@@ -6,8 +6,12 @@
 //! by hand. This module gates it against live shim names, arity and async
 //! returns, and exports relative declaration trees for catalog consumers.
 //!
-//! O-SCRIPT-API can append a typed sidecar `.d.ts` under `compat-js/` and
-//! add its barrel export in `@rs2b0t/api`; the extension gate remains active.
+//! O-SCRIPT-API extends declarations through the runtime barrel in
+//! `src/shim/declared_surface.js`, generated from
+//! `tests/fixtures/js_declared_abi.json`. Durable runtime re-exports require
+//! both a fixture entry and its declared-ABI renderer mapping. Add the typed
+//! sidecar `.d.ts` under `compat-js/`, then regenerate `compat-js/index.d.ts`
+//! with `compat-js/generate.cjs`; never hand-edit the generated index.
 
 use crate::shim::{shim_modules, PRELUDE};
 use deno_ast::swc::ast::*;
@@ -48,6 +52,8 @@ pub enum CompatExport {
         name: String,
         params: Vec<FnParam>,
         is_async: bool,
+        /// True when the contract accepts a non-Promise result.
+        allows_non_promise: bool,
     },
     Value {
         name: String,
@@ -69,6 +75,8 @@ pub struct Member {
     pub kind: MemberKind,
     pub params: Vec<FnParam>,
     pub is_async: bool,
+    /// True when the contract accepts a non-Promise result.
+    pub allows_non_promise: bool,
     pub is_static: bool,
 }
 
@@ -107,18 +115,12 @@ pub fn shim_source_pairs() -> Vec<(String, String)> {
 
 /// Walk the isolate's shim modules and prelude.
 pub fn collect_compat_surface() -> CompatSurface {
-    let prelude = parse_prelude(PRELUDE);
-    let mut modules = Vec::new();
-    for m in shim_modules() {
-        let specifier = m.filename().to_string_lossy().into_owned();
-        if is_barrel(&specifier) {
-            continue;
-        }
-        let parsed = parse_module_source(&specifier, m.contents());
-        modules.push(parsed);
-    }
-    resolve_aliases(&mut modules, &prelude);
-    CompatSurface { modules, prelude }
+    let pairs = shim_source_pairs();
+    let sources: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(specifier, source)| (specifier.as_str(), source.as_str()))
+        .collect();
+    collect_compat_surface_from(&sources)
 }
 
 /// Build a surface from explicit (specifier, source) pairs plus the live
@@ -134,6 +136,7 @@ pub fn collect_compat_surface_from(sources: &[(&str, &str)]) -> CompatSurface {
         modules.push(parse_module_source(specifier, source));
     }
     resolve_aliases(&mut modules, &prelude);
+    infer_imported_promises(&mut modules, sources);
     CompatSurface { modules, prelude }
 }
 
@@ -466,6 +469,7 @@ fn expr_as_export(
             name: name.to_string(),
             params: finish_params(pats_to_params(&arrow.params)),
             is_async: arrow.is_async,
+            allows_non_promise: !arrow.is_async,
         }),
         Expr::New(new_expr) if is_ident(&new_expr.callee, "Proxy") => {
             Some(proxy_export(name, new_expr, locals))
@@ -592,6 +596,7 @@ fn fn_export(name: &str, func: &Function) -> CompatExport {
         name: name.to_string(),
         params: finish_params(func.params.iter().map(|p| pat_to_param(&p.pat)).collect()),
         is_async: func.is_async,
+        allows_non_promise: !func.is_async,
     }
 }
 
@@ -629,6 +634,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                     kind: MemberKind::Constructor,
                     params,
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
                 for field in constructor_this_fields(ctor) {
@@ -661,6 +667,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                             .collect(),
                     ),
                     is_async: method.function.is_async,
+                    allows_non_promise: !method.function.is_async,
                     is_static: method.is_static,
                 });
             }
@@ -676,6 +683,7 @@ fn class_members(class: &Class) -> Vec<Member> {
                     kind: MemberKind::Field,
                     params: Vec::new(),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: prop.is_static,
                 });
             }
@@ -715,6 +723,7 @@ fn constructor_this_fields(ctor: &Constructor) -> Vec<Member> {
             kind: MemberKind::Field,
             params: Vec::new(),
             is_async: false,
+            allows_non_promise: true,
             is_static: false,
         });
     }
@@ -751,6 +760,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                             .collect(),
                     ),
                     is_async: m.function.is_async,
+                    allows_non_promise: !m.function.is_async,
                     is_static: false,
                 });
             }
@@ -763,6 +773,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     kind: MemberKind::Getter,
                     params: Vec::new(),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -775,6 +786,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                     kind: MemberKind::Setter,
                     params: vec![pat_to_param(&s.param)],
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -788,6 +800,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         kind: MemberKind::Field,
                         params: Vec::new(),
                         is_async: false,
+                        allows_non_promise: true,
                         is_static: false,
                     });
                 }
@@ -808,6 +821,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                                 .collect(),
                         ),
                         is_async: func.function.is_async,
+                        allows_non_promise: !func.function.is_async,
                         is_static: false,
                     }),
                     Expr::Arrow(arrow) => out.push(Member {
@@ -815,6 +829,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         kind: MemberKind::Method,
                         params: finish_params(pats_to_params(&arrow.params)),
                         is_async: arrow.is_async,
+                        allows_non_promise: !arrow.is_async,
                         is_static: false,
                     }),
                     Expr::Ident(id) => {
@@ -824,6 +839,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                                 kind: member.kind,
                                 params: member.params,
                                 is_async: member.is_async,
+                                allows_non_promise: member.allows_non_promise,
                                 is_static: false,
                             });
                         } else {
@@ -832,6 +848,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                                 kind: MemberKind::Field,
                                 params: Vec::new(),
                                 is_async: false,
+                                allows_non_promise: true,
                                 is_static: false,
                             });
                         }
@@ -841,6 +858,7 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
                         kind: MemberKind::Field,
                         params: Vec::new(),
                         is_async: false,
+                        allows_non_promise: true,
                         is_static: false,
                     }),
                 }
@@ -854,12 +872,16 @@ fn object_lit_members(obj: &ObjectLit, locals: &HashMap<String, CompatExport>) -
 fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Option<Member> {
     match locals.get(name) {
         Some(CompatExport::Function {
-            params, is_async, ..
+            params,
+            is_async,
+            allows_non_promise,
+            ..
         }) => Some(Member {
             name: name.to_string(),
             kind: MemberKind::Method,
             params: params.clone(),
             is_async: *is_async,
+            allows_non_promise: *allows_non_promise,
             is_static: false,
         }),
         Some(CompatExport::Class { members, .. }) => {
@@ -869,6 +891,7 @@ fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Opti
                 kind: MemberKind::Field,
                 params: ctor.map(|c| c.params.clone()).unwrap_or_default(),
                 is_async: false,
+                allows_non_promise: true,
                 is_static: false,
             })
         }
@@ -877,6 +900,7 @@ fn member_from_local(name: &str, locals: &HashMap<String, CompatExport>) -> Opti
             kind: MemberKind::Field,
             params: Vec::new(),
             is_async: false,
+            allows_non_promise: true,
             is_static: false,
         }),
         None => None,
@@ -1094,11 +1118,15 @@ fn rename_export(exp: CompatExport, name: &str) -> CompatExport {
             members,
         },
         CompatExport::Function {
-            params, is_async, ..
+            params,
+            is_async,
+            allows_non_promise,
+            ..
         } => CompatExport::Function {
             name: name.to_string(),
             params,
             is_async,
+            allows_non_promise,
         },
         CompatExport::Value { .. } => CompatExport::Value {
             name: name.to_string(),
@@ -1154,11 +1182,22 @@ pub fn find_export<'a>(surface: &'a CompatSurface, name: &str) -> Option<&'a Com
 }
 
 fn infer_promises_in_source(module: &mut ShimModule, source: &str) {
+    infer_promises_in_source_with_import_facts(module, source, &HashMap::new());
+}
+
+fn infer_promises_in_source_with_import_facts(
+    module: &mut ShimModule,
+    source: &str,
+    imported_facts: &HashMap<(String, String), bool>,
+) {
     let Some(parsed) = parse_js(&module.specifier, source, MediaType::JavaScript) else {
         return;
     };
     let mut facts = HashMap::new();
     seed_module_facts(module, &mut facts);
+    if !imported_facts.is_empty() {
+        seed_imported_promise_facts(&parsed, &module.specifier, imported_facts, &mut facts);
+    }
     for _ in 0..12 {
         if !walk_parsed(&parsed, &mut facts) {
             break;
@@ -1194,9 +1233,15 @@ fn seed_export_facts(exp: &CompatExport, facts: &mut HashMap<String, bool>) {
 fn apply_promise_facts(module: &mut ShimModule, facts: &HashMap<String, bool>) {
     for exp in module.exports.iter_mut().chain(module.privates.iter_mut()) {
         match exp {
-            CompatExport::Function { name, is_async, .. } => {
+            CompatExport::Function {
+                name,
+                is_async,
+                allows_non_promise,
+                ..
+            } => {
                 if facts.get(name).copied().unwrap_or(false) {
                     *is_async = true;
+                    *allows_non_promise = false;
                 }
             }
             CompatExport::Object { name, members } | CompatExport::Class { name, members, .. } => {
@@ -1208,10 +1253,92 @@ fn apply_promise_facts(module: &mut ShimModule, facts: &HashMap<String, bool>) {
                             .unwrap_or(false)
                     {
                         m.is_async = true;
+                        m.allows_non_promise = false;
                     }
                 }
             }
             CompatExport::Value { .. } => {}
+        }
+    }
+}
+
+fn infer_imported_promises(modules: &mut [ShimModule], sources: &[(&str, &str)]) {
+    let mut imported_facts = HashMap::new();
+    for module in modules.iter() {
+        for export in &module.exports {
+            let symbol = export_ident(export).to_string();
+            let mut names = vec![symbol.clone()];
+            if module.default_export.as_deref() == Some(symbol.as_str()) && symbol != "default" {
+                names.push("default".to_string());
+            }
+            match export {
+                CompatExport::Function { is_async: true, .. } => {
+                    for name in names {
+                        imported_facts.insert((module.specifier.clone(), name), true);
+                    }
+                }
+                CompatExport::Object { members, .. } | CompatExport::Class { members, .. } => {
+                    for name in names {
+                        for member in members
+                            .iter()
+                            .filter(|member| member.kind == MemberKind::Method && member.is_async)
+                        {
+                            imported_facts.insert(
+                                (
+                                    module.specifier.clone(),
+                                    format!("{name}.{}", member.name),
+                                ),
+                                true,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if imported_facts.is_empty() {
+        return;
+    }
+
+    let source_by_specifier: HashMap<&str, &str> = sources.iter().copied().collect();
+    for module in modules {
+        if let Some(source) = source_by_specifier.get(module.specifier.as_str()) {
+            infer_promises_in_source_with_import_facts(module, source, &imported_facts);
+        }
+    }
+}
+
+fn seed_imported_promise_facts(
+    parsed: &ParsedSource,
+    specifier: &str,
+    imported_facts: &HashMap<(String, String), bool>,
+    facts: &mut HashMap<String, bool>,
+) {
+    let ProgramRef::Module(source) = parsed.program_ref() else {
+        return;
+    };
+    let mut state = ParseState::new(specifier);
+    for item in &source.body {
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+            record_import(&mut state, import);
+        }
+    }
+    for (local, (imported, from)) in state.imports {
+        if imported_facts
+            .get(&(from.clone(), imported.clone()))
+            .copied()
+            .unwrap_or(false)
+        {
+            facts.insert(local.clone(), true);
+        }
+        let member_prefix = format!("{imported}.");
+        for ((target_specifier, target_symbol), is_promise) in imported_facts {
+            if *is_promise && target_specifier == &from {
+                if let Some(member) = target_symbol.strip_prefix(&member_prefix) {
+                    facts.insert(format!("{local}.{member}"), true);
+                }
+            }
         }
     }
 }
@@ -1531,6 +1658,8 @@ fn call_is_promise(call: &CallExpr, facts: &HashMap<String, bool>) -> bool {
 #[derive(Debug, Clone)]
 pub struct AuthoredSurface {
     pub modules: Vec<AuthoredModule>,
+    /// Shared generated-file header from the authored index.
+    pub preamble: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1556,6 +1685,13 @@ pub fn load_authored_dts_from(dir: &Path) -> Result<AuthoredSurface, String> {
     let index = dir.join("index.d.ts");
     let src =
         std::fs::read_to_string(&index).map_err(|e| format!("read {}: {e}", index.display()))?;
+    let preamble_end = src.find("declare module").ok_or_else(|| {
+        format!(
+            "no ambient module declaration in authored index {}",
+            index.display()
+        )
+    })?;
+    let preamble = src[..preamble_end].to_string();
     let mut modules = parse_authored_source(&src, false)?;
     let mut files = Vec::new();
     collect_dts_files(dir, &mut files)?;
@@ -1598,7 +1734,7 @@ pub fn load_authored_dts_from(dir: &Path) -> Result<AuthoredSurface, String> {
     for (module, resolved) in modules.iter_mut().zip(aliases) {
         module.exports = resolved.exports;
     }
-    Ok(AuthoredSurface { modules })
+    Ok(AuthoredSurface { modules, preamble })
 }
 
 fn file_rel_to_specifier(rel: &str) -> String {
@@ -1906,10 +2042,13 @@ fn collect_dts_decl(
 }
 
 fn dts_fn_export(name: &str, func: &Function) -> CompatExport {
+    let return_type = func.return_type.as_deref();
     CompatExport::Function {
         name: name.to_string(),
         params: finish_params(func.params.iter().map(|p| pat_to_param(&p.pat)).collect()),
-        is_async: func.is_async || func.return_type.as_deref().is_some_and(type_ann_is_promise),
+        is_async: func.is_async || return_type.is_some_and(type_ann_is_promise),
+        allows_non_promise: !func.is_async
+            && return_type.map_or(true, type_ann_allows_non_promise),
     }
 }
 
@@ -1945,6 +2084,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     kind: MemberKind::Constructor,
                     params,
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -1957,12 +2097,11 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     MethodKind::Setter => MemberKind::Setter,
                     MethodKind::Method => MemberKind::Method,
                 };
-                let is_async = method.function.is_async
-                    || method
-                        .function
-                        .return_type
-                        .as_deref()
-                        .is_some_and(type_ann_is_promise);
+                let return_type = method.function.return_type.as_deref();
+                let is_async =
+                    method.function.is_async || return_type.is_some_and(type_ann_is_promise);
+                let allows_non_promise = !method.function.is_async
+                    && return_type.map_or(true, type_ann_allows_non_promise);
                 out.push(Member {
                     name,
                     kind,
@@ -1975,6 +2114,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                             .collect(),
                     ),
                     is_async,
+                    allows_non_promise,
                     is_static: method.is_static,
                 });
             }
@@ -1987,6 +2127,7 @@ fn dts_class_members(class: &Class) -> Vec<Member> {
                     kind: MemberKind::Field,
                     params: Vec::new(),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: prop.is_static,
                 });
             }
@@ -2012,6 +2153,7 @@ fn dts_var_export(decl: &VarDeclarator) -> Option<CompatExport> {
                 name,
                 params: finish_params(fun.params.iter().map(ts_fn_param).collect()),
                 is_async: type_ann_is_promise(&fun.type_ann),
+                allows_non_promise: type_ann_allows_non_promise(&fun.type_ann),
             });
         }
     }
@@ -2037,11 +2179,13 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                 let Some(name) = expr_key_name(&m.key) else {
                     continue;
                 };
+                let return_type = m.type_ann.as_deref();
                 out.push(Member {
                     name,
                     kind: MemberKind::Method,
                     params: finish_params(m.params.iter().map(ts_fn_param).collect()),
-                    is_async: m.type_ann.as_deref().is_some_and(type_ann_is_promise),
+                    is_async: return_type.is_some_and(type_ann_is_promise),
+                    allows_non_promise: return_type.map_or(true, type_ann_allows_non_promise),
                     is_static: false,
                 });
             }
@@ -2054,6 +2198,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     kind: MemberKind::Getter,
                     params: Vec::new(),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -2066,6 +2211,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     kind: MemberKind::Setter,
                     params: vec![ts_fn_param(&s.param)],
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -2082,6 +2228,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                             kind: MemberKind::Method,
                             params: finish_params(f.params.iter().map(ts_fn_param).collect()),
                             is_async: type_ann_is_promise(&f.type_ann),
+                            allows_non_promise: type_ann_allows_non_promise(&f.type_ann),
                             is_static: false,
                         });
                         continue;
@@ -2092,6 +2239,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     kind: MemberKind::Field,
                     params: Vec::new(),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -2101,6 +2249,7 @@ fn dts_type_lit_members(elements: &[TsTypeElement]) -> Vec<Member> {
                     kind: MemberKind::Constructor,
                     params: finish_params(c.params.iter().map(ts_fn_param).collect()),
                     is_async: false,
+                    allows_non_promise: true,
                     is_static: false,
                 });
             }
@@ -2147,6 +2296,24 @@ fn type_ann_is_promise(ann: &TsTypeAnn) -> bool {
     type_is_promise(&ann.type_ann)
 }
 
+fn type_ann_allows_non_promise(ann: &TsTypeAnn) -> bool {
+    type_allows_non_promise(&ann.type_ann)
+}
+
+fn type_allows_non_promise(ty: &TsType) -> bool {
+    match ty {
+        TsType::TsTypeRef(r) => match &r.type_name {
+            TsEntityName::Ident(id) => id.sym.as_ref() != "Promise",
+            TsEntityName::TsQualifiedName(_) => true,
+        },
+        TsType::TsParenthesizedType(p) => type_allows_non_promise(&p.type_ann),
+        TsType::TsUnionOrIntersectionType(TsUnionOrIntersectionType::TsUnionType(u)) => {
+            u.types.iter().any(|t| type_allows_non_promise(t))
+        }
+        _ => true,
+    }
+}
+
 fn type_is_promise(ty: &TsType) -> bool {
     match ty {
         TsType::TsTypeRef(r) => match &r.type_name {
@@ -2175,8 +2342,8 @@ pub fn write_authored_dts_tree(authored: &AuthoredSurface, root: &Path) -> Resul
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
-        let mut src =
-            String::from("// Compat JS API v1 — copied from authored compat-js declarations.\n");
+        let mut src = String::with_capacity(authored.preamble.len() + module.body.len());
+        src.push_str(&authored.preamble);
         let from_dir = Path::new(&rel)
             .parent()
             .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -2394,20 +2561,26 @@ fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: 
             CompatExport::Function {
                 name,
                 params,
-                is_async,
+                is_async: shim_async,
+                ..
             },
             CompatExport::Function {
                 params: dparams,
-                is_async: dasync,
+                is_async: declaration_async,
+                allows_non_promise,
                 ..
             },
         ) => {
             compare_params(label, name, params, dparams, drifts);
-            if *is_async && !*dasync {
-                drifts.push(format!(
-                    "{label} {name} async-ness: shim returns a Promise, declaration is not Promise<T>"
-                ));
-            }
+            compare_async_contract(
+                label,
+                name,
+                None,
+                *shim_async,
+                *declaration_async,
+                *allows_non_promise,
+                drifts,
+            );
         }
         (
             CompatExport::Object { name, members },
@@ -2450,6 +2623,28 @@ fn compare_export(label: &str, shim: &CompatExport, dts: &CompatExport, drifts: 
     }
 }
 
+fn compare_async_contract(
+    label: &str,
+    symbol: &str,
+    member: Option<&str>,
+    shim_async: bool,
+    declaration_async: bool,
+    declaration_allows_non_promise: bool,
+    drifts: &mut Vec<String>,
+) {
+    if shim_async && !declaration_async {
+        let subject = member.map_or_else(|| symbol.to_string(), |name| format!("{symbol}.{name}"));
+        drifts.push(format!(
+            "{label} {subject} async-ness: shim returns a Promise, declaration is not Promise<T>"
+        ));
+    } else if !shim_async && declaration_async && !declaration_allows_non_promise {
+        let subject = member.map_or_else(|| symbol.to_string(), |name| format!("{symbol}.{name}"));
+        drifts.push(format!(
+            "{label} {subject} async-ness: shim does not return a Promise, declaration requires Promise<T>"
+        ));
+    }
+}
+
 fn kind_tag(exp: &CompatExport) -> &'static str {
     match exp {
         CompatExport::Class { .. } => "class",
@@ -2471,12 +2666,6 @@ fn compare_members(
             drifts.push(format!("{label} {owner} missing member {}", m.name));
             continue;
         };
-        if m.kind == MemberKind::Method
-            && d.kind != MemberKind::Method
-            && d.kind != MemberKind::Field
-        {
-            // getters vs methods still count as present; arity is compared for methods
-        }
         if m.kind == MemberKind::Method || m.kind == MemberKind::Constructor {
             compare_params(
                 label,
@@ -2485,12 +2674,15 @@ fn compare_members(
                 &d.params,
                 drifts,
             );
-            if m.is_async && !d.is_async {
-                drifts.push(format!(
-                    "{label} {owner}.{} async-ness: shim returns a Promise, declaration is not Promise<T>",
-                    m.name
-                ));
-            }
+            compare_async_contract(
+                label,
+                owner,
+                Some(&m.name),
+                m.is_async,
+                d.is_async,
+                d.allows_non_promise,
+                drifts,
+            );
         }
     }
     for d in dts {
@@ -2570,10 +2762,13 @@ fn relative_from_dir(from_dir: &str, target: &str) -> String {
     }
     let mut parts: Vec<&str> = std::iter::repeat_n("..", from.len() - i).collect();
     parts.extend(to[i..].iter().copied());
-    if parts.is_empty() {
+    let relative = parts.join("/");
+    if parts.first().is_some_and(|part| *part == "..") {
+        relative
+    } else if relative.is_empty() {
         format!("./{}", to.last().copied().unwrap_or(target))
     } else {
-        parts.join("/")
+        format!("./{relative}")
     }
 }
 
