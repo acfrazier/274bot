@@ -70,4 +70,4 @@ test-support = ["script/test-hooks"]
 # Windows-only headed Quester journal paint proof. The code remains gated by
 # both this feature and `cfg(windows)` so ordinary Mac/headless tests never
 # construct a native window.
-journal-paint-proof = ["client/window"]
+journal-paint-proof = ["client/headed-fixture"]
