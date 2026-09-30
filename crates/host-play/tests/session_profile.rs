@@ -202,6 +202,34 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
 }
 
 #[test]
+fn unpack_root_inside_selected_engine_or_content_is_rejected() {
+    let fixture = Fixture::new();
+    let mut options = ProfileOptions {
+        profile: Some("local-289".into()),
+        engine_dir: Some(fixture.0.join("engine")),
+        content_dir: Some(fixture.0.join("content")),
+        nav_pack: Some(fixture.0.join("missing.navpack")),
+        ..Default::default()
+    };
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selected.unpack_dir().ends_with(".274bot/unpack-289"));
+    assert!(!selected.unpack_dir().starts_with(selected.content_dir()));
+    assert!(!selected.unpack_dir().starts_with(selected.engine_dir()));
+
+    for (label, root) in [
+        ("content", fixture.0.join("content")),
+        ("engine", fixture.0.join("engine")),
+    ] {
+        options.unpack_dir = Some(root.join("runtime"));
+        let error = options.resolve_with_env(None, &fixture.env()).unwrap_err();
+        assert!(
+            error.contains("unpack root") && error.contains(label),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     let fixture = Fixture::new();
     let mut lower_priority = fixture.env();
