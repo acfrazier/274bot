@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
@@ -503,7 +503,10 @@ fn put(buf: &mut Buffer, area: Rect, col: usize, row: usize, glyph: &str) {
 fn tint(buf: &mut Buffer, area: Rect, col: usize, row: usize) {
     if col < area.width as usize && row < area.height as usize {
         let point = (area.x + col as u16, area.y + row as u16);
-        let style = buf[point].style().bg(WILDERNESS_BG);
+        let style = buf[point]
+            .style()
+            .bg(WILDERNESS_BG)
+            .add_modifier(Modifier::DIM | Modifier::REVERSED);
         buf[point].set_style(style);
     }
 }
@@ -520,12 +523,13 @@ fn poi_glyph(kind: PoiKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
-
     use nav::grid::StepGrid;
     use nav::router::find;
     use nav::tile::Tile;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Modifier;
+    use ratatui::Terminal;
 
     use super::{Map, MapAction, MapView, ZOOMS};
 
@@ -541,15 +545,17 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    /// Render `map` into a `w × h` TestBackend and return the buffer text.
-    fn render(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> String {
+    fn render_buffer(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|frame| frame.render_widget(map, frame.area()))
             .unwrap();
-        terminal
-            .backend()
-            .buffer()
+        terminal.backend().buffer().clone()
+    }
+
+    /// Render `map` into a `w × h` TestBackend and return the buffer text.
+    fn render(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> String {
+        render_buffer(map, w, h)
             .content()
             .iter()
             .map(|cell| cell.symbol())
@@ -602,21 +608,56 @@ mod tests {
         };
         let mut view = MapView::new();
         view.layers.wilderness = true;
-        let text = render(
+        let buffer = render_buffer(
             Map::new(&world, &mut view, |_| {}).here(wtile(2946, 3519, 0)),
             9,
             9,
         );
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
         // Centre is z=3519; the selected zone rows z=3520 and z=3521
         // straddle the real surface wilderness edge at z=3520.
         assert_eq!(&text[2 * 9 + 4..2 * 9 + 5], ".");
         assert_eq!(&text[3 * 9 + 4..3 * 9 + 5], ".");
         assert_eq!(&text[4 * 9 + 4..4 * 9 + 5], "@");
+        let wilderness = |row: usize| buffer[(4, row as u16)].style();
+        for row in [2, 3] {
+            let style = wilderness(row);
+            assert_eq!(
+                style.bg,
+                Some(super::WILDERNESS_BG),
+                "z={} should carry the wilderness background",
+                3519 + (4 - row) as i32
+            );
+            assert!(
+                style
+                    .add_modifier
+                    .contains(Modifier::DIM | Modifier::REVERSED),
+                "z={} should carry the non-colour wilderness marker",
+                3519 + (4 - row) as i32
+            );
+        }
+        for row in [1, 4] {
+            let style = wilderness(row);
+            assert_ne!(
+                style.bg,
+                Some(super::WILDERNESS_BG),
+                "z={} must not carry the wilderness background",
+                3519 + (4 - row) as i32
+            );
+            assert!(
+                !style
+                    .add_modifier
+                    .contains(Modifier::DIM | Modifier::REVERSED),
+                "z={} must not carry the wilderness marker",
+                3519 + (4 - row) as i32
+            );
+        }
         // The south side and the next north row stay outside the zone; an
         // area marker must not turn every visible cell into a wilderness glyph.
         assert_eq!(&text[4 * 9 + 3..4 * 9 + 4], ".");
         assert_eq!(&text[9 + 4..9 + 5], ".");
     }
+
     #[test]
     fn route_paints_stars_and_advancing_here_drops_the_first() {
         let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(

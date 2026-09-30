@@ -564,8 +564,19 @@ impl TuiApp {
     }
 
     pub(crate) fn toggle_map_wilderness(&mut self) {
-        if let Err(error) = self.map.toggle_wilderness() {
-            self.error = Some(format!("map wilderness: {error}"));
+        match self.map.toggle_wilderness() {
+            Ok(()) => {
+                if self
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("map wilderness:"))
+                {
+                    self.error = None;
+                }
+            }
+            Err(error) => {
+                self.error = Some(format!("map wilderness: {error}"));
+            }
         }
     }
     /// The header title (profile, server and revision).

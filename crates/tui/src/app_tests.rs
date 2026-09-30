@@ -369,6 +369,17 @@ fn wilderness_persistence_errors_are_visible() {
         "preference write failure must be surfaced: {:?}",
         app.error
     );
+
+    std::fs::remove_file(&parent).unwrap();
+    std::fs::create_dir(&parent).unwrap();
+    app.toggle_map_wilderness();
+    assert!(!app.map.layers.wilderness);
+    assert!(
+        app.error.is_none(),
+        "a later successful save clears the stale map error: {:?}",
+        app.error
+    );
+
     std::fs::remove_dir_all(root).unwrap();
 }
 
