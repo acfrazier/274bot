@@ -81,6 +81,12 @@ packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
 identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
 application callers use `prepare_template()` or `bind_runtime()`.
 
+Headerless Jagex archives are decoded without copying their compressed payload
+just to restore a header. The normal decoder uses the engine's 100k block size,
+avoiding a 900k libbz2 workspace for each stream. Larger headerless blocks remain
+supported by retrying with the larger hint on a block-data error; truncated or
+CRC-corrupt streams still fail. This does not change decoded content identities.
+
 New nav manifests, build stamps and compiled bundle rows carry `content_id` and
 `source_sha256`. Source provenance hashes the conservative content-tree closure
 and actual baker config; the build stamp also binds generator source bytes.
