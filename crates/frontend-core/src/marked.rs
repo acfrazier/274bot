@@ -263,11 +263,12 @@ pub fn logout_marked<Io>(
 /// `source` (the focused bot) holds for the card, and the marked same-card
 /// bots that would take them. Unmarked bots are never targets and are only
 /// counted; every marked row that cannot take the copy is named with its
-/// reason. Nothing is written until [`Scripts::apply_settings_sync`]; a scope
-/// with no marked target to copy to is refused instead of prepared.
+/// reason. Read-only (`core` is borrowed shared): nothing is written or
+/// migrated until [`Scripts::apply_settings_sync`]; a scope with no marked
+/// target to copy to is refused instead of prepared.
 pub fn prepare_apply_settings_marked<'a, Io>(
     selection: &MarkedSelection,
-    core: &mut OperatorSession<Io>,
+    core: &OperatorSession<Io>,
     scripts: &'a mut Scripts,
     source: &str,
     card: &script::ScriptSel,

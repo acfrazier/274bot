@@ -2260,12 +2260,30 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let bob = s.core.profile_identity("bob").unwrap();
     s.fleet_selection.set(bob, true);
 
+    // Newly assigned: alice has no per-card key, only a legacy override.
+    s.scripts
+        .legacy
+        .set_str(card.source, &card.name, "target", "Guard");
+    s.core.flush_writes();
+    let vault_file = dir.join("v.vault");
+    let before = fs::read(&vault_file).unwrap();
+
     s.fleet_prepare_apply_settings();
+    s.core.flush_writes();
 
     let scope = s.scripts.prepared_settings_sync().expect("prepared");
     assert_eq!(scope.targets, ["bob"]);
     assert!(scope.skipped.is_empty(), "an unmarked bot is not named");
     assert_eq!(scope.unmarked, Some(1));
+    assert_eq!(
+        scope.overrides.get("target"),
+        Some(&serde_json::json!("Guard"))
+    );
     assert!(scope.prompt().contains("1 marked same-card bot(s)"));
     assert!(scope.prompt().contains("1 unmarked bot(s) left unchanged"));
+    assert_eq!(
+        fs::read(&vault_file).unwrap(),
+        before,
+        "preparing wrote the vault before Apply"
+    );
 }

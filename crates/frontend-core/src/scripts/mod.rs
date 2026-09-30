@@ -491,17 +491,17 @@ impl Scripts {
         if already {
             return;
         }
-        let legacy = self.legacy.overrides(
-            script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
-                .unwrap_or(script::ScriptSource::Catalog),
-            card_name,
-        );
+        let legacy = self.legacy_overrides_for(key, card_name);
         let _ = self.upsert_profile_settings(core, profile, ArmMirror::None, |settings| {
             script::claim_legacy_overrides(settings, key, card_name, &legacy);
         });
     }
 
-    /// `profile`'s overrides bag for the card `key`.
+    /// `profile`'s overrides bag for the card `key`, claiming the legacy
+    /// global overrides into the profile on its first use of the card. That
+    /// claim queues a durable write; a read that must not write (a
+    /// confirmation still awaiting the operator) uses
+    /// [`Self::peek_profile_overrides`].
     pub fn profile_overrides<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -510,10 +510,38 @@ impl Scripts {
         card_name: &str,
     ) -> Map<String, Value> {
         self.claim_legacy_for(core, profile, key, card_name);
-        core.vault()
-            .and_then(|v| v.get(profile))
-            .and_then(|p| p.settings.script_settings.get(key).cloned())
-            .unwrap_or_default()
+        self.peek_profile_overrides(core, profile, key, card_name)
+    }
+
+    /// The bag [`Self::profile_overrides`] returns, without the claim: the
+    /// profile's own overrides for the card, or, before its first use of the
+    /// card, the migrated legacy overrides the claim would store. Writes
+    /// nothing and queues nothing.
+    pub fn peek_profile_overrides<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        key: &str,
+        card_name: &str,
+    ) -> Map<String, Value> {
+        let Some(row) = core.vault().and_then(|v| v.get(profile)) else {
+            return Map::new();
+        };
+        match row.settings.script_settings.get(key) {
+            Some(own) => own.clone(),
+            None => {
+                script::migrate_overrides(card_name, &self.legacy_overrides_for(key, card_name))
+            }
+        }
+    }
+
+    /// The legacy global overrides for the card `key` names.
+    fn legacy_overrides_for(&self, key: &str, card_name: &str) -> Map<String, Value> {
+        self.legacy.overrides(
+            script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
+                .unwrap_or(script::ScriptSource::Catalog),
+            card_name,
+        )
     }
 
     /// What a Start of this card on `profile` receives: schema defaults,

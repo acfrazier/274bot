@@ -3344,6 +3344,9 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     }
 
     // Running it freezes the scope and asks first; Esc drops it unwritten.
+    let vault_file = iso.dir.join("vault");
+    let rows_before = script_settings_rows(&session);
+    let bytes_before = std::fs::read(&vault_file).unwrap();
     app.modal = None;
     let action = app.run_command(command);
     dispatch(&mut session, &mut app, action);
@@ -3363,6 +3366,16 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     dispatch(&mut session, &mut app, cancel);
     assert!(session.scripts.prepared_settings_sync().is_none());
     session.core.flush_writes();
+    assert_eq!(
+        script_settings_rows(&session),
+        rows_before,
+        "cancel changed a profile, the focused source included"
+    );
+    assert_eq!(
+        std::fs::read(&vault_file).unwrap(),
+        bytes_before,
+        "cancel wrote the vault"
+    );
     let key = card.identity_key();
     let saved = |session: &TuiSession, name: &str| {
         session
@@ -3403,4 +3416,76 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
             && report.contains("1 unmarked unchanged"),
         "{report}"
     );
+}
+
+/// Opening *Apply focused bot's settings to marked* for a card newly assigned
+/// to the focused bot (no per-card key in its profile yet, only a legacy
+/// global override) and cancelling leaves the vault byte-identical, as the
+/// dialog promises, while the frozen scope still carries the migrated bag.
+#[test]
+fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwritten() {
+    let iso = IsolatedEnv::enter("tui-apply-marked-fresh");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let thiever = iso.dir.join("thiever.ts");
+    std::fs::write(&thiever, THIEVER_TS).unwrap();
+    let card = session.scripts.js.load(&thiever).unwrap();
+    for name in ["alice", "bob"] {
+        assign(&mut session, name, &card);
+    }
+    session
+        .scripts
+        .legacy
+        .set_str(card.source, &card.name, "target", "Guard");
+    focus_member(&mut session, &mut app, "alice");
+    app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let id = session.core.profile_identity("bob").unwrap();
+    app.table.selection.set(id, true);
+
+    let vault_file = iso.dir.join("vault");
+    let rows_before = script_settings_rows(&session);
+    assert!(
+        rows_before
+            .iter()
+            .all(|(_, settings)| !settings.contains_key(&card.identity_key())),
+        "a newly assigned card has no per-card key"
+    );
+    let bytes_before = std::fs::read(&vault_file).unwrap();
+
+    let action = app.run_command(crate::commands::Command::ScriptApplyMarked);
+    dispatch(&mut session, &mut app, action);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    let scope = session.scripts.prepared_settings_sync().unwrap();
+    assert_eq!(
+        scope.overrides.get("target"),
+        Some(&serde_json::json!("Guard"))
+    );
+    assert_eq!(
+        std::fs::read(&vault_file).unwrap(),
+        bytes_before,
+        "opening the confirmation wrote the vault"
+    );
+
+    let cancel = app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    dispatch(&mut session, &mut app, cancel);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert_eq!(script_settings_rows(&session), rows_before);
+    assert_eq!(std::fs::read(&vault_file).unwrap(), bytes_before);
+}
+
+type SettingsRows = Vec<(
+    String,
+    std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
+)>;
+
+/// Every profile's per-card settings map, by name.
+fn script_settings_rows(session: &TuiSession) -> SettingsRows {
+    session
+        .core
+        .vault()
+        .unwrap()
+        .profiles()
+        .map(|row| (row.username.clone(), row.settings.script_settings.clone()))
+        .collect()
 }

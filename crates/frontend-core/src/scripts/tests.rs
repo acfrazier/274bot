@@ -156,13 +156,8 @@ impl Fixture {
     }
 
     fn prepare(&mut self, source: &str, card: &script::JsCard) {
-        self.scripts.prepare_settings_sync(
-            &mut self.core,
-            source,
-            card.source,
-            &card.name,
-            &card.path,
-        );
+        self.scripts
+            .prepare_settings_sync(&self.core, source, card.source, &card.name, &card.path);
     }
 
     /// Posting `bag` again is refused when the run already has it.
@@ -286,6 +281,45 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     );
     let summary = report.summary().to_string();
     assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
+}
+
+/// Apply to all shares the prepare path: freezing it for a newly assigned
+/// card (no per-card key in the source profile yet) writes nothing, and the
+/// bag it freezes is the migrated legacy overrides.
+#[test]
+fn apply_to_all_prepare_and_cancel_write_nothing_for_an_unclaimed_source() {
+    let mut f = fixture("sync-readonly", &["alice", "bob"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    f.assign("bob", &thiever);
+    f.scripts
+        .legacy
+        .set_str(thiever.source, &thiever.name, "target", "Guard");
+    let key = thiever.identity_key();
+    let vault_file = f.dir.join("vault");
+    let before = std::fs::read(&vault_file).unwrap();
+
+    f.prepare("alice", &thiever);
+    let scope = f.scripts.prepared_settings_sync().unwrap();
+    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(scope.overrides, bag(&[("target", json!("Guard"))]));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(std::fs::read(&vault_file).unwrap(), before, "prepare wrote");
+    assert_eq!(f.saved_bag("alice", &key), None);
+
+    f.scripts.cancel_settings_sync();
+    f.core.flush_writes();
+    assert_eq!(std::fs::read(&vault_file).unwrap(), before, "cancel wrote");
+
+    f.prepare("alice", &thiever);
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.saved_bag("bob", &key),
+        Some(bag(&[("target", json!("Guard"))]))
+    );
 }
 
 /// Apply to all posts the whole bag to each live target: its own

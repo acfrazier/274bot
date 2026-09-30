@@ -362,7 +362,7 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     // bob and dave take the copy; carol is on another card and frank is not
     // loaded (both marked, so both are named); erin is unmarked.
     let marked = marks(&[2, 3, 4, 6]);
-    let scope = prepare_apply_settings_marked(&marked, &mut f.core, &mut f.scripts, "alice", &sel)
+    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
         .unwrap()
         .clone();
     assert_eq!(scope.targets, ["bob", "dave"]);
@@ -428,7 +428,7 @@ fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
     f.assign("carol", &card);
 
     let refused = |f: &mut Fixture, marked: &MarkedSelection| {
-        prepare_apply_settings_marked(marked, &mut f.core, &mut f.scripts, "alice", &sel)
+        prepare_apply_settings_marked(marked, &f.core, &mut f.scripts, "alice", &sel)
             .map(|_| ())
             .unwrap_err()
     };
@@ -450,6 +450,70 @@ fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
         f.scripts.prepared_settings_sync().is_none(),
         "a refusal leaves nothing to apply"
     );
+}
+
+/// A loaded card newly assigned to the focused bot has no per-card settings
+/// key in its profile yet (only the legacy global overrides). Opening the
+/// frozen confirmation and cancelling it writes nothing: the vault file is
+/// byte-identical and the source profile stays unclaimed, while the frozen
+/// bag still carries what the first read would have migrated. Confirming
+/// copies that bag to the marked target and still leaves the source alone.
+#[test]
+fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
+    let mut f = fixture("apply-marked-readonly", &["alice", "bob"], 2);
+    let (card, sel) = f.card("thiever.ts");
+    f.assign("alice", &card);
+    f.assign("bob", &card);
+    f.scripts
+        .legacy
+        .set_str(card.source, &card.name, "target", "Guard");
+    let key = card.identity_key();
+    let in_vault = |f: &Fixture, name: &str| {
+        f.core
+            .vault()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned()
+    };
+    assert_eq!(in_vault(&f, "alice"), None, "a newly assigned card");
+    let vault_file = f.dir.join("vault");
+    let before = std::fs::read(&vault_file).unwrap();
+
+    let scope = prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel)
+        .unwrap()
+        .clone();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(scope.targets, ["bob"]);
+    assert_eq!(
+        scope.overrides.get("target"),
+        Some(&serde_json::json!("Guard")),
+        "the frozen bag is what the first read would migrate"
+    );
+    assert_eq!(
+        std::fs::read(&vault_file).unwrap(),
+        before,
+        "preparing the confirmation wrote the vault"
+    );
+    assert_eq!(in_vault(&f, "alice"), None, "the source was claimed early");
+
+    f.scripts.cancel_settings_sync();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(std::fs::read(&vault_file).unwrap(), before, "cancel wrote");
+    assert_eq!(in_vault(&f, "bob"), None, "cancel copied nothing");
+
+    prepare_apply_settings_marked(&marks(&[2]), &f.core, &mut f.scripts, "alice", &sel).unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let want: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
+    assert_eq!(in_vault(&f, "bob"), Some(want), "confirm copies the bag");
 }
 
 /// The Fleet window's progress columns read the host: a started run reports

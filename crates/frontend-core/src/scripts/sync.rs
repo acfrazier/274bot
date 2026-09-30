@@ -352,17 +352,19 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
 impl Scripts {
     /// Freeze an Apply-to-all of `source`'s parameters for one card: the
     /// wall members assigned the same card and the overrides bag to copy.
-    /// Nothing is written until [`Self::apply_settings_sync`].
+    /// Read-only: a source that has not used the card yet contributes the
+    /// legacy overrides its first read would migrate, without claiming
+    /// them. Nothing is written until [`Self::apply_settings_sync`].
     pub fn prepare_settings_sync<Io>(
         &mut self,
-        core: &mut OperatorSession<Io>,
+        core: &OperatorSession<Io>,
         source: &str,
         card_source: script::ScriptSource,
         card_name: &str,
         card_path: &Path,
     ) -> &SyncScope {
         let card = script::card_identity_key(card_source, card_path, card_name);
-        let overrides = self.profile_overrides(core, source, &card, card_name);
+        let overrides = self.peek_profile_overrides(core, source, &card, card_name);
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
         for member in core.members().iter().filter(|m| *m != source) {
