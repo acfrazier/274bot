@@ -1,31 +1,56 @@
-//! Live BankBudget walk-to-access at real packed banks (booth and teller).
+//! Live BankBudget fetch at real packed banks, from the street.
 //!
-//! Forces a throwaway `HOME` (refuses the operator home), points cache at
-//! the engine with `OPERATOR_HOME` / `BOT_CACHE_DIR`, and removes its
-//! scratch dir on the way out. Game port defaults to the orchestrator
-//! tunnel `45594`.
+//! Every leg runs a real planned session — Walk, Open, DepositAll,
+//! Withdraw, Close, Wear — through the production pump: the script pump
+//! ([`super::step_nav_bot`]) or the panel/TUI pump
+//! ([`super::step_walk_arm_follow`]), once per player tick. Legs cover
+//! Varrock West, Draynor, Falador East and Al Kharid, each with the booth
+//! (a booth-only stand table, so Open can only click a booth) and with the
+//! banker (the real table, whose Open tries the tellers first), through
+//! both owners. A leg passes only when the bronze dagger seeded into the
+//! bank ends up worn, the seeded bones are deposited, and Open used the
+//! expected access: the booth next to the player, or a banker.
 //!
-//! `LIVE=1 cargo test -p host-play --lib live_bankbudget_access_from_the_street -- --ignored --nocapture --test-threads=1`
+//! Sets a throwaway `HOME` it removes on the way out, points cache at the
+//! engine with `BOT_CACHE_DIR`, and defaults the game port to the
+//! orchestrator tunnel `45594`.
+//!
+//! `LIVE=1 cargo test -p host-play --lib live_bankbudget_fetch_from_the_street -- --ignored --nocapture --test-threads=1`
 
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult};
+use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
-use client::client::Client;
-use nav::bank_fetch::{nearest_bank_access, BankStep};
-use nav::router::{FindOptions, Leg, Route};
+use client::client::{Client, MiniMenuAction};
+use nav::bank_fetch::{plan_bank_fetch, BankStep};
+use nav::pack::BankAccess;
+use nav::router::{FindOptions, Leg, MissingReq, Route};
 use nav::world::NavWorld;
+use nav::WorldState;
 use parking_lot::Mutex;
 use vault::{Profile, ProfileSettings};
 
-use super::open_bank_at_here;
 use super::{
-    run_with_template, tele_args, NavBot, PendingBankFetch, ProfileOptions, SharedClientTemplate,
+    run_with_template, step_nav_bot, step_walk_arm_follow, tele_args, NavBot, PendingBankFetch,
+    ProfileOptions, SharedClientTemplate, SlotStatus, WalkArm,
 };
 
+/// Bronze dagger: wieldable, seeded into the bank each leg.
+const DAGGER: i32 = 1205;
+/// Bones: the backpack junk the DepositAll must clear.
+const BONES: i32 = 526;
+const SEED: [&str; 4] = [
+    "~clearinv",
+    "~clearinv worn",
+    "givebank bronze_dagger 1",
+    "give bones 3",
+];
+const LEG_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Street tiles outside each bank, never in a bankers' aisle.
 const BANKS: [(&str, WorldTile); 4] = [
     (
         "Varrock West",
@@ -38,8 +63,8 @@ const BANKS: [(&str, WorldTile); 4] = [
     (
         "Draynor",
         WorldTile {
-            x: 3088,
-            z: 3240,
+            x: 3105,
+            z: 3250,
             level: 0,
         },
     ),
@@ -61,19 +86,72 @@ const BANKS: [(&str, WorldTile); 4] = [
     ),
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Booth,
+    Banker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    /// The script `walk_with` pump (`NavBot`).
+    Script,
+    /// The panel/TUI WalkTo pump (`WalkArm`).
+    Panel,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LegSpec {
+    bank: usize,
+    access: Access,
+    owner: Owner,
+}
+
+fn legs() -> Vec<LegSpec> {
+    let mut legs = Vec::new();
+    for bank in 0..BANKS.len() {
+        for access in [Access::Booth, Access::Banker] {
+            for owner in [Owner::Script, Owner::Panel] {
+                legs.push(LegSpec {
+                    bank,
+                    access,
+                    owner,
+                });
+            }
+        }
+    }
+    legs
+}
+
 #[derive(Debug, Clone)]
 enum Phase {
+    Relog,
+    WaitRelog,
     WaitReady,
     TutSkip,
-    Tele { index: usize },
-    WaitStreet { index: usize },
-    Walk { index: usize },
-    OpenBooth { index: usize },
-    CloseBooth { index: usize },
-    OpenNpc { index: usize },
-    CloseNpc { index: usize },
+    Tele { leg: usize },
+    WaitStreet { leg: usize },
+    Seed { leg: usize, next: usize },
+    WaitSeeded { leg: usize },
+    Run { leg: usize },
     Pass,
     Fail(String),
+}
+
+/// The Open pump's menu send `(action, a, b, c)` and the tile it was sent
+/// from.
+type OpenSend = ((i32, i32, i32, i32), (i32, i32, i32));
+
+/// Per-leg observations.
+#[derive(Default)]
+struct LegRun {
+    started: Option<Instant>,
+    latch: Option<(u64, (i32, i32, i32))>,
+    pumps: u32,
+    front: Option<BankStep>,
+    open: Option<OpenSend>,
+    bank_facts_logged: bool,
+    empty_facts_logged: bool,
 }
 
 struct ScratchHome {
@@ -91,11 +169,8 @@ impl Drop for ScratchHome {
     }
 }
 
-fn home_is_throwaway(home: &Path, scratch: &Path) -> bool {
-    home == scratch
-        && (home.starts_with(std::env::temp_dir()) || home.starts_with(Path::new("/tmp")))
-}
-
+/// Point `HOME` at a fresh temp directory for the whole run; the guard
+/// restores it and removes the directory.
 fn install_throwaway_home() -> ScratchHome {
     let previous = std::env::var("HOME").ok();
     let path = std::env::temp_dir().join(format!(
@@ -108,22 +183,47 @@ fn install_throwaway_home() -> ScratchHome {
     ));
     std::fs::create_dir_all(&path).expect("throwaway HOME");
     std::env::set_var("HOME", &path);
-    let now = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    assert!(
-        home_is_throwaway(&now, &path),
-        "live harness refuses to run against HOME={}; need a throwaway under {}",
-        now.display(),
-        std::env::temp_dir().display()
-    );
     ScratchHome { path, previous }
 }
 
 struct Live {
     phase: Phase,
     last_cheat: Instant,
-    opened_at: Option<Instant>,
-    world: Arc<NavWorld>,
-    bot: NavBot,
+    full: Arc<NavWorld>,
+    booths: Arc<NavWorld>,
+    snap: GameSnapshot,
+    navs: Arc<std::sync::Mutex<HashMap<String, NavBot>>>,
+    statuses: Arc<std::sync::Mutex<Vec<SlotStatus>>>,
+    arm: WalkArm,
+    run: LegRun,
+    name: String,
+    passed: Vec<String>,
+}
+
+impl Live {
+    fn world(&self, spec: LegSpec) -> Arc<NavWorld> {
+        match spec.access {
+            Access::Booth => Arc::clone(&self.booths),
+            Access::Banker => Arc::clone(&self.full),
+        }
+    }
+
+    fn session_front(&self, owner: Owner) -> Option<Option<BankStep>> {
+        match owner {
+            Owner::Script => self
+                .navs
+                .lock()
+                .unwrap()
+                .get(&self.name)
+                .and_then(|bot| bot.bank_fetch.as_ref())
+                .map(|p| p.steps.front().cloned()),
+            Owner::Panel => self
+                .arm
+                .bank_fetch
+                .as_ref()
+                .map(|p| p.steps.front().cloned()),
+        }
+    }
 }
 
 fn live() -> bool {
@@ -157,14 +257,6 @@ fn live_profile(scratch: &Path) -> ProfileOptions {
     }
 }
 
-fn dummy_route(dest: WorldTile) -> Route {
-    Route {
-        legs: vec![Leg::Walk { tiles: vec![dest] }],
-        dest,
-        ticks: 1.0,
-    }
-}
-
 fn near(tile: Option<(i32, i32, i32)>, dest: WorldTile, radius: i32) -> bool {
     tile.is_some_and(|(x, z, level)| {
         level == dest.level && (x - dest.x).abs().max((z - dest.z).abs()) <= radius
@@ -181,31 +273,57 @@ fn on_packed_stand(world: &NavWorld, here: Option<(i32, i32, i32)>) -> bool {
         .any(|stand| stand.tile.x == x && stand.tile.z == z && stand.tile.level == level)
 }
 
-fn action_slot(actions: &[Option<String>], want: &str) -> Option<i32> {
-    let want = want.to_lowercase();
-    actions.iter().enumerate().find_map(|(i, action)| {
-        action.as_deref().and_then(|label| {
-            label
-                .to_lowercase()
-                .eq_ignore_ascii_case(&want)
-                .then_some(i as i32 + 1)
-        })
-    })
+fn is_loc_op(action: i32) -> bool {
+    [
+        MiniMenuAction::OP_LOC1,
+        MiniMenuAction::OP_LOC2,
+        MiniMenuAction::OP_LOC3,
+        MiniMenuAction::OP_LOC4,
+        MiniMenuAction::OP_LOC5,
+    ]
+    .contains(&action)
+}
+
+fn is_npc_op(action: i32) -> bool {
+    [
+        MiniMenuAction::OP_NPC1,
+        MiniMenuAction::OP_NPC2,
+        MiniMenuAction::OP_NPC3,
+        MiniMenuAction::OP_NPC4,
+        MiniMenuAction::OP_NPC5,
+    ]
+    .contains(&action)
+}
+
+fn rows(items: &[api::snapshot::ItemView]) -> Vec<(i32, i32)> {
+    items.iter().map(|it| (it.def.id, it.count)).collect()
+}
+
+fn wearing(snap: &GameSnapshot, id: i32) -> bool {
+    snap.equipment()
+        .iter()
+        .any(|it| it.def.id == id && it.count >= 1)
+}
+
+fn holding(snap: &GameSnapshot, id: i32) -> bool {
+    snap.inventory()
+        .iter()
+        .any(|it| it.def.id == id && it.count >= 1)
 }
 
 fn drive(client: &mut Client, live: &Mutex<Live>) {
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(client);
     let mut g = live.lock();
+    g.snap.rebuild(client);
     let now = Instant::now();
-    let here = snap.tile();
+    let here = g.snap.tile();
+    let legs = legs();
     match g.phase.clone() {
         Phase::WaitReady => {
-            if client.ingame && client.scene_state == 2 && snap.local_player().is_some() {
+            if client.ingame && client.scene_state == 2 && g.snap.local_player().is_some() {
                 println!(
-                    "live_bank_access: ready tile={:?} scene={}",
-                    snap.tile(),
-                    snap.scene_state()
+                    "live_bank_fetch: ready tile={:?} scene={}",
+                    g.snap.tile(),
+                    g.snap.scene_state()
                 );
                 g.phase = Phase::TutSkip;
             }
@@ -213,196 +331,399 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
         Phase::TutSkip if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
             let _ = interact::cheat(client, "setvar tutorial 1000");
             g.last_cheat = now;
-            g.phase = Phase::Tele { index: 0 };
+            g.phase = Phase::Relog;
         }
-        Phase::Tele { index } if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
-            let street = BANKS[index].1;
+        // A tutorial-skipped account binds its side tabs (the inv tab
+        // among them) only at the next login.
+        Phase::Relog if now.duration_since(g.last_cheat) > Duration::from_secs(2) => {
+            let ifaces = Arc::clone(&client.ifaces);
+            if !interact::logout(client, &ifaces) {
+                g.phase = Phase::Fail("logout iface missing".into());
+                return;
+            }
+            g.last_cheat = now;
+            g.snap = GameSnapshot::new();
+            g.phase = Phase::WaitRelog;
+        }
+        Phase::WaitRelog => {
+            if client.ingame
+                && client.scene_state == 2
+                && g.snap.local_player().is_some()
+                && g.snap.inventory_size() > 0
+            {
+                println!(
+                    "live_bank_fetch: relogged tile={:?} side_icon[3]={} inventory_size={}",
+                    g.snap.tile(),
+                    client.side_icon[3],
+                    g.snap.inventory_size()
+                );
+                g.phase = Phase::Tele { leg: 0 };
+            } else if now.duration_since(g.last_cheat) > Duration::from_secs(60) {
+                g.phase = Phase::Fail("no inv tab 60s after the relog".into());
+            }
+        }
+        Phase::Tele { leg } if now.duration_since(g.last_cheat) > Duration::from_millis(400) => {
+            let street = BANKS[legs[leg].bank].1;
             let _ = interact::cheat(client, &tele_args(street));
             g.last_cheat = now;
-            g.opened_at = None;
-            g.bot = NavBot::default();
-            g.phase = Phase::WaitStreet { index };
+            g.run = LegRun {
+                started: Some(now),
+                ..LegRun::default()
+            };
+            g.phase = Phase::WaitStreet { leg };
         }
-        Phase::WaitStreet { index } => {
-            let street = BANKS[index].1;
-            if on_packed_stand(&g.world, here) {
-                if now.duration_since(g.last_cheat) > Duration::from_secs(1) {
-                    let _ = interact::cheat(client, &tele_args(street));
-                    g.last_cheat = now;
-                }
+        Phase::WaitStreet { leg } => {
+            if g.run
+                .started
+                .is_some_and(|t| now.duration_since(t) > Duration::from_secs(60))
+            {
+                g.phase = Phase::Fail(format!(
+                    "leg {leg}: never settled on the street at {here:?}"
+                ));
                 return;
             }
-            if !near(here, street, 8) {
+            let spec = legs[leg];
+            let street = BANKS[spec.bank].1;
+            let off_street = on_packed_stand(&g.full, here) || !near(here, street, 4);
+            if off_street || g.snap.bank_component_id() >= 0 {
                 if now.duration_since(g.last_cheat) > Duration::from_secs(2) {
-                    let _ = interact::cheat(client, &tele_args(street));
+                    if g.snap.bank_component_id() >= 0 {
+                        let mut ix = interact::Interactions::new(&g.snap, client);
+                        let _ = ix.close_modal();
+                    } else {
+                        let _ = interact::cheat(client, &tele_args(street));
+                    }
                     g.last_cheat = now;
                 }
                 return;
             }
-            println!(
-                "live_bank_access: {} street here={:?} (not on a packed stand)",
-                BANKS[index].0, here
-            );
-            let from = here
-                .map(|(x, z, level)| WorldTile { x, z, level })
-                .unwrap_or(street);
-            let access =
-                nearest_bank_access(&g.world.collision, g.world.banks(), from).unwrap_or(street);
-            g.bot.bank_fetch = Some(PendingBankFetch {
-                steps: VecDeque::from([BankStep::Walk {
-                    x: access.x,
-                    z: access.z,
-                    level: access.level,
-                }]),
-                dest: access,
-                opts: FindOptions::default(),
-                final_route: dummy_route(access),
-                avoid: Vec::new(),
-            });
-            g.opened_at = Some(now);
-            g.phase = Phase::Walk { index };
+            g.phase = Phase::Seed { leg, next: 0 };
         }
-        Phase::Walk { index } => {
-            if on_packed_stand(&g.world, here) {
-                g.phase = Phase::Fail(format!(
-                    "{} Walk landed on a packed stand tile {:?}",
-                    BANKS[index].0, here
-                ));
-                return;
-            }
-            let world = Arc::clone(&g.world);
-            super::step_bank_fetch_on_bot(client, &snap, &mut g.bot, Some(&world), here, false);
-            if let Some(route) = g.bot.route.clone() {
-                let mut options = nav::traveller::TravelOptions {
-                    close_enough: 0,
-                    teleports: Some(world.graph.teleports.as_slice()),
-                    edges: Some(world.graph.edges.as_slice()),
-                    ..nav::traveller::TravelOptions::default()
-                };
-                let _ = g.bot.traveller.follow(client, &snap, route, &mut options);
-            }
-            if g.bot.bank_fetch.is_none() {
-                println!(
-                    "live_bank_access: {} Walk arrived here={:?}",
-                    BANKS[index].0, here
-                );
-                g.opened_at = Some(now);
-                g.last_cheat = now - Duration::from_secs(2);
-                g.phase = Phase::OpenBooth { index };
-                return;
-            }
-            if g.opened_at
-                .is_some_and(|t| now.duration_since(t) > Duration::from_secs(45))
-            {
-                g.phase = Phase::Fail(format!(
-                    "{} Walk never reached an access tile",
-                    BANKS[index].0
-                ));
-            }
-        }
-        Phase::OpenBooth { index } => {
-            if snap.bank_loaded() {
-                g.phase = Phase::CloseBooth { index };
-                g.last_cheat = now - Duration::from_secs(2);
-                return;
-            }
-            if now.duration_since(g.last_cheat) < Duration::from_millis(800) {
-                return;
-            }
-            let sent = snap.locs().iter().find_map(|loc| {
-                action_slot(&loc.actions, "Use-quickly").map(|slot| {
-                    let mut ix = Interactions::new(&snap, client);
-                    matches!(
-                        ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(slot)),
-                        SendResult::Sent { .. }
-                    )
-                })
-            });
+        Phase::Seed { leg, next }
+            if now.duration_since(g.last_cheat) > Duration::from_millis(600) =>
+        {
+            let _ = interact::cheat(client, SEED[next]);
             g.last_cheat = now;
-            if sent == Some(true) {
-                println!(
-                    "live_bank_access: {} booth Use-quickly from {:?}",
-                    BANKS[index].0, here
-                );
-            }
-            if g.opened_at
-                .is_some_and(|t| now.duration_since(t) > Duration::from_secs(25))
-            {
-                g.phase = Phase::Fail(format!("{} booth never opened", BANKS[index].0));
-            }
+            g.phase = if next + 1 < SEED.len() {
+                Phase::Seed {
+                    leg,
+                    next: next + 1,
+                }
+            } else {
+                Phase::WaitSeeded { leg }
+            };
         }
-        Phase::CloseBooth { index } => {
-            if snap.bank_component_id() < 0 {
-                g.opened_at = Some(now);
-                g.last_cheat = now - Duration::from_secs(2);
-                g.phase = Phase::OpenNpc { index };
-                return;
-            }
-            if now.duration_since(g.last_cheat) < Duration::from_millis(600) {
-                return;
-            }
-            let mut ix = Interactions::new(&snap, client);
-            let _ = ix.close_modal();
-            g.last_cheat = now;
-        }
-        Phase::OpenNpc { index } => {
-            if snap.bank_loaded() {
-                g.phase = Phase::CloseNpc { index };
-                g.last_cheat = now - Duration::from_secs(2);
-                return;
-            }
-            if now.duration_since(g.last_cheat) < Duration::from_millis(800) {
-                return;
-            }
-            let sent = open_bank_at_here(client, &snap, here, Some(&g.world));
-            g.last_cheat = now;
-            if sent {
-                println!(
-                    "live_bank_access: {} packed NPC/booth Open from {:?}",
-                    BANKS[index].0, here
-                );
-            }
-            if g.opened_at
-                .is_some_and(|t| now.duration_since(t) > Duration::from_secs(25))
-            {
-                g.phase = Phase::Fail(format!("{} teller never opened", BANKS[index].0));
-            }
-        }
-        Phase::CloseNpc { index } => {
-            if snap.bank_component_id() < 0 {
-                let next = index + 1;
-                if next >= BANKS.len() {
-                    g.phase = Phase::Pass;
-                } else {
-                    g.phase = Phase::Tele { index: next };
-                    g.last_cheat = now - Duration::from_secs(1);
+        Phase::WaitSeeded { leg } => {
+            let seeded = g
+                .snap
+                .inventory()
+                .iter()
+                .filter(|it| it.def.id == BONES)
+                .map(|it| it.count)
+                .sum::<i32>()
+                >= 3
+                && !wearing(&g.snap, DAGGER)
+                && !holding(&g.snap, DAGGER);
+            if !seeded {
+                if now.duration_since(g.last_cheat) > Duration::from_secs(10) {
+                    g.phase = Phase::Fail(format!(
+                        "leg {leg}: seeding never showed: inventory={:?} equipment={:?} inv()={:?}",
+                        rows(g.snap.inventory()),
+                        rows(g.snap.equipment()),
+                        g.snap.inv()
+                    ));
                 }
                 return;
             }
-            if now.duration_since(g.last_cheat) < Duration::from_millis(600) {
+            let spec = legs[leg];
+            let world = g.world(spec);
+            let (x, z, level) = here.expect("seeded player tile");
+            let from = WorldTile { x, z, level };
+            let state = WorldState::from_snapshot(&g.snap).with_map_members(true);
+            let Some(fetch) = plan_bank_fetch(
+                &[MissingReq::WearAny { ids: vec![DAGGER] }],
+                &state,
+                &[(DAGGER, 1)],
+                world.banks(),
+                from,
+                &world.collision,
+            ) else {
+                g.phase = Phase::Fail(format!("leg {leg} {spec:?}: no plan from {from:?}"));
+                return;
+            };
+            let BankStep::Walk {
+                x: wx,
+                z: wz,
+                level: wl,
+            } = fetch.steps[0]
+            else {
+                g.phase = Phase::Fail(format!("leg {leg}: plan starts {:?}", fetch.steps));
+                return;
+            };
+            let expected = [
+                BankStep::Open,
+                BankStep::DepositAll,
+                BankStep::Withdraw {
+                    id: DAGGER,
+                    count: 1,
+                },
+                BankStep::Close,
+                BankStep::Wear { id: DAGGER },
+            ];
+            if fetch.steps[1..] != expected {
+                g.phase = Phase::Fail(format!("leg {leg}: plan order {:?}", fetch.steps));
                 return;
             }
-            let mut ix = Interactions::new(&snap, client);
-            let _ = ix.close_modal();
-            g.last_cheat = now;
+            // Judged against the leg's own table: a booth-only leg may plan
+            // the booth's aisle-side tile, which is a banker's spawn in the
+            // full table but no stand of this one (the Walk then falls back
+            // to a routable access tile).
+            if on_packed_stand(&world, Some((wx, wz, wl))) {
+                g.phase = Phase::Fail(format!("leg {leg}: Walk planned onto a stand"));
+                return;
+            }
+            let pending = PendingBankFetch {
+                steps: fetch.steps.clone().into(),
+                dest: from,
+                opts: FindOptions::default(),
+                final_route: Route {
+                    legs: vec![Leg::Walk { tiles: vec![from] }],
+                    dest: from,
+                    ticks: 1.0,
+                },
+                avoid: Vec::new(),
+                progress: Default::default(),
+            };
+            println!(
+                "live_bank_fetch: leg {leg} {} {:?} {:?} from={from:?} plan={:?}",
+                BANKS[spec.bank].0, spec.access, spec.owner, fetch.steps
+            );
+            match spec.owner {
+                Owner::Script => {
+                    let name = g.name.clone();
+                    g.navs.lock().unwrap().insert(
+                        name,
+                        NavBot {
+                            bank_fetch: Some(pending),
+                            ..Default::default()
+                        },
+                    );
+                }
+                Owner::Panel => {
+                    g.arm = WalkArm {
+                        bank_fetch: Some(pending),
+                        ..Default::default()
+                    };
+                }
+            }
+            g.run = LegRun {
+                started: Some(now),
+                front: fetch.steps.first().cloned(),
+                ..LegRun::default()
+            };
+            g.phase = Phase::Run { leg };
         }
-        Phase::TutSkip | Phase::Tele { .. } | Phase::Pass | Phase::Fail(_) => {}
+        Phase::Run { leg } => run_leg(client, &mut g, leg, legs[leg], now),
+        Phase::TutSkip
+        | Phase::Relog
+        | Phase::Tele { .. }
+        | Phase::Seed { .. }
+        | Phase::Pass
+        | Phase::Fail(_) => {}
     }
 }
 
-#[test]
-fn live_harness_refuses_operator_home() {
-    let scratch = std::env::temp_dir().join("274bot-m279-scratch");
-    assert!(!home_is_throwaway(Path::new("/var/empty"), &scratch));
-    assert!(home_is_throwaway(&scratch, &scratch));
+fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: Instant) {
+    let label = format!(
+        "leg {leg} {} {:?} {:?}",
+        BANKS[spec.bank].0, spec.access, spec.owner
+    );
+    if g.run
+        .started
+        .is_some_and(|t| now.duration_since(t) > LEG_TIMEOUT)
+    {
+        g.phase = Phase::Fail(format!(
+            "{label}: no finish in {LEG_TIMEOUT:?}, front={:?}",
+            g.run.front
+        ));
+        return;
+    }
+    let Some(here) = g.snap.tile() else {
+        return;
+    };
+    let world = g.world(spec);
+    // Production pumps once per player tick: (gens.player, here) moved.
+    let key = (client.gens.player, here);
+    if g.run.latch != Some(key) {
+        g.run.latch = Some(key);
+        let front_before = g.session_front(spec.owner).flatten();
+        if front_before == Some(BankStep::Open) {
+            client.menu_action[0] = -1;
+        }
+        match spec.owner {
+            Owner::Script => {
+                let name = g.name.clone();
+                step_nav_bot(
+                    client,
+                    &name,
+                    Some(here),
+                    &g.snap,
+                    &g.navs,
+                    &g.statuses,
+                    Some(&world),
+                    false,
+                    true,
+                    || unreachable!("the harness never arms a radius walk"),
+                );
+            }
+            Owner::Panel => {
+                step_walk_arm_follow(
+                    client,
+                    &g.snap,
+                    &mut g.arm,
+                    Some(&world),
+                    here,
+                    true,
+                    Some(&g.name),
+                );
+            }
+        }
+        g.run.pumps += 1;
+        if front_before == Some(BankStep::Open) && client.menu_action[0] != -1 {
+            g.run.open = Some((
+                (
+                    client.menu_action[0],
+                    client.menu_param_a[0],
+                    client.menu_param_b[0],
+                    client.menu_param_c[0],
+                ),
+                here,
+            ));
+        }
+        let front_after = g.session_front(spec.owner).flatten();
+        if front_after != g.run.front {
+            println!(
+                "live_bank_fetch: {label}: {:?} -> {front_after:?} here={here:?} pumps={} bank_com={} inventory={:?} bank_side={:?} worn={:?}",
+                g.run.front,
+                g.run.pumps,
+                g.snap.bank_component_id(),
+                rows(g.snap.inventory()),
+                rows(g.snap.bank_side()),
+                rows(g.snap.equipment()),
+            );
+            if matches!(g.run.front, Some(BankStep::Walk { .. }))
+                && on_packed_stand(&g.full, Some(here))
+            {
+                g.phase = Phase::Fail(format!("{label}: Walk arrived on a stand {here:?}"));
+                return;
+            }
+            g.run.front = front_after;
+        }
+    }
+    if g.snap.bank_loaded() && !g.run.bank_facts_logged {
+        g.run.bank_facts_logged = true;
+        println!(
+            "live_bank_fetch: {label}: bank open: side_icon[3]={} inventory={:?} inv()={:?} bank_side={:?}",
+            client.side_icon[3],
+            rows(g.snap.inventory()),
+            g.snap.inv(),
+            rows(g.snap.bank_side()),
+        );
+    }
+    if g.snap.bank_loaded() && g.snap.bank_side().is_empty() && !g.run.empty_facts_logged {
+        g.run.empty_facts_logged = true;
+        println!(
+            "live_bank_fetch: {label}: pack deposited: inventory={:?} inv()={:?} bank_side={:?} bank has dagger={}",
+            rows(g.snap.inventory()),
+            g.snap.inv(),
+            rows(g.snap.bank_side()),
+            g.snap.bank().iter().any(|it| it.def.id == DAGGER),
+        );
+    }
+    if g.session_front(spec.owner).is_some() {
+        return;
+    }
+    // The session ended: it must have fetched and worn the dagger.
+    if !wearing(&g.snap, DAGGER) {
+        g.phase = Phase::Fail(format!(
+            "{label}: session ended at {:?} without the dagger worn; equipment={:?} inventory={:?}",
+            g.run.front,
+            rows(g.snap.equipment()),
+            rows(g.snap.inventory())
+        ));
+        return;
+    }
+    if holding(&g.snap, BONES) {
+        g.phase = Phase::Fail(format!("{label}: the bones were never deposited"));
+        return;
+    }
+    if g.snap.bank_component_id() >= 0 {
+        g.phase = Phase::Fail(format!("{label}: the bank is still open"));
+        return;
+    }
+    let Some(((action, a, b, c), from)) = g.run.open else {
+        g.phase = Phase::Fail(format!("{label}: no Open send observed"));
+        return;
+    };
+    let used = match spec.access {
+        Access::Booth => {
+            let (bx, bz) = client_scene_to_world(client, b, c);
+            let own = (bx - from.0).abs().max((bz - from.1).abs()) == 1;
+            let booth = world.banks().iter().any(|s| {
+                s.tile.x == bx && s.tile.z == bz && matches!(s.access, BankAccess::Booth { .. })
+            });
+            if !is_loc_op(action) || !own || !booth {
+                g.phase = Phase::Fail(format!(
+                    "{label}: Open was not the player's own booth: action={action} loc=({bx},{bz}) from={from:?}"
+                ));
+                return;
+            }
+            format!("booth ({bx},{bz}) from {from:?}")
+        }
+        Access::Banker => {
+            let npc = g.snap.npcs().iter().find(|n| n.index == a as usize);
+            if !is_npc_op(action) {
+                g.phase = Phase::Fail(format!(
+                    "{label}: Open did not use a banker: action={action}"
+                ));
+                return;
+            }
+            format!(
+                "banker {:?} at {:?} from {from:?}",
+                npc.and_then(|n| n.name.clone()),
+                npc.map(|n| n.tile)
+            )
+        }
+    };
+    let line = format!(
+        "{label}: worn dagger, bones deposited, bank closed; Open used {used}; {} pumps, {:.1}s",
+        g.run.pumps,
+        g.run
+            .started
+            .map(|t| now.duration_since(t).as_secs_f32())
+            .unwrap_or(0.0)
+    );
+    println!("live_bank_fetch: PASS {line}");
+    g.passed.push(line);
+    g.arm = WalkArm::default();
+    g.navs.lock().unwrap().clear();
+    g.phase = if leg + 1 < legs().len() {
+        Phase::Tele { leg: leg + 1 }
+    } else {
+        Phase::Pass
+    };
+}
+
+fn client_scene_to_world(client: &Client, sx: i32, sz: i32) -> (i32, i32) {
+    (client.map_build_base_x + sx, client.map_build_base_z + sz)
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the tunnelled local 289 engine"]
-fn live_bankbudget_access_from_the_street() {
+fn live_bankbudget_fetch_from_the_street() {
     assert!(
         live(),
-        "live_bankbudget_access_from_the_street requires LIVE=1"
+        "live_bankbudget_fetch_from_the_street requires LIVE=1"
     );
     let scratch = install_throwaway_home();
     let options = live_profile(&scratch.path);
@@ -410,18 +731,31 @@ fn live_bankbudget_access_from_the_street() {
         .nav_pack
         .clone()
         .expect("baked 289 navpack for live BankBudget");
-    let world = Arc::new(NavWorld::load_pack(&pack).expect("load baked pack"));
+    let bytes = std::fs::read(&pack).expect("read baked pack");
+    let full = Arc::new(NavWorld::from_bytes(&bytes).expect("load baked pack"));
+    let (collision, graph, stands) = nav::pack::decode(&bytes).expect("decode baked pack");
+    drop(bytes);
+    let booths = Arc::new(NavWorld::from_parts(
+        collision,
+        graph,
+        stands
+            .into_iter()
+            .filter(|stand| matches!(stand.access, BankAccess::Booth { .. }))
+            .collect(),
+    ));
     assert!(
-        world.banks().len() >= 64,
-        "live proof needs the real packed stand table, got {}",
-        world.banks().len()
+        full.banks().len() >= 64 && booths.banks().len() < full.banks().len(),
+        "live proof needs the real packed stand table, got {} ({} booths)",
+        full.banks().len(),
+        booths.banks().len()
     );
     println!(
-        "live_bank_access: port={:?} http={:?} cache={:?} stands={}",
+        "live_bank_fetch: port={:?} http={:?} cache={:?} stands={} booths={}",
         options.port,
         options.http_port,
         options.cache_dir,
-        world.banks().len()
+        full.banks().len(),
+        booths.banks().len()
     );
     let profile = options
         .resolve(None)
@@ -431,7 +765,7 @@ fn live_bankbudget_access_from_the_street() {
     let template =
         SharedClientTemplate::load(Arc::clone(&profile)).expect("live template/world load");
     let name = format!(
-        "n{}",
+        "f{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -441,15 +775,21 @@ fn live_bankbudget_access_from_the_street() {
     let profiles = vec![Profile {
         username: name.clone(),
         password: name.clone().into(),
-        uid: 274_279_002,
+        uid: 274_279_003,
         settings: ProfileSettings::default(),
     }];
     let live_state = Arc::new(Mutex::new(Live {
         phase: Phase::WaitReady,
         last_cheat: Instant::now() - Duration::from_secs(1),
-        opened_at: None,
-        world,
-        bot: NavBot::default(),
+        full,
+        booths,
+        snap: GameSnapshot::new(),
+        navs: Arc::default(),
+        statuses: Arc::default(),
+        arm: WalkArm::default(),
+        run: LegRun::default(),
+        name,
+        passed: Vec::new(),
     }));
     let hook_state = Arc::clone(&live_state);
     let play = run_with_template(
@@ -460,7 +800,7 @@ fn live_bankbudget_access_from_the_street() {
         move |c, _, _| drive(c, &hook_state),
     )
     .expect("live play starts");
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + LEG_TIMEOUT * legs().len() as u32 + Duration::from_secs(120);
     loop {
         let phase = live_state.lock().phase.clone();
         match phase {
@@ -468,16 +808,19 @@ fn live_bankbudget_access_from_the_street() {
                 let s = play.statuses();
                 assert!(
                     s.iter().any(|row| row.ingame && row.scene_state == 2),
-                    "live bank access without ingame scene 2"
+                    "live bank fetch without ingame scene 2"
                 );
-                println!("PASS: live_bankbudget_access_from_the_street banks={BANKS:?}");
+                for line in &live_state.lock().passed {
+                    println!("live_bank_fetch: {line}");
+                }
+                println!("PASS: live_bankbudget_fetch_from_the_street");
                 return;
             }
-            Phase::Fail(msg) => panic!("FAIL: live_bankbudget_access_from_the_street: {msg}"),
+            Phase::Fail(msg) => panic!("FAIL: live_bankbudget_fetch_from_the_street: {msg}"),
             _ => {
                 if Instant::now() >= deadline {
                     panic!(
-                        "FAIL: live_bankbudget_access_from_the_street timeout in {:?}; statuses={:?}",
+                        "FAIL: live_bankbudget_fetch_from_the_street timeout in {:?}; statuses={:?}",
                         phase,
                         play.statuses()
                     );
