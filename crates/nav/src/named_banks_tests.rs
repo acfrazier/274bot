@@ -72,7 +72,7 @@ fn bank_access_stands_never_land_in_a_footprint_or_on_blocked_collision() {
             bank.name
         );
         assert_ne!(bank.tile, BOOTH.tile);
-        assert_eq!(footprint_distance(bank.tile, access), 1);
+        assert_eq!(Footprint::from(access).distance(bank.tile), 1);
     }
     assert_eq!(
         facts.banks()[2].tile,

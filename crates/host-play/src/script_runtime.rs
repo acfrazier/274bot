@@ -11,7 +11,7 @@ mod script_nav;
 #[cfg(test)]
 pub(super) use script_nav::{approach_tiles, ScriptRouteRequest};
 pub(super) use script_nav::{
-    hold_script_nav, reset_script_nav, BankFetchFlight, NavBot, PostedWalkOutcome, ScriptWalkArm,
+    hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 #[path = "script_walk.rs"]
@@ -19,8 +19,7 @@ mod script_walk;
 #[cfg(test)]
 pub(super) use script_walk::apply_nav_follow_outcome;
 pub(super) use script_walk::{
-    abort_script_walk, bank_fetch_freezes_follow, pause_script, step_bank_fetch_on_bot,
-    step_nav_bot,
+    abort_script_walk, pause_script, session_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
 };
 use script_walk::{apply_watchdog_nav_action, recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]

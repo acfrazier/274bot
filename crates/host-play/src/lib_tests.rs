@@ -3400,6 +3400,7 @@ fn bank_fetch_session_refuses_exact_walk_near() {
                     ticks: 0.0,
                 },
                 avoid: Vec::new(),
+                progress: Default::default(),
             }),
             route_generation: 1,
             ..Default::default()
@@ -3690,6 +3691,7 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
                     ticks: 0.0,
                 },
                 avoid: Vec::new(),
+                progress: Default::default(),
             }),
             route_generation: 1,
             walk_outcome_seq: 3,
@@ -3785,6 +3787,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
             opts: FindOptions::default(),
             final_route: route.clone(),
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -4493,6 +4496,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
                     ticks: 0.0,
                 },
                 avoid: Vec::new(),
+                progress: Default::default(),
             }),
             route_generation: 1,
             walk_outcome_seq: prior.seq,
@@ -5127,6 +5131,7 @@ fn unroutable_bank_stand_aborts_the_walk_request_exactly_once() {
             opts: FindOptions::default(),
             final_route,
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -5219,6 +5224,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
             opts: FindOptions::default(),
             final_route,
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -11168,6 +11174,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
             opts: FindOptions::default(),
             final_route: final_route.clone(),
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -11194,6 +11201,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
         opts: FindOptions::default(),
         final_route: final_route.clone(),
         avoid: Vec::new(),
+        progress: Default::default(),
     });
     bot.route = None;
     step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)), false);
@@ -11355,10 +11363,10 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
             nav::bank_fetch::BankStep::Open,
             nav::bank_fetch::BankStep::DepositAll,
             nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
-            nav::bank_fetch::BankStep::Wear { id: 2 },
             nav::bank_fetch::BankStep::Close,
+            nav::bank_fetch::BankStep::Wear { id: 2 },
         ],
-        "deposit the junk, withdraw the knife, wear it, close"
+        "deposit the junk, withdraw the knife, close, then wear it"
     );
     let r = find_with(
         &world.collision,
@@ -11777,6 +11785,7 @@ fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
             opts: FindOptions::default(),
             final_route: route.clone(),
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -11801,6 +11810,7 @@ fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
         opts: FindOptions::default(),
         final_route: route.clone(),
         avoid: Vec::new(),
+        progress: Default::default(),
     });
     step_bank_fetch_on_bot(
         &mut closed,
@@ -11821,6 +11831,7 @@ fn bank_fetch_deposit_wear_close_wait_for_snapshot() {
         opts: FindOptions::default(),
         final_route: route,
         avoid: Vec::new(),
+        progress: Default::default(),
     });
     // Frozen snapshot has no knife in the pack (only Bones) and none worn.
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
@@ -11851,6 +11862,7 @@ fn bank_fetch_open_uses_packed_npc_access() {
             opts: FindOptions::default(),
             final_route: route,
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -11966,14 +11978,14 @@ fn bank_fetch_deposit_all_aborts_when_bank_closed() {
     use nav::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
-    let mut c = bank_client();
+    let mut c = bank_fetch_client();
     c.main_modal_id = -1;
     c.side_modal_id = -1;
     c.bump_gens(ServerProt::IF_OPENMAIN);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     assert!(snap.bank_component_id() < 0);
-    assert!(!snap.inv().is_empty(), "junk still in the pack");
+    assert!(!snap.inventory().is_empty(), "junk still in the pack");
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
@@ -11982,6 +11994,7 @@ fn bank_fetch_deposit_all_aborts_when_bank_closed() {
             opts: FindOptions::default(),
             final_route: route,
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
@@ -11992,44 +12005,95 @@ fn bank_fetch_deposit_all_aborts_when_bank_closed() {
     );
 }
 
-/// A wear that never lands aborts after the pump budget, not forever.
-#[test]
-fn bank_fetch_wear_aborts_after_bounded_wait() {
-    use nav::bank_fetch::BankStep;
-    use std::collections::VecDeque;
-
-    let mut c = bank_fetch_client();
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(&c);
-    assert!(
-        snap.inv().iter().any(|&(id, n)| id == 1 && n >= 1),
-        "fixture carries junk that Wear can attempt"
-    );
+/// Pump one BankBudget session through the script pump (`NavBot`) or the
+/// panel/TUI pump (`WalkArm`, which re-wraps the session every pump) until
+/// it ends or `max` pumps pass, on an unchanged snapshot. Returns the
+/// pumps run, the pumps that wrote to the driver, and whether the session
+/// (and, for the WalkArm, its route) is still latched.
+fn pump_fetch_session(
+    c: &mut Client,
+    snap: &GameSnapshot,
+    steps: Vec<nav::bank_fetch::BankStep>,
+    walk_arm: bool,
+    max: u32,
+) -> (u32, u32, bool) {
     let route = dummy_fetch_route();
+    let pending = PendingBankFetch {
+        steps: steps.into(),
+        dest: route.dest,
+        opts: FindOptions::default(),
+        final_route: route.clone(),
+        avoid: Vec::new(),
+        progress: Default::default(),
+    };
     let mut bot = NavBot {
-        bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Wear { id: 1 }]),
-            dest: route.dest,
-            opts: FindOptions::default(),
-            final_route: route,
-            avoid: Vec::new(),
-        }),
+        bank_fetch: Some(pending.clone()),
         ..Default::default()
     };
+    let mut arm = WalkArm {
+        bank_fetch: Some(pending),
+        route: Some(route),
+        ..Default::default()
+    };
+    let (mut pumps, mut sends) = (0, 0);
     let mut last_pos = c.out.pos;
-    let mut sends = 0u32;
-    for _ in 0..40 {
-        if bot.bank_fetch.is_none() {
+    while pumps < max {
+        let alive = if walk_arm {
+            arm.bank_fetch.is_some()
+        } else {
+            bot.bank_fetch.is_some()
+        };
+        if !alive {
             break;
         }
-        step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
-        if c.out.pos > last_pos {
+        if walk_arm {
+            step_walk_arm_bank_fetch(c, snap, &mut arm, None, Some((0, 4, 0)), false);
+        } else {
+            step_bank_fetch_on_bot(c, snap, &mut bot, None, Some((0, 4, 0)), false);
+        }
+        pumps += 1;
+        if c.out.pos != last_pos {
             sends += 1;
             last_pos = c.out.pos;
         }
     }
-    assert!(bot.bank_fetch.is_none(), "Wear that never lands must abort");
-    assert!(sends <= 1, "in-flight Wear must not re-send, sends={sends}");
+    let alive = if walk_arm {
+        arm.bank_fetch.is_some() || arm.route.is_some()
+    } else {
+        bot.bank_fetch.is_some()
+    };
+    (pumps, sends, alive)
+}
+
+/// A wear that never lands aborts after the pump budget, not forever, on
+/// the script pump and on the panel/TUI pump alike.
+#[test]
+fn bank_fetch_wear_aborts_after_bounded_wait() {
+    use nav::bank_fetch::BankStep;
+
+    let mut c = bank_fetch_client();
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() < 0, "wearing needs a closed bank");
+    assert!(
+        snap.inventory().iter().any(|it| it.def.id == 1),
+        "fixture carries the obj Wear attempts"
+    );
+    for walk_arm in [false, true] {
+        let (pumps, _, alive) =
+            pump_fetch_session(&mut c, &snap, vec![BankStep::Wear { id: 1 }], walk_arm, 100);
+        assert!(
+            !alive,
+            "Wear that never lands must abort (walk_arm={walk_arm})"
+        );
+        assert_eq!(
+            pumps, 32,
+            "the budget bounds the wait (walk_arm={walk_arm})"
+        );
+    }
 }
 
 /// When the packed teller is not in the scene, Open uses the same bank's
@@ -12117,43 +12181,215 @@ fn bank_fetch_open_falls_back_to_booth_when_teller_missing() {
     );
 }
 
-/// Withdraw must not re-send on an unchanged snapshot.
+/// Withdraw must not re-send on an unchanged snapshot, and a Withdraw that
+/// never lands ends at the step budget — on the script pump and on the
+/// panel/TUI pump, which re-wraps the session every pump.
 #[test]
 fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
     use nav::bank_fetch::BankStep;
-    use std::collections::VecDeque;
 
     let mut c = bank_fetch_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     assert!(bank_holds_for_test(&snap, 2));
+    let withdraw = || vec![BankStep::Withdraw { id: 2, count: 1 }];
+    for walk_arm in [false, true] {
+        let (pumps, sends, alive) = pump_fetch_session(&mut c, &snap, withdraw(), walk_arm, 3);
+        assert_eq!(
+            (pumps, sends, alive),
+            (3, 1, true),
+            "3 pumps on an unchanged snapshot send Withdraw once (walk_arm={walk_arm})"
+        );
+        let (pumps, sends, alive) = pump_fetch_session(&mut c, &snap, withdraw(), walk_arm, 100);
+        assert_eq!(
+            (pumps, sends, alive),
+            (32, 1, false),
+            "a Withdraw that never lands sends once and aborts at the budget (walk_arm={walk_arm})"
+        );
+    }
+}
+
+/// While the bank is open the live client binds no inv tab, so
+/// `GameSnapshot::inv()` falls back to the first filled TYPE_INV: the
+/// bank's own withdraw grid once the pack is empty. Deposit and withdraw
+/// progress must read the pack itself (the bank side panel), or DepositAll
+/// never sees the pack empty and a Withdraw "lands" on the bank's rows.
+#[test]
+fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let mut c = bank_client();
+    c.set_iface_mut(
+        701,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() >= 0, "the bank is open");
+    assert!(snap.bank_side().is_empty(), "the pack is empty");
+    assert!(snap.inventory().is_empty(), "no inv tab is bound");
+    assert_eq!(snap.inv(), &[(1, 20)], "inv() shows the bank's rows");
     let route = dummy_fetch_route();
     let mut bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }]),
+            steps: VecDeque::from([BankStep::DepositAll, BankStep::Withdraw { id: 1, count: 2 }]),
             dest: route.dest,
             opts: FindOptions::default(),
             final_route: route,
             avoid: Vec::new(),
+            progress: Default::default(),
         }),
         ..Default::default()
     };
-    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
-    let after_first = c.out.pos;
-    assert!(after_first > 0, "first pump sends");
-    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    let front = |bot: &NavBot| {
+        bot.bank_fetch
+            .as_ref()
+            .and_then(|p| p.steps.front().cloned())
+    };
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
     assert_eq!(
-        c.out.pos, after_first,
-        "unchanged snapshot must not re-send Withdraw"
+        front(&bot),
+        Some(BankStep::Withdraw { id: 1, count: 2 }),
+        "the empty pack completes DepositAll"
     );
+    let before = c.out.pos;
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert!(c.out.pos > before, "Withdraw is sent");
+    assert_eq!(
+        front(&bot),
+        Some(BankStep::Withdraw { id: 1, count: 2 }),
+        "the bank's rows do not count as withdrawn"
+    );
+    // Two unstackable bones land as two one-count slots of the pack.
+    c.set_iface_mut(
+        701,
+        IfTypeMut {
+            link_obj_type: Some(vec![2, 2]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    snap.rebuild(&c);
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
     assert!(
-        matches!(
-            bot.bank_fetch.as_ref().and_then(|p| p.steps.front()),
-            Some(BankStep::Withdraw { id: 2, count: 1 })
-        ),
-        "Withdraw stays in flight until the pack shows the stack"
+        bot.bank_fetch.is_none(),
+        "the pack's slots add up to the withdrawn count"
     );
+}
+
+/// A sent Withdraw or Wear moves the obj out of its source before the
+/// server's next update shows it arrive: live, the pack loses the dagger a
+/// tick before the worn set gains it. That gap is progress, not a refusal:
+/// the step keeps waiting and lands once the obj shows where it went.
+#[test]
+fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
+    use nav::bank_fetch::BankStep;
+    use std::collections::VecDeque;
+
+    let set_rows = |c: &mut Client, com: usize, obj: Vec<i32>, n: Vec<i32>| {
+        c.set_iface_mut(
+            com,
+            IfTypeMut {
+                link_obj_type: Some(obj),
+                link_obj_number: Some(n),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    };
+    let session = |step: BankStep| {
+        let route = dummy_fetch_route();
+        NavBot {
+            bank_fetch: Some(PendingBankFetch {
+                steps: VecDeque::from([step]),
+                dest: route.dest,
+                opts: FindOptions::default(),
+                final_route: route,
+                avoid: Vec::new(),
+                progress: Default::default(),
+            }),
+            ..Default::default()
+        }
+    };
+    let front = |bot: &NavBot| {
+        bot.bank_fetch
+            .as_ref()
+            .and_then(|p| p.steps.front().cloned())
+    };
+    let here = Some((0, 4, 0));
+
+    // Withdraw: the bank row goes before the pack shows the knife.
+    let mut c = bank_fetch_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let withdraw = BankStep::Withdraw { id: 2, count: 1 };
+    let mut bot = session(withdraw.clone());
+    let before = c.out.pos;
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert!(c.out.pos > before, "Withdraw is sent");
+    set_rows(&mut c, 601, vec![0, 0], vec![0, 0]);
+    snap.rebuild(&c);
+    assert!(!bank_holds_for_test(&snap, 2), "the bank row is gone");
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(
+        front(&bot),
+        Some(withdraw),
+        "the emptied bank row is the send landing, not a refusal"
+    );
+    set_rows(&mut c, 701, vec![3, 0], vec![1, 0]);
+    snap.rebuild(&c);
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(
+        front(&bot),
+        None,
+        "the knife in the pack lands the Withdraw"
+    );
+
+    // Wear: the pack slot empties before the worn tab shows the knife.
+    let mut c = bank_fetch_client();
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs[2].iop[1] = Some("Wield".into());
+    }
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    set_rows(&mut c, 500, vec![3, 0], vec![1, 0]);
+    snap.rebuild(&c);
+    assert!(snap.bank_component_id() < 0, "wearing needs a closed bank");
+    let mut bot = session(BankStep::Wear { id: 2 });
+    let before = c.out.pos;
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert!(c.out.pos > before, "Wear is sent");
+    set_rows(&mut c, 500, vec![0, 0], vec![0, 0]);
+    snap.rebuild(&c);
+    assert!(snap.inventory().is_empty() && snap.equipment().is_empty());
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(
+        front(&bot),
+        Some(BankStep::Wear { id: 2 }),
+        "the emptied pack slot is the send landing, not a refusal"
+    );
+    c.side_icon[4] = 710;
+    c.set_iface(
+        710,
+        IfType {
+            id: 710,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
+    );
+    set_rows(&mut c, 710, vec![3], vec![1]);
+    snap.rebuild(&c);
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
+    assert_eq!(front(&bot), None, "the worn knife lands the Wear");
 }
 
 fn bank_holds_for_test(snapshot: &GameSnapshot, id: i32) -> bool {
@@ -16265,6 +16501,7 @@ fn an_aborted_walk_ends_its_bank_fetch_session() {
         opts: FindOptions::default(),
         final_route: route,
         avoid: Vec::new(),
+        progress: Default::default(),
     });
     navs.lock().unwrap().insert("alice".to_string(), bot);
     abort_script_walk(&navs, "alice");
@@ -20128,8 +20365,8 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
                 BankStep::Open,
                 BankStep::DepositAll,
                 BankStep::Withdraw { id: 3, count: 1 },
-                BankStep::Wear { id: 3 },
                 BankStep::Close,
+                BankStep::Wear { id: 3 },
             ],
         ),
     ];

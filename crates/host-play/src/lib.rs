@@ -158,10 +158,11 @@ pub use resource_view::{
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;
-pub use walk_plan::PendingBankFetch;
 use walk_plan::{
-    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, RouteOutcome, StandFetch,
+    fetch_stand, fetch_tile, fetchable_facts, route_or_bank_fetch, BankFetchFlight, RouteOutcome,
+    StandFetch,
 };
+pub use walk_plan::{PendingBankFetch, StepProgress};
 
 #[cfg(test)]
 use script::ScriptCtx;

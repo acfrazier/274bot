@@ -352,15 +352,29 @@ fail-closed: when the only missing gates are `item_req` / `worn_req`, the
 host plans a fetch-and-wear session from the packed bank stand table
 (`NavWorld::banks()`), walks to a standable access tile of the nearest
 stand (never the booth loc or a teller spawn behind the counter), opens
-it, deposits, withdraws, wears, and closes, then re-runs the strict search.
+it, deposits the backpack, withdraws what the route needs, closes the
+bank, then wears any worn item (the client cannot wear while the bank is
+open), and re-runs the strict search. Access tiles come from the one rule
+the named-bank stands script bank walks use (`nav::named_banks`):
+standable and never the stand tile itself. BankBudget takes the tiles in
+line with the stand (north, south, east or west), not the diagonals the
+named stands allow, because a teller across a booth answers only in line,
+and never a tile across a wall from the stand (a banker behind the bank's
+outer wall does not answer from the street).
 
 Packed stands are content-derived booths **and** NPC tellers
 (`category=bank_teller`). Open uses that packed access — a teller stand
 sends the banker op (and a dialog choice when the pack carries one), and
-falls back to another access of the same bank when that teller is gone.
-Deposit, wear and close wait until the live snapshot shows the step
-landed, with a bounded wait and a truthful abort if it never does. A
-send already in flight is not repeated every pump.
+falls back to the same bank's booths, nearest the player first, when no
+teller answers. Each step then waits until the live snapshot shows it
+landed: the backpack as the bank's side panel shows it while the bank is
+open, the inventory tab once it is closed. A sent withdraw or wear keeps
+waiting while the item has left the bank or the backpack but not yet
+shown up in the backpack or the worn set. Every step has a bounded wait
+(32 pumps, one per player tick) and ends the session with a logged reason
+if it never lands, and a send already in flight is not repeated. The
+script walk and the panel/TUI WalkTo share one step machine, one wait
+budget and one in-flight latch.
 
 **Closed bank:** the session is planned from the **open** bank's rows
 (`snap.bank()`). A closed bank contributes `[]`, so BankBudget cannot prove

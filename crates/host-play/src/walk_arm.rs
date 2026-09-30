@@ -9,7 +9,7 @@ use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use crate::script_runtime::{bank_fetch_freezes_follow, step_bank_fetch_on_bot, NavBot};
+use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found
@@ -172,7 +172,9 @@ pub fn arm_walk_on(
     }
 }
 /// Public WalkArm BankBudget pump (panel / TUI follow path). Same step
-/// semantics as the script [`NavBot`] pump.
+/// semantics as the script [`NavBot`] pump: the session, with its step
+/// budget and in-flight latch, moves through the pump and back, so both
+/// persist across pumps.
 pub fn step_walk_arm_bank_fetch<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -181,26 +183,20 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
     here: Option<(i32, i32, i32)>,
     map_members: bool,
 ) -> bool {
-    // Reuse NavBot stepping by temporarily viewing the arm as the same
-    // shape of pending session + route.
+    // Reuse NavBot stepping by moving the arm's session and route into
+    // the same shape; every step result moves back.
     let mut bot = NavBot {
-        traveller: Traveller::default(),
-        route: arm.route.clone(),
+        route: arm.route.take(),
         bank_fetch: arm.bank_fetch.take(),
-        allow_teleports: false,
         ..Default::default()
     };
     let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here, map_members);
-    arm.bank_fetch = bot.bank_fetch;
-    // Walk-to-stand may have armed a temporary route on the bot; abort
-    // clears both session and route.
-    if arm.bank_fetch.is_none() && bot.route.is_none() {
-        arm.route = None;
-    } else if let Some(r) = bot.route {
-        arm.route = Some(r);
-        if bot.map_route_generation != 0 {
-            arm.route_generation = bot.map_route_generation;
-        }
+    arm.bank_fetch = bot.bank_fetch.take();
+    // The step may arm the access sub-route or the final route (the
+    // follow's route generation moves with it); an abort clears both.
+    arm.route = bot.route.take();
+    if arm.route.is_some() && bot.map_route_generation != 0 {
+        arm.route_generation = bot.map_route_generation;
     }
     wrote
 }
@@ -208,13 +204,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
 /// Whether a WalkArm BankBudget session freezes follow this frame
 /// (panel / TUI). Same rule as the script [`NavBot`] pump.
 pub fn walk_arm_bank_fetch_freezes_follow(arm: &WalkArm) -> bool {
-    bank_fetch_freezes_follow(&NavBot {
-        traveller: Traveller::default(),
-        route: arm.route.clone(),
-        bank_fetch: arm.bank_fetch.clone(),
-        allow_teleports: false,
-        ..Default::default()
-    })
+    session_freezes_follow(arm.bank_fetch.as_ref(), arm.route.as_ref())
 }
 
 fn walk_destination(arm: &WalkArm) -> Option<WorldTile> {

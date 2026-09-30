@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::bank_fetch::{bank_access_tiles, BankStep};
-use nav::router::{find_first_with_avoid, find_with_avoid, FindOptions};
+use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
+use nav::router::{find_first_with_avoid, find_with_avoid, FindOptions, Route};
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -12,13 +12,11 @@ use nav::WorldState;
 use super::play_status::lock_statuses;
 use super::{
     deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, BankFetchFlight,
-    NavBot, ScriptWalkArm, SlotStatus,
+    NavBot, PendingBankFetch, ScriptWalkArm, SlotStatus,
 };
 
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
-/// Packed stands within this Chebyshev of each other share a bank.
-const SAME_BANK: i32 = 12;
 
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
@@ -41,8 +39,6 @@ pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
     bot.traveller.clear();
     // Bank work and carried routes share the revoked walk's ownership.
     bot.bank_fetch = None;
-    bot.bank_fetch_attempts = 0;
-    bot.bank_fetch_flight = None;
     bot.carried_walk = None;
 }
 
@@ -317,10 +313,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             // A missing player cannot deposit/open/wear; abort the latched
             // non-Walk step so disconnect does not hang with follow frozen.
             if bank_fetch_freezes_follow(bot) {
-                bot.bank_fetch = None;
-                bot.bank_fetch_attempts = 0;
-                bot.bank_fetch_flight = None;
-                bot.route = None;
+                abort_bank_fetch(bot, "no player tile (disconnected)");
             }
         }
         return;
@@ -440,9 +433,11 @@ pub(crate) fn step_nav_bot<D: Driver>(
 /// Withdraw / Wear / Close dispatch through
 /// [`api::interact::Interactions`] and pop only after the snapshot
 /// shows the step landed. Each non-Walk step has a pump budget and does
-/// not re-send while the snapshot is unchanged. Clears the pending
-/// session when steps are exhausted, or on a truthful failure. Returns
-/// whether the driver was written.
+/// not re-send while the snapshot is unchanged; both live on the session
+/// ([`PendingBankFetch::progress`]), so a caller that re-wraps the session
+/// every pump (the panel/TUI `WalkArm`) keeps them. Clears the pending
+/// session when steps are exhausted, or on a truthful, logged failure.
+/// Returns whether the driver was written.
 pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -451,275 +446,231 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     here: Option<(i32, i32, i32)>,
     map_members: bool,
 ) -> bool {
-    if bot.bank_fetch.is_none() {
-        bot.bank_fetch_attempts = 0;
-        bot.bank_fetch_flight = None;
-        return false;
-    }
-    let Some(step) = bot
-        .bank_fetch
-        .as_ref()
-        .and_then(|pending| pending.steps.front().cloned())
-    else {
-        bot.bank_fetch = None;
-        bot.bank_fetch_attempts = 0;
-        bot.bank_fetch_flight = None;
+    let Some(pending) = bot.bank_fetch.as_ref() else {
         return false;
     };
-    let mut abort = false;
-    let mut popped = false;
-    let wrote = match &step {
-        BankStep::Walk { x, z, level } => {
-            let dest = WorldTile {
-                x: *x,
-                z: *z,
-                level: *level,
-            };
-            if walk_arrived(here, dest, world) {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                    bot.route = Some(pending.final_route.clone());
-                }
-                popped = true;
-                log_walk_arm_bot(|| {
-                    format!(
-                        "bank_fetch phase done Walk on-access ({},{},{})",
-                        dest.x, dest.z, dest.level
-                    )
-                });
-                bot.map_route_generation = crate::walk_map::next_map_route_generation();
-                false
-            } else if bot.route.as_ref().is_some_and(|r| r.dest == dest) {
-                false
-            } else if let Some(w) = world {
-                let from = match here {
-                    Some((hx, hz, hl)) => WorldTile {
-                        x: hx,
-                        z: hz,
-                        level: hl,
-                    },
-                    None => return false,
-                };
-                let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
-                let opts = FindOptions {
-                    allow_bank_fetch: false,
-                    ..bot.bank_fetch.as_ref().map(|p| p.opts).unwrap_or_default()
-                };
-                let avoid = bot
-                    .bank_fetch
-                    .as_ref()
-                    .map(|p| p.avoid.clone())
-                    .unwrap_or_default();
-                match find_with_avoid(&w.collision, &w.graph, from, dest, opts, &state, &avoid) {
-                    Ok(route) => {
-                        log_walk_arm_bot(|| {
-                            format!("bank_fetch Walk armed sub-route dest={dest:?}")
-                        });
-                        bot.route = Some(route);
-                        bot.map_route_generation = crate::walk_map::next_map_route_generation();
-                        false
-                    }
-                    Err(_) => match arm_access_fallback(w, from, dest, opts, &state, &avoid) {
-                        Some(route) => {
-                            let reached = route.dest;
-                            if let Some(BankStep::Walk { x, z, level }) =
-                                bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
-                            {
-                                *x = reached.x;
-                                *z = reached.z;
-                                *level = reached.level;
-                            }
-                            log_walk_arm_bot(|| {
-                                format!("bank_fetch Walk fallback access dest={reached:?}")
-                            });
-                            bot.route = Some(route);
-                            bot.map_route_generation = crate::walk_map::next_map_route_generation();
-                            false
-                        }
-                        None => {
-                            abort = true;
-                            false
-                        }
-                    },
-                }
-            } else {
-                abort = true;
-                false
-            }
-        }
-        BankStep::Open => {
-            if snapshot.bank_loaded() {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                }
-                popped = true;
-                log_walk_arm_bot(|| "bank_fetch phase done Open already-loaded".to_string());
-                false
-            } else if snapshot.bank_component_id() != -1 || in_flight(bot, snapshot) {
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                false
-            } else {
-                let sent = open_bank_at_here(driver, snapshot, here, world);
-                if sent {
-                    latch_flight(bot, snapshot);
-                    log_walk_arm_bot(|| "bank_fetch Open sent packed access".to_string());
-                }
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                sent
-            }
-        }
-        BankStep::DepositAll => {
-            if backpack_empty(snapshot) {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                }
-                popped = true;
-                log_walk_arm_bot(|| "bank_fetch phase done DepositAll observed-empty".to_string());
-                false
-            } else if snapshot.bank_component_id() < 0 {
-                abort = true;
-                false
-            } else if in_flight(bot, snapshot) {
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                false
-            } else {
-                let wrote = deposit_all_backpack(driver, snapshot);
-                if wrote {
-                    latch_flight(bot, snapshot);
-                }
-                log_walk_arm_bot(|| format!("bank_fetch DepositAll sent={wrote}"));
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                wrote
-            }
-        }
-        BankStep::Withdraw { id, count } => {
-            if inventory_at_least(snapshot, *id, *count) {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                }
-                popped = true;
-                log_walk_arm_bot(|| {
-                    format!("bank_fetch phase done Withdraw id={id} count={count} observed")
-                });
-                false
-            } else if !bank_holds(snapshot, *id) {
-                abort = true;
-                false
-            } else if in_flight(bot, snapshot) {
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                false
-            } else {
-                let wrote = withdraw_id(driver, snapshot, *id, *count);
-                if wrote {
-                    latch_flight(bot, snapshot);
-                }
-                log_walk_arm_bot(|| {
-                    format!("bank_fetch Withdraw id={id} count={count} sent={wrote}")
-                });
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                wrote
-            }
-        }
-        BankStep::Wear { id } => {
-            if wearing(snapshot, *id) {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                }
-                popped = true;
-                log_walk_arm_bot(|| format!("bank_fetch phase done Wear id={id} observed"));
-                false
-            } else if !inventory_at_least(snapshot, *id, 1) {
-                abort = true;
-                false
-            } else if in_flight(bot, snapshot) {
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                false
-            } else {
-                let mut ix = api::interact::Interactions::new(snapshot, driver);
-                let wrote = matches!(ix.wear(*id), api::interact::SendResult::Sent { .. });
-                if wrote {
-                    latch_flight(bot, snapshot);
-                }
-                log_walk_arm_bot(|| format!("bank_fetch Wear id={id} sent={wrote}"));
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                wrote
-            }
-        }
-        BankStep::Close => {
-            if snapshot.bank_component_id() < 0 {
-                if let Some(pending) = bot.bank_fetch.as_mut() {
-                    pending.steps.pop_front();
-                }
-                popped = true;
-                log_walk_arm_bot(|| "bank_fetch phase done Close observed".to_string());
-                false
-            } else if in_flight(bot, snapshot) {
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                false
-            } else {
-                let mut ix = api::interact::Interactions::new(snapshot, driver);
-                let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
-                if wrote {
-                    latch_flight(bot, snapshot);
-                }
-                log_walk_arm_bot(|| format!("bank_fetch Close sent={wrote}"));
-                if step_wait_expired(bot) {
-                    abort = true;
-                }
-                wrote
-            }
+    let Some(step) = pending.steps.front().cloned() else {
+        bot.bank_fetch = None;
+        return false;
+    };
+    let (wrote, end) = match step {
+        BankStep::Walk { x, z, level } => step_walk(
+            snapshot,
+            bot,
+            world,
+            here,
+            map_members,
+            WorldTile { x, z, level },
+        ),
+        _ => {
+            let pending = bot
+                .bank_fetch
+                .as_mut()
+                .expect("the session holds the front step");
+            step_bank_action(driver, snapshot, pending, &step, here, world)
         }
     };
-    if popped {
-        bot.bank_fetch_attempts = 0;
-        bot.bank_fetch_flight = None;
+    match end {
+        StepEnd::Waiting => {}
+        StepEnd::Abort(why) => {
+            abort_bank_fetch(bot, why);
+            return wrote;
+        }
+        StepEnd::Landed(how) => {
+            log_walk_arm_bot(|| format!("bank_fetch phase done {step:?} {how}"));
+            if let Some(pending) = bot.bank_fetch.as_mut() {
+                pending.pop_step();
+            }
+        }
     }
-    if abort {
-        let session_dest = bot.bank_fetch.as_ref().map(|p| p.dest);
-        let remaining = bot.bank_fetch.as_ref().map(|p| p.steps.len()).unwrap_or(0);
-        log_walk_arm_bot(|| {
-            format!(
-                "bank_fetch abort front={step:?} session_dest={session_dest:?} remaining={remaining}"
-            )
-        });
-        bot.bank_fetch = None;
-        bot.bank_fetch_attempts = 0;
-        bot.bank_fetch_flight = None;
-        bot.route = None;
-        return wrote;
-    }
-    if bot
-        .bank_fetch
-        .as_ref()
-        .is_some_and(|pending| pending.steps.is_empty())
-    {
-        let session_dest = bot.bank_fetch.as_ref().map(|p| p.dest);
-        log_walk_arm_bot(|| {
-            format!("bank_fetch session cleared complete session_dest={session_dest:?}")
-        });
-        bot.bank_fetch = None;
-        bot.bank_fetch_attempts = 0;
-        bot.bank_fetch_flight = None;
+    if let Some(pending) = bot.bank_fetch.as_ref() {
+        if pending.steps.is_empty() {
+            let session_dest = pending.dest;
+            log_walk_arm_bot(|| {
+                format!("bank_fetch session cleared complete session_dest={session_dest:?}")
+            });
+            bot.bank_fetch = None;
+        }
     }
     wrote
+}
+
+/// How a pump left the front step.
+enum StepEnd {
+    /// Still waiting for the snapshot to show it (or for the sub-route).
+    Waiting,
+    /// The snapshot shows it done; the detail goes in the log.
+    Landed(&'static str),
+    /// It cannot land: the session ends with this reason.
+    Abort(&'static str),
+}
+
+/// End the BankBudget session truthfully: log the step it stopped at and
+/// why, then clear the session and the route it armed.
+fn abort_bank_fetch(bot: &mut NavBot, why: &str) {
+    if let Some(pending) = bot.bank_fetch.take() {
+        log_walk_arm_bot(|| {
+            format!(
+                "bank_fetch abort front={:?} why={why} session_dest={:?} remaining={}",
+                pending.steps.front(),
+                pending.dest,
+                pending.steps.len()
+            )
+        });
+    }
+    bot.route = None;
+}
+
+/// The Walk step: arrived on an access tile of the planned bank, or a
+/// sub-route to it armed for follow, or a fallback to the nearest routable
+/// access tile of that bank (the step's dest is rewritten to it).
+fn step_walk(
+    snapshot: &GameSnapshot,
+    bot: &mut NavBot,
+    world: Option<&NavWorld>,
+    here: Option<(i32, i32, i32)>,
+    map_members: bool,
+    dest: WorldTile,
+) -> (bool, StepEnd) {
+    if walk_arrived(here, dest, world) {
+        if let Some(pending) = bot.bank_fetch.as_ref() {
+            bot.route = Some(pending.final_route.clone());
+        }
+        bot.map_route_generation = crate::walk_map::next_map_route_generation();
+        return (false, StepEnd::Landed("on-access"));
+    }
+    if bot.route.as_ref().is_some_and(|r| r.dest == dest) {
+        return (false, StepEnd::Waiting);
+    }
+    let Some(w) = world else {
+        return (false, StepEnd::Abort("no nav world to route the walk"));
+    };
+    let (Some((x, z, level)), Some(pending)) = (here, bot.bank_fetch.as_ref()) else {
+        return (false, StepEnd::Waiting);
+    };
+    let from = WorldTile { x, z, level };
+    let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+    let opts = FindOptions {
+        allow_bank_fetch: false,
+        ..pending.opts
+    };
+    let route = match find_with_avoid(
+        &w.collision,
+        &w.graph,
+        from,
+        dest,
+        opts,
+        &state,
+        &pending.avoid,
+    ) {
+        Ok(route) => {
+            log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={dest:?}"));
+            route
+        }
+        Err(_) => match arm_access_fallback(w, from, dest, opts, &state, &pending.avoid) {
+            Some(route) => {
+                let reached = route.dest;
+                if let Some(BankStep::Walk { x, z, level }) =
+                    bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
+                {
+                    *x = reached.x;
+                    *z = reached.z;
+                    *level = reached.level;
+                }
+                log_walk_arm_bot(|| format!("bank_fetch Walk fallback access dest={reached:?}"));
+                route
+            }
+            None => return (false, StepEnd::Abort("no route to a bank access tile")),
+        },
+    };
+    bot.route = Some(route);
+    bot.map_route_generation = crate::walk_map::next_map_route_generation();
+    (false, StepEnd::Waiting)
+}
+
+/// One pump of a non-Walk step on the session: landed on snapshot
+/// evidence, else (unless a send is still in flight) send it, within the
+/// step's pump budget.
+fn step_bank_action<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    pending: &mut PendingBankFetch,
+    step: &BankStep,
+    here: Option<(i32, i32, i32)>,
+    world: Option<&NavWorld>,
+) -> (bool, StepEnd) {
+    let bank_open = snapshot.bank_component_id() >= 0;
+    let landed = match step {
+        BankStep::Open => snapshot.bank_loaded().then_some("loaded"),
+        BankStep::DepositAll => backpack_empty(snapshot).then_some("observed-empty"),
+        BankStep::Withdraw { id, count } => {
+            (backpack_count(snapshot, *id) >= *count).then_some("observed in the backpack")
+        }
+        BankStep::Wear { id } => wearing(snapshot, *id).then_some("observed worn"),
+        BankStep::Close => (!bank_open).then_some("observed closed"),
+        BankStep::Walk { .. } => unreachable!("Walk steps in step_walk"),
+    };
+    if let Some(how) = landed {
+        return (false, StepEnd::Landed(how));
+    }
+    // The obj a Withdraw or Wear moves leaves its source (the bank row, the
+    // backpack slot) before the server's next update shows it arrived (the
+    // backpack, the worn set), so those two refusals hold only until the
+    // step's first send; after it, the step waits for the landing within
+    // its budget.
+    let sent = pending.progress.flight.is_some();
+    let refused = match step {
+        BankStep::DepositAll | BankStep::Withdraw { .. } if !bank_open => {
+            Some("the bank is closed")
+        }
+        BankStep::Withdraw { id, .. } if !sent && !bank_holds(snapshot, *id) => {
+            Some("the open bank does not hold the obj")
+        }
+        BankStep::Wear { .. } if bank_open => Some("the bank is open; wearing needs it closed"),
+        BankStep::Wear { id } if !sent && backpack_count(snapshot, *id) < 1 => {
+            Some("the obj is not in the backpack")
+        }
+        _ => None,
+    };
+    if let Some(why) = refused {
+        return (false, StepEnd::Abort(why));
+    }
+    // Open also waits while a bank component is up but not yet loaded.
+    let in_flight = pending
+        .progress
+        .flight
+        .as_ref()
+        .is_some_and(|flight| flight.matches(snapshot))
+        || (matches!(step, BankStep::Open) && snapshot.bank_component_id() != -1);
+    let wrote = !in_flight && {
+        let wrote = match step {
+            BankStep::Open => open_bank_at_here(driver, snapshot, here, world),
+            BankStep::DepositAll => deposit_all_backpack(driver, snapshot),
+            BankStep::Withdraw { id, count } => withdraw_id(driver, snapshot, *id, *count),
+            BankStep::Wear { id } => {
+                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                matches!(ix.wear(*id), api::interact::SendResult::Sent { .. })
+            }
+            BankStep::Close => {
+                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                matches!(ix.close_modal(), api::interact::SendResult::Sent { .. })
+            }
+            BankStep::Walk { .. } => unreachable!("Walk steps in step_walk"),
+        };
+        if wrote {
+            pending.progress.flight = Some(Box::new(BankFetchFlight::of(snapshot)));
+        }
+        log_walk_arm_bot(|| format!("bank_fetch {step:?} sent={wrote}"));
+        wrote
+    };
+    pending.progress.attempts = pending.progress.attempts.saturating_add(1);
+    if pending.progress.attempts >= BANK_STEP_ATTEMPTS {
+        return (
+            wrote,
+            StepEnd::Abort("the step did not land within its pump budget"),
+        );
+    }
+    (wrote, StepEnd::Waiting)
 }
 
 /// Whether a latched BankBudget session must freeze [`Traveller::follow`].
@@ -727,7 +678,16 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
 /// Deposit / Withdraw / Wear / Close do. Mid-session `final_route` is
 /// never followed.
 pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
-    let Some(pending) = bot.bank_fetch.as_ref() else {
+    session_freezes_follow(bot.bank_fetch.as_ref(), bot.route.as_ref())
+}
+
+/// [`bank_fetch_freezes_follow`] over a session and the route armed with
+/// it, for an owner that keeps them apart (the panel/TUI `WalkArm`).
+pub(crate) fn session_freezes_follow(
+    pending: Option<&PendingBankFetch>,
+    route: Option<&Route>,
+) -> bool {
+    let Some(pending) = pending else {
         return false;
     };
     match pending.steps.front() {
@@ -735,9 +695,7 @@ pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
             // Freeze only until the access sub-route is armed; once armed,
             // follow that route. If route still points at final_route,
             // stay frozen this tick (Walk arms next pump / this pump).
-            !bot.route
-                .as_ref()
-                .is_some_and(|r| r.dest.x == *x && r.dest.z == *z && r.dest.level == *level)
+            !route.is_some_and(|r| r.dest.x == *x && r.dest.z == *z && r.dest.level == *level)
         }
         Some(_) => true,
         None => false,
@@ -765,7 +723,7 @@ fn walk_arrived(here: Option<(i32, i32, i32)>, dest: WorldTile, world: Option<&N
                 .abs()
                 .max((stand.tile.z - dest.z).abs())
                 <= SAME_BANK
-            && bank_access_tiles(&world.collision, stand).contains(&here_tile)
+            && is_bank_access(&world.collision, stand, here_tile)
     })
 }
 
@@ -812,44 +770,62 @@ fn arm_access_fallback(
     .ok()
 }
 
-fn snapshot_flight(snapshot: &GameSnapshot) -> BankFetchFlight {
-    BankFetchFlight {
-        bank_gen: snapshot.bank_session_generation(),
-        bank_com: snapshot.bank_component_id(),
-        inv: snapshot.inv().to_vec(),
-        worn: snapshot
-            .equipment()
-            .iter()
-            .filter(|item| item.count >= 1)
-            .map(|item| item.def.id)
-            .collect(),
+impl BankFetchFlight {
+    /// The bank, backpack and worn facts a send is judged against.
+    fn of(snapshot: &GameSnapshot) -> Self {
+        BankFetchFlight {
+            bank_gen: snapshot.bank_session_generation(),
+            bank_com: snapshot.bank_component_id(),
+            backpack: backpack(snapshot).collect(),
+            worn: worn(snapshot).collect(),
+        }
+    }
+
+    /// Whether `snapshot` still shows exactly the latched facts, so the
+    /// send is still in flight. Compares in place, without a per-pump copy.
+    fn matches(&self, snapshot: &GameSnapshot) -> bool {
+        self.bank_gen == snapshot.bank_session_generation()
+            && self.bank_com == snapshot.bank_component_id()
+            && self.backpack.iter().copied().eq(backpack(snapshot))
+            && self.worn.iter().copied().eq(worn(snapshot))
     }
 }
 
-fn in_flight(bot: &NavBot, snapshot: &GameSnapshot) -> bool {
-    bot.bank_fetch_flight
-        .as_ref()
-        .is_some_and(|flight| *flight == snapshot_flight(snapshot))
-}
-
-fn latch_flight(bot: &mut NavBot, snapshot: &GameSnapshot) {
-    bot.bank_fetch_flight = Some(snapshot_flight(snapshot));
-}
-
-fn step_wait_expired(bot: &mut NavBot) -> bool {
-    bot.bank_fetch_attempts = bot.bank_fetch_attempts.saturating_add(1);
-    bot.bank_fetch_attempts >= BANK_STEP_ATTEMPTS
+/// The backpack's own rows `(obj id, count)`, one per filled slot. While a
+/// bank is open the client shows the pack only in the bank's side panel
+/// (`bank_side`); otherwise it is the inv tab (`inventory`). Never
+/// [`GameSnapshot::inv`]: with no inv tab bound, its fallback reads the
+/// first filled TYPE_INV, which is the bank's withdraw grid while the bank
+/// is open and the pack is empty.
+fn backpack(snapshot: &GameSnapshot) -> impl Iterator<Item = (i32, i32)> + '_ {
+    let rows = if snapshot.bank_component_id() >= 0 {
+        snapshot.bank_side()
+    } else {
+        snapshot.inventory()
+    };
+    rows.iter()
+        .filter(|item| item.count >= 1)
+        .map(|item| (item.def.id, item.count))
 }
 
 fn backpack_empty(snapshot: &GameSnapshot) -> bool {
-    snapshot.inv().iter().all(|&(_, n)| n <= 0)
+    backpack(snapshot).next().is_none()
 }
 
-fn inventory_at_least(snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
+/// The obj's total over the backpack's slots (an unstackable obj fills one
+/// slot per item).
+fn backpack_count(snapshot: &GameSnapshot, id: i32) -> i32 {
+    backpack(snapshot)
+        .filter(|&(got, _)| got == id)
+        .fold(0, |total, (_, n)| total.saturating_add(n))
+}
+
+fn worn(snapshot: &GameSnapshot) -> impl Iterator<Item = i32> + '_ {
     snapshot
-        .inv()
+        .equipment()
         .iter()
-        .any(|&(got, n)| got == id && n >= count)
+        .filter(|item| item.count >= 1)
+        .map(|item| item.def.id)
 }
 
 fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
@@ -860,8 +836,5 @@ fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
 }
 
 fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {
-    snapshot
-        .equipment()
-        .iter()
-        .any(|item| item.def.id == id && item.count >= 1)
+    worn(snapshot).any(|got| got == id)
 }
