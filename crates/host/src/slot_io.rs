@@ -374,6 +374,35 @@ impl SlotInput {
         }
     }
 
+    /// Drop the user input buffered while the slot ran no frames (a login
+    /// wait or handshake outside the client pump), so a click or key made
+    /// then cannot act on the next title. Button and key releases still
+    /// reach the shell, so nothing stays held.
+    pub fn discard_user(&self, shell: &mut GameShell) {
+        let mut g = self.rx.lock().unwrap();
+        let Some(rx) = g.as_mut() else {
+            return;
+        };
+        let mut released = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                InputEv::Up => {
+                    shell.apply_mouse_up();
+                    released = true;
+                }
+                InputEv::Key { down: false, ch } => shell.apply_key(false, 0, ch),
+                InputEv::Move { .. } | InputEv::Down { .. } | InputEv::Key { down: true, .. } => {}
+            }
+        }
+        drop(g);
+        if released {
+            let mut mouse = self.mouse.lock().unwrap();
+            if mouse.held == MouseOwner::User {
+                mouse.held = MouseOwner::None;
+            }
+        }
+    }
+
     /// Map frozen/script client coordinates onto applet pixels.
     /// Refuses non-finite, negative, outside, and non-left buttons.
     /// DOM 0/1 → Java button 1. Does not truncate before the bounds check.

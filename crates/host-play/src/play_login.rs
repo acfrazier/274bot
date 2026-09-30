@@ -15,6 +15,12 @@ use super::{clear_startup_progress, lock_statuses, public_worlds, Play, SlotStat
 
 pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
+/// Title frames a slot owner runs while it waits outside its client pump
+/// (queue, retry backoff, transfer countdown). Each call runs the frame that
+/// is due, if any, and returns how long the waiter may block before the
+/// next one.
+pub(super) type WaitFrames<'a> = dyn FnMut() -> Duration + 'a;
+
 static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
 
 /// Three independent unexpected exits inside ten minutes are unlikely to be
@@ -562,21 +568,30 @@ impl SlotArm {
     /// Wait to a retry deadline. Notifications only re-check Stop,
     /// withdrawal, latch, and optionally world selection; generic UI wakes
     /// use a separate channel and cannot spend another login attempt.
-    pub(super) fn wait_for_retry(&self, timeout: Duration) -> bool {
-        self.wait_for_retry_inner(timeout, true)
+    /// `frames` keeps the logged-out title live meanwhile.
+    pub(super) fn wait_for_retry(&self, timeout: Duration, frames: &mut WaitFrames<'_>) -> bool {
+        self.wait_for_retry_inner(timeout, true, frames)
     }
 
     /// Response 21 is tied to the same server-selected world. A profile world
     /// edit must not turn the transfer cooldown into an early retry/switch.
-    pub(super) fn wait_for_transfer(&self, timeout: Duration) -> bool {
-        self.wait_for_retry_inner(timeout, false)
+    pub(super) fn wait_for_transfer(&self, timeout: Duration, frames: &mut WaitFrames<'_>) -> bool {
+        self.wait_for_retry_inner(timeout, false, frames)
     }
 
-    fn wait_for_retry_inner(&self, timeout: Duration, interrupt_on_world_change: bool) -> bool {
+    fn wait_for_retry_inner(
+        &self,
+        timeout: Duration,
+        interrupt_on_world_change: bool,
+        frames: &mut WaitFrames<'_>,
+    ) -> bool {
         let mut intent = self.intent.lock();
         let world_generation = self.world_generation.load(Ordering::Relaxed);
         let deadline = Instant::now() + timeout;
         loop {
+            // A title frame runs unlocked so no arm writer waits on a paint;
+            // the predicate is read after it, under the lock the wait keeps.
+            let next_frame = parking_lot::MutexGuard::unlocked(&mut intent, &mut *frames);
             if self.stop.load(Ordering::Relaxed) || !self.wanted(&intent) {
                 return false;
             }
@@ -591,7 +606,7 @@ impl SlotArm {
             }
             #[cfg(test)]
             Self::wait_at_retry_race_gate(&self.retry_wait_gate);
-            self.retry_wake.wait_for(&mut intent, left);
+            self.retry_wake.wait_for(&mut intent, left.min(next_frame));
         }
     }
 
@@ -939,6 +954,7 @@ pub(super) fn wait_for_transfer_response(
     arm: &SlotArm,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
+    frames: &mut WaitFrames<'_>,
 ) -> Option<bool> {
     if error.code != 21 {
         return None;
@@ -947,7 +963,7 @@ pub(super) fn wait_for_transfer_response(
     let mut remaining = delay.as_secs();
     loop {
         publish_transfer_countdown(statuses, name, remaining);
-        if !arm.wait_for_transfer(Duration::from_secs(1)) {
+        if !arm.wait_for_transfer(Duration::from_secs(1), frames) {
             clear_startup_progress(statuses, name);
             return Some(false);
         }
@@ -1124,7 +1140,8 @@ pub(super) fn permit_wait_cancelled(arm: &SlotArm) -> bool {
 }
 
 /// Block until the already-enqueued slot owner receives a handshake permit,
-/// mirroring the queue position onto the slot's status row while it waits.
+/// mirroring the queue position onto the slot's status row while it waits
+/// and keeping the logged-out title live through `frames`.
 /// Withdrawal is observed before every poll, so a dropped place is never
 /// recreated by this waiter.
 pub(super) fn wait_for_permit(
@@ -1133,6 +1150,7 @@ pub(super) fn wait_for_permit(
     username: &str,
     uid: i32,
     arm: &SlotArm,
+    frames: &mut WaitFrames<'_>,
 ) -> PermitWait {
     let withdraw = || {
         arm.withdraw_login();
@@ -1174,8 +1192,9 @@ pub(super) fn wait_for_permit(
                 apply_queue_wait(&mut lock_statuses(statuses), username, pos);
                 next_publish = now + QUEUE_PUBLISH;
             }
+            let next_frame = frames();
             let left = deadline.saturating_duration_since(Instant::now());
-            thread::sleep(left.min(Duration::from_millis(20)));
+            thread::sleep(left.min(Duration::from_millis(20)).min(next_frame));
         }
     }
 }

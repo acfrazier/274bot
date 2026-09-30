@@ -7,6 +7,11 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// A login wait with no title to keep live (no client in the test).
+fn no_frames() -> impl FnMut() -> Duration {
+    || Duration::MAX
+}
+
 fn wait_for_permit(
     queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
@@ -15,7 +20,7 @@ fn wait_for_permit(
     arm: &SlotArm,
 ) -> PermitWait {
     enqueue_queue_place(queue, statuses, username, uid, arm);
-    super::wait_for_permit(queue, statuses, username, uid, arm)
+    super::wait_for_permit(queue, statuses, username, uid, arm, &mut no_frames())
 }
 
 const TEST_QUEUE_OWNER_NAMESPACE: u64 = 1 << 63;
@@ -614,6 +619,7 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
                 &arm,
                 &statuses,
                 "alice",
+                &mut no_frames(),
             )
         })
     };
@@ -1410,7 +1416,7 @@ fn stop_slot_interrupts_login_backoff() {
     let waiter = thread::spawn(move || {
         waiting_tx.send(()).unwrap();
         done_tx
-            .send(arm.wait_for_retry(Duration::from_secs(60)))
+            .send(arm.wait_for_retry(Duration::from_secs(60), &mut no_frames()))
             .unwrap();
     });
     play.handles.insert("bob".into(), waiter);
@@ -1435,7 +1441,9 @@ fn retry_notification_serializes_with_waiter_park() {
     let (notify_entered, release_notify) = arm.hold_retry_notify_before_lock_for_test();
 
     let waiting_arm = Arc::clone(&arm);
-    let waiter = thread::spawn(move || waiting_arm.wait_for_retry(Duration::from_millis(40)));
+    let waiter = thread::spawn(move || {
+        waiting_arm.wait_for_retry(Duration::from_millis(40), &mut no_frames())
+    });
     waiter_entered.recv().unwrap();
 
     let notifying_arm = Arc::clone(&arm);
@@ -1478,7 +1486,8 @@ fn generic_wake_does_not_shorten_login_backoff() {
     let arm = SlotArm::new(9, true);
     play.attach_arm("bob", Arc::clone(&arm));
     let started = Instant::now();
-    let waiter = thread::spawn(move || arm.wait_for_retry(Duration::from_millis(120)));
+    let waiter =
+        thread::spawn(move || arm.wait_for_retry(Duration::from_millis(120), &mut no_frames()));
     thread::sleep(Duration::from_millis(20));
     play.wake("bob");
 
@@ -18048,6 +18057,154 @@ fn hosted_title_click_enters_the_login_fifo_without_opening_a_socket() {
         "the hosted title must not open a socket before the FIFO grants it"
     );
     play.stop_slot("titlefifo");
+}
+
+fn send_hosted_log_in(input: &std::sync::mpsc::Sender<InputEv>, enter: bool) {
+    if enter {
+        input.send(InputEv::Key { down: true, ch: 10 }).unwrap();
+        input
+            .send(InputEv::Key {
+                down: false,
+                ch: 10,
+            })
+            .unwrap();
+    } else {
+        input
+            .send(InputEv::Down {
+                button: 1,
+                x: client::client::APPLET_W / 2,
+                y: client::client::APPLET_H / 2 + 40,
+            })
+            .unwrap();
+        input.send(InputEv::Up).unwrap();
+    }
+}
+
+/// One hosted Log In round: the slot waits in the held FIFO, the operator
+/// presses Log In again (click or Enter) `gap` before a Logout, and the
+/// arm is read once the slot is back on its title.
+fn hosted_log_in_then_logout(enter: bool, gap: Duration) -> (Option<LoginLatchReason>, bool) {
+    let (endpoint, attempts) = counting_login_server();
+    let mut play = offline_play(endpoint);
+    play.queue
+        .lock()
+        .hold_for(Instant::now(), Duration::from_secs(30));
+    let arm = SlotArm::new(42, false);
+    arm.bypass_asset_startup_for_test();
+    arm.hold_logged_out();
+    let input = SlotInput::new();
+    input.set_enabled(true);
+    let (input_tx, input_rx) = std::sync::mpsc::channel();
+    input.connect_rx(input_rx);
+    play.spawn_slot(
+        profile("titlewait", 42),
+        Some(Arc::clone(&input)),
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    send_hosted_log_in(&input_tx, false);
+    play.wake("titlewait");
+    assert!(wait_until(2_000, || arm.wants_login()
+        && play.queue.lock().status_owner(arm.queue_owner).is_some()));
+    send_hosted_log_in(&input_tx, enter);
+    thread::sleep(gap);
+    arm.request_logout();
+    play.wake("titlewait");
+    thread::sleep(Duration::from_millis(500));
+
+    let outcome = (arm.login_latch_reason(), arm.wants_login());
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        0,
+        "the held FIFO opens no socket"
+    );
+    play.stop_slot("titlewait");
+    outcome
+}
+
+/// A second hosted Log In made while the first waits outside the pump is
+/// not replayed onto the title after a later Logout: the Logout stands.
+#[test]
+fn a_log_in_pressed_during_the_login_wait_does_not_undo_a_later_logout() {
+    for (enter, gap) in [
+        (false, Duration::from_millis(200)),
+        (true, Duration::from_millis(200)),
+        (false, Duration::ZERO),
+        (true, Duration::ZERO),
+        (false, Duration::from_millis(200)),
+        (true, Duration::from_millis(200)),
+    ] {
+        assert_eq!(
+            hosted_log_in_then_logout(enter, gap),
+            (Some(LoginLatchReason::OperatorLogout), false),
+            "enter={enter} gap={gap:?}: the Logout must not be undone"
+        );
+    }
+}
+
+/// The 60 s code-5 cooldown runs outside the pump; the hosted title keeps
+/// painting flames through it instead of freezing on its last frame.
+#[test]
+fn a_code_5_retry_wait_keeps_the_title_animating() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&attempts);
+    thread::spawn(move || {
+        for socket in listener.incoming() {
+            let Ok(mut socket) = socket else { return };
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut preface = [0; 2];
+            if socket.read_exact(&mut preface).is_ok() && preface[0] == 14 {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let _ = socket.write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 5]);
+                let _ = socket.flush();
+            }
+        }
+    });
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |c, _, _| c.set_draw(true),
+    );
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    let input = SlotInput::new();
+    input.set_enabled(true);
+    input.set_prefer_cpu(true);
+    let mailbox = FrameBuf::new();
+    play.spawn_slot(
+        profile("cooldown", 42),
+        Some(input),
+        Some(Arc::clone(&mailbox)),
+        Some(Arc::clone(&arm)),
+    );
+
+    assert!(wait_until(5_000, || attempts.load(Ordering::SeqCst) == 1));
+    thread::sleep(Duration::from_millis(300));
+    let before = mailbox.generation();
+    thread::sleep(Duration::from_millis(500));
+    let painted = mailbox.generation() - before;
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "still inside the 60 s wait"
+    );
+    assert!(
+        painted >= 5,
+        "the waiting title must keep painting flames, painted {painted} in 500 ms"
+    );
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("cooldown");
 }
 
 fn start_offline_script(play: &Play) {
