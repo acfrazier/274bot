@@ -3,6 +3,7 @@
 pub mod dialogue;
 pub mod progress_predicates;
 pub mod reach;
+pub mod s2;
 
 use super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
@@ -51,6 +52,36 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             kind: "wait",
             version: 1,
             compile: compile_wait,
+        },
+        super::compile::StepHandler {
+            kind: "bank",
+            version: 1,
+            compile: s2::compile_bank,
+        },
+        super::compile::StepHandler {
+            kind: "buy",
+            version: 1,
+            compile: s2::compile_buy,
+        },
+        super::compile::StepHandler {
+            kind: "make",
+            version: 1,
+            compile: s2::compile_make,
+        },
+        super::compile::StepHandler {
+            kind: "equip",
+            version: 1,
+            compile: s2::compile_equip,
+        },
+        super::compile::StepHandler {
+            kind: "unequip",
+            version: 1,
+            compile: s2::compile_unequip,
+        },
+        super::compile::StepHandler {
+            kind: "loadout",
+            version: 1,
+            compile: s2::compile_loadout,
         },
     ]
 }
@@ -156,6 +187,21 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "flag",
             version: 1,
             compile: progress_predicates::compile_flag,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_known",
+            version: 1,
+            compile: s2::compile_bank_known,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_has",
+            version: 1,
+            compile: s2::compile_bank_has,
+        },
+        super::compile::PredicateHandler {
+            kind: "loadout_ready",
+            version: 1,
+            compile: s2::compile_loadout_ready,
         },
     ]
 }
@@ -1669,7 +1715,10 @@ impl StepRun for UseOnRun {
         };
         if let Some(before) = self.round_before {
             let observed_id = self.until.map(|(id, _)| id).or(self.product);
-            if observed_id.and_then(held).is_none_or(|count| count <= before) {
+            if observed_id
+                .and_then(held)
+                .is_none_or(|count| count <= before)
+            {
                 return Poll::Pending;
             }
         }
@@ -1680,7 +1729,10 @@ impl StepRun for UseOnRun {
                 self.round_before = None;
                 return Poll::Pending;
             }
-        } else if self.product.is_some_and(|id| !held(id).is_some_and(|count| count > 0)) {
+        } else if self
+            .product
+            .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
+        {
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
@@ -1801,6 +1853,7 @@ impl StepRun for AcquireRun {
                     required_after: cx.required_after,
                     chat_since: self.chat_since,
                     outcome: None,
+                    bank: cx.bank,
                 });
                 if truth != Truth::True {
                     if cx.tick.cx.active_now() >= self.settle_deadline {
@@ -1822,6 +1875,7 @@ impl StepRun for AcquireRun {
                         required_after: cx.required_after,
                         chat_since: reach::last_chat_seq(&cx.tick.cx),
                         outcome: None,
+                        bank: cx.bank,
                     });
                     if skip == Truth::Unknown {
                         let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
@@ -1937,6 +1991,7 @@ impl StepRun for WaitRun {
             required_after: cx.required_after,
             chat_since: self.chat_since,
             outcome: None,
+            bank: cx.bank,
         };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;

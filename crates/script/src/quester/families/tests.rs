@@ -272,11 +272,13 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
 fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>) -> R) -> R {
     let quests = api::quest_facts::QuestCatalog::empty();
     let required_after = t.cx.evidence();
+    let bank = crate::quester::bank_memo::BankMemo::default();
     f(&mut StepContext {
         tick: t,
         quests: &quests,
         progress: &[],
         required_after,
+        bank: &bank,
     })
 }
 #[test]
@@ -387,6 +389,10 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         gathering: None,
         areas: &areas,
         recipes: &recipes,
+        bank: None,
+        bank_items: &[],
+        path_id: &FactKey::new("test"),
+        loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
     let plan = compile_use_on(&serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 }), &compile).unwrap();
     let id = resolve_obj(&compile, "grain").unwrap();
@@ -589,6 +595,10 @@ fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
         gathering: None,
         areas: &Default::default(),
         recipes: &Default::default(),
+        bank: None,
+        bank_items: &[],
+        path_id: &FactKey::new("test"),
+        loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
 }
 
@@ -635,6 +645,7 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
                     required_after: t.cx.evidence(),
                     chat_since: 0,
                     outcome: None,
+                    bank: &crate::quester::bank_memo::BankMemo::default(),
                 }),
                 Truth::True
             );
@@ -764,6 +775,7 @@ fn public_chat_cannot_settle_or_set_message_state() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(message.evaluate(&pred), Truth::False);
             assert_eq!(state.evaluate(&pred), Truth::False);
@@ -873,6 +885,7 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             for index in [1, 2] {
                 assert_eq!(
@@ -934,6 +947,7 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(loaded.evaluate(&pred), Truth::False);
         });
@@ -971,6 +985,7 @@ fn progress_predicates_require_known_same_run_evidence() {
                 required_after: t.cx.evidence(),
                 chat_since: 0,
                 outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
             assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
@@ -1003,6 +1018,7 @@ fn progress_predicates_require_known_same_run_evidence() {
                 },
                 chat_since: 0,
                 outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
             };
             assert_eq!(stage.evaluate(&known), Truth::True);
             assert_eq!(flag.evaluate(&known), Truth::True);

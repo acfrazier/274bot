@@ -11,6 +11,18 @@ const COOK_KITCHEN: WorldTile = WorldTile {
     level: 0,
 };
 
+const SHEEP_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("sheep"),
+}];
+const RUNE_MYSTERIES_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("runemysteries"),
+}];
+const ROMEO_AND_JULIET_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("romeojuliet"),
+}];
 /// Generic builder: jump a quest to a stage key with optional items, then
 /// Start Quester. `varp`/`value` seed via `setvar` (fixture only).
 pub fn quester_stage(
@@ -124,6 +136,57 @@ pub(crate) fn quester_cook_scenario() -> Scenario {
         &[],
         COOK_KITCHEN,
     )
+}
+
+pub(crate) fn quester_sheep_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_sheep",
+        "Sheep Shearer",
+        "sheep",
+        0,
+        &[],
+        WorldTile {
+            x: 3189,
+            z: 3273,
+            level: 0,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(SHEEP_SETTINGS);
+    scenario
+}
+
+pub(crate) fn quester_rune_mysteries_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_rune_mysteries",
+        "Rune Mysteries Quest",
+        "runemysteries",
+        0,
+        &[],
+        WorldTile {
+            x: 3208,
+            z: 3222,
+            level: 1,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(RUNE_MYSTERIES_SETTINGS);
+    scenario
+}
+
+pub(crate) fn quester_romeo_and_juliet_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_romeo_and_juliet",
+        "Romeo & Juliet",
+        "rjquest",
+        0,
+        &[],
+        WorldTile {
+            x: 3211,
+            z: 3425,
+            level: 0,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(ROMEO_AND_JULIET_SETTINGS);
+    scenario
 }
 
 /// Resume Cook from in-progress with the three products already held.

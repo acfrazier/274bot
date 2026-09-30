@@ -48,7 +48,9 @@ impl NativeMachine for BuyMachine {
 
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         if request.qty < 1 {
-            return Err(ActionError::Unavailable(Arc::from("buy quantity must be positive")));
+            return Err(ActionError::Unavailable(Arc::from(
+                "buy quantity must be positive",
+            )));
         }
         Ok(Self {
             request,
@@ -68,12 +70,16 @@ impl NativeMachine for BuyMachine {
                     let Some(npcs) = cx.snapshot().npcs() else {
                         return Poll::Pending;
                     };
-                    let npc = npcs.value.iter().filter(|npc| {
-                        npc.r#type == usize::try_from(self.request.npc_id).ok()
-                            || npc.name.as_deref().is_some_and(|name| {
-                                name.eq_ignore_ascii_case(&self.request.npc_name)
-                            })
-                    }).min_by_key(|npc| npc.distance);
+                    let npc = npcs
+                        .value
+                        .iter()
+                        .filter(|npc| {
+                            npc.r#type == usize::try_from(self.request.npc_id).ok()
+                                || npc.name.as_deref().is_some_and(|name| {
+                                    name.eq_ignore_ascii_case(&self.request.npc_name)
+                                })
+                        })
+                        .min_by_key(|npc| npc.distance);
                     let Some(npc) = npc else {
                         return Poll::Pending;
                     };
@@ -87,7 +93,10 @@ impl NativeMachine for BuyMachine {
                         ))));
                     };
                     cx.emit(InteractReq::Npc {
-                        name: npc.name.clone().unwrap_or_else(|| self.request.npc_name.to_string()),
+                        name: npc
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| self.request.npc_name.to_string()),
                         action: trade.clone(),
                         index: i32::try_from(npc.index).ok(),
                     })?;
@@ -107,7 +116,8 @@ impl NativeMachine for BuyMachine {
                     return Poll::Pending;
                 }
                 Phase::Buy => {
-                    let Some(inventory) = cx.snapshot().inventory() else {
+                    let snapshot = cx.snapshot();
+                    let Some(inventory) = snapshot.inventory() else {
                         return Poll::Pending;
                     };
                     let held = count(inventory.value, self.request.item_id);
@@ -115,7 +125,7 @@ impl NativeMachine for BuyMachine {
                         self.phase = Phase::Close;
                         continue;
                     }
-                    let Some(shop) = cx.snapshot().shop() else {
+                    let Some(shop) = snapshot.shop() else {
                         return Poll::Pending;
                     };
                     if !shop.value.open {
@@ -141,12 +151,13 @@ impl NativeMachine for BuyMachine {
                     } else {
                         1
                     };
+                    let (id, slot, component) = (row.def.id, row.slot, row.component_id);
                     cx.emit(InteractReq::ShopButton {
                         kind: "buy".into(),
                         name: self.request.item_name.to_string(),
-                        id: row.def.id,
-                        slot: row.slot,
-                        component: row.component_id,
+                        id,
+                        slot,
+                        component,
                         chunk,
                     })?;
                     self.deadline = cx.active_now().saturating_add(SETTLE_BOUND);

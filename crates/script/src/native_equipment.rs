@@ -40,7 +40,8 @@ impl NativeMachine for EquipmentMachine {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        let Some(worn) = cx.snapshot().equipment() else {
+        let snapshot = cx.snapshot();
+        let Some(worn) = snapshot.equipment() else {
             return Poll::Pending;
         };
         if let Some(id) = self.pending_id {
@@ -69,7 +70,9 @@ impl NativeMachine for EquipmentMachine {
                     }));
                 }
                 let held = cx.snapshot().inventory().is_some_and(|rows| {
-                    rows.value.iter().any(|row| row.def.id == *id && row.count > 0)
+                    rows.value
+                        .iter()
+                        .any(|row| row.def.id == *id && row.count > 0)
                 });
                 if !held {
                     return Poll::Ready(Err(ActionError::Failed(Arc::from(
@@ -93,18 +96,18 @@ impl NativeMachine for EquipmentMachine {
                 self.pending_id = Some(*id);
             }
             EquipmentRequest::Strip => {
-                let Some(row) = worn.value.iter().find(|row| row.count > 0) else {
+                let row = worn
+                    .value
+                    .iter()
+                    .find(|row| row.count > 0)
+                    .and_then(|row| row.def.name.clone().map(|name| (row.def.id, name)));
+                let Some((id, name)) = row else {
                     return Poll::Ready(Ok(EquipmentReceipt {
                         changed: self.changed,
                     }));
                 };
-                let Some(name) = row.def.name.as_deref() else {
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                        "worn item has no resolved name",
-                    ))));
-                };
-                cx.emit(InteractReq::Unequip { name: name.into() })?;
-                self.pending_id = Some(row.def.id);
+                cx.emit(InteractReq::Unequip { name })?;
+                self.pending_id = Some(id);
             }
         }
         self.deadline = cx.active_now().saturating_add(SETTLE_BOUND);
