@@ -738,35 +738,27 @@ impl StepPlan for LoadoutPlan {
                     .map(|stat| stat.base)
             })
         };
-        let owned = self
-            .resolved
-            .iter()
-            .filter(|candidate| {
-                snapshot.inventory().is_some_and(|rows| {
-                    rows.value
-                        .iter()
-                        .any(|row| row.def.id == candidate.id && row.count > 0)
-                }) || snapshot.equipment().is_some_and(|rows| {
-                    rows.value
-                        .iter()
-                        .any(|row| row.def.id == candidate.id && row.count > 0)
+        let quest_complete = |name: &str| {
+            snapshot.quest_statuses().is_some_and(|rows| {
+                rows.value.iter().any(|row| {
+                    row.name.eq_ignore_ascii_case(name)
+                        && row.status() == api::snapshot::QuestListStatus::Complete
                 })
             })
+        };
+        let facts = crate::quester::loadouts::TierFacts {
+            attack: skill("attack").unwrap_or(0),
+            defence: skill("defence").unwrap_or(0),
+            ranged: skill("ranged").unwrap_or(0),
+            lost_city: quest_complete("Lost City"),
+            heroes: quest_complete("Heroes' Quest"),
+            dragon_slayer: quest_complete("Dragon Slayer"),
+        };
+        let available = self
+            .resolved
+            .iter()
             .map(|candidate| candidate.name.to_string())
             .collect::<Vec<_>>();
-        let row = if self.allow_lower_tier {
-            crate::quester::loadouts::fill_owned_lower_tiers(
-                &self.row,
-                &owned,
-                crate::quester::loadouts::TierFacts {
-                    attack: skill("attack").unwrap_or(0),
-                    defence: skill("defence").unwrap_or(0),
-                    ..Default::default()
-                },
-            )
-        } else {
-            self.row.clone()
-        };
         let resolve = |name: &str| {
             self.resolved
                 .iter()
@@ -777,23 +769,39 @@ impl StepPlan for LoadoutPlan {
         let mut bank_actions = Vec::new();
         let mut worn = Vec::new();
         if !self.strip {
-            for carry in &row.carry {
+            for carry in &self.row.carry {
                 bank_actions.push(BankAction::Withdraw {
                     item: resolve(&carry.item)?,
                     qty: i32::try_from(carry.qty).unwrap_or(i32::MAX),
                 });
             }
-            for name in row.worn.values() {
-                let item = resolve(name)?;
-                if !bank_actions.iter().any(
-                    |action| matches!(action, BankAction::Withdraw { item: known, .. } if known.id == item.id),
-                ) {
+            for (slot, name) in &self.row.worn {
+                let names = if self.allow_lower_tier {
+                    crate::quester::loadouts::tier_candidates(slot, name, &available, facts)
+                } else {
+                    vec![name.clone()]
+                };
+                if names.is_empty() {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "no stat/quest-legal loadout tier",
+                    )));
+                }
+                let items = names
+                    .iter()
+                    .map(|name| resolve(name))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if self.allow_lower_tier {
+                    bank_actions.push(BankAction::WithdrawAny {
+                        items: Arc::from(items.clone()),
+                        qty: 1,
+                    });
+                } else {
                     bank_actions.push(BankAction::Withdraw {
-                        item: item.clone(),
+                        item: items[0].clone(),
                         qty: 1,
                     });
                 }
-                worn.push(item);
+                worn.push(Arc::from(items));
             }
             bank_actions.push(BankAction::Close);
         }
@@ -824,7 +832,7 @@ impl StepPlan for LoadoutPlan {
 
 struct LoadoutRun {
     bank: Option<BankRun>,
-    worn: Arc<[BankItem]>,
+    worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
     strip: bool,
@@ -857,15 +865,44 @@ impl StepRun for LoadoutRun {
                 }
             }
         }
-        let request = if self.strip && !self.stripped {
-            Some(EquipmentRequest::Strip)
-        } else {
-            self.worn
-                .get(self.worn_index)
-                .map(|item| EquipmentRequest::Wear {
-                    id: item.id,
-                    name: Arc::clone(&item.name),
+        let request = loop {
+            if self.strip && !self.stripped {
+                break Some(EquipmentRequest::Strip);
+            }
+            let Some(items) = self.worn.get(self.worn_index) else {
+                break None;
+            };
+            let snapshot = cx.tick.cx.snapshot();
+            let Some(equipment) = snapshot.equipment() else {
+                return Poll::Pending;
+            };
+            if equipment.value.iter().any(|row| {
+                row.count > 0 && items.iter().any(|candidate| candidate.id == row.def.id)
+            }) {
+                self.worn_index += 1;
+                continue;
+            }
+            let Some(inventory) = snapshot.inventory() else {
+                return Poll::Pending;
+            };
+            let Some(item) = items
+                .iter()
+                .find(|candidate| {
+                    inventory
+                        .value
+                        .iter()
+                        .any(|row| row.count > 0 && row.def.id == candidate.id)
                 })
+                .cloned()
+            else {
+                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "withdrawn loadout tier is not held",
+                ))));
+            };
+            break Some(EquipmentRequest::Wear {
+                id: item.id,
+                name: Arc::clone(&item.name),
+            });
         };
         if let Some(request) = request {
             self.equipment = Some(
