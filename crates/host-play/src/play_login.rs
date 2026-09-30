@@ -385,6 +385,13 @@ impl SlotArm {
         self.session_online.store(true, Ordering::Release);
     }
 
+    /// Whether the current connected session still owns its one boundary
+    /// decision. The pump clears this in [`super::play_slots::end_slot_session`];
+    /// its caller must not publish or reset that same exit again.
+    pub(super) fn session_online(&self) -> bool {
+        self.session_online.load(Ordering::Acquire)
+    }
+
     pub(super) fn mark_session_offline(&self) {
         self.session_online.store(false, Ordering::Release);
     }

@@ -9918,13 +9918,13 @@ fn pair_out_len(client: &client::client::Client) -> usize {
     client.out.pos
 }
 
-/// Host::run_client returns on !ingame before another observe, so the
-/// companion callback never sees the off-world frame. A successful
-/// session generation after intentional logout is the delivered
-/// post-logout signal; last_login_reconnect may already be true from
-/// an earlier grant and must not admit stale pre-logout scene2.
+/// The live title pump normally delivers an off-world frame. A session
+/// generation after intentional logout is also sufficient when a queued
+/// handshake takes ownership before that frame is observed;
+/// last_login_reconnect may already be true from an earlier grant and must
+/// not admit stale pre-logout scene2.
 #[test]
-fn pair_companion_seeds_after_reconnect_without_an_off_world_frame() {
+fn pair_companion_accepts_session_change_if_off_world_frame_is_missed() {
     let scenario = get("nature_crafter_air").expect("nature_crafter_air is registered");
     let mut runner = crate::ScenarioRunner::new(scenario);
     let index = runner
@@ -9940,7 +9940,7 @@ fn pair_companion_seeds_after_reconnect_without_an_off_world_frame() {
     runner.companion_tick(index, &mut client);
     assert!(
         client.ingame,
-        "the fixture keeps the in-game frame the live scheduler actually delivers"
+        "this case exercises the generation fallback without an off-world frame"
     );
 
     let after_relog = pair_out_len(&client);
@@ -9959,7 +9959,7 @@ fn pair_companion_seeds_after_reconnect_without_an_off_world_frame() {
     runner.companion_tick(index, &mut client);
     assert!(
         pair_out_len(&client) > after_relog,
-        "session generation change without a delivered !ingame frame must admit WaitRelog and seed"
+        "a post-logout session generation must admit WaitRelog and seed"
     );
 }
 

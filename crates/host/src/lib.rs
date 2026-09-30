@@ -45,6 +45,8 @@ pub fn debug_enabled() -> bool {
 
 /// The 274 client's frame time: one `mainloop` pass every 20 ms.
 const FRAME_MS: Duration = Duration::from_millis(20);
+/// Java 289's steady-state title flame frame time.
+const TITLE_FLAME_FRAME_TIME: Duration = Duration::from_millis(37);
 
 /// `BOT_DEBUG=1` summaries: every N `client_frame`s, **not** per game tick.
 const DEBUG_SUMMARY_EVERY: u32 = 50;
@@ -233,18 +235,18 @@ impl Host {
     /// script's rising-edge `on_random` arm (`Host` when the slot has no
     /// scripts).
     ///
-    /// The scheduler is event-driven: a slot that captures input, is still
-    /// loading (TV static), or runs full-rate TV keeps the fixed 20 ms
-    /// [`FRAME_MS`] loop — that loop *is* the render cadence. A watch-only
-    /// 1 fps sidecar (draw on, nothing on the 20 ms loop) parks on the 1 s
-    /// wall-clock repaint bound; everything else parks on `poll(2)` over
-    /// the client socket's readability, the `ctl` control wake
+    /// The scheduler is event-driven: captured input, a loading scene (TV
+    /// static), or full-rate TV keeps the fixed 20 ms [`FRAME_MS`] mainloop.
+    /// Captured/full-rate title raster is bounded by the 37 ms flame deadline
+    /// or a visible login-state change. A visible uncaptured title uses the
+    /// same 1 s watch park as a ready in-game sidecar; its flame simulation
+    /// catches up from wall time on the next paint. Everything else parks on
+    /// `poll(2)` over the client socket's readability, the `ctl` control wake
     /// (focus/draw/stop/spawn), and the game-tick timeout ([`IDLE_PARK_MS`]),
-    /// waking once per park to drain the socket and re-evaluate. Packets
-    /// are never dropped: a readable socket wakes the park, and `mainloop`
-    /// is the first thing that drains it. A wake that consumed no bytes
-    /// (EOF, partial packet) skips the socket on the next park so it cannot
-    /// busy-spin.
+    /// waking once per park to drain the socket and re-evaluate. Packets are
+    /// never dropped: a readable socket wakes the park, and `mainloop` is the
+    /// first thing that drains it. A wake that consumed no bytes (EOF, partial
+    /// packet) skips the socket on the next park so it cannot busy-spin.
     ///
     /// The host owns the script run-policy overlay; `observe` synchronizes the
     /// active runtime and applies decoded FlatBuffer updates through its final
@@ -423,15 +425,25 @@ impl Host {
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
     {
         client.set_external_reconnect_owner(true);
+        client.set_hosted_title_label(Some(username));
         if let Some(inp) = input {
             inp.consume_native_frame(&mut client.shell);
         } else {
             client.shell.latch_click();
         }
+        let title_before = (!client.ingame).then(|| title_visible_fingerprint(client));
         let random_events = slot.random_events.load(Ordering::Relaxed);
         slot.settings.random_events = random_events;
         let t_loop = std::time::Instant::now();
         client.mainloop();
+        let title_dirty = !client.ingame && title_before != Some(title_visible_fingerprint(client));
+        if title_before.is_none() && !client.ingame {
+            // The in-game → title edge replaces the last game frame now and
+            // starts a fresh title cadence without storing another per-slot
+            // scheduler field.
+            slot.raster_last = None;
+            slot.raster_was_on = false;
+        }
         slot.loop_ns = slot
             .loop_ns
             .wrapping_add(t_loop.elapsed().as_nanos() as u64);
@@ -484,12 +496,14 @@ impl Host {
         let busy = busy || (client.stream.is_some() && client.out.pos > 0);
         // Channel-tune / first rebuild: TV static must re-roll every 20 ms,
         // not the 1 fps watch cadence (otherwise the zap is one snow frame
-        // a second and looks like a frozen splash).
+        // a second and looks like a frozen splash). A captured or full-rate
+        // title follows its 37 ms flame deadline plus visible-state dirtiness.
+        // An uncaptured title uses the same wall-clock 1 fps watch policy as a
+        // ready in-game view; TitleFlames catches up from elapsed wall time at
+        // the next paint instead of making the slot spin for animation alone.
         let zap = client.ingame && client.scene_state != 2;
-        // 50 fps paint is `full_rate` (focused-50 / sidecar-50 / live overlay).
-        // Capture still holds the 20 ms loop (`frame_cadence`) so input
-        // drains; it does not raise paint.
         let full_rate = input.map(|i| i.full_rate()).unwrap_or(false);
+        let title_fast = input.map(|i| i.enabled()).unwrap_or(false) || full_rate;
         // The backend the slot's head must be built for: the per-slot
         // CpuPix3D latch **or** the process `BOT_CPU` env (both false is
         // GPU-first, the host default). SlotInput must not hide `BOT_CPU=1`.
@@ -540,13 +554,33 @@ impl Host {
             rearm_after_head_drop(client, !client.draw && slot.draw_was_on, backend_flip);
         }
         slot.draw_was_on = client.draw;
-        let paint = raster_this_tick(
-            client.draw,
-            zap || full_rate,
-            t_loop,
-            &mut slot.raster_last,
-            &mut slot.raster_was_on,
-        );
+        let paint = if client.ingame {
+            raster_this_tick(
+                client.draw,
+                zap || full_rate,
+                t_loop,
+                &mut slot.raster_last,
+                &mut slot.raster_was_on,
+            )
+        } else if title_fast {
+            title_raster_this_tick(
+                client.draw,
+                title_dirty,
+                t_loop,
+                &mut slot.raster_last,
+                &mut slot.raster_was_on,
+            )
+        } else {
+            // Passing dirtiness through the draw gate is essential: on a
+            // draw-off logout edge it must not construct a renderer.
+            raster_this_tick(
+                client.draw,
+                title_dirty,
+                t_loop,
+                &mut slot.raster_last,
+                &mut slot.raster_was_on,
+            )
+        };
         let mut frame: Option<FrameOutput> = None;
         if paint {
             let t_r = std::time::Instant::now();
@@ -834,6 +868,58 @@ fn stream_wait_handle(stream: &client::io::ClientStream) -> slot_io::WaitHandle 
     }
 }
 
+/// Scalar fingerprint of title fields that change what the next paint shows.
+/// FNV-1a stays stack-only and catches same-length message/text replacements,
+/// not just screen/focus transitions.
+fn title_visible_fingerprint(client: &Client) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for value in [client.loginscreen as u64, client.login_select as u64] {
+        hash ^= value;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    for text in [
+        client.login_user.as_str(),
+        client.login_pass.as_str(),
+        client.login_mes1.as_str(),
+        client.login_mes2.as_str(),
+    ] {
+        for byte in text.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+/// Fast logged-out paint cadence for a captured/full-rate title. The first
+/// visible title paints immediately; thereafter a paint is due only when the
+/// flame clock reaches 37 ms or the title input loop changed visible state.
+/// An input paint does not postpone the next flame deadline.
+fn title_raster_this_tick(
+    draw: bool,
+    dirty: bool,
+    now: Instant,
+    last_flame: &mut Option<Instant>,
+    was_on: &mut bool,
+) -> bool {
+    if !draw {
+        *was_on = false;
+        return false;
+    }
+    let rising = !*was_on;
+    *was_on = true;
+    let flame_due =
+        rising || last_flame.is_none_or(|last| now.duration_since(last) >= TITLE_FLAME_FRAME_TIME);
+    if flame_due {
+        *last_flame = Some(now);
+    }
+    flame_due || dirty
+}
+
 /// Watch-only repaint bound: the rail/sidecar picture refreshes once a
 /// wall-clock second. Elapsed time, not a tick count — the slot is parked
 /// on [`WATCH_PARK_MS`], so ticks (one per wake) are not a clock.
@@ -910,7 +996,7 @@ struct SlotLoop {
     /// flip on a live slot (the `Client` flips `set_lowmem`, never a
     /// restart) drops the head until the next paint rebuilds it.
     renderer_lowmem: Option<bool>,
-    /// `Instant` of the last paint of any kind; the watch-only 1 fps
+    /// `Instant` of the last in-game paint; the ready watch-only 1 fps
     /// decision repaints when this is ≥1 s old.
     raster_last: Option<Instant>,
     raster_was_on: bool,

@@ -650,6 +650,9 @@ impl<Io> OperatorSession<Io> {
                 if cancelled_removal && want_login && arm.login_latched() {
                     arm.arm_explicit_login();
                 }
+                if let Some(play) = self.play.as_ref() {
+                    play.wake(name);
+                }
                 Ok(())
             }
             None => {
@@ -672,6 +675,9 @@ impl<Io> OperatorSession<Io> {
             play.reap_finished_workers();
         }
         let result = self.arm_login(name, surface);
+        if let Some(play) = self.play.as_ref() {
+            play.wake(name);
+        }
         self.record_login(op, name, result);
         op
     }
