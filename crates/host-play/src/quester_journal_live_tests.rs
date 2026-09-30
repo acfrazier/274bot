@@ -21,7 +21,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::interact;
 use api::quest_facts::QuestCatalog;
+use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
+use api::snapshot::GameSnapshot;
+use client::client::MiniMenuAction;
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::{compile_uncached_for_test, decode_cook};
 use script::quester::path::{
@@ -37,6 +40,8 @@ const SYNTHETIC_QUEST: &str = "runemysteries";
 const ACCOUNT_UID: i32 = 274_279_003;
 const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(240);
 const COOK_TIMEOUT: Duration = Duration::from_secs(1000);
+const JOURNAL_ROOT_R289: i32 = 8134;
+const JOURNAL_TITLE_COMPONENT_R289: i32 = 8144;
 
 #[derive(Clone, Copy)]
 enum SetupMode {
@@ -51,6 +56,17 @@ struct SetupState {
     logout_sent: bool,
     saw_offline: bool,
     relog_ready: bool,
+    journal_capture: bool,
+    journal_capture_ready: bool,
+    journal_expected_display: Option<String>,
+    journal_expected_title: Option<String>,
+    journal_last_modal: Option<i32>,
+    journal_open_count: u32,
+    journal_close_count: u32,
+    journal_click_count: u32,
+    journal_title_seen: bool,
+    journal_titles: Vec<String>,
+    journal_title_mismatch: Option<String>,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -170,6 +186,169 @@ fn post_relog(client: &mut client::client::Client, mode: SetupMode) {
     );
 }
 
+fn normalize_journal_title(title: &str) -> &str {
+    title.strip_prefix("@dre@").unwrap_or(title).trim()
+}
+
+fn observed_journal_title(snapshot: &GameSnapshot) -> Option<String> {
+    snapshot
+        .widgets()
+        .iter()
+        .find(|widget| {
+            widget.root_component_id == JOURNAL_ROOT_R289
+                && widget.component_id == JOURNAL_TITLE_COMPONENT_R289
+                && !widget.hidden
+        })
+        .and_then(|widget| widget.text.clone())
+}
+
+fn observe_journal(client: &mut client::client::Client, state: &mut SetupState) {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    let modal = snapshot.modals().main;
+    if state.journal_last_modal != Some(modal) {
+        if modal == JOURNAL_ROOT_R289 && state.journal_last_modal != Some(JOURNAL_ROOT_R289) {
+            state.journal_open_count += 1;
+        }
+        if state.journal_last_modal == Some(JOURNAL_ROOT_R289) && modal != JOURNAL_ROOT_R289 {
+            state.journal_close_count += 1;
+        }
+        state.journal_last_modal = Some(modal);
+    }
+    if modal == JOURNAL_ROOT_R289 {
+        if let Some(title) = observed_journal_title(&snapshot) {
+            state.journal_title_seen = true;
+            if state.journal_titles.last() != Some(&title) {
+                state.journal_titles.push(title.clone());
+            }
+            if state
+                .journal_expected_title
+                .as_deref()
+                .is_some_and(|expected| normalize_journal_title(&title) != expected)
+            {
+                state.journal_title_mismatch = Some(title);
+            }
+        }
+    }
+    let row_component = client.menu_param_c.first().copied();
+    if client.menu_action.first().copied() == Some(MiniMenuAction::IF_BUTTON) {
+        if let (Some(component), Some(display)) = (
+            row_component,
+            state.journal_expected_display.as_deref(),
+        ) {
+            let journal_row = snapshot
+                .quest_statuses()
+                .iter()
+                .any(|row| row.component_id == component && row.name.eq_ignore_ascii_case(display));
+            if journal_row {
+                state.journal_click_count += 1;
+                // `doAction` already consumed this command. Clear only the
+                // component slot so a later identical click is observable
+                // without collecting or injecting any production traffic.
+                if let Some(component) = client.menu_param_c.get_mut(0) {
+                    *component = -1;
+                }
+            }
+        }
+    }
+    state.journal_capture_ready = true;
+}
+
+#[derive(Debug, Clone)]
+struct JournalProbe {
+    capture_ready: bool,
+    main_modal: Option<i32>,
+    opens: u32,
+    closes: u32,
+    clicks: u32,
+    title_seen: bool,
+    titles: Vec<String>,
+    title_mismatch: Option<String>,
+}
+
+fn arm_journal_capture(state: &Arc<Mutex<SetupState>>, display: &str, title: &str) {
+    let mut state = state.lock().expect("journal capture state");
+    state.journal_capture = true;
+    state.journal_capture_ready = false;
+    state.journal_expected_display = Some(display.to_string());
+    state.journal_expected_title = Some(title.to_string());
+    state.journal_last_modal = None;
+    state.journal_open_count = 0;
+    state.journal_close_count = 0;
+    state.journal_click_count = 0;
+    state.journal_title_seen = false;
+    state.journal_titles.clear();
+    state.journal_title_mismatch = None;
+}
+
+fn journal_probe(state: &Arc<Mutex<SetupState>>) -> JournalProbe {
+    let state = state.lock().expect("journal capture state");
+    JournalProbe {
+        capture_ready: state.journal_capture_ready,
+        main_modal: state.journal_last_modal,
+        opens: state.journal_open_count,
+        closes: state.journal_close_count,
+        clicks: state.journal_click_count,
+        title_seen: state.journal_title_seen,
+        titles: state.journal_titles.clone(),
+        title_mismatch: state.journal_title_mismatch.clone(),
+    }
+}
+
+fn assert_exact_journal_titles(probe: &JournalProbe, expected: &str, label: &str) {
+    assert!(probe.title_seen, "{label} never exposed the journal title");
+    assert!(
+        probe.title_mismatch.is_none(),
+        "{label} observed a foreign journal title: {:?}",
+        probe.title_mismatch
+    );
+    assert!(
+        probe
+            .titles
+            .iter()
+            .all(|title| normalize_journal_title(title) == expected),
+        "{label} observed unexpected journal titles: {:?}",
+        probe.titles
+    );
+}
+
+fn wait_until_fast(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if ready() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} timed out after {timeout:?}"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn wait_journal_open(
+    state: &Arc<Mutex<SetupState>>,
+    expected_title: &str,
+    label: &str,
+) -> JournalProbe {
+    wait_until_fast(label, Duration::from_secs(20), || {
+        let probe = journal_probe(state);
+        probe.capture_ready && probe.main_modal == Some(JOURNAL_ROOT_R289) && probe.title_seen
+    });
+    wait_until_fast("journal row click capture", Duration::from_secs(2), || {
+        journal_probe(state).clicks >= 1
+    });
+    let probe = journal_probe(state);
+    assert_exact_journal_titles(&probe, expected_title, label);
+    assert_eq!(
+        probe.main_modal,
+        Some(JOURNAL_ROOT_R289),
+        "{label} must interrupt while the owned journal is open"
+    );
+    probe
+}
+
+
 fn frame_hook(
     state: Arc<Mutex<SetupState>>,
     mode: SetupMode,
@@ -185,6 +364,9 @@ fn frame_hook(
         }
         if client.scene_state != 2 {
             return;
+        }
+        if state.journal_capture {
+            observe_journal(client, &mut state);
         }
         if !state.primed {
             prime(client, mode);
@@ -277,6 +459,14 @@ fn truth(status: &ScriptStatus, key: &str) -> Truth {
     }
 }
 
+fn progress_evidence(status: &ScriptStatus, key: &str) -> EvidenceStamp {
+    match field(status, key) {
+        StatusValue::Quest(progress) => progress.evidence,
+        other => panic!("status {key:?} is not Quest progress: {other:?}"),
+    }
+}
+
+
 fn wait_status(
     play: &super::Play,
     name: &str,
@@ -304,6 +494,33 @@ fn wait_status(
         thread::sleep(Duration::from_millis(100));
     }
 }
+
+fn wait_read_journal_active(
+    play: &super::Play,
+    name: &str,
+    target: api::selected::RunKey,
+    expected_lines: &str,
+) -> Arc<ScriptStatus> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(status) = play.script_native_status(name) {
+            if status.run == target
+                && matches!(status.phase, NativePhase::Waiting | NativePhase::Working)
+                && truth(&status, "needs_read") == Truth::True
+                && text(&status, "journal_lines") == expected_lines
+            {
+                return status;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "ReadJournal never exposed a pending Waiting/Working status; status={:?}",
+            play.script_native_status(name)
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 
 fn wait_test_start(handle: &ScriptStartHandle, name: &str) {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -492,6 +709,39 @@ fn compile_synthetic(
     path
 }
 
+fn start_synthetic(
+    handle: &ScriptStartHandle,
+    play: &super::Play,
+    name: &str,
+    path: Arc<script::quester::compile::CompiledPath>,
+    quests: &Arc<QuestCatalog>,
+    selected: &Arc<api::game_data::SelectedGameData>,
+) -> api::selected::RunKey {
+    let run = handle
+        .start_test_script(
+            name,
+            Box::new(Quester::new(
+                api::selected::RunKey {
+                    slot: 0,
+                    run: 0,
+                    session: 0,
+                },
+                path,
+                Arc::clone(quests),
+            )),
+            Some(Arc::clone(selected)),
+        )
+        .expect("install synthetic Quester");
+    assert_eq!(
+        run,
+        play.script_native_run(name)
+            .expect("synthetic run key after install")
+    );
+    play.wake(name);
+    run
+}
+
+
 #[test]
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
 fn live_quester_journal_synthetic_runemysteries() {
@@ -636,9 +886,339 @@ fn live_quester_journal_synthetic_runemysteries() {
         parked.run,
         text(&parked, "journal_lines")
     );
+
+    // Read now is a real retry command for a parked run. It must expose a
+    // pending native read first, then publish a later no-match proof and park
+    // again; an Ok response that leaves the slot Blocked is not sufficient.
+    let parked_lines = text(&parked, "journal_lines").to_string();
+    let parked_evidence = progress_evidence(&parked, "progress");
+    assert!(
+        play.script_native_read_journal(&name, no_match_run).is_ok(),
+        "ReadJournal must accept the current parked native run"
+    );
+    let active_read =
+        wait_read_journal_active(&play, &name, no_match_run, &parked_lines);
+    assert_eq!(active_read.run, no_match_run);
+    let reread = wait_status(
+        &play,
+        &name,
+        SYNTHETIC_TIMEOUT,
+        "no-match ReadJournal re-parking",
+        |status| {
+            status.phase == NativePhase::Blocked
+                && text(status, "rule") == "unknown"
+                && text(status, "journal_lines") == parked_lines
+                && {
+                    let evidence = progress_evidence(status, "progress");
+                    evidence.run == parked_evidence.run
+                        && (evidence.tick, evidence.sequence)
+                            > (parked_evidence.tick, parked_evidence.sequence)
+                }
+        },
+    );
+    assert_eq!(reread.run, no_match_run);
+    assert_eq!(truth(&reread, "needs_read"), Truth::True);
+    match field(&reread, "progress") {
+        StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
+        other => panic!("re-read progress is not Quest: {other:?}"),
+    }
+    println!(
+        "synthetic no-match ReadJournal re-read status: run={:?} raw={:?} status={reread:?}",
+        reread.run,
+        text(&reread, "journal_lines")
+    );
+
     drop(play);
+
+
     drop(home);
 }
+
+fn prepare_synthetic_live(
+    label: &str,
+) -> (
+    ThrowawayHome,
+    super::Play,
+    Arc<Mutex<SetupState>>,
+    String,
+    Arc<api::game_data::SelectedGameData>,
+    Arc<QuestCatalog>,
+    Arc<script::quester::compile::CompiledPath>,
+    String,
+) {
+    let (home, play, setup, name) = launch_live(SetupMode::Synthetic, label);
+    wait_relogged(&play, &setup);
+    let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
+    let quests =
+        Arc::new(QuestCatalog::from_identity(selected.quest_identity()).expect("quest catalog"));
+    let facts = quests
+        .quest(SYNTHETIC_QUEST)
+        .expect("Rune Mysteries catalog row");
+    let expected_display = facts.display.to_string();
+    let expected_title = facts
+        .journal_title
+        .as_deref()
+        .expect("Rune Mysteries journal title")
+        .to_string();
+    arm_journal_capture(&setup, &expected_display, &expected_title);
+    wait_until_fast("journal capture hook", Duration::from_secs(5), || {
+        journal_probe(&setup).capture_ready
+    });
+    let path = compile_synthetic(&selected, &quests, false);
+    (
+        home,
+        play,
+        setup,
+        name,
+        selected,
+        quests,
+        path,
+        expected_title,
+    )
+}
+
+fn wait_recovered_synthetic(
+    play: &super::Play,
+    name: &str,
+    state: &Arc<Mutex<SetupState>>,
+    run: api::selected::RunKey,
+    baseline: &JournalProbe,
+    expected_title: &str,
+    label: &str,
+) -> Arc<ScriptStatus> {
+    let recovered = wait_status(
+        play,
+        name,
+        SYNTHETIC_TIMEOUT,
+        label,
+        |status| {
+            status.phase == NativePhase::Working
+                && status.run == run
+                && text(status, "stage") == "rm:3"
+                && text(status, "rule") == "rm:3"
+                && text(status, "journal_lines").contains("Research Package")
+                && truth(status, "needs_read") == Truth::False
+        },
+    );
+    let after = journal_probe(state);
+    assert_exact_journal_titles(&after, expected_title, label);
+    assert!(
+        after.closes > baseline.closes,
+        "{label} must observe the recovered journal close: before={baseline:?} after={after:?}"
+    );
+    let click_delta = after.clicks.saturating_sub(baseline.clicks);
+    assert!(
+        click_delta <= 1,
+        "{label} emitted more than one recovery journal click: before={baseline:?} after={after:?}"
+    );
+    assert_eq!(
+        after.opens,
+        baseline.opens + click_delta,
+        "{label} must either adopt the retained page or freshly open exactly one page"
+    );
+    assert_eq!(
+        after.clicks,
+        baseline.clicks + click_delta,
+        "{label} click accounting must match adoption/fresh-open accounting"
+    );
+    recovered
+}
+
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
+fn live_quester_journal_stop_start_recovers_stranded_page() {
+    assert!(
+        live(),
+        "live_quester_journal_stop_start_recovers_stranded_page requires LIVE=1"
+    );
+    let (home, play, setup, name, selected, quests, path, expected_title) =
+        prepare_synthetic_live("journal-stop");
+    let handle = play.script_start_handle();
+    let first_run = start_synthetic(
+        &handle,
+        &play,
+        &name,
+        Arc::clone(&path),
+        &quests,
+        &selected,
+    );
+    let _opened = wait_journal_open(
+        &setup,
+        &expected_title,
+        "Stop mid-read journal capture",
+    );
+    assert!(
+        play.script_native_stop(&name, first_run),
+        "stop the Quester while root 8134 is still open"
+    );
+    wait_until("Stop mid-read idle", Duration::from_secs(20), || {
+        handle.idle(&name)
+    });
+    let baseline = journal_probe(&setup);
+    assert_exact_journal_titles(&baseline, &expected_title, "Stop stranded page");
+    println!("Stop mid-read stranded journal probe: {baseline:?}");
+
+    let restarted = start_synthetic(
+        &handle,
+        &play,
+        &name,
+        Arc::clone(&path),
+        &quests,
+        &selected,
+    );
+    let recovered = wait_recovered_synthetic(
+        &play,
+        &name,
+        &setup,
+        restarted,
+        &baseline,
+        &expected_title,
+        "Stop then Start journal recovery",
+    );
+    let recovered_probe = journal_probe(&setup);
+    let advanced = wait_status(
+        &play,
+        &name,
+        SYNTHETIC_TIMEOUT,
+        "Stop recovery Rune Mysteries advancement",
+        |status| {
+            status.phase == NativePhase::Working
+                && status.run == restarted
+                && text(status, "stage") == "rm:4"
+                && text(status, "rule") == "rm:4"
+                && text(status, "journal_lines").contains("delivered it")
+                && truth(status, "needs_read") == Truth::False
+        },
+    );
+    wait_until_fast("Stop recovery fresh journal click", Duration::from_secs(2), || {
+        journal_probe(&setup).clicks > recovered_probe.clicks
+    });
+    let advanced_probe = journal_probe(&setup);
+    assert_exact_journal_titles(
+        &advanced_probe,
+        &expected_title,
+        "Stop recovery advanced journal",
+    );
+    assert_eq!(
+        advanced_probe.clicks,
+        recovered_probe.clicks + 1,
+        "advancement must perform one fresh journal click after recovery"
+    );
+    assert!(
+        advanced_probe.closes > recovered_probe.closes,
+        "advancement must close its fresh journal read"
+    );
+    assert_eq!(text(&advanced, "stage"), "rm:4");
+    println!(
+        "Stop recovery advanced journal status: run={:?} raw={:?} status={advanced:?}",
+        advanced.run,
+        text(&advanced, "journal_lines")
+    );
+    assert!(play.script_native_stop(&name, restarted), "cleanup Stop recovery run");
+    wait_until("Stop recovery cleanup", Duration::from_secs(20), || {
+        handle.idle(&name)
+    });
+    drop(play);
+    drop(home);
+    let _ = recovered;
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
+fn live_quester_journal_pause_resume_recovers_stranded_page() {
+    assert!(
+        live(),
+        "live_quester_journal_pause_resume_recovers_stranded_page requires LIVE=1"
+    );
+    let (home, play, setup, name, selected, quests, path, expected_title) =
+        prepare_synthetic_live("journal-pause");
+    let handle = play.script_start_handle();
+    let run = start_synthetic(
+        &handle,
+        &play,
+        &name,
+        Arc::clone(&path),
+        &quests,
+        &selected,
+    );
+    let _opened = wait_journal_open(
+        &setup,
+        &expected_title,
+        "Pause mid-read journal capture",
+    );
+    assert!(
+        play.script_native_pause(&name, run, true),
+        "pause the Quester while root 8134 is still open"
+    );
+    wait_until_fast("Pause mid-read paused", Duration::from_secs(10), || {
+        handle.run_state(&name) == script::RunState::Paused
+    });
+    let baseline = journal_probe(&setup);
+    assert_exact_journal_titles(&baseline, &expected_title, "Pause stranded page");
+    println!("Pause mid-read stranded journal probe: {baseline:?}");
+    assert!(
+        play.script_native_pause(&name, run, false),
+        "resume the paused Quester"
+    );
+
+    let recovered = wait_recovered_synthetic(
+        &play,
+        &name,
+        &setup,
+        run,
+        &baseline,
+        &expected_title,
+        "Pause then Resume journal recovery",
+    );
+    let recovered_probe = journal_probe(&setup);
+    let advanced = wait_status(
+        &play,
+        &name,
+        SYNTHETIC_TIMEOUT,
+        "Pause recovery Rune Mysteries advancement",
+        |status| {
+            status.phase == NativePhase::Working
+                && status.run == run
+                && text(status, "stage") == "rm:4"
+                && text(status, "rule") == "rm:4"
+                && text(status, "journal_lines").contains("delivered it")
+                && truth(status, "needs_read") == Truth::False
+        },
+    );
+    wait_until_fast("Pause recovery fresh journal click", Duration::from_secs(2), || {
+        journal_probe(&setup).clicks > recovered_probe.clicks
+    });
+    let advanced_probe = journal_probe(&setup);
+    assert_exact_journal_titles(
+        &advanced_probe,
+        &expected_title,
+        "Pause recovery advanced journal",
+    );
+    assert_eq!(
+        advanced_probe.clicks,
+        recovered_probe.clicks + 1,
+        "advancement must perform one fresh journal click after recovery"
+    );
+    assert!(
+        advanced_probe.closes > recovered_probe.closes,
+        "advancement must close its fresh journal read"
+    );
+    assert_eq!(text(&advanced, "stage"), "rm:4");
+    println!(
+        "Pause recovery advanced journal status: run={:?} raw={:?} status={advanced:?}",
+        advanced.run,
+        text(&advanced, "journal_lines")
+    );
+    assert!(play.script_native_stop(&name, run), "cleanup Pause recovery run");
+    wait_until("Pause recovery cleanup", Duration::from_secs(20), || {
+        handle.idle(&name)
+    });
+    drop(play);
+    drop(home);
+    let _ = recovered;
+}
+
 
 #[test]
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
