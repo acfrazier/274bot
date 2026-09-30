@@ -66,6 +66,7 @@ const JOURNAL_TITLE_COMPONENT_R289: i32 = 8144;
 const JOURNAL_ROOT: i32 = 8134;
 #[cfg(all(windows, feature = "journal-paint-proof"))]
 const JOURNAL_TITLE_COMPONENT: i32 = 8144;
+const JOURNAL_BUTTON: i32 = 42;
 const JOURNAL_CLOSE_X: i32 = 496;
 const JOURNAL_CLOSE_Y: i32 = 8;
 
@@ -896,6 +897,7 @@ struct SetupState {
     journal_title_seen: bool,
     journal_titles: Vec<String>,
     journal_title_mismatch: Option<String>,
+    open_unowned_journal: bool,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -1216,6 +1218,13 @@ fn frame_hook(
         if state.logout_sent && state.saw_offline && !state.relog_ready {
             post_relog(client, mode);
             state.relog_ready = true;
+        }
+        if state.open_unowned_journal && !client.journal_paint_hidden() {
+            assert!(
+                interact::press(client, JOURNAL_BUTTON),
+                "unowned Rune Mysteries journal button must be accepted"
+            );
+            state.open_unowned_journal = false;
         }
     }
 }
@@ -1633,9 +1642,23 @@ fn live_quester_journal_synthetic_runemysteries() {
                         .is_some_and(|status| truth(&status, "needs_read") == Truth::True)
             },
         );
+        eprintln!(
+            "journal-proof-stop event=requested run={run:?} unix_ns={}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("journal proof clock")
+                .as_nanos()
+        );
         assert!(
             play.script_native_stop(&name, run),
             "forced Stop must revoke the initial synthetic journal read"
+        );
+        eprintln!(
+            "journal-proof-stop event=revoked run={run:?} unix_ns={}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("journal proof clock")
+                .as_nanos()
         );
         wait_until(
             "forced synthetic read Stop",
@@ -1643,13 +1666,19 @@ fn live_quester_journal_synthetic_runemysteries() {
             || handle.idle(&name),
         );
         wait_until(
-            "forced synthetic read flag cleared",
+            "normal paint after forced Stop",
             Duration::from_secs(20),
-            || {
-                play.script_native_status(&name)
-                    .is_some_and(|status| truth(&status, "needs_read") == Truth::False)
-            },
+            || capture.saw_visible_after_hidden() || capture.normal_closed_paint(),
         );
+        if !capture.saw_visible_after_hidden() {
+            // Stop can leave the root open or close it. Reopen only when
+            // needed, through the real client button path without a reader.
+            setup
+                .lock()
+                .expect("quester live setup lock")
+                .open_unowned_journal = true;
+            play.wake(&name);
+        }
         wait_until(
             "normal visible journal paint after forced Stop",
             Duration::from_secs(20),
