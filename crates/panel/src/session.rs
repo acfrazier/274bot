@@ -3865,7 +3865,7 @@ impl Session {
             return false;
         };
         let armed = self.mem_relog_armed.as_deref() == Some(name.as_str());
-        if self.core.memory_relog_warning(&name) && !armed {
+        if self.focused_memory_relog_warning() && !armed {
             self.mem_relog_armed = Some(name);
             return false;
         }
