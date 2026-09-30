@@ -658,6 +658,14 @@ impl FollowRun {
             arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
         } else if edge.kind == TransportKind::Glider {
             arrived(edge.to, GLIDER_ARRIVE_RADIUS)
+        } else if matches!(edge.kind, TransportKind::Ladder | TransportKind::Stairs)
+            && edge.at.level != edge.to.level
+            && edge.at.x == edge.to.x
+            && edge.at.z == edge.to.z
+        {
+            // `movecoord(coord(), 0, ±1, 0)` preserves the player's adjacent
+            // stand. The graph derives its nominal destination from the loc.
+            arrived(edge.to, VERTICAL_ARRIVE_RADIUS.max(close_enough))
         } else if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
             // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile,
             // one Chebyshev off the loc-baked dest when the hop is taken

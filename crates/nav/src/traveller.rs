@@ -56,6 +56,9 @@ const TELEPORT_ARRIVE_RADIUS: i32 = 2;
 /// so the baked dest (loc ± 6400) is one tile beside the live landing.
 /// Independent of host WalkNear `close_enough` 0 — not a global radius.
 const CELLAR_ARRIVE_RADIUS: i32 = 1;
+/// Pure vertical ladder/stair scripts change the player's level, retaining
+/// the adjacent stand rather than teleporting onto the loc-baked tile.
+const VERTICAL_ARRIVE_RADIUS: i32 = 1;
 /// Gnome glider landing scatter: `p_teleport(map_findsquare($dest, 0, 1,
 /// lineofwalk))` in `gnome_glider.rs2` — chebyshev 1, never the pad
 /// exactly when a loc/NPC occupies it.
