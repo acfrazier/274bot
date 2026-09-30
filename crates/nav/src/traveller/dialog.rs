@@ -183,7 +183,7 @@ pub(super) fn hop_dialog_choice(
         return npc_hop_dialog_choice(edge, packed, chat_options);
     }
     if edge.kind == TransportKind::Door {
-        return door_hop_dialog_choice(chat_options);
+        return door_hop_dialog_choice(edge.loc_id, chat_options);
     }
     Some(dest_dialog_choice(leg, teleports, packed))
 }
@@ -192,13 +192,18 @@ pub(super) fn hop_dialog_choice(
 /// Shantay first-crossing disclaimer. Unknown or duplicate labels fail
 /// closed — choice 1 on the toll page is "walk around", not pay.
 pub(super) fn door_hop_dialog_choice(
+    loc_id: i32,
     chat_options: &[api::snapshot::ChatOptionView],
 ) -> Option<i32> {
-    for matcher in [
-        is_alkharid_pay_choice as fn(&str) -> bool,
-        is_shantay_disclaimer_choice,
-    ] {
-        match unique_option_choice(chat_options, matcher) {
+    let matchers: &[fn(&str) -> bool] = if loc_id == SHANTAY_HENGE_LOC_ID {
+        &[is_shantay_disclaimer_choice]
+    } else if loc_id == AL_KHARID_TOLL_LEFT_LOC_ID || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID {
+        &[is_alkharid_pay_choice]
+    } else {
+        return None;
+    };
+    for matcher in matchers {
+        match unique_option_choice(chat_options, *matcher) {
             Err(()) => return None,
             Ok(Some(choice)) => return Some(choice),
             Ok(None) => {}
@@ -371,8 +376,12 @@ pub(super) fn door_hop_choice_blocked(
     if !is_alkharid_pay_choice(text) {
         return None;
     }
-    (snapshot.inv_count(995) < AL_KHARID_TOLL_COINS)
-        .then(|| format!("need {AL_KHARID_TOLL_COINS} coins to pay the Al Kharid toll"))
+    for &(id, count) in &edge.item_req {
+        if snapshot.inv_count(id) < count {
+            return Some(format!("need {count} coins to pay the Al Kharid toll"));
+        }
+    }
+    None
 }
 
 pub(super) fn spirit_tree_choice(

@@ -817,7 +817,6 @@ pub(crate) const AL_KHARID_TOLL_LEFT_LOC_ID: i32 = 2882;
 /// `border_gate_toll_right` in `pack/loc.pack`: the northern Al Kharid
 /// border gate (m51_50 (4,28) = (3268,3228)).
 pub(crate) const AL_KHARID_TOLL_RIGHT_LOC_ID: i32 = 2883;
-pub(crate) use toll::AL_KHARID_TOLL_COINS;
 
 /// Dialogue-driven Door hops: the Al Kharid border toll (`border_gate.rs2`
 /// `oploc1` → border-guard `p_choice3`) and the Shantay henge

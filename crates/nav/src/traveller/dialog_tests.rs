@@ -42,6 +42,13 @@ fn choice(kind: TransportKind, texts: &[&str]) -> Option<i32> {
     hop_dialog_choice(&leg, None, None, &chat_options)
 }
 
+fn door_choice(loc_id: i32, texts: &[&str]) -> Option<i32> {
+    let mut e = edge(TransportKind::Door);
+    e.loc_id = loc_id;
+    let leg = Leg::Transport { edge: e };
+    hop_dialog_choice(&leg, None, None, &options(texts))
+}
+
 #[test]
 fn npc_dialog_sailor_crandor_branch_selects_ride_option() {
     assert_eq!(
@@ -298,8 +305,8 @@ fn hop_dialog_choice_rides_the_young_spirit_tree_single_destination() {
 #[test]
 fn door_dialog_alkharid_pay_selects_yes_ok_not_the_refuse_branch() {
     assert_eq!(
-        choice(
-            TransportKind::Door,
+        door_choice(
+            AL_KHARID_TOLL_LEFT_LOC_ID,
             &[
                 "No thank you, I'll walk around.",
                 "Who does my money go to?",
@@ -313,8 +320,8 @@ fn door_dialog_alkharid_pay_selects_yes_ok_not_the_refuse_branch() {
 #[test]
 fn door_dialog_shantay_disclaimer_selects_enter_regardless_of_order() {
     assert_eq!(
-        choice(
-            TransportKind::Door,
+        door_choice(
+            SHANTAY_HENGE_LOC_ID,
             &[
                 "No, I'm having serious second thoughts now.",
                 "Yeah, that poster doesn't scare me!",
@@ -326,6 +333,12 @@ fn door_dialog_shantay_disclaimer_selects_enter_regardless_of_order() {
 
 #[test]
 fn door_dialog_unknown_or_duplicate_page_fails_closed() {
-    assert_eq!(choice(TransportKind::Door, &["Hello.", "Goodbye."]), None);
-    assert_eq!(choice(TransportKind::Door, &["Yes, ok.", "Yes, ok."]), None);
+    assert_eq!(
+        door_choice(AL_KHARID_TOLL_LEFT_LOC_ID, &["Hello.", "Goodbye."]),
+        None
+    );
+    assert_eq!(
+        door_choice(AL_KHARID_TOLL_LEFT_LOC_ID, &["Yes, ok.", "Yes, ok."]),
+        None
+    );
 }

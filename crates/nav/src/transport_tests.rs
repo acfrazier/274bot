@@ -7512,7 +7512,7 @@ fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
         graph
             .edges
             .iter()
-            .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, AL_KHARID_TOLL_COINS)]),
+            .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, 10)]),
         "no toll or henge hops without border_gate.loc"
     );
     assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
@@ -7574,7 +7574,7 @@ param=next_loc_stage,loc_1563
             .edges
             .iter()
             .filter(|e| e.loc_id == 2882)
-            .all(|e| { e.item_req == vec![(995, AL_KHARID_TOLL_COINS)] && e.varp_req.is_empty() }),
+            .all(|e| { e.item_req == vec![(995, 10)] && e.varp_req.is_empty() }),
         "a missing waiver script must leave only paid crossings"
     );
     fx.write("pack/varp.pack", "419=princequest\n");
@@ -7796,7 +7796,7 @@ param=next_loc_stage,loc_1564
         assert_eq!(e.option, 1, "Open {e:?}");
         assert_eq!(e.ticks, 1, "{e:?}");
         assert_eq!(e.open_loc_id, Some(1564), "{e:?}");
-        assert_eq!(e.item_req, vec![(995, AL_KHARID_TOLL_COINS)], "{e:?}");
+        assert_eq!(e.item_req, vec![(995, 10)], "{e:?}");
         assert_eq!(e.at, extras[0].at);
         assert!(e.skill_req.is_empty() && e.quest_req.is_empty(), "{e:?}");
     }
@@ -7845,7 +7845,7 @@ param=next_loc_stage,loc_1562
         .cloned()
         .collect();
     assert_eq!(left.len(), 2, "left gate still emits: {left:?}");
-    assert_eq!(left[0].item_req, vec![(995, AL_KHARID_TOLL_COINS)]);
+    assert_eq!(left[0].item_req, vec![(995, 10)]);
     assert_eq!(left[0].dir, Some(DoorDir::W));
     assert_eq!(left[1].dir, Some(DoorDir::E));
     assert!(
