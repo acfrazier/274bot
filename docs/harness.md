@@ -32,6 +32,11 @@ cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
 ```
 
+Live runs mint fresh accounts named `live<token>_<i>` (at most 12
+characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace
+`live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs can be told
+apart in engine logs and player saves. An invalid value stops the run.
+
 Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`). The door test also accepts
 `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven

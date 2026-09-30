@@ -492,7 +492,6 @@ fn mint_live_names_are_unique_and_never_test() {
             assert_eq!(names.len(), n);
             for name in names {
                 assert_ne!(name, "test", "a live boot must never log in `test`");
-                assert!(name.starts_with("live"), "minted name: {name}");
                 assert!(
                     name.len() <= 12,
                     "the engine enforces the 12-char username limit: {name}"
@@ -521,6 +520,38 @@ fn mint_live_names_keep_the_12_char_limit_at_scale() {
 #[test]
 fn mint_live_names_zero_is_empty() {
     assert!(mint_live_names(0).is_empty());
+}
+
+#[test]
+fn live_name_prefix_override_replaces_live_within_the_name_budget() {
+    use crate::play_bootstrap::mint_live_names_with;
+    let mut all = std::collections::HashSet::new();
+    for n in [1, 2, 10, 50] {
+        for prefix in ["tm", "abcd", "q"] {
+            let names = mint_live_names_with(prefix, n);
+            for name in &names {
+                assert!(name.starts_with(prefix), "{name} lacks {prefix}");
+                assert!(!name.starts_with("live"), "{name} kept the default");
+                assert!(name.len() <= 12, "{name} (n={n}) exceeds the limit");
+                assert!(all.insert(name.clone()), "duplicate minted name {name}");
+            }
+            // A shorter prefix hands its budget to the random token, so the
+            // widest slot index fills all 12 characters.
+            assert_eq!(names.last().map(String::len), Some(12), "{names:?}");
+        }
+    }
+}
+
+#[test]
+fn live_name_prefix_accepts_only_short_lowercase_letters() {
+    use crate::play_bootstrap::parse_live_name_prefix;
+    assert_eq!(parse_live_name_prefix(None), Ok("live"));
+    assert_eq!(parse_live_name_prefix(Some("tm")), Ok("tm"));
+    assert_eq!(parse_live_name_prefix(Some("abcd")), Ok("abcd"));
+    for bad in ["", "abcde", "Tm", "t1", "t_", "tm "] {
+        let err = parse_live_name_prefix(Some(bad)).unwrap_err();
+        assert!(err.contains("BOT_LIVE_NAME_PREFIX"), "{bad:?}: {err}");
+    }
 }
 
 #[test]
