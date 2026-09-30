@@ -1069,6 +1069,9 @@ pub(crate) fn script_observe_cached_with_channels(
                                 let packet_trace = api::hostlog::enabled(Category::InteractTrace)
                                     .then(|| driver.packet_checkpoint())
                                     .flatten();
+                                #[cfg(all(windows, test, feature = "journal-paint-proof"))]
+                                let proof_close =
+                                    matches!(&request, script::shim::InteractReq::CloseModal);
                                 let accepted = dispatch_script_interact_cached(
                                     driver,
                                     snapshot,
@@ -1103,6 +1106,19 @@ pub(crate) fn script_observe_cached_with_channels(
                                     );
                                 }
                                 wrote |= accepted;
+                                #[cfg(all(windows, test, feature = "journal-paint-proof"))]
+                                if proof_close {
+                                    eprintln!(
+                                        "journal-proof-close origin=host-native effect=CloseModal accepted={accepted} run={:?} request={} tick={tick} snapshot_root={:?} unix_ns={}",
+                                        authority.run(),
+                                        authority.request_id().get(),
+                                        snapshot.main_modal().map(|pair| pair.value.root),
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .expect("journal proof clock")
+                                            .as_nanos(),
+                                    );
+                                }
                                 slot.complete_native_interaction(
                                     &authority,
                                     script::native::InteractionReceipt {
