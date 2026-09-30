@@ -36,12 +36,7 @@ fn generator_check_matches_frozen_emit_and_overlay() {
         .env("RS2B0T", rs2b0t)
         .current_dir(manifest)
         .output()
-        .unwrap_or_else(|e| {
-            panic!(
-                "failed to run node {} --check: {e}",
-                generator.display()
-            )
-        });
+        .unwrap_or_else(|e| panic!("failed to run node {} --check: {e}", generator.display()));
     assert!(
         output.status.success(),
         "generator --check failed:\n{}\n{}",
@@ -56,12 +51,9 @@ fn generator_check_matches_frozen_emit_and_overlay() {
 #[ignore]
 fn write_compat_dts_tree_to_env() {
     let persistent = std::env::var_os("COMPAT_DTS_TREE");
-    let dir = persistent
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::temp_dir().join(format!("compat-dts-tree-{}", std::process::id()))
-        });
+    let dir = persistent.as_deref().map(PathBuf::from).unwrap_or_else(|| {
+        std::env::temp_dir().join(format!("compat-dts-tree-{}", std::process::id()))
+    });
     script::compat_dts::write_compat_dts_tree(&dir).expect("write compat dts tree");
     eprintln!("wrote tree {}", dir.display());
     if persistent.is_none() {
@@ -137,8 +129,8 @@ fn tsc_consumer_probe_rejects_wrong_uses() {
 #[test]
 #[ignore = "requires npx and TypeScript 5.8.3"]
 fn tsc_valid_consumer_probe_has_zero_diagnostics() {
-    let project = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/compat_dts_probe/consumer.tsconfig.json");
+    let project =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/compat_dts_probe/consumer.tsconfig.json");
     let output = tsc_command()
         .arg("--noEmit")
         .arg("-p")
@@ -148,7 +140,10 @@ fn tsc_valid_consumer_probe_has_zero_diagnostics() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}\n{stderr}");
-    let diag_count = combined.lines().filter(|line| line.contains("error TS")).count();
+    let diag_count = combined
+        .lines()
+        .filter(|line| line.contains("error TS"))
+        .count();
     assert!(
         output.status.success() && diag_count == 0,
         "valid consumers must have 0 diagnostics against generated declarations (saw {diag_count}):\n{stdout}\n{stderr}"

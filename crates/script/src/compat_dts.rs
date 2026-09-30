@@ -1,39 +1,24 @@
 //! TypeScript declarations for the **compat** (JS API v1) surface.
 //!
-//! Names and members come from the JS shim name maps (`shim_modules` +
-//! prelude). Types live in the authored `compat-js/index.d.ts` (and extra
-//! `.d.ts` files beside it). This module walks the live shim and **gates**
-//! that file: module/export/member names, shorthand properties, arity, and
-//! Promise-returning wrappers must match. An authored export or member that
-//! is absent from the live shim is also drift.
+//! Declarations are emitted from the frozen rs2b0t typed source by
+//! `compat-js/generate.cjs`, with named host divergences in `overlay*.json`.
+//! The checked-in `index.d.ts` is the overlay-applied product, never edited
+//! by hand. This module gates it against live shim names, arity and async
+//! returns, and exports relative declaration trees for catalog consumers.
 //!
-//! The `@rs2b0t/api` barrel re-exports those typed modules (plus unknown
-//! stubs for catalog ABI names with no shim). Check the authored file with
-//! `skipLibCheck: false`:
-//! `npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe`
-//!
-//! O-SCRIPT-API extends the surface by adding a typed module declaration
-//! file under `compat-js/` plus a barrel export in `@rs2b0t/api`.
+//! O-SCRIPT-API can append a typed sidecar `.d.ts` under `compat-js/` and
+//! add its barrel export in `@rs2b0t/api`; the extension gate remains active.
 
-use crate::declared_abi::{load_fixture, DeclaredExport, DeclaredKind};
 use crate::shim::{shim_modules, PRELUDE};
 use deno_ast::swc::ast::*;
 use deno_ast::{MediaType, ParseParams, ParsedSource, ProgramRef};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-/// Extra modules later APIs (O-SCRIPT-API) append to the generated `.d.ts`.
-#[derive(Debug, Clone)]
-pub struct DtsExtension {
-    pub specifier: String,
-    pub exports: Vec<CompatExport>,
-}
 
 #[derive(Debug, Clone)]
 pub struct CompatSurface {
     pub modules: Vec<ShimModule>,
     pub prelude: Vec<CompatExport>,
-    pub extras: Vec<DtsExtension>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,72 +84,12 @@ pub fn compat_dts_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("compat-js/index.d.ts")
 }
 
-pub fn write_compat_dts() -> Result<(), String> {
-    write_compat_dts_to(&compat_dts_path())
-}
-
-pub fn write_compat_dts_to(path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-    let src = render_compat_dts();
-    std::fs::write(path, src).map_err(|e| format!("write {}: {e}", path.display()))
-}
-
 /// Write one `.d.ts` per authored module under `root`, mirroring `/rs2b0t/bot/`.
 /// Catalog scripts import relative `../../api/game/Game.js`; TypeScript
 /// resolves those to files, not ambient wildcards. Extra O-SCRIPT-API
 /// modules are included when they appear in the authored surface.
 pub fn write_compat_dts_tree(root: &Path) -> Result<(), String> {
     write_authored_dts_tree(&load_authored_dts()?, root)
-}
-
-pub fn write_compat_dts_tree_from(surface: &CompatSurface, root: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| format!("mkdir {}: {e}", root.display()))?;
-    let mut modules: Vec<&ShimModule> = surface.modules.iter().collect();
-    modules.sort_by(|a, b| a.specifier.cmp(&b.specifier));
-    for module in modules {
-        let Some(suffix) = module_suffix(&module.specifier) else {
-            continue;
-        };
-        let file = suffix
-            .strip_suffix(".js")
-            .or_else(|| suffix.strip_suffix(".ts"))
-            .unwrap_or(suffix);
-        let path = root.join(format!("{file}.d.ts"));
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-        }
-        let mut src = String::from("// Generated from the JS shim name maps — do not edit.\n");
-        render_module_body(&mut src, module, true);
-        for extra in &surface.extras {
-            if module_suffix(&extra.specifier) == Some(suffix) {
-                for exp in &extra.exports {
-                    render_export(&mut src, exp, true);
-                }
-            }
-        }
-        std::fs::write(&path, src).map_err(|e| format!("write {}: {e}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// Render the living compat declarations from the shim name maps.
-pub fn render_compat_dts() -> String {
-    render_compat_dts_with(&[])
-}
-
-/// Same as [`render_compat_dts`], with extra modules for later APIs.
-pub fn render_compat_dts_with(extras: &[DtsExtension]) -> String {
-    let mut surface = collect_compat_surface();
-    surface.extras.extend(extras.iter().cloned());
-    render_compat_surface(&surface)
-}
-
-/// Render a surface already collected (tests inject patched shim sources).
-pub fn render_compat_surface(surface: &CompatSurface) -> String {
-    render_surface(surface)
 }
 
 /// Specifier + source for every isolate shim module (barrels included).
@@ -193,11 +118,7 @@ pub fn collect_compat_surface() -> CompatSurface {
         modules.push(parsed);
     }
     resolve_aliases(&mut modules, &prelude);
-    CompatSurface {
-        modules,
-        prelude,
-        extras: Vec::new(),
-    }
+    CompatSurface { modules, prelude }
 }
 
 /// Build a surface from explicit (specifier, source) pairs plus the live
@@ -213,11 +134,7 @@ pub fn collect_compat_surface_from(sources: &[(&str, &str)]) -> CompatSurface {
         modules.push(parse_module_source(specifier, source));
     }
     resolve_aliases(&mut modules, &prelude);
-    CompatSurface {
-        modules,
-        prelude,
-        extras: Vec::new(),
-    }
+    CompatSurface { modules, prelude }
 }
 
 fn is_barrel(specifier: &str) -> bool {
@@ -1212,388 +1129,8 @@ fn resolve_rel(from_file: &str, spec: &str) -> String {
     out
 }
 
-fn render_surface(surface: &CompatSurface) -> String {
-    let mut out = String::from(
-        "// Generated from the JS shim name maps (shim_modules + prelude) — do not edit by hand.\n\
-         // Regen: cargo test -p script --test compat_dts regen_compat_dts -- --ignored\n\
-         // Compat (JS API v1) as the isolate exposes it. O-SCRIPT-API appends via DtsExtension.\n\
-         // Not a clone of rs2b0t-api; stubs are declared ABI names with no shim owner.\n\n",
-    );
-
-    let barrel = barrel_exports(surface);
-    out.push_str("declare module '@rs2b0t/api' {\n");
-    for exp in &barrel {
-        render_export(&mut out, exp, false);
-        out.push('\n');
-    }
-    out.push_str("}\n\n");
-
-    let mut modules: Vec<&ShimModule> = surface.modules.iter().collect();
-    modules.sort_by(|a, b| a.specifier.cmp(&b.specifier));
-    for module in modules {
-        let Some(suffix) = module_suffix(&module.specifier) else {
-            continue;
-        };
-        out.push_str("declare module '*");
-        out.push_str(suffix);
-        out.push_str("' {\n");
-        render_module_body(&mut out, module, false);
-        out.push_str("}\n\n");
-    }
-    for extra in &surface.extras {
-        let suffix = module_suffix(&extra.specifier).unwrap_or(extra.specifier.as_str());
-        out.push_str("declare module '*");
-        out.push_str(suffix);
-        out.push_str("' {\n");
-        for exp in &extra.exports {
-            render_export(&mut out, exp, false);
-        }
-        out.push_str("}\n\n");
-    }
-    out
-}
-
-fn render_module_body(out: &mut String, module: &ShimModule, top: bool) {
-    for exp in &module.privates {
-        render_item(out, exp, top, false);
-    }
-    for exp in &module.exports {
-        render_item(out, exp, top, true);
-    }
-    emit_default_alias(out, module, if top { "" } else { "  " });
-    if module.exports.is_empty() && module.privates.is_empty() && module.default_export.is_none() {
-        out.push_str(if top {
-            "export {};\n"
-        } else {
-            "  export {};\n"
-        });
-    }
-}
-
-fn emit_default_alias(out: &mut String, module: &ShimModule, pad: &str) {
-    let Some(name) = &module.default_export else {
-        return;
-    };
-    if module
-        .exports
-        .iter()
-        .any(|e| matches!(e, CompatExport::Class { default: true, .. }))
-    {
-        return;
-    }
-    out.push_str(pad);
-    out.push_str("export default ");
-    out.push_str(name);
-    out.push_str(";\n");
-}
-
 fn module_suffix(specifier: &str) -> Option<&str> {
     specifier.strip_prefix("/rs2b0t/bot/")
-}
-
-fn barrel_exports(surface: &CompatSurface) -> Vec<CompatExport> {
-    let fixture = load_fixture().unwrap_or_default();
-    let mut by_name: BTreeMap<String, CompatExport> = BTreeMap::new();
-    for module in &surface.modules {
-        for exp in &module.exports {
-            by_name
-                .entry(export_ident(exp).to_string())
-                .or_insert_with(|| exp.clone());
-        }
-        for exp in &module.privates {
-            by_name
-                .entry(export_ident(exp).to_string())
-                .or_insert_with(|| exp.clone());
-        }
-    }
-    for exp in &surface.prelude {
-        by_name
-            .entry(export_ident(exp).to_string())
-            .or_insert_with(|| exp.clone());
-    }
-    for extra in &surface.extras {
-        for exp in &extra.exports {
-            by_name
-                .entry(export_ident(exp).to_string())
-                .or_insert_with(|| exp.clone());
-        }
-    }
-
-    let mut out = Vec::new();
-    if let Some(define) = by_name.get("defineBot") {
-        out.push(define.clone());
-    } else {
-        out.push(CompatExport::Function {
-            name: "defineBot".to_string(),
-            params: vec![FnParam {
-                name: "manifest".to_string(),
-                optional: false,
-                rest: false,
-            }],
-            is_async: false,
-        });
-    }
-    let mut names: Vec<&DeclaredExport> = fixture.iter().collect();
-    names.sort_by(|a, b| a.name.cmp(&b.name));
-    for exp in names {
-        if exp.name == "defineBot" {
-            continue;
-        }
-        if let Some(found) = by_name.get(&exp.name) {
-            let mut found = found.clone();
-            if let CompatExport::Class { default, .. } = &mut found {
-                *default = false;
-            }
-            out.push(found);
-        } else {
-            out.push(stub_from_declared(exp));
-        }
-    }
-    let needed: Vec<String> = out
-        .iter()
-        .filter_map(|e| match e {
-            CompatExport::Class {
-                super_name: Some(s),
-                ..
-            } => Some(s.clone()),
-            _ => None,
-        })
-        .collect();
-    for name in needed {
-        if out.iter().any(|e| export_ident(e) == name) {
-            continue;
-        }
-        if let Some(found) = by_name.get(&name) {
-            let mut found = found.clone();
-            if let CompatExport::Class { default, .. } = &mut found {
-                *default = false;
-            }
-            out.push(found);
-        }
-    }
-    out
-}
-
-fn stub_from_declared(exp: &DeclaredExport) -> CompatExport {
-    match exp.kind {
-        DeclaredKind::Value => CompatExport::Value {
-            name: exp.name.clone(),
-        },
-        DeclaredKind::Function => CompatExport::Function {
-            name: exp.name.clone(),
-            params: vec![FnParam {
-                name: "args".to_string(),
-                optional: false,
-                rest: true,
-            }],
-            is_async: false,
-        },
-        DeclaredKind::Object => CompatExport::Object {
-            name: exp.name.clone(),
-            members: exp
-                .members
-                .iter()
-                .map(|m| Member {
-                    name: m.clone(),
-                    kind: MemberKind::Method,
-                    params: vec![FnParam {
-                        name: "args".to_string(),
-                        optional: false,
-                        rest: true,
-                    }],
-                    is_async: false,
-                    is_static: false,
-                })
-                .collect(),
-        },
-        DeclaredKind::Class => {
-            let mut members: Vec<Member> = exp
-                .members
-                .iter()
-                .filter(|m| m.as_str() != "constructor")
-                .map(|m| {
-                    let is_static =
-                        exp.name == "Area" && matches!(m.as_str(), "rectangular" | "circular");
-                    Member {
-                        name: m.clone(),
-                        kind: MemberKind::Method,
-                        params: vec![FnParam {
-                            name: "args".to_string(),
-                            optional: false,
-                            rest: true,
-                        }],
-                        is_async: false,
-                        is_static,
-                    }
-                })
-                .collect();
-            members.insert(
-                0,
-                Member {
-                    name: "constructor".to_string(),
-                    kind: MemberKind::Constructor,
-                    params: Vec::new(),
-                    is_async: false,
-                    is_static: false,
-                },
-            );
-            CompatExport::Class {
-                name: exp.name.clone(),
-                default: false,
-                super_name: None,
-                members,
-            }
-        }
-    }
-}
-
-fn render_export(out: &mut String, exp: &CompatExport, top: bool) {
-    render_item(out, exp, top, true);
-}
-
-fn render_item(out: &mut String, exp: &CompatExport, top: bool, exported: bool) {
-    let pad = if top { "" } else { "  " };
-    match exp {
-        CompatExport::Class {
-            name,
-            default,
-            super_name,
-            members,
-        } => {
-            out.push_str(pad);
-            if exported {
-                out.push_str("export class ");
-            } else if top {
-                out.push_str("declare class ");
-            } else {
-                out.push_str("class ");
-            }
-            out.push_str(name);
-            if let Some(sup) = super_name {
-                out.push_str(" extends ");
-                out.push_str(sup);
-            }
-            out.push_str(" {\n");
-            render_members(out, members, if top { "  " } else { "    " });
-            out.push_str(pad);
-            out.push_str("}\n");
-            if *default && exported {
-                out.push_str(pad);
-                out.push_str("export default ");
-                out.push_str(name);
-                out.push_str(";\n");
-            }
-        }
-        CompatExport::Object { name, members } => {
-            out.push_str(pad);
-            out.push_str("export const ");
-            out.push_str(name);
-            out.push_str(": {\n");
-            render_members(out, members, if top { "  " } else { "    " });
-            out.push_str(pad);
-            out.push_str("};\n");
-        }
-        CompatExport::Function {
-            name,
-            params,
-            is_async,
-        } => {
-            out.push_str(pad);
-            out.push_str("export function ");
-            out.push_str(name);
-            render_params(out, params);
-            out.push_str(": ");
-            if *is_async {
-                out.push_str("Promise<any>");
-            } else {
-                out.push_str("any");
-            }
-            out.push_str(";\n");
-        }
-        CompatExport::Value { name } => {
-            if name.starts_with("__") || name == "*" {
-                return;
-            }
-            out.push_str(pad);
-            if name == "apiVersion" {
-                out.push_str("export const apiVersion: number;\n");
-            } else {
-                out.push_str("export const ");
-                out.push_str(name);
-                out.push_str(": any;\n");
-            }
-        }
-    }
-}
-
-fn render_members(out: &mut String, members: &[Member], pad: &str) {
-    for m in members {
-        out.push_str(pad);
-        if m.is_static && m.kind != MemberKind::Constructor {
-            out.push_str("static ");
-        }
-        match m.kind {
-            MemberKind::Getter => {
-                out.push_str("get ");
-                write_member_name(out, &m.name);
-                out.push_str("(): any;\n");
-            }
-            MemberKind::Setter => {
-                out.push_str("set ");
-                write_member_name(out, &m.name);
-                render_params(out, &m.params);
-                out.push_str(";\n");
-            }
-            MemberKind::Field => {
-                write_member_name(out, &m.name);
-                out.push_str(": any;\n");
-            }
-            MemberKind::Constructor => {
-                out.push_str("constructor");
-                render_params(out, &m.params);
-                out.push_str(";\n");
-            }
-            MemberKind::Method => {
-                write_member_name(out, &m.name);
-                render_params(out, &m.params);
-                out.push_str(": ");
-                if m.is_async {
-                    out.push_str("Promise<any>");
-                } else {
-                    out.push_str("any");
-                }
-                out.push_str(";\n");
-            }
-        }
-    }
-}
-
-fn write_member_name(out: &mut String, name: &str) {
-    if is_ts_ident(name) {
-        out.push_str(name);
-    } else {
-        out.push('"');
-        out.push_str(name);
-        out.push('"');
-    }
-}
-
-fn render_params(out: &mut String, params: &[FnParam]) {
-    out.push('(');
-    for (i, p) in params.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        if p.rest {
-            out.push_str("...");
-        }
-        out.push_str(&p.name);
-        if p.optional && !p.rest {
-            out.push('?');
-        }
-        out.push_str(": any");
-    }
-    out.push(')');
 }
 
 /// Every member name an export contributes to the declared surface.
@@ -2048,6 +1585,19 @@ pub fn load_authored_dts_from(dir: &Path) -> Result<AuthoredSurface, String> {
         module.extension_file = true;
         modules.push(module);
     }
+    let mut aliases: Vec<ShimModule> = modules
+        .iter()
+        .map(|m| ShimModule {
+            specifier: m.specifier.clone(),
+            exports: m.exports.clone(),
+            privates: m.privates.clone(),
+            default_export: m.default_export.clone(),
+        })
+        .collect();
+    resolve_aliases(&mut aliases, &[]);
+    for (module, resolved) in modules.iter_mut().zip(aliases) {
+        module.exports = resolved.exports;
+    }
     Ok(AuthoredSurface { modules })
 }
 
@@ -2062,7 +1612,7 @@ fn collect_dts_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for ent in entries {
         let ent = ent.map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
         let path = ent.path();
-        if path.is_dir() {
+        if path.is_dir() && path.file_name().is_some_and(|n| n != "node_modules") {
             collect_dts_files(&path, out)?;
         } else if path
             .file_name()
@@ -2284,7 +1834,7 @@ fn collect_dts_item(
                     *default_export = Some(id.sym.to_string());
                 }
             }
-            ModuleDecl::ExportNamed(named) => {
+            ModuleDecl::ExportNamed(named) if !named.type_only => {
                 for spec in &named.specifiers {
                     let ExportSpecifier::Named(n) = spec else {
                         continue;
@@ -2300,7 +1850,17 @@ fn collect_dts_item(
                     if exports.iter().any(|e| export_ident(e) == exported) {
                         continue;
                     }
-                    exports.push(CompatExport::Value { name: exported });
+                    let name = named.src.as_ref().map_or_else(
+                        || exported.clone(),
+                        |src| {
+                            format!(
+                                "__reexport__{exported}__{}__{}",
+                                export_name(&n.orig),
+                                src.value
+                            )
+                        },
+                    );
+                    exports.push(CompatExport::Value { name });
                 }
             }
             _ => {}
@@ -2444,6 +2004,15 @@ fn dts_var_export(decl: &VarDeclarator) -> Option<CompatExport> {
     if let Some(ann) = id.type_ann.as_deref() {
         if let Some(members) = dts_type_members(&ann.type_ann) {
             return Some(CompatExport::Object { name, members });
+        }
+        if let TsType::TsFnOrConstructorType(TsFnOrConstructorType::TsFnType(fun)) =
+            ann.type_ann.as_ref()
+        {
+            return Some(CompatExport::Function {
+                name,
+                params: finish_params(fun.params.iter().map(ts_fn_param).collect()),
+                is_async: type_ann_is_promise(&fun.type_ann),
+            });
         }
     }
     if let Some(init) = decl.init.as_deref() {
@@ -2720,8 +2289,43 @@ fn wildcard_spec(spec: &str) -> String {
     }
 }
 
+fn inherited_export(exp: &CompatExport, available: &[&CompatExport]) -> CompatExport {
+    let mut resolved = exp.clone();
+    let mut base = match exp {
+        CompatExport::Class { super_name, .. } => super_name.as_deref(),
+        _ => return resolved,
+    };
+    let mut seen = HashSet::new();
+    while let Some(name) = base {
+        if !seen.insert(name) {
+            break;
+        }
+        let Some(CompatExport::Class {
+            members: inherited,
+            super_name,
+            ..
+        }) = available.iter().find(|e| export_ident(e) == name).copied()
+        else {
+            break;
+        };
+        if let CompatExport::Class { members, .. } = &mut resolved {
+            for member in inherited {
+                if member.kind != MemberKind::Constructor
+                    && !members.iter().any(|m| m.name == member.name)
+                {
+                    members.push(member.clone());
+                }
+            }
+        }
+        base = super_name.as_deref();
+    }
+    resolved
+}
+
 fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec<String>) {
     let label = wildcard_spec(&authored.specifier);
+    let shim_types: Vec<_> = shim.exports.iter().chain(&shim.privates).collect();
+    let declaration_types: Vec<_> = authored.exports.iter().chain(&authored.privates).collect();
     for exp in &shim.exports {
         let name = export_ident(exp);
         if name.starts_with("__") {
@@ -2736,7 +2340,12 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
             drifts.push(format!("{label} missing export {name}"));
             continue;
         };
-        compare_export(&label, exp, dts, drifts);
+        compare_export(
+            &label,
+            &inherited_export(exp, &shim_types),
+            &inherited_export(dts, &declaration_types),
+            drifts,
+        );
     }
     for exp in &authored.exports {
         let name = export_ident(exp);
