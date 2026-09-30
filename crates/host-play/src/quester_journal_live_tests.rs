@@ -8,9 +8,12 @@
 //!
 //! The tests are ignored because they need the shared local R289 engine.  Run
 //! one at a time with a throwaway HOME, for example:
+//! Set BOT_ENGINE_DIR to the local engine install. Each empty throwaway HOME
+//! uses the same cold `prepare_template` route as panel/TUI startup.
 //!
 //! ```text
 //! LIVE=1 cargo test -p host-play --lib live_quester_journal_synthetic_runemysteries -- --ignored --nocapture --test-threads=1
+//! LIVE=1 cargo test -p host-play --lib live_quester_journal_hp_only_combat_interrupts_dialogue -- --ignored --nocapture --test-threads=1
 //! LIVE=1 cargo test -p host-play --lib live_quester_cook_reaches_complete -- --ignored --nocapture --test-threads=1
 //! ```
 
@@ -23,7 +26,7 @@ use api::interact;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
-use api::snapshot::GameSnapshot;
+use api::snapshot::{ActorKind, GameSnapshot};
 use client::client::MiniMenuAction;
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::quester::compile::{compile_uncached_for_test, decode_cook};
@@ -34,7 +37,7 @@ use script::quester::path::{
 use script::quester::runner::Quester;
 use vault::{Profile, ProfileSettings};
 
-use super::{run_with_template, ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
 const SYNTHETIC_QUEST: &str = "runemysteries";
 const ACCOUNT_UID: i32 = 274_279_003;
@@ -46,6 +49,7 @@ const JOURNAL_TITLE_COMPONENT_R289: i32 = 8144;
 #[derive(Clone, Copy)]
 enum SetupMode {
     Synthetic,
+    SyntheticCombatControl,
     Cook,
 }
 
@@ -56,6 +60,21 @@ struct SetupState {
     logout_sent: bool,
     saw_offline: bool,
     relog_ready: bool,
+    pre_teleport_ready: bool,
+    pre_teleport: Option<CombatObservation>,
+    pre_teleport_hit_cycles: Option<[i32; 4]>,
+    current_combat: Option<CombatObservation>,
+    dialogue_modal_open: bool,
+    dialogue_modal_seen: bool,
+    dialogue_zero_damage_hit_cycle: Option<i32>,
+    dialogue_hitpoints_at_zero_hit: Option<i32>,
+    dialogue_closed_after_zero_hit: bool,
+    dialogue_closed_by_zero_damage_mugger: bool,
+    dialogue_hitpoints_after_close: Option<i32>,
+    dialogue_local_in_combat_at_close: bool,
+    dialogue_mugger_targeting_local_at_close: bool,
+    lower_to_hp_only_requested: bool,
+    lower_to_hp_only_cheats_sent: bool,
     journal_capture: bool,
     journal_capture_ready: bool,
     journal_expected_display: Option<String>,
@@ -67,6 +86,20 @@ struct SetupState {
     journal_title_seen: bool,
     journal_titles: Vec<String>,
     journal_title_mismatch: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CombatObservation {
+    combat_level: i32,
+    attack_base: i32,
+    strength_base: i32,
+    defence_base: i32,
+    hitpoints_base: i32,
+    hitpoints_effective: i32,
+    local_in_combat: bool,
+    hostile_npc_targeting_local: bool,
+    mugger_targeting_local: bool,
+    idle_mugger_distance: Option<i32>,
 }
 
 /// The live engine is shared by the operator's tunnel.  Keep its profile and
@@ -107,6 +140,8 @@ fn live() -> bool {
     std::env::var("LIVE").as_deref() == Ok("1")
 }
 
+/// Keep cache_dir unset: prepare_template must exercise the genuine cold
+/// panel/TUI route inside this fixture's empty HOME.
 fn live_options(home: &Path) -> ProfileOptions {
     let port = std::env::var("BOT_GAME_PORT")
         .ok()
@@ -123,6 +158,9 @@ fn live_options(home: &Path) -> ProfileOptions {
                 .join("../../target/debug/nav/289/274bot.navpack");
             own.exists().then_some(own)
         });
+    let engine_dir = std::env::var_os("BOT_ENGINE_DIR")
+        .map(PathBuf::from)
+        .expect("journal live fixtures require BOT_ENGINE_DIR");
     ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -133,7 +171,7 @@ fn live_options(home: &Path) -> ProfileOptions {
         vault_path: Some(home.join("vault")),
         unpack_dir: Some(home.join("unpack")),
         nav_pack,
-        engine_dir: std::env::var_os("BOT_ENGINE_DIR").map(PathBuf::from),
+        engine_dir: Some(engine_dir),
         ..ProfileOptions::default()
     }
 }
@@ -158,13 +196,25 @@ fn profile(name: &str) -> Profile {
 
 fn prime(client: &mut client::client::Client, mode: SetupMode) {
     // Tutorial completion must be followed by a relog before the quest tab is
-    // trusted.  The quest varp/item cheats only choose a deterministic fixture
-    // state; all journal clicks and subsequent actions remain host-owned.
+    // trusted. Reset only this minted test account to its bounded baseline,
+    // then raise Defence enough to clear the Mugger aggression threshold. The
+    // hook observes the resulting combat level and hostile state before it
+    // teleports.
     interact::mainland_hop(client);
     match mode {
-        SetupMode::Synthetic => {
+        SetupMode::Synthetic | SetupMode::SyntheticCombatControl => {
+            assert_eq!(
+                interact::cheat(client, "minme"),
+                client::CheatSend::Sent,
+                "reset minted fixture stats"
+            );
             let _ = interact::cheat(client, "setvar runemysteries 3");
             let _ = interact::cheat(client, "give research_package 1");
+            assert_eq!(
+                interact::cheat(client, "setstat defence 40"),
+                client::CheatSend::Sent,
+                "stage bounded anti-aggro Defence"
+            );
         }
         SetupMode::Cook => {
             let _ = interact::cheat(client, "~clearinv");
@@ -177,6 +227,9 @@ fn post_relog(client: &mut client::client::Client, mode: SetupMode) {
     let (x, z) = match mode {
         // Aubury is the real Rune Mysteries branch-3 advance target.
         SetupMode::Synthetic => (3253, 3401),
+        // The hostile control alone starts at the entrance, two tiles nearer
+        // the natural Mugger wander route. No shared door/NPC state changes.
+        SetupMode::SyntheticCombatControl => (3253, 3399),
         SetupMode::Cook => (3209, 3215),
     };
     assert_eq!(
@@ -201,9 +254,110 @@ fn observed_journal_title(snapshot: &GameSnapshot) -> Option<String> {
         .and_then(|widget| widget.text.clone())
 }
 
+fn combat_observation(snapshot: &GameSnapshot) -> Option<CombatObservation> {
+    let local = snapshot.local_player()?;
+    let stat_base = |name: &str| {
+        snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.name.eq_ignore_ascii_case(name))
+            .map(|stat| stat.base)
+    };
+    let hitpoints = snapshot
+        .stats()
+        .iter()
+        .find(|stat| stat.name.eq_ignore_ascii_case("hitpoints"))?;
+    let local_index = local.player.index;
+    let targets_local = |npc: &api::snapshot::NpcView| {
+        npc.in_combat
+            && npc.target.is_some_and(|target| {
+                target.kind == ActorKind::Player && target.index == local_index
+            })
+    };
+    Some(CombatObservation {
+        combat_level: local.player.combat_level,
+        attack_base: stat_base("attack")?,
+        strength_base: stat_base("strength")?,
+        defence_base: stat_base("defence")?,
+        hitpoints_base: hitpoints.base,
+        hitpoints_effective: hitpoints.effective,
+        local_in_combat: local.player.actor.in_combat,
+        hostile_npc_targeting_local: snapshot.npcs().iter().any(targets_local),
+        mugger_targeting_local: snapshot
+            .npcs()
+            .iter()
+            .any(|npc| npc.r#type == Some(175) && targets_local(npc)),
+        idle_mugger_distance: snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| {
+                npc.r#type == Some(175)
+                    && !npc.in_combat
+                    && !npc.target.is_some_and(|target| {
+                        target.kind == ActorKind::Player && target.index != local_index
+                    })
+            })
+            .map(|npc| npc.distance)
+            .min(),
+    })
+}
+
+fn live_combat_observation(client: &mut client::client::Client) -> Option<CombatObservation> {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    combat_observation(&snapshot)
+}
+
+fn fresh_zero_damage_hit_cycle(
+    client: &client::client::Client,
+    baseline: Option<[i32; 4]>,
+) -> Option<i32> {
+    let baseline = baseline?;
+    let entity = &client.local_player.as_ref()?.entity;
+    (0..4).find_map(|index| {
+        let cycle = entity.damage_cycles[index];
+        (entity.damage_values[index] == 0 && cycle > baseline[index] && cycle > client.loop_cycle)
+            .then_some(cycle)
+    })
+}
+
 fn observe_journal(client: &mut client::client::Client, state: &mut SetupState) {
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
+    if let Some(combat) = combat_observation(&snapshot) {
+        state.current_combat = Some(combat);
+        let chat_open = snapshot.modals().chat != -1;
+        if chat_open {
+            state.dialogue_modal_seen = true;
+        }
+        if (chat_open || state.dialogue_modal_open)
+            && combat.local_in_combat
+            && combat.mugger_targeting_local
+        {
+            if let Some(cycle) = fresh_zero_damage_hit_cycle(client, state.pre_teleport_hit_cycles)
+            {
+                state.dialogue_zero_damage_hit_cycle = Some(cycle);
+                state
+                    .dialogue_hitpoints_at_zero_hit
+                    .get_or_insert(combat.hitpoints_effective);
+            }
+        }
+        if state.dialogue_modal_open && !chat_open {
+            state.dialogue_closed_after_zero_hit = state.dialogue_zero_damage_hit_cycle.is_some();
+        }
+        if state.dialogue_closed_after_zero_hit
+            && !chat_open
+            && combat.local_in_combat
+            && combat.mugger_targeting_local
+            && fresh_zero_damage_hit_cycle(client, state.pre_teleport_hit_cycles).is_some()
+        {
+            state.dialogue_closed_by_zero_damage_mugger = true;
+            state.dialogue_hitpoints_after_close = Some(combat.hitpoints_effective);
+            state.dialogue_local_in_combat_at_close = combat.local_in_combat;
+            state.dialogue_mugger_targeting_local_at_close = combat.mugger_targeting_local;
+        }
+        state.dialogue_modal_open = chat_open;
+    }
     let modal = snapshot.modals().main;
     if state.journal_last_modal != Some(modal) {
         if modal == JOURNAL_ROOT_R289 && state.journal_last_modal != Some(JOURNAL_ROOT_R289) {
@@ -365,6 +519,30 @@ fn frame_hook(
         if state.journal_capture {
             observe_journal(client, &mut state);
         }
+        if state.lower_to_hp_only_requested
+            && !state.lower_to_hp_only_cheats_sent
+            && state.dialogue_modal_open
+            && state.current_combat.is_some_and(|observation| {
+                observation.combat_level > 12
+                    && !observation.local_in_combat
+                    && !observation.hostile_npc_targeting_local
+                    && observation
+                        .idle_mugger_distance
+                        .is_some_and(|distance| distance <= 3)
+            })
+        {
+            assert_eq!(
+                interact::cheat(client, "setstat hitpoints 30"),
+                client::CheatSend::Sent,
+                "raise only HP before lowering fixture combat level"
+            );
+            assert_eq!(
+                interact::cheat(client, "setstat defence 1"),
+                client::CheatSend::Sent,
+                "lower fixture combat level while its owned chat is open"
+            );
+            state.lower_to_hp_only_cheats_sent = true;
+        }
         if !state.primed {
             prime(client, mode);
             state.primed = true;
@@ -377,8 +555,30 @@ fn frame_hook(
             return;
         }
         if state.logout_sent && state.saw_offline && !state.relog_ready {
-            post_relog(client, mode);
-            state.relog_ready = true;
+            match mode {
+                SetupMode::Synthetic | SetupMode::SyntheticCombatControl => {
+                    if let Some(observation) = live_combat_observation(client) {
+                        state.pre_teleport = Some(observation);
+                        if observation.combat_level > 12
+                            && !observation.local_in_combat
+                            && !observation.hostile_npc_targeting_local
+                        {
+                            state.pre_teleport_ready = true;
+                            state.pre_teleport_hit_cycles = client
+                                .local_player
+                                .as_ref()
+                                .map(|player| player.entity.damage_cycles);
+                            post_relog(client, mode);
+                            state.relog_ready = true;
+                        }
+                    }
+                }
+                SetupMode::Cook => {
+                    state.pre_teleport_ready = true;
+                    post_relog(client, mode);
+                    state.relog_ready = true;
+                }
+            }
         }
     }
 }
@@ -389,13 +589,11 @@ fn launch_live(
 ) -> (ThrowawayHome, super::Play, Arc<Mutex<SetupState>>, String) {
     let home = ThrowawayHome::enter(label);
     let options = live_options(&home.path);
-    let server_profile = options
+    let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
-        .bind()
-        .expect("bind local-289 profile");
-    let template =
-        SharedClientTemplate::load(Arc::clone(&server_profile)).expect("load live template");
+        .prepare_template()
+        .expect("prepare cold live template");
     let name = account_name();
     let state = Arc::new(Mutex::new(SetupState::default()));
     let hook = Arc::clone(&state);
@@ -432,6 +630,44 @@ fn wait_relogged(play: &super::Play, state: &Arc<Mutex<SetupState>>) {
                 .iter()
                 .any(|status| status.ingame && status.scene_state == 2)
     });
+}
+
+fn assert_synthetic_pre_teleport(state: &Arc<Mutex<SetupState>>) {
+    let state = state.lock().expect("synthetic pre-teleport state");
+    assert!(
+        state.pre_teleport_ready,
+        "synthetic staging was not observed"
+    );
+    let observation = state
+        .pre_teleport
+        .expect("synthetic pre-teleport combat observation");
+    assert!(
+        observation.combat_level > 12,
+        "Mugger-safe staging must observe combat level >12 before Aubury teleport: {observation:?}"
+    );
+    assert!(
+        !observation.local_in_combat,
+        "synthetic staging must observe the local player out of combat before teleport: {observation:?}"
+    );
+    assert!(
+        !observation.hostile_npc_targeting_local,
+        "synthetic staging must observe no in-combat NPC targeting the local player before teleport: {observation:?}"
+    );
+    assert_eq!(
+        (
+            observation.attack_base,
+            observation.strength_base,
+            observation.defence_base,
+            observation.hitpoints_base
+        ),
+        (1, 1, 40, 10),
+        "fixture staging must change only bounded Defence and retain HP10: {observation:?}"
+    );
+    assert!(
+        state.pre_teleport_hit_cycles.is_some(),
+        "synthetic staging must capture pre-teleport hitmark cycles"
+    );
+    println!("Observed safe pre-teleport combat staging: {observation:?}");
 }
 
 fn field<'a>(status: &'a ScriptStatus, key: &str) -> &'a StatusValue {
@@ -487,6 +723,35 @@ fn wait_status(
             Instant::now() < deadline,
             "{label} timed out; status={:?}",
             play.script_native_status(name)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn wait_blocked_status(
+    play: &super::Play,
+    name: &str,
+    target: api::selected::RunKey,
+    timeout: Duration,
+    label: &str,
+) -> Arc<ScriptStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = play.script_native_status(name) {
+            if status.run == target && status.phase == NativePhase::Blocked {
+                return status;
+            }
+            assert_ne!(
+                status.phase,
+                NativePhase::Complete,
+                "{label} completed instead of being blocked: {status:#?}"
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} timed out; status={:?}; terminal={:?}",
+            play.script_native_status(name),
+            play.script_lifecycle_receipt(name)
         );
         thread::sleep(Duration::from_millis(100));
     }
@@ -746,6 +1011,7 @@ fn live_quester_journal_synthetic_runemysteries() {
     );
     let (home, play, setup, name) = launch_live(SetupMode::Synthetic, "journal");
     wait_relogged(&play, &setup);
+    assert_synthetic_pre_teleport(&setup);
 
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
     let quests =
@@ -938,9 +1204,10 @@ struct SyntheticLive {
     expected_title: String,
 }
 
-fn prepare_synthetic_live(label: &str) -> SyntheticLive {
-    let (home, play, setup, name) = launch_live(SetupMode::Synthetic, label);
+fn prepare_synthetic_live(label: &str, mode: SetupMode) -> SyntheticLive {
+    let (home, play, setup, name) = launch_live(mode, label);
     wait_relogged(&play, &setup);
+    assert_synthetic_pre_teleport(&setup);
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
     let quests =
         Arc::new(QuestCatalog::from_identity(selected.quest_identity()).expect("quest catalog"));
@@ -1070,7 +1337,7 @@ fn live_quester_journal_debug_reply_does_not_take_modal_ownership() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-debug");
+    } = prepare_synthetic_live("journal-debug", SetupMode::Synthetic);
     let log = &*JOURNAL_DEBUG_LOG;
     *log.state.lock().expect("debug journal state") = Some(Arc::clone(&setup));
     assert!(api::hostlog::install_sink(log));
@@ -1157,7 +1424,7 @@ fn live_quester_journal_stop_start_recovers_stranded_page() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-stop");
+    } = prepare_synthetic_live("journal-stop", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let first_run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
     let _opened = wait_journal_open(&setup, &expected_title, "Stop mid-read journal capture");
@@ -1254,7 +1521,7 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
         quests,
         path,
         expected_title,
-    } = prepare_synthetic_live("journal-pause");
+    } = prepare_synthetic_live("journal-pause", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
     let _opened = wait_journal_open(&setup, &expected_title, "Pause mid-read journal capture");
@@ -1336,6 +1603,220 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
     drop(play);
     drop(home);
     let _ = recovered;
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
+fn live_quester_journal_hp_only_combat_interrupts_dialogue() {
+    assert!(
+        live(),
+        "live_quester_journal_hp_only_combat_interrupts_dialogue requires LIVE=1"
+    );
+    let SyntheticLive {
+        home,
+        play,
+        setup,
+        name,
+        selected,
+        quests,
+        path,
+        expected_title,
+    } = prepare_synthetic_live("journal-hp-only", SetupMode::SyntheticCombatControl);
+    // Keep the real native dialogue unpaused: Resume deliberately replaces
+    // its active step with a fresh journal read. Stage an available nearby
+    // attacker before starting instead, while Defence still prevents aggro.
+    wait_until_fast(
+        "idle Mugger observed next to combat-safe Aubury fixture",
+        SYNTHETIC_TIMEOUT,
+        || {
+            let observation = setup.lock().expect("nearby Mugger staging").current_combat;
+            observation.is_some_and(|observation| {
+                observation.combat_level > 12
+                    && !observation.local_in_combat
+                    && !observation.hostile_npc_targeting_local
+                    && observation
+                        .idle_mugger_distance
+                        .is_some_and(|distance| distance <= 1)
+            })
+        },
+    );
+    println!(
+        "HP-only controlled attacker staging: {:?}",
+        setup.lock().expect("nearby Mugger staging").current_combat
+    );
+    let handle = play.script_start_handle();
+    let run = start_synthetic(&handle, &play, &name, path, &quests, &selected);
+    let _opened = wait_journal_open(&setup, &expected_title, "HP-only fixture journal read");
+    let rm3 = wait_status(
+        &play,
+        &name,
+        SYNTHETIC_TIMEOUT,
+        "HP-only fixture reaches Rune Mysteries rm:3",
+        |status| {
+            status.run == run
+                && status.phase == NativePhase::Working
+                && text(status, "stage") == "rm:3"
+                && text(status, "rule") == "rm:3"
+                && text(status, "journal_lines").contains("Research Package")
+                && truth(status, "needs_read") == Truth::False
+        },
+    );
+    let initial_lines = text(&rm3, "journal_lines").to_string();
+    let initial_evidence = progress_evidence(&rm3, "progress");
+    let journal_before = journal_probe(&setup);
+    assert_exact_journal_titles(&journal_before, &expected_title, "HP-only rm:3 baseline");
+
+    wait_until_fast(
+        "Quester-owned Aubury dialogue opens while staging remains safe",
+        Duration::from_secs(20),
+        || {
+            let state = setup.lock().expect("HP-only dialogue state");
+            state.dialogue_modal_seen
+                && state.dialogue_modal_open
+                && state.current_combat.is_some_and(|observation| {
+                    observation.combat_level > 12
+                        && !observation.local_in_combat
+                        && !observation.hostile_npc_targeting_local
+                })
+        },
+    );
+    {
+        let mut state = setup.lock().expect("request HP-only dialogue control");
+        assert!(
+            state.dialogue_modal_open,
+            "Quester must still own open chat"
+        );
+        state.lower_to_hp_only_requested = true;
+    }
+    wait_until_fast(
+        "HP-only low-combat stats observed without touching HP99",
+        Duration::from_secs(20),
+        || {
+            let state = setup.lock().expect("HP-only staging observation");
+            state.lower_to_hp_only_cheats_sent
+                && state.current_combat.is_some_and(|observation| {
+                    observation.combat_level <= 12
+                        && observation.attack_base == 1
+                        && observation.strength_base == 1
+                        && observation.defence_base == 1
+                        && observation.hitpoints_base == 30
+                        && observation.hitpoints_effective == 30
+                })
+        },
+    );
+    let low_combat = setup
+        .lock()
+        .expect("observed HP-only combat stats")
+        .current_combat
+        .expect("HP-only combat observation");
+    assert!(
+        low_combat.combat_level <= 12,
+        "HP-only staging must remain aggro-eligible: {low_combat:?}"
+    );
+    assert_eq!(
+        (
+            low_combat.attack_base,
+            low_combat.strength_base,
+            low_combat.defence_base,
+            low_combat.hitpoints_base
+        ),
+        (1, 1, 1, 30),
+        "control must raise only HP to a bounded level"
+    );
+    println!("HP-only live exposure: name={name} low={low_combat:?} baseline={rm3:?}");
+
+    let blocked = wait_blocked_status(
+        &play,
+        &name,
+        run,
+        SYNTHETIC_TIMEOUT,
+        "Mugger combat interrupts the owned dialogue",
+    );
+    wait_until_fast(
+        "fresh zero-damage Mugger hit closes owned dialogue",
+        Duration::from_secs(20),
+        || {
+            setup
+                .lock()
+                .expect("Mugger dialogue interruption")
+                .dialogue_closed_by_zero_damage_mugger
+        },
+    );
+    let (hit_cycle, hp_at_hit, hp_at_close, closed_after_hit, in_combat_at_close, mugger_at_close) = {
+        let state = setup.lock().expect("Mugger dialogue evidence");
+        (
+            state.dialogue_zero_damage_hit_cycle,
+            state.dialogue_hitpoints_at_zero_hit,
+            state.dialogue_hitpoints_after_close,
+            state.dialogue_closed_after_zero_hit,
+            state.dialogue_local_in_combat_at_close,
+            state.dialogue_mugger_targeting_local_at_close,
+        )
+    };
+    assert!(
+        closed_after_hit,
+        "the owned chat must close after the zero-damage hit"
+    );
+    assert!(
+        in_combat_at_close,
+        "the local actor must expose a fresh in-combat flag at closure"
+    );
+    assert!(
+        mugger_at_close,
+        "Mugger type 175 must be in combat targeting the local player"
+    );
+    assert!(
+        hit_cycle.is_some_and(|cycle| cycle > 0),
+        "must observe a fresh active zero-damage hitmark"
+    );
+    assert_eq!(hp_at_hit, Some(30), "HP at the witnessed hit");
+    assert_eq!(
+        hp_at_close, hp_at_hit,
+        "zero damage must leave HP unchanged"
+    );
+
+    assert_eq!(blocked.phase, NativePhase::Blocked);
+    let failure = blocked
+        .failure
+        .as_ref()
+        .expect("combat interruption must carry a typed failure");
+    assert_eq!(failure.message.as_ref(), "dialogue interrupted by combat");
+    assert_eq!(blocked.run, run);
+    assert_eq!(text(&blocked, "stage"), "rm:3");
+    assert_eq!(text(&blocked, "rule"), "rm:3");
+    assert_eq!(text(&blocked, "journal_lines"), initial_lines.as_str());
+    assert_eq!(truth(&blocked, "needs_read"), Truth::False);
+    assert!(matches!(
+        field(&blocked, "varp_hint"),
+        StatusValue::Integer(3)
+    ));
+    let blocked_evidence = progress_evidence(&blocked, "progress");
+    assert_eq!(blocked_evidence.run, initial_evidence.run);
+    assert_eq!(
+        (blocked_evidence.tick, blocked_evidence.sequence),
+        (initial_evidence.tick, initial_evidence.sequence),
+        "combat interruption must not publish new quest progress"
+    );
+    let journal_after = journal_probe(&setup);
+    assert_exact_journal_titles(
+        &journal_after,
+        &expected_title,
+        "HP-only combat interruption",
+    );
+    assert_eq!(
+        journal_after.clicks, journal_before.clicks,
+        "combat interruption must not trigger a fresh journal read"
+    );
+    assert_eq!(
+        journal_after.opens, journal_before.opens,
+        "combat interruption must not reopen the journal"
+    );
+    println!(
+        "HP-only combat interruption: low={low_combat:?} hit_cycle={hit_cycle:?} \
+         hp={hp_at_hit:?}->{hp_at_close:?} journal={journal_after:?} status={blocked:?}"
+    );
+    drop(play);
+    drop(home);
 }
 
 #[test]
