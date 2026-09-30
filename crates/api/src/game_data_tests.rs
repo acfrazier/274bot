@@ -175,6 +175,37 @@ fn missing_quest_identity_is_absent_not_an_empty_list() {
 }
 
 #[test]
+fn generated_quest_starts_are_pinned_to_selected_content() {
+    let data = for_revision(ClientRevision::R289).expect("selected game data");
+    let starts = data.quest_starts().expect("generated quest start family");
+    assert_eq!(starts.schema, 1);
+    assert_eq!(starts.revision, 289);
+    assert_eq!(Some(starts.content_id.as_str()), data.content_id());
+    assert!(
+        !starts.rows.is_empty(),
+        "the pinned content has quest starts"
+    );
+    assert!(
+        starts
+            .rows
+            .iter()
+            .all(|row| !row.quest.is_empty()
+                && (row.target.kind == "npc" || row.target.kind == "loc"))
+    );
+}
+
+#[test]
+fn quest_starts_with_mismatched_content_are_rejected() {
+    let json = minimal_json(
+        r#", "quest_starts": {"schema": 1, "revision": 274, "content_id": "not-the-cache", "rows": [{"quest": "cook", "target": {"kind": "npc", "id": 100}, "op": 1}]}"#,
+    )
+    .replace(r#""cache_id": "x""#, r#""cache_id": "x", "content_id": "the-cache""#);
+    let error = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274)
+        .expect_err("quest starts must be pinned to the selected content");
+    assert!(error.contains("content identity mismatch"), "{error}");
+}
+
+#[test]
 fn bare_quest_identity_vec_does_not_decode() {
     let error = SelectedGameData::decode(
         minimal_json(r#", "quest_identity": []"#).as_bytes(),

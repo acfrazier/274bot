@@ -13,7 +13,9 @@ use super::poi::{
 use super::producer::ClientMapInput;
 use super::{MapError, Rows, Text};
 use client::config::{LocType, NpcType};
+use client::io::ClientRevision;
 use client::map_cache::MAP_SQUARE_SIZE;
+use std::collections::{BTreeSet, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[derive(Debug, Clone)]
@@ -40,6 +42,156 @@ impl LocDefinition {
 /// locs carry only this mapfunction; the per-placement tree name comes from a
 /// nearby woodcutting loc placement already visited by the generator.
 const RARE_TREES_SYMBOL: u16 = 34;
+
+/// World-map Key row for quest starts (`WORLDMAP_KEY_NAMES[6]`). The
+/// content-derived relation is optional; unmatched markers remain generic.
+const QUEST_STARTS_SYMBOL: u16 = 6;
+const MAX_QUEST_START_MATCH_DIST2: f64 = 8.0 * 8.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuestStartTargetKind {
+    Npc,
+    Loc,
+}
+
+#[derive(Debug, Clone)]
+struct QuestStartEntry {
+    display: String,
+    kind: QuestStartTargetKind,
+    id: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QuestStartPlacement {
+    id: i32,
+    x: i32,
+    z: i32,
+    plane: u8,
+}
+
+#[derive(Debug, Clone, Default)]
+struct QuestStartCatalog {
+    entries: Vec<QuestStartEntry>,
+    npc_placements: Vec<QuestStartPlacement>,
+    loc_ids: HashSet<i32>,
+}
+
+fn quest_start_catalog(input: ClientMapInput<'_>) -> Option<QuestStartCatalog> {
+    let revision = match input.revision {
+        274 => ClientRevision::R274,
+        289 => ClientRevision::R289,
+        _ => return None,
+    };
+    let data = api::game_data::for_revision(revision).ok()?;
+    let content_id = input.content.to_string();
+    if data.content_id() != Some(content_id.as_str()) {
+        return None;
+    }
+    let starts = data.quest_starts()?;
+    let identities = data.quest_identity()?;
+    let entries = starts
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let display = identities
+                .rows
+                .iter()
+                .find(|identity| identity.id == row.quest)?
+                .display
+                .clone();
+            let kind = match row.target.kind.as_str() {
+                "npc" => QuestStartTargetKind::Npc,
+                "loc" => QuestStartTargetKind::Loc,
+                _ => return None,
+            };
+            Some(QuestStartEntry {
+                display,
+                kind,
+                id: row.target.id,
+            })
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return None;
+    }
+    let npc_ids = entries
+        .iter()
+        .filter_map(|entry| (entry.kind == QuestStartTargetKind::Npc).then_some(entry.id))
+        .collect::<HashSet<_>>();
+    let npc_placements = data
+        .npc_placements()
+        .into_iter()
+        .flat_map(|facts| facts.rows.iter())
+        .filter(|placement| npc_ids.contains(&placement.npc_id))
+        .map(|placement| QuestStartPlacement {
+            id: placement.npc_id,
+            x: placement.x,
+            z: placement.z,
+            plane: u8::try_from(placement.plane).unwrap_or(u8::MAX),
+        })
+        .collect();
+    let loc_ids = entries
+        .iter()
+        .filter_map(|entry| (entry.kind == QuestStartTargetKind::Loc).then_some(entry.id))
+        .collect();
+    Some(QuestStartCatalog {
+        entries,
+        npc_placements,
+        loc_ids,
+    })
+}
+
+fn quest_start_name(
+    catalog: &QuestStartCatalog,
+    marker: &PoiRecord,
+    loc_placements: &[QuestStartPlacement],
+) -> Option<Text> {
+    quest_start_name_at(
+        catalog,
+        marker.effective_plane,
+        marker.display.x,
+        marker.display.z,
+        loc_placements,
+    )
+}
+
+fn quest_start_name_at(
+    catalog: &QuestStartCatalog,
+    plane: u8,
+    centre_x: f64,
+    centre_z: f64,
+    loc_placements: &[QuestStartPlacement],
+) -> Option<Text> {
+    let mut names = BTreeSet::new();
+    for entry in &catalog.entries {
+        let matched = match entry.kind {
+            QuestStartTargetKind::Npc => catalog.npc_placements.iter().any(|placement| {
+                placement.id == entry.id
+                    && placement.plane == plane
+                    && nearby(placement.x, placement.z, centre_x, centre_z)
+            }),
+            QuestStartTargetKind::Loc => loc_placements.iter().any(|placement| {
+                placement.id == entry.id
+                    && placement.plane == plane
+                    && nearby(placement.x, placement.z, centre_x, centre_z)
+            }),
+        };
+        if matched {
+            names.insert(entry.display.clone());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    let joined = names.into_iter().collect::<Vec<_>>().join(", ");
+    Text::new(&joined).ok()
+}
+
+fn nearby(x: i32, z: i32, centre_x: f64, centre_z: f64) -> bool {
+    let dx = f64::from(x) + 0.5 - centre_x;
+    let dz = f64::from(z) + 0.5 - centre_z;
+    dx * dx + dz * dz <= MAX_QUEST_START_MATCH_DIST2
+}
 
 /// A placed tree the generator already visited: non-empty client-cache name
 /// with a Chop-down operation. Content-derived (client cache ops), never a
@@ -133,6 +285,7 @@ pub(super) fn derive_client_pois(
             service
         })
         .count() as u32;
+    let quest_starts = quest_start_catalog(input);
 
     let mut reader = CacheReader::open(input)?;
     let entries = reader.entries.clone();
@@ -145,6 +298,7 @@ pub(super) fn derive_client_pois(
     };
     let mut unknown_mapfunctions = 0u32;
     let mut woodcut_trees: Vec<TreePlacement> = Vec::new();
+    let mut quest_start_loc_placements: Vec<QuestStartPlacement> = Vec::new();
 
     for entry in entries {
         let land = reader.read_land(entry)?;
@@ -182,6 +336,18 @@ pub(super) fn derive_client_pois(
                 i32::from(entry.square_x) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.x);
             let world_z =
                 i32::from(entry.square_z) * i32::from(MAP_SQUARE_SIZE) + i32::from(placement.z);
+            if let Some(catalog) = &quest_starts {
+                if let Ok(id) = i32::try_from(placement.id) {
+                    if catalog.loc_ids.contains(&id) {
+                        quest_start_loc_placements.push(QuestStartPlacement {
+                            id,
+                            x: world_x,
+                            z: world_z,
+                            plane: effective_plane,
+                        });
+                    }
+                }
+            }
             // Remember every visited woodcutting tree for Rare-Trees renaming
             // below. Uses only the generator's own placements + client-cache
             // ops/names, never a handwritten coordinate table.
@@ -347,6 +513,23 @@ pub(super) fn derive_client_pois(
         match Text::new(&tree_def.name) {
             Ok(name) => record.name = name,
             Err(_) => unknown_mapfunctions += 1,
+        }
+    }
+    if let Some(catalog) = &quest_starts {
+        for record in records.iter_mut() {
+            if !matches!(
+                record.kind,
+                PoiKind::MapSymbol {
+                    symbol: QUEST_STARTS_SYMBOL
+                }
+            ) || record.name.as_str() != "Quest Start"
+            {
+                continue;
+            }
+            if let Some(name) = quest_start_name(catalog, record, &quest_start_loc_placements) {
+                record.name = name;
+                unknown_mapfunctions = unknown_mapfunctions.saturating_sub(1);
+            }
         }
     }
 

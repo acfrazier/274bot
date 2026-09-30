@@ -663,6 +663,28 @@ pub struct QuestIdentityRow {
     #[serde(default)]
     pub journal_script: Option<String>,
 }
+/// A content-script-derived quest start target. Rows are intentionally sparse:
+/// no row means the map marker remains the generic `Quest Start` label.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartRow {
+    pub quest: String,
+    pub target: QuestStartTarget,
+    pub op: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartTarget {
+    pub kind: String,
+    pub id: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartFacts {
+    pub schema: u16,
+    pub revision: i32,
+    pub content_id: String,
+    pub rows: Vec<QuestStartRow>,
+}
 
 /// Pack-joined NPC identity for Path compile (`npc:cook`).
 #[derive(Debug, Deserialize, Clone)]
@@ -965,6 +987,8 @@ pub struct SelectedGameData {
     #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
+    quest_starts: Option<QuestStartFacts>,
+    #[serde(default)]
     npc_names: Option<NpcNameFacts>,
     #[serde(default)]
     loc_names: Option<LocNameFacts>,
@@ -1151,6 +1175,25 @@ impl SelectedGameData {
                 return Err(
                     "quest_identity empty mustHave cannot carry items or skills".to_string()
                 );
+            }
+        }
+        if let Some(facts) = &data.quest_starts {
+            if facts.schema != 1 || facts.revision != data.revision {
+                return Err("quest_starts schema or revision mismatch".to_string());
+            }
+            if data.provenance.cache_identity.content_id.as_deref()
+                != Some(facts.content_id.as_str())
+            {
+                return Err("quest_starts content identity mismatch".to_string());
+            }
+            if facts.rows.iter().any(|row| {
+                row.quest.is_empty()
+                    || row.op == 0
+                    || row.op > 5
+                    || row.target.id < 0
+                    || !matches!(row.target.kind.as_str(), "npc" | "loc")
+            }) {
+                return Err("quest_starts contains an invalid target row".to_string());
             }
         }
         if let Some(facts) = &data.npc_names {
@@ -1474,6 +1517,9 @@ impl SelectedGameData {
     /// Roster identity. `None` is family absence, not an empty extract.
     pub fn quest_identity(&self) -> Option<&QuestIdentityFacts> {
         self.quest_identity.as_ref()
+    }
+    pub fn quest_starts(&self) -> Option<&QuestStartFacts> {
+        self.quest_starts.as_ref()
     }
 
     pub fn npc_names(&self) -> Option<&NpcNameFacts> {

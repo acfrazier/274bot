@@ -7,7 +7,8 @@ import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
 import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
-import { questIdentityContentFiles, extractQuestIdentityFacts } from './extractors/quests.ts';
+import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
+import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
@@ -2587,6 +2588,10 @@ async function generate(spec: Revision) {
     fs.writeFileSync(gatheringFile, familyBytes(gatheringInputs, gathering, 'gathering'));
     const gatheringArtifact = { path: path.relative(path.dirname(spec.output), gatheringFile), schema: gathering.schema, ...sha256(gatheringFile) };
     const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision);
+    const contentId = spec.cacheIdentity.content_id;
+    if (!contentId) throw new Error(`${spec.revision}: quest starts require content identity`);
+    const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
+    Object.assign(facts, { quest_starts: questStarts });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
     const deathRow = questIdentity.rows.find((row) => row.id === 'death');
     if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {

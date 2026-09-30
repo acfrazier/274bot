@@ -68540,6 +68540,589 @@
       "pocket": "Fremennik's pocket"
     }
   ],
+  "quest_starts": {
+    "schema": 1,
+    "revision": 289,
+    "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
+    "rows": [
+      {
+        "quest": "arena",
+        "target": {
+          "kind": "loc",
+          "id": 76
+        },
+        "op": 1
+      },
+      {
+        "quest": "arena",
+        "target": {
+          "kind": "npc",
+          "id": 264
+        },
+        "op": 1
+      },
+      {
+        "quest": "arthur",
+        "target": {
+          "kind": "npc",
+          "id": 239
+        },
+        "op": 1
+      },
+      {
+        "quest": "arthur",
+        "target": {
+          "kind": "npc",
+          "id": 240
+        },
+        "op": 1
+      },
+      {
+        "quest": "ball",
+        "target": {
+          "kind": "npc",
+          "id": 895
+        },
+        "op": 1
+      },
+      {
+        "quest": "biohazard",
+        "target": {
+          "kind": "npc",
+          "id": 335
+        },
+        "op": 1
+      },
+      {
+        "quest": "blackarmgang",
+        "target": {
+          "kind": "npc",
+          "id": 647
+        },
+        "op": 1
+      },
+      {
+        "quest": "chompybird",
+        "target": {
+          "kind": "npc",
+          "id": 1010
+        },
+        "op": 1
+      },
+      {
+        "quest": "cook",
+        "target": {
+          "kind": "npc",
+          "id": 278
+        },
+        "op": 1
+      },
+      {
+        "quest": "crest",
+        "target": {
+          "kind": "npc",
+          "id": 664
+        },
+        "op": 1
+      },
+      {
+        "quest": "crest",
+        "target": {
+          "kind": "npc",
+          "id": 666
+        },
+        "op": 1
+      },
+      {
+        "quest": "death",
+        "target": {
+          "kind": "npc",
+          "id": 1060
+        },
+        "op": 1
+      },
+      {
+        "quest": "demon",
+        "target": {
+          "kind": "npc",
+          "id": 882
+        },
+        "op": 1
+      },
+      {
+        "quest": "demon",
+        "target": {
+          "kind": "npc",
+          "id": 883
+        },
+        "op": 1
+      },
+      {
+        "quest": "desertrescue",
+        "target": {
+          "kind": "npc",
+          "id": 835
+        },
+        "op": 1
+      },
+      {
+        "quest": "doric",
+        "target": {
+          "kind": "npc",
+          "id": 284
+        },
+        "op": 1
+      },
+      {
+        "quest": "druid",
+        "target": {
+          "kind": "npc",
+          "id": 454
+        },
+        "op": 1
+      },
+      {
+        "quest": "druid",
+        "target": {
+          "kind": "npc",
+          "id": 455
+        },
+        "op": 1
+      },
+      {
+        "quest": "druidspirit",
+        "target": {
+          "kind": "npc",
+          "id": 1049
+        },
+        "op": 1
+      },
+      {
+        "quest": "drunkmonk",
+        "target": {
+          "kind": "npc",
+          "id": 279
+        },
+        "op": 1
+      },
+      {
+        "quest": "fishingcompo",
+        "target": {
+          "kind": "npc",
+          "id": 232
+        },
+        "op": 1
+      },
+      {
+        "quest": "fluffs",
+        "target": {
+          "kind": "npc",
+          "id": 780
+        },
+        "op": 1
+      },
+      {
+        "quest": "fluffs",
+        "target": {
+          "kind": "npc",
+          "id": 781
+        },
+        "op": 1
+      },
+      {
+        "quest": "fluffs",
+        "target": {
+          "kind": "npc",
+          "id": 783
+        },
+        "op": 1
+      },
+      {
+        "quest": "grandtree",
+        "target": {
+          "kind": "npc",
+          "id": 670
+        },
+        "op": 1
+      },
+      {
+        "quest": "haunted",
+        "target": {
+          "kind": "npc",
+          "id": 285
+        },
+        "op": 1
+      },
+      {
+        "quest": "haunted",
+        "target": {
+          "kind": "npc",
+          "id": 286
+        },
+        "op": 1
+      },
+      {
+        "quest": "hazeelcult",
+        "target": {
+          "kind": "npc",
+          "id": 885
+        },
+        "op": 1
+      },
+      {
+        "quest": "hazeelcult",
+        "target": {
+          "kind": "npc",
+          "id": 893
+        },
+        "op": 1
+      },
+      {
+        "quest": "hetty",
+        "target": {
+          "kind": "npc",
+          "id": 307
+        },
+        "op": 1
+      },
+      {
+        "quest": "horror",
+        "target": {
+          "kind": "npc",
+          "id": 1336
+        },
+        "op": 1
+      },
+      {
+        "quest": "hunt",
+        "target": {
+          "kind": "npc",
+          "id": 375
+        },
+        "op": 1
+      },
+      {
+        "quest": "ikov",
+        "target": {
+          "kind": "npc",
+          "id": 273
+        },
+        "op": 1
+      },
+      {
+        "quest": "imp",
+        "target": {
+          "kind": "npc",
+          "id": 706
+        },
+        "op": 1
+      },
+      {
+        "quest": "itgronigen",
+        "target": {
+          "kind": "npc",
+          "id": 488
+        },
+        "op": 1
+      },
+      {
+        "quest": "itwatchtower",
+        "target": {
+          "kind": "npc",
+          "id": 872
+        },
+        "op": 1
+      },
+      {
+        "quest": "junglepotion",
+        "target": {
+          "kind": "npc",
+          "id": 740
+        },
+        "op": 1
+      },
+      {
+        "quest": "legends",
+        "target": {
+          "kind": "npc",
+          "id": 400
+        },
+        "op": 1
+      },
+      {
+        "quest": "mcannon",
+        "target": {
+          "kind": "npc",
+          "id": 208
+        },
+        "op": 1
+      },
+      {
+        "quest": "misc",
+        "target": {
+          "kind": "npc",
+          "id": 1373
+        },
+        "op": 1
+      },
+      {
+        "quest": "mm",
+        "target": {
+          "kind": "npc",
+          "id": 1408
+        },
+        "op": 1
+      },
+      {
+        "quest": "mm",
+        "target": {
+          "kind": "npc",
+          "id": 1411
+        },
+        "op": 1
+      },
+      {
+        "quest": "murder",
+        "target": {
+          "kind": "npc",
+          "id": 812
+        },
+        "op": 1
+      },
+      {
+        "quest": "priest",
+        "target": {
+          "kind": "npc",
+          "id": 456
+        },
+        "op": 1
+      },
+      {
+        "quest": "prince",
+        "target": {
+          "kind": "npc",
+          "id": 915
+        },
+        "op": 1
+      },
+      {
+        "quest": "prince",
+        "target": {
+          "kind": "npc",
+          "id": 923
+        },
+        "op": 1
+      },
+      {
+        "quest": "prince",
+        "target": {
+          "kind": "npc",
+          "id": 924
+        },
+        "op": 1
+      },
+      {
+        "quest": "regicide",
+        "target": {
+          "kind": "npc",
+          "id": 1210
+        },
+        "op": 1
+      },
+      {
+        "quest": "routequest",
+        "target": {
+          "kind": "npc",
+          "id": 1567
+        },
+        "op": 1
+      },
+      {
+        "quest": "routequest",
+        "target": {
+          "kind": "npc",
+          "id": 1576
+        },
+        "op": 1
+      },
+      {
+        "quest": "routequest",
+        "target": {
+          "kind": "npc",
+          "id": 1577
+        },
+        "op": 1
+      },
+      {
+        "quest": "runemysteries",
+        "target": {
+          "kind": "npc",
+          "id": 300
+        },
+        "op": 1
+      },
+      {
+        "quest": "runemysteries",
+        "target": {
+          "kind": "npc",
+          "id": 741
+        },
+        "op": 1
+      },
+      {
+        "quest": "scorpcatcher",
+        "target": {
+          "kind": "npc",
+          "id": 389
+        },
+        "op": 1
+      },
+      {
+        "quest": "seaslug",
+        "target": {
+          "kind": "npc",
+          "id": 696
+        },
+        "op": 1
+      },
+      {
+        "quest": "seaslug",
+        "target": {
+          "kind": "npc",
+          "id": 700
+        },
+        "op": 1
+      },
+      {
+        "quest": "sheep",
+        "target": {
+          "kind": "npc",
+          "id": 758
+        },
+        "op": 1
+      },
+      {
+        "quest": "sheepherder",
+        "target": {
+          "kind": "npc",
+          "id": 289
+        },
+        "op": 1
+      },
+      {
+        "quest": "sheepherder",
+        "target": {
+          "kind": "npc",
+          "id": 290
+        },
+        "op": 1
+      },
+      {
+        "quest": "squire",
+        "target": {
+          "kind": "npc",
+          "id": 606
+        },
+        "op": 1
+      },
+      {
+        "quest": "tbwt",
+        "target": {
+          "kind": "npc",
+          "id": 1162
+        },
+        "op": 1
+      },
+      {
+        "quest": "totem",
+        "target": {
+          "kind": "npc",
+          "id": 846
+        },
+        "op": 1
+      },
+      {
+        "quest": "tree",
+        "target": {
+          "kind": "loc",
+          "id": 2181
+        },
+        "op": 2
+      },
+      {
+        "quest": "tree",
+        "target": {
+          "kind": "npc",
+          "id": 469
+        },
+        "op": 1
+      },
+      {
+        "quest": "tree",
+        "target": {
+          "kind": "npc",
+          "id": 470
+        },
+        "op": 1
+      },
+      {
+        "quest": "upass",
+        "target": {
+          "kind": "loc",
+          "id": 3213
+        },
+        "op": 1
+      },
+      {
+        "quest": "upass",
+        "target": {
+          "kind": "npc",
+          "id": 972
+        },
+        "op": 1
+      },
+      {
+        "quest": "viking",
+        "target": {
+          "kind": "npc",
+          "id": 1294
+        },
+        "op": 1
+      },
+      {
+        "quest": "waterfall",
+        "target": {
+          "kind": "loc",
+          "id": 1987
+        },
+        "op": 1
+      },
+      {
+        "quest": "waterfall",
+        "target": {
+          "kind": "npc",
+          "id": 304
+        },
+        "op": 1
+      },
+      {
+        "quest": "zanaris",
+        "target": {
+          "kind": "npc",
+          "id": 650
+        },
+        "op": 1
+      },
+      {
+        "quest": "zanaris",
+        "target": {
+          "kind": "npc",
+          "id": 654
+        },
+        "op": 1
+      }
+    ]
+  },
   "drop_tables": [
     {
       "npc_alias": "giant",

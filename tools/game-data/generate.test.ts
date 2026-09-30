@@ -7,6 +7,7 @@ import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGi
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
 import { extractGatheringFamily, GATHERING_SCHEMA, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
+import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
@@ -851,6 +852,7 @@ function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, stri
 ~send_quest_progress_colour(questlist:regicide, %regicide_quest, ^regicide_complete);
 `,
         'scripts/general/configs/quest.constant': `^cook_complete = 2
+^cookquest_not_started = 0
 ^cookquest_complete = 7
 ^cook_questpoints = 1
 ^runemysteries_complete = 6
@@ -892,6 +894,17 @@ text=Waterfall Quest
 314=death_equiproom
 147=zanaris
 101=qp
+`,
+        'pack/npc.pack': `100=cook
+`,
+        'pack/loc.pack': `200=cook_start
+`,
+        'scripts/areas/area_test/scripts/start.rs2': `[opnpc1,cook]
+if (%cookquest = ^cookquest_not_started) {
+    @cook_start;
+}
+[label,cook_start]
+%cookquest = 1;
 `,
         'scripts/general/configs/quest.enum': `[quest_names_enum]
 val=1,Cook's Assistant
@@ -983,6 +996,15 @@ assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverag
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
+const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289, 'fixture-content');
+assert.equal(questStarts.schema, 1);
+assert.equal(questStarts.revision, 289);
+assert.equal(questStarts.content_id, 'fixture-content');
+assert.deepEqual(questStarts.rows, [{
+    quest: 'cook',
+    target: { kind: 'npc', id: 100 },
+    op: 1,
+}]);
 assert.doesNotThrow(() => extractQuestIdentityFacts(questRoot, 274));
 
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/scripts/quests.rs2']; }), 274), /quests\.rs2/);
