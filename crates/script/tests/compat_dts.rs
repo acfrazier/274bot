@@ -391,7 +391,7 @@ fn bank_deposit_and_delay_until_are_promise_returning() {
 
 /// Consumer TypeScript probe: good uses typecheck, bad `Game` uses must not.
 /// Also type-checks `compat-js/index.d.ts` with `skipLibCheck: false`.
-/// Requires `tsc` or `npx`. Run:
+/// Requires `npx`; always runs the pinned TypeScript 5.8.3 (a `tsc` on `PATH` may be 7.x). Run:
 /// `npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe`
 #[test]
 #[ignore = "requires tsc; npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe"]
@@ -411,15 +411,8 @@ fn tsc_consumer_probe_rejects_wrong_uses() {
     }
 }
 
+/// Pinned compiler: a bare `tsc` on `PATH` (Homebrew ships 7.x) would change the diagnostics.
 fn tsc_command() -> std::process::Command {
-    if std::process::Command::new("tsc")
-        .arg("-v")
-        .output()
-        .ok()
-        .is_some_and(|o| o.status.success())
-    {
-        return std::process::Command::new("tsc");
-    }
     let mut npx = std::process::Command::new("npx");
     npx.args(["-p", "typescript@5.8.3", "--yes", "tsc"]);
     npx
