@@ -729,6 +729,32 @@ impl SlotScript {
         Ok(())
     }
 
+    /// Same run/session fence as other native controls. Requests are latched;
+    /// this command never interrupts an owned dialogue or emits a game verb.
+    pub fn read_journal_compiled(&mut self, target: RunKey) -> Result<(), ScriptFailure> {
+        let run = self
+            .compiled
+            .as_mut()
+            .filter(|run| run.run == target)
+            .ok_or_else(|| ScriptFailure {
+                code: "read-journal-refused".into(),
+                message: "stale native run".into(),
+                retryable: false,
+            })?;
+        match catch_unwind(AssertUnwindSafe(|| run.script.read_journal())) {
+            Ok(result) => result,
+            Err(payload) => {
+                let failure = ScriptFailure {
+                    code: "read-journal-panic".into(),
+                    message: panic_message(&payload).into(),
+                    retryable: false,
+                };
+                self.fail_compiled(failure.clone());
+                Err(failure)
+            }
+        }
+    }
+
     /// Behavioral fixtures use the same compiled instance/tick path, without
     /// adding test cards or constructors to the production registry.
     #[cfg(any(test, feature = "test-hooks"))]
