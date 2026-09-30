@@ -2202,6 +2202,7 @@ impl Session {
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
             world: self.core.play().and_then(|p| p.world()),
             obj_names: self.core.play().map(|p| p.obj_names()),
+            map_members: self.core.play().is_some_and(|p| p.map_members()),
         })?;
         self.set_multibox(true);
         for name in &run.names {

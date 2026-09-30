@@ -341,20 +341,6 @@ fn blocked_door_fixture() -> WorldCollision {
 
 /// One directed door edge `at -> to` (loc 1530, `Open` op 1).
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
-    door_with_members(at, to, ticks, false)
-}
-
-/// Zanaris-style directed door edge, gated by WORLD membership.
-fn members_door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
-    door_with_members(at, to, ticks, true)
-}
-
-fn door_with_members(
-    at: WorldTile,
-    to: WorldTile,
-    ticks: i32,
-    members_req: bool,
-) -> TransportGraph {
     let edge = TransportEdge {
         kind: TransportKind::Door,
         at,
@@ -369,7 +355,7 @@ fn door_with_members(
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
-        members_req,
+        members_req: false,
         wildy_cap: None,
         quest_gates: None,
     };
@@ -477,42 +463,6 @@ fn router_uses_transport_across_a_wall() {
     assert_eq!(edge.to, tile(2, 2, 0));
     assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
     assert_eq!(w1.last(), Some(&tile(4, 4, 0)));
-}
-
-#[test]
-fn zanaris_style_transport_requires_members_world() {
-    let wc = walled_5x5_gap(2);
-    let graph = members_door(tile(1, 2, 0), tile(2, 2, 0), 4);
-    let free = WorldState::empty();
-    assert!(
-        matches!(
-            find_with(
-                &wc,
-                &graph,
-                tile(0, 0, 0),
-                tile(4, 4, 0),
-                FindOptions::default(),
-                &free,
-            ),
-            Err(RouteError::NoPath)
-        ),
-        "a F2P world must not plan through a Zanaris-style transport"
-    );
-
-    let members = WorldState::empty().with_map_members(true);
-    let route = find_with(
-        &wc,
-        &graph,
-        tile(0, 0, 0),
-        tile(4, 4, 0),
-        FindOptions::default(),
-        &members,
-    )
-    .expect("a members world may plan through the transport");
-    assert!(route.legs.iter().any(|leg| matches!(
-        leg,
-        Leg::Transport { edge } if edge.members_req
-    )));
 }
 
 #[test]

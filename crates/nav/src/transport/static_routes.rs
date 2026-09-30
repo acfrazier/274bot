@@ -37,6 +37,39 @@ pub(super) struct BoatRoute {
     /// non-transmitted varps with proven completed journal names.
     varp_req: Option<(i32, i32)>,
 }
+/// Whether a fixed boat route's source handler refuses F2P worlds.
+///
+/// The Port Sarim monk checks `map_members = ^false` before opening its
+/// dialogue. The return handler intentionally has no such guard, so its
+/// route remains usable for a player already on Entrana. Keep this derived
+/// from the source blocks rather than making the route table a second gate
+/// table.
+fn boat_members_req(content_root: &Path, npc: i32) -> bool {
+    let (relative, handler) = match npc {
+        657 => (
+            "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2",
+            "shipmonk",
+        ),
+        658 => (
+            "scripts/areas/area_entrana/scripts/monk_of_entrana.rs2",
+            "shipmonk2",
+        ),
+        _ => return false,
+    };
+    let Ok(text) = fs::read_to_string(content_root.join(relative)) else {
+        return false;
+    };
+    script_blocks(&text)
+        .into_iter()
+        .find(|(op, name, _)| op == "opnpc1" && name == handler)
+        .is_some_and(|(_, _, body)| {
+            body.lines().take(5).any(|raw| {
+                let code = raw.split_once("//").map_or(raw, |(code, _)| code);
+                let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+                compact == "if(map_members=^false){"
+            })
+        })
+}
 
 /// The 2004 boat journeys: `~set_sail(` landings from area scripts, NPC
 /// tiles from jm2, disembark locs from `gangplank.loc` / loc.pack (jm2
@@ -283,11 +316,13 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
 /// hop (`Cross` on the boat-side gangplank → dock). Kind is Ladder: a
 /// level-changing loc op, not an NPC.
 pub(super) fn boat_edges(
+    content_root: &Path,
     graph: &mut TransportGraph,
     gates: &ObservableGates,
     audit: &mut VarpGateAudit,
 ) {
     for r in BOAT_ROUTES {
+        let members_req = boat_members_req(content_root, r.npc);
         gates.admit_edge(
             graph,
             TransportEdge {
@@ -304,7 +339,7 @@ pub(super) fn boat_edges(
                 quest_req: vec![],
                 varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
                 worn_req: vec![],
-                members_req: false,
+                members_req,
                 wildy_cap: None,
                 quest_gates: None,
             },

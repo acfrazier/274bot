@@ -1010,6 +1010,7 @@ impl TuiSession {
         self.live_stop_wait_started = None;
         let world = play.world();
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+        runner.set_map_members(play.map_members());
         let budget = scenario::budget_s_from_env();
         if let Some(budget) = budget {
             runner.set_deadline(budget);
@@ -2702,6 +2703,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
             world: session.core.play().and_then(|p| p.world()),
             obj_names: session.core.play().map(|p| p.obj_names()),
+            map_members: session.core.play().is_some_and(|p| p.map_members()),
         })?;
         session.names = run.names.clone();
         session.load_and_login_all();
