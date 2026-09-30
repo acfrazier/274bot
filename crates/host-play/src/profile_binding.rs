@@ -393,26 +393,17 @@ impl ProfileSelection {
         let unpack_dir = runtime_cache
             .as_ref()
             .map_or(self.unpack_dir.as_path(), |p| p.unpack_root());
-        let availability = if let Some(p) = &runtime_cache {
-            CacheAvailability::Ready {
-                version: p.version.clone(),
-                published: true,
-                source: if p.source == "update-server" {
-                    "update-server"
-                } else {
-                    "local-store"
-                },
-            }
-        } else {
-            crate::cache::prepare(
+        let cache_preparation = if runtime_cache.is_none() {
+            Some(crate::cache::prepare(
                 cache_dir,
                 unpack_dir,
                 self.transport(),
                 &self.asset_host,
                 self.asset_port,
                 observer,
-            )
-            .availability
+            ))
+        } else {
+            None
         };
         let mut archives = std::collections::BTreeMap::new();
         let mut crcs = [0; 9];
@@ -428,8 +419,15 @@ impl ProfileSelection {
             archive_total,
         ));
         for (index, name) in JAGS.iter().enumerate() {
-            let bytes =
-                std::fs::read(cache_dir.join(name)).map_err(|e| format!("cache {name}: {e}"))?;
+            let bytes = std::fs::read(cache_dir.join(name)).map_err(|error| {
+                let archive_error = format!("cache {name}: {error}");
+                match cache_preparation.as_ref().map(|prep| &prep.availability) {
+                    Some(crate::cache::CacheAvailability::Degraded(reason)) => {
+                        format!("{archive_error}; cache preparation degraded: {reason}")
+                    }
+                    _ => archive_error,
+                }
+            })?;
             archives.insert((*name).into(), hash_bytes_with_progress(&bytes, |_, _| {}));
             crcs[index + 1] = Packet::getcrc(&bytes, 0, bytes.len());
             let completed = index as u64 + 1;
@@ -567,6 +565,21 @@ impl ProfileSelection {
                 }
             }
         }
+        let availability = if let Some(p) = &runtime_cache {
+            CacheAvailability::Ready {
+                version: p.version.clone(),
+                published: true,
+                source: if p.source == "update-server" {
+                    "update-server"
+                } else {
+                    "local-store"
+                },
+            }
+        } else {
+            cache_preparation
+                .expect("non-runtime cache preparation")
+                .availability
+        };
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
             transport: self.transport(),
