@@ -115,10 +115,14 @@ checkboxes on a focused profile:
 - **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
   Every drawing slot at 50 fps, focused included. Ephemeral.
 - **lowmem / highmem** — default **lowmem**. Click the current mem
-  button (under none/GPU/CPU) for a sticky picker like Teles. Highmem
-  is `Profile.settings.lowmem = false`; switching mem (like GPU↔CPU)
-  drops + reattaches the head on the live `Client` — never a logout
-  or restart.
+  button (under none/GPU/CPU) for a sticky picker like Teles. Highmem is
+  `Profile.settings.lowmem = false`. The live client follows the switch
+  immediately without an automatic logout; server-side tabs, music and
+  sound follow at the next login. While those modes differ the panel shows
+  both and offers **Relog now**, which logs out and back in through the
+  ordinary login queue. A running or queued script Start is disclosed
+  before relogging, and the queued label clears when login succeeds, fails
+  terminally, or the operator takes over with Log in / Log out.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.

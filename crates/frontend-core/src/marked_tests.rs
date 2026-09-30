@@ -331,6 +331,46 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     );
 }
 
+#[test]
+fn marked_logout_cancels_a_memory_relog_login_half() {
+    let mut f = fixture("marked-logout-relog", &["alice", "bob"], 2);
+    for name in ["alice", "bob"] {
+        push_ready(&f, name);
+    }
+    {
+        let mut rows = f.core.play().unwrap().statuses.lock().unwrap();
+        for row in rows.iter_mut() {
+            row.login_lowmem = Some(true);
+        }
+    }
+    f.core.poll();
+    f.core.request_memory_relog("alice", &mut f.surface);
+    {
+        let mut rows = f.core.play().unwrap().statuses.lock().unwrap();
+        let alice = rows.iter_mut().find(|row| row.username == "alice").unwrap();
+        alice.connected = false;
+        alice.ingame = false;
+        alice.scene_state = 0;
+        alice.login_latched = true;
+    }
+    f.core.poll();
+    assert!(f.core.play().unwrap().arm("alice").unwrap().wants_login());
+    assert!(f.core.memory_status("alice").unwrap().relog_pending);
+
+    let out = logout_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts);
+
+    assert_eq!(out.summary(), "Log out marked: logging out 2, skipped 0");
+    for name in ["alice", "bob"] {
+        let arm = f.core.play().unwrap().arm(name).unwrap();
+        assert!(!arm.wants_login(), "{name} must stay logged out");
+        assert!(arm.login_latched(), "{name} must keep the logout latch");
+    }
+    assert!(
+        !f.core.memory_status("alice").unwrap().relog_pending,
+        "marked Logout cancels the relog exactly like single Logout"
+    );
+}
+
 /// Apply the focused bot's card settings to the marked bots only: an
 /// unmarked same-card bot keeps its own and is only counted, and every
 /// marked bot that cannot take the copy is named with its reason.

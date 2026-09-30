@@ -73,7 +73,7 @@ label in its border. Everything is plain text as well as colour.
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
-| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` (persisted on the profile); session nav opt-ins; **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). The TUI map is catalogue-only, so it never bakes terrain or asks. |
+| Settings | popup: `random_events`, `lamp_skill`, `lamp_auto` and **lowmem / highmem** (persisted on the profile); session nav opt-ins; **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`). A memory switch applies to the live client immediately and shows the server login mode until the next login; `r` explicitly relogs through the ordinary login queue and is disabled while that relog is queued. The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
 ## Keys
 

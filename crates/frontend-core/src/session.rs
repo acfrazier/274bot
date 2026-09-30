@@ -985,16 +985,21 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Settle Relog-now's visible queued state only after the login half has
-    /// observably reached the game. Until then another Relog action must not
-    /// be offered.
+    /// Settle Relog-now's visible queued state after the login half reaches
+    /// the game or stops on a terminal login error. While it remains queued,
+    /// another Relog action must not be offered.
     fn finish_memory_relogs(&mut self) {
         let statuses = &self.statuses;
+        let play = self.play.as_ref();
         self.mem_relog_login.retain(|name| {
-            !statuses
+            let logged_in = statuses
                 .iter()
                 .find(|status| status.username == *name)
-                .is_some_and(|status| status.ingame)
+                .is_some_and(|status| status.ingame);
+            let failed = play
+                .and_then(|play| play.arm(name))
+                .is_some_and(|arm| arm.login_held_by_error());
+            !logged_in && !failed
         });
     }
 
