@@ -7,6 +7,7 @@ import { parsePack } from './extractors/common.ts';
 import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs } from './generate.ts';
+import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -68,7 +69,10 @@ async function verifyRevision(revision: number) {
     const spec = revisions.find((each) => each.revision === revision)!;
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
-    assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(contentFiles), `${revision} complete content provenance`);
+    const expectedContentFiles = payload.quest_starts === undefined
+        ? contentFiles
+        : [...new Set([...contentFiles, ...questStartContentFiles(pin.contentRoot)])];
+    assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: any) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
     const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
@@ -274,6 +278,16 @@ async function verifyRevision(revision: number) {
     if (payload.quest_prereqs !== undefined) throw new Error(`${revision}: quest_prereqs is not a second field`);
     const extractedQuest = extractQuestIdentityFacts(pin.contentRoot, revision);
     assertEqual(JSON.stringify(questIdentity), JSON.stringify(extractedQuest), `${revision} quest_identity matches the writer extract`);
+    if (revision === 289 && payload.quest_starts === undefined) throw new Error(`${revision}: quest_starts family missing`);
+    if (payload.quest_starts !== undefined) {
+        const questStarts = payload.quest_starts;
+        if (Array.isArray(questStarts) || questStarts.schema !== 1 || questStarts.revision !== revision
+            || questStarts.content_id !== pin.cache.content_id || !Array.isArray(questStarts.rows)) {
+            throw new Error(`${revision}: quest_starts family shape or identity mismatch`);
+        }
+        const extractedQuestStarts = extractQuestStartFacts(pin.contentRoot, questIdentity.rows, revision, pin.cache.content_id);
+        assertEqual(JSON.stringify(questStarts), JSON.stringify(extractedQuestStarts), `${revision} quest_starts matches the writer extract`);
+    }
     const expectedQuest = [
         ['cook', "Cook's Assistant", 'cook', 'cookquest', 29, 2, 1],
         ['runemysteries', 'Rune Mysteries Quest', 'runemysteries', 'runemysteries', 63, 6, 1],

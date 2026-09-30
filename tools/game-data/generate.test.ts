@@ -1071,6 +1071,29 @@ assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
 assert.deepEqual(pinQuest289.coverage, []);
 assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(pinQuest289.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm' || row.id === 'barcrawl' || row.id === 'hauntedmine'), true);
+const pinContent289 = revisions.find((spec) => spec.revision === 289)!.content;
+const pinQuestStarts = extractQuestStartFacts(pinContent289, pinQuest289.rows, 289, 'fixture-content');
+const hasQuestStart = (quest: string, kind: 'npc' | 'loc', id: number, op = 1) =>
+    pinQuestStarts.rows.some((row) => row.quest === quest && row.target.kind === kind && row.target.id === id && row.op === op);
+for (const [quest, kind, id, op] of [
+    ['arthur', 'npc', 239, 1],
+    ['arthur', 'npc', 240, 1],
+    ['haunted', 'npc', 286, 1],
+    ['arena', 'loc', 76, 1],
+    ['tree', 'loc', 2181, 2],
+] as const) {
+    assert.equal(hasQuestStart(quest, kind, id, op), false, `false quest start ${quest} ${kind} ${id} op${op}`);
+}
+for (const [quest, kind, id] of [
+    ['cook', 'npc', 278],
+    ['sheep', 'npc', 758],
+    ['imp', 'npc', 706],
+    ['runemysteries', 'npc', 741],
+    ['demon', 'npc', 882],
+    ['doric', 'npc', 284],
+] as const) {
+    assert.equal(hasQuestStart(quest, kind, id), true, `real quest start ${quest} ${kind} ${id}`);
+}
 
 
 // ---- trails ------------------------------------------------------------------

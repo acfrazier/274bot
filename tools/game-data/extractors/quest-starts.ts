@@ -14,6 +14,17 @@ type Section = {
     body: string;
 };
 
+type ExpandedLine =
+    | { kind: 'source'; text: string }
+    | { kind: 'label-start'; guardLine?: string }
+    | { kind: 'label-end' };
+
+type Scope = {
+    kind: 'block' | 'switch' | 'label';
+    guard: boolean;
+    terminated: boolean;
+};
+
 export type QuestStartTarget = {
     kind: 'npc' | 'loc';
     id: number;
@@ -89,54 +100,108 @@ function labelReferences(body: string, names: ReadonlySet<string>): string[] {
     return [...new Set(refs)];
 }
 
-function expandedBody(handler: Section, labels: ReadonlyMap<string, Section>): string {
+function expandedBody(handler: Section, labels: ReadonlyMap<string, Section>): ExpandedLine[] {
     const names = new Set(labels.keys());
-    const seen = new Set<string>();
-    const pieces = [handler.body];
-    const visit = (body: string, depth: number) => {
-        if (depth >= 8) return;
-        for (const name of labelReferences(body, names)) {
-            if (!seen.add(name)) continue;
-            const label = labels.get(name);
-            if (!label) continue;
-            pieces.push(label.body);
-            visit(label.body, depth + 1);
+    const expand = (body: string, depth: number, active: ReadonlySet<string>): ExpandedLine[] => {
+        const out: ExpandedLine[] = [];
+        for (const raw of body.split(/\r?\n/)) {
+            out.push({ kind: 'source', text: raw });
+            const refs = labelReferences(raw, names);
+            const inlineGuard = refs.length === 1
+                && /^\s*(?:else\s+)?if\b/.test(raw)
+                && !raw.includes('{')
+                && !/\belse\b/.test(raw)
+                ? raw
+                : undefined;
+            for (const name of refs) {
+                if (active.has(name)) continue;
+                const label = labels.get(name);
+                if (!label || depth >= 8) continue;
+                out.push({ kind: 'label-start', guardLine: inlineGuard });
+                const nextActive = new Set(active);
+                nextActive.add(name);
+                out.push(...expand(label.body, depth + 1, nextActive));
+                out.push({ kind: 'label-end' });
+            }
         }
+        return out;
     };
-    visit(handler.body, 0);
-    return pieces.join('\n');
+    return expand(handler.body, 0, new Set());
 }
 
-function notStartedNames(content: string): Set<string> {
-    const constants = fs.readFileSync(path.join(content, 'scripts/general/configs/quest.constant'), 'utf8');
-    const names = new Set<string>();
-    for (const raw of constants.split(/\r?\n/)) {
-        const match = /^\^([A-Za-z0-9_]+_not_started)\s*=/.exec(raw.trim());
-        if (match) names.add(match[1]);
-    }
-    return names;
+export function questStartContentFiles(content: string): string[] {
+    return walkContentFiles(path.join(content, 'scripts'), '.rs2')
+        .filter((file) => !file.includes('/journal') && !file.includes('/_test/') && !file.includes('/_unpack/'))
+        .map((file) => path.relative(content, file).split(path.sep).join('/'));
 }
 
-function firstStartAssignment(body: string, varp: string, constants: ReadonlySet<string>): boolean {
+function firstStartAssignment(lines: readonly ExpandedLine[], questId: string, varp: string): boolean {
     const varpStem = varp.replace(/(?:_quest|quest|_bits)$/, '');
-    const lines = body.split(/\r?\n/);
-    let guard = false;
-    for (const raw of lines) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
+    const guardForLine = (line: string) => {
         const names = [...line.matchAll(/\^([A-Za-z0-9_]+_not_started)\b/g)].map((match) => match[1]);
-        const directGuard = new RegExp(`%${varp}\\s*=\\s*\\^\\w+_not_started\\b`).test(line);
-        const caseGuard = /^\s*case\b/.test(line);
-        if (names.some((name) => {
+        const isNotStarted = names.some((name) => {
             const stem = name.slice(0, -'_not_started'.length);
-            return (directGuard || caseGuard) && (constants.has(name) || stem === varp || stem === varpStem || stem.startsWith(varpStem) || varpStem.startsWith(stem));
-        })) guard = true;
-        if (new RegExp(`%${varp}\\s*=\\s*0\\b`).test(line)) guard = true;
+            return stem === questId || stem === varp || stem === varpStem;
+        });
+        const isIf = /^\s*(?:else\s+)?if\b/.test(line);
+        // A numeric zero is only a branch-local guard; a bare assignment or early return cannot latch it.
+        const zeroGuard = isIf && new RegExp(`%${varp}\\s*=\\s*0\\b`).test(line);
+        return isIf && (isNotStarted || zeroGuard);
+    };
+    const scopes: Scope[] = [];
+    for (const expanded of lines) {
+        if (expanded.kind === 'label-start') {
+            scopes.push({ kind: 'label', guard: expanded.guardLine !== undefined && guardForLine(expanded.guardLine), terminated: false });
+            continue;
+        }
+        if (expanded.kind === 'label-end') {
+            if (scopes.at(-1)?.kind === 'label') scopes.pop();
+            continue;
+        }
+        const line = expanded.text.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (/^case\b/.test(line)) {
+            const switchScope = [...scopes].reverse().find((scope) => scope.kind === 'switch');
+            if (switchScope) {
+                const names = [...line.matchAll(/\^([A-Za-z0-9_]+_not_started)\b/g)].map((match) => match[1]);
+                switchScope.guard = names.some((name) => {
+                    const stem = name.slice(0, -'_not_started'.length);
+                    return stem === questId || stem === varp || stem === varpStem;
+                });
+                switchScope.terminated = false;
+            }
+        }
         const assignment = ASSIGNMENT.exec(line);
-        if (!assignment || assignment[1] !== varp) continue;
-        const value = assignment[2] ?? assignment[3];
-        if (value === undefined || value === '0' || value.endsWith('_not_started') || constants.has(value)) continue;
-        if (guard) return true;
+        if (assignment && assignment[1] === varp) {
+            const value = assignment[2] ?? assignment[3];
+            if (value !== undefined && value !== '0' && !value.endsWith('_not_started')
+                && scopes.some((scope) => scope.guard && !scope.terminated)) {
+                return true;
+            }
+        }
+        if (/^return\b/.test(line)) {
+            for (let index = scopes.length - 1; index >= 0; index -= 1) {
+                if (!scopes[index].guard) continue;
+                scopes[index].terminated = true;
+                break;
+            }
+        }
+        const code = line.replace(/"[^"]*"/g, '');
+        let firstOpen = true;
+        for (const token of code.matchAll(/[{}]/g)) {
+            if (token[0] === '}') {
+                scopes.pop();
+                continue;
+            }
+            const prefix = code.slice(0, token.index).replace(/^\s*}\s*/, '').trim();
+            const switchBlock = firstOpen && /^switch(?:_int)?\b/.test(prefix);
+            scopes.push({
+                kind: switchBlock ? 'switch' : 'block',
+                guard: !switchBlock && firstOpen && guardForLine(line),
+                terminated: false,
+            });
+            firstOpen = false;
+        }
     }
     return false;
 }
@@ -150,9 +215,9 @@ function packs(content: string) {
 
 /**
  * Find only the simple, content-visible starter relation: an NPC/LOC op handler
- * whose first assignment to that quest's progress var leaves a not-started guard.
- * This deliberately does not interpret RuneScript control flow; uncertain or
- * indirect handlers stay out of the facts and therefore keep map labels generic.
+ * whose assignment to that quest's progress var stays in the same not-started
+ * switch arm or conditional branch. This deliberately leaves ambiguous or
+ * indirect handlers out of the facts so map labels remain generic.
  */
 export function extractQuestStartFacts(
     content: string,
@@ -160,8 +225,7 @@ export function extractQuestStartFacts(
     revision: number,
     contentId: string,
 ): QuestStartFacts {
-    const files = walkContentFiles(path.join(content, 'scripts'), '.rs2')
-        .filter((file) => !file.includes('/journal') && !file.includes('/_test/') && !file.includes('/_unpack/'));
+    const files = questStartContentFiles(content).map((file) => path.join(content, file));
     const handlers: Section[] = [];
     const labels = new Map<string, Section>();
     const duplicateLabels = new Set<string>();
@@ -174,13 +238,12 @@ export function extractQuestStartFacts(
         }
     }
     for (const name of duplicateLabels) labels.delete(name);
-    const constants = notStartedNames(content);
     const pack = packs(content);
     const rows: QuestStartRow[] = [];
     for (const quest of quests) {
         if (!/^\w+$/.test(quest.varp)) continue;
         for (const handler of handlers) {
-            if (!firstStartAssignment(expandedBody(handler, labels), quest.varp, constants)) continue;
+            if (!firstStartAssignment(expandedBody(handler, labels), quest.id, quest.varp)) continue;
             const ids = pack[handler.kind].get(handler.alias);
             if (ids === undefined) continue;
             rows.push({ quest: quest.id, target: { kind: handler.kind, id: ids }, op: handler.op });
