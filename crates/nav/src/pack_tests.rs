@@ -496,7 +496,7 @@ fn roundtrip_collision_and_transport_graph() {
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![772], // dramen_staff on the Zanaris shed door
-        members_req: false,
+        members_req: true,
         wildy_cap: None,
         quest_gates: None,
     };

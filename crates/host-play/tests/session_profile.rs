@@ -599,6 +599,26 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 }
 
 #[test]
+fn shared_template_client_members_follow_world_members_fact() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    for (uid, members) in [(740_101, false), (740_102, true)] {
+        let mut options = fixture.options(289);
+        options.world_members = Some(members);
+        let profile = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap();
+        let template = SharedClientTemplate::load(profile).unwrap();
+        let client = template.prepare_client(uid, false).unwrap();
+        assert_eq!(
+            client.config.members, members,
+            "bound client must use WORLD membership, not a hard-coded account flag"
+        );
+    }
+}
+#[test]
 fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();

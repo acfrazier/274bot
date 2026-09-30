@@ -192,9 +192,10 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
 
 /// The Zanaris shed door (`quest_zanaris.rs2:89-100`
 /// `[oploc1,zanarisdoor]`): its Open channel teleports through to Zanaris
-/// (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is worn, so the
-/// door edge carries the staff's obj id as `worn_req` and the Lost City
-/// quest name, and names the `loc_1532` leaf it swings.
+/// (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is worn on a
+/// members world, so the edge carries both the staff's obj id as `worn_req`
+/// and `members_req`, plus the Lost City quest name, and names the `loc_1532`
+/// leaf it swings.
 #[test]
 fn derive_transports_emits_zanaris_shed_door_with_worn_dramen() {
     let fx = Fixture::new();
@@ -246,9 +247,21 @@ if($entering = false) {
         "Zanaris landing, not Lumbridge swamp"
     );
     assert_eq!(e.worn_req, [772]);
+    assert!(e.members_req, "Zanaris requires a members world");
     assert_eq!(e.quest_req, ["Lost City"]);
     assert_eq!(e.open_loc_id, Some(1532));
     assert_eq!(e.ticks, ZANARIS_DOOR_TICKS);
+    let mut facts = crate::world_state::WorldState::empty();
+    facts.worn.insert(772);
+    facts.quests.insert("Lost City".into());
+    assert!(
+        !facts.allows(e),
+        "the source's map_members check must block F2P even with staff and quest"
+    );
+    assert!(
+        facts.with_map_members(true).allows(e),
+        "the same Zanaris edge is usable on a members world"
+    );
 }
 
 /// The graph derived from an empty content root: only the explicit route

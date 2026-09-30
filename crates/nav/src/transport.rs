@@ -171,9 +171,9 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
-    /// WORLD membership required (`MAP_MEMBERS`). False on every existing
-    /// deriver; only the canonical `membergatel`/`membergater` family sets
-    /// this. Packed as a `u8` on the v9 wire after `worn_req`.
+    /// WORLD membership required (`MAP_MEMBERS`). Content derivers set this
+    /// for canonical members-gated scripts, including Zanaris and the
+    /// `membergatel`/`membergater` family. Packed as a `u8` on the v9 wire
     pub members_req: bool,
     /// Content-derived max wilderness level this teleport may be used from
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
