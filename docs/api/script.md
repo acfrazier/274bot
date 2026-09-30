@@ -85,7 +85,19 @@ scripts end their live step at either boundary.
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
-chat closed, rather than an elapsed host-millisecond gap. A journal transaction
+chat closed, rather than an elapsed host-millisecond gap. Combat interruption
+is keyed directly to the client's `in_combat` flag, not to a newly observed hit
+or a combat baseline. The flag stays set for about 8 s after any hitsplat
+(`client.rs:9211` sets it to `loop_cycle + 400`; `decode.rs:1288` reads it).
+Thus a talk step that starts or ends within that window after unrelated combat
+parks as **Blocked**, even if the dialogue itself was not hit. This is
+fail-closed and requires an explicit operator retry. Poison hits count too:
+poison closes interfaces before applying its damage hitsplat, which sets the
+same flag. A closed chat while the flag is set produces an explicit
+combat-interruption outcome, including during dialogue opening or page
+acknowledgement. Quester does not count that interruption as successful work,
+settle the step, or request an advancement journal read. It does not fight or
+automatically retry the conversation. A journal transaction
 that loses ownership or becomes transiently busy is retried only after both
 main and chat modals have been observed closed for three game ticks. Unknown
 modal observations or reopened modals restart this quiet interval.
