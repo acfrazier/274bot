@@ -1,6 +1,7 @@
 use api::interact::Driver;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::snapshot::{GameSnapshot, WorldTile};
+use nav::bank_fetch::SAME_BANK;
 use nav::router::{
     find_many_with_avoid_bounded, find_with, FindOptions, Route, BANK_TARGET_BUDGET,
 };
@@ -702,9 +703,10 @@ fn norm_action(s: &str) -> String {
         .collect()
 }
 
-/// Packed stands within this Chebyshev belong to one bank building.
-const SAME_BANK: i32 = 12;
-
+/// Open the bank the player stands at, by the packed stands of the one
+/// bank building ([`SAME_BANK`]) nearest `here`: a teller in the scene
+/// first (its packed op), then that building's booths nearest `here`
+/// first, so the booth the player stands at is the one used.
 pub(crate) fn open_bank_at_here<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -754,6 +756,7 @@ pub(crate) fn open_bank_at_here<D: Driver>(
                     }
                 }
             }
+            // `cluster` keeps the nearest-`here` order of `stands`.
             for stand in cluster
                 .iter()
                 .filter(|s| matches!(s.access, BankAccess::Booth { .. }))

@@ -16,7 +16,10 @@ use nav::WorldState;
 /// the access-tile sub-route. Wear-from-inv and bank-trip deposit/withdraw
 /// both pump through the same path. `final_route` is the post-session
 /// route (status row + follow once steps clear); a Walk-to-access may
-/// temporarily replace `WalkArm::route` / `NavBot::route`.
+/// temporarily replace `WalkArm::route` / `NavBot::route`. The front
+/// step's [`StepProgress`] lives here too, so the script pump (`NavBot`)
+/// and the panel/TUI pump (`WalkArm`) share one budget and one in-flight
+/// latch across pumps.
 #[derive(Debug, Clone)]
 pub struct PendingBankFetch {
     pub steps: VecDeque<BankStep>,
@@ -26,6 +29,36 @@ pub struct PendingBankFetch {
     /// The walk's avoidance rectangles: the access sub-route keeps out of
     /// them as the walk does.
     pub avoid: Vec<AvoidRect>,
+    /// The front step's pump budget and in-flight send.
+    pub progress: StepProgress,
+}
+
+impl PendingBankFetch {
+    /// Pop the front step: the next one starts with a fresh budget and no
+    /// send in flight.
+    pub(crate) fn pop_step(&mut self) {
+        self.steps.pop_front();
+        self.progress = StepProgress::default();
+    }
+}
+
+/// The front non-Walk step's progress: pumps spent waiting for it to land,
+/// and the snapshot facts its last send latched (boxed: most pumps have no
+/// send in flight, and every planned session carries it).
+#[derive(Debug, Clone, Default)]
+pub struct StepProgress {
+    pub(crate) attempts: u32,
+    pub(crate) flight: Option<Box<BankFetchFlight>>,
+}
+
+/// The snapshot facts a BankBudget send latched, so the next pump does
+/// not re-send until the bank, backpack or worn set actually changes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BankFetchFlight {
+    pub(crate) bank_gen: u64,
+    pub(crate) bank_com: i32,
+    pub(crate) backpack: Vec<(i32, i32)>,
+    pub(crate) worn: Vec<i32>,
 }
 
 /// Outcome of a walk-arm route attempt: a direct route, a BankBudget
@@ -247,6 +280,7 @@ fn session_route(
             opts,
             final_route: route.clone(),
             avoid: avoid.to_vec(),
+            progress: StepProgress::default(),
         },
         route,
     })

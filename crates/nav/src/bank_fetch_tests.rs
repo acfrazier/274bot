@@ -162,8 +162,8 @@ fn worn_req_with_knife_in_inventory_wears_in_place() {
 
 /// Session unit: the inventory is full of junk and the knife is in
 /// the bank snapshot — the plan deposits the backpack, withdraws the
-/// knife, wears it, closes, and the post-session strict re-find
-/// crosses.
+/// knife, closes the bank, then wears it (the client cannot wear while
+/// the bank is open), and the post-session strict re-find crosses.
 #[test]
 fn bank_trip_deposits_withdraws_wears_then_finds() {
     let wc = walled_5x5();
@@ -195,10 +195,10 @@ fn bank_trip_deposits_withdraws_wears_then_finds() {
                 id: KNIFE,
                 count: 1
             },
-            BankStep::Wear { id: KNIFE },
             BankStep::Close,
+            BankStep::Wear { id: KNIFE },
         ],
-        "walk, open, deposit the junk, withdraw the knife, wear, close"
+        "walk, open, deposit the junk, withdraw the knife, close, wear"
     );
     assert!(fetch.state.inv.is_empty(), "the junk stays deposited");
     assert!(
@@ -317,8 +317,8 @@ fn bank_trip_fetches_any_one_worn_alternative() {
             BankStep::Open,
             BankStep::DepositAll,
             BankStep::Withdraw { id: 1321, count: 1 },
-            BankStep::Wear { id: 1321 },
             BankStep::Close,
+            BankStep::Wear { id: 1321 },
         ],
         "the banked alternative is withdrawn and worn"
     );
@@ -363,11 +363,11 @@ fn bank_trip_supply_includes_the_deposited_backpack() {
                 id: KNIFE,
                 count: 1
             },
-            BankStep::Wear { id: KNIFE },
             BankStep::Withdraw { id: 995, count: 10 },
             BankStep::Close,
+            BankStep::Wear { id: KNIFE },
         ],
-        "the deposited knife is withdrawn and worn, then the toll stack"
+        "the deposited knife and the toll stack are withdrawn, then the knife worn after the close"
     );
     let r = find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).unwrap();
     assert_eq!(r.dest, to);
@@ -600,22 +600,73 @@ fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
     }
 }
 
-/// Access tiles are orthogonal standable neighbours; the stand tile is
-/// never one of them, even when it itself is standable.
+/// BankBudget's access tiles are the standable tiles in line with the stand
+/// (east/west/north/south): never the stand tile, even when it itself is
+/// standable (a teller's spawn), never a blocked neighbour, and never a
+/// diagonal — a teller across a booth does not answer from the corner.
 #[test]
 fn bank_access_tiles_are_standable_neighbours_not_the_stand() {
-    let wc = bake(5, 5, &[(2, 2, CollisionFlag::SQ_BLOCKED as u32)]);
-    let booth = stand(2, 2);
-    let tiles = bank_access_tiles(&wc, &booth);
-    assert!(
-        !tiles.contains(&booth.tile),
-        "the booth loc tile is not an access tile"
+    let wc = bake(
+        5,
+        5,
+        &[
+            (2, 2, CollisionFlag::SQ_BLOCKED as u32),
+            (2, 3, CollisionFlag::SQ_BLOCKED as u32),
+        ],
     );
-    assert!(tiles.contains(&tile(3, 2, 0)));
-    assert!(tiles.contains(&tile(1, 2, 0)));
-    assert!(tiles.contains(&tile(2, 3, 0)));
-    assert!(tiles.contains(&tile(2, 1, 0)));
-    assert_eq!(tiles.len(), 4);
+    let booth = stand(2, 2);
+    let mut tiles: Vec<_> = bank_access_tiles(&wc, &booth).collect();
+    tiles.sort_by_key(|t| (t.x, t.z));
+    assert_eq!(
+        tiles,
+        vec![tile(1, 2, 0), tile(2, 1, 0), tile(3, 2, 0)],
+        "the in-line standable neighbours only"
+    );
+    assert!(super::is_bank_access(&wc, &booth, tile(1, 2, 0)));
+    assert!(
+        !super::is_bank_access(&wc, &booth, tile(1, 1, 0)),
+        "a diagonal"
+    );
+    assert!(
+        !super::is_bank_access(&wc, &booth, tile(2, 3, 0)),
+        "blocked"
+    );
+    let open = open_grid();
+    let teller = stand(4, 4);
+    assert!(open.standable(teller.tile));
+    assert!(!bank_access_tiles(&open, &teller).any(|t| t == teller.tile));
+    assert!(!super::is_bank_access(&open, &teller, teller.tile));
+}
+
+/// A tile across a wall from the stand is no access, whichever of the two
+/// tiles carries the wall face (the client stamps both): a teller against
+/// the bank's outer wall is not used from the street behind it.
+#[test]
+fn bank_access_tiles_skip_a_tile_walled_off_from_the_stand() {
+    let teller = stand(2, 2);
+    for faces in [
+        vec![
+            (2, 1, CollisionFlag::W_N as u32),
+            (2, 2, CollisionFlag::W_S as u32),
+        ],
+        vec![(2, 1, CollisionFlag::W_N as u32)],
+        vec![(2, 2, CollisionFlag::W_S as u32)],
+    ] {
+        let wc = bake(5, 5, &faces);
+        assert!(
+            wc.standable(tile(2, 1, 0)),
+            "the street tile stays standable"
+        );
+        let mut tiles: Vec<_> = bank_access_tiles(&wc, &teller).collect();
+        tiles.sort_by_key(|t| (t.x, t.z));
+        assert_eq!(
+            tiles,
+            vec![tile(1, 2, 0), tile(2, 3, 0), tile(3, 2, 0)],
+            "the walled-off south tile is dropped ({faces:?})"
+        );
+        assert!(!super::is_bank_access(&wc, &teller, tile(2, 1, 0)));
+        assert!(super::is_bank_access(&wc, &teller, tile(2, 3, 0)));
+    }
 }
 
 /// On the real 289 pack, BankBudget walks to a standable access tile from
@@ -625,9 +676,11 @@ fn packed_bank_fetch_walks_to_access_from_customer_streets() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
+    // Draynor's street is the road east of the bank: (3088,3240) is the
+    // bankers' aisle, which reaches no bank customer tile.
     let samples = [
         ("Varrock West", tile(3180, 3430, 0)),
-        ("Draynor", tile(3088, 3240, 0)),
+        ("Draynor", tile(3105, 3250, 0)),
         ("Falador East", tile(3008, 3352, 0)),
         ("Al Kharid", tile(3264, 3163, 0)),
     ];

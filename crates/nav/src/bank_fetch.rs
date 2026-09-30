@@ -17,39 +17,72 @@
 use std::collections::HashSet;
 
 use api::snapshot::WorldTile;
+use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
+use crate::named_banks::{is_access_tile, AccessReach, Footprint};
 use crate::pack::BankStand;
 use crate::router::MissingReq;
 use crate::world_state::WorldState;
 
-/// Orthogonal deltas of the router's interact radius 1, matching frozen
-/// `bankStand` (east/west/north/south). The stand tile itself is never
-/// an access tile.
-const ACCESS_DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+/// Packed stands within this Chebyshev of each other belong to one bank
+/// building: the Walk arrives at any of their access tiles and Open may use
+/// any of their booths or tellers.
+pub const SAME_BANK: i32 = 12;
 
-/// Standable tiles from which `stand` can be used: the orthogonal
-/// neighbours that [`WorldCollision::standable`] accepts. Reuses the
-/// transport take-off neighbourhood (standable, radius 1, never the
-/// interact tile itself) rather than a second reach flood. Booth loc
-/// tiles are not standable; most teller spawns sit in the bankers'
-/// aisle, so walking onto `stand.tile` is not an access.
-pub fn bank_access_tiles(collision: &WorldCollision, stand: &BankStand) -> Vec<WorldTile> {
-    ACCESS_DIRS
-        .into_iter()
-        .map(|(dx, dz)| WorldTile {
-            x: stand.tile.x + dx,
-            z: stand.tile.z + dz,
-            level: stand.tile.level,
-        })
-        .filter(|&tile| collision.standable(tile))
-        .collect()
+/// The standable tiles `stand` is used from, by the access rule the C1
+/// named-bank stands also use ([`is_access_tile`] over the stand's one-tile
+/// [`Footprint`]): standable and never the stand's own tile. BankBudget's
+/// reach is [`AccessReach::InLine`] (east/west/north/south of the stand), not
+/// the named stands' diagonals: its Open tries a teller first, and a teller
+/// across a booth answers only in line. A tile walled off from the stand
+/// ([`wall_between`]) is not an access: Falador East's bankers stand
+/// against the bank's south wall, and the Bank op from the street behind it
+/// never opens the bank. Booth loc tiles are not standable
+/// and most teller spawns sit in the bankers' aisle, so the stand tile
+/// itself is never a walk target.
+pub fn bank_access_tiles<'a>(
+    collision: &'a WorldCollision,
+    stand: &BankStand,
+) -> impl Iterator<Item = WorldTile> + 'a {
+    let at = stand.tile;
+    Footprint::tile(at).access_tiles(AccessReach::InLine, move |tile| {
+        collision.standable(tile) && !wall_between(collision, tile, at)
+    })
+}
+
+/// Whether `tile` is one of `stand`'s [`bank_access_tiles`].
+pub fn is_bank_access(collision: &WorldCollision, stand: &BankStand, tile: WorldTile) -> bool {
+    is_access_tile(
+        tile,
+        &[Footprint::tile(stand.tile)],
+        AccessReach::InLine,
+        &|tile| collision.standable(tile) && !wall_between(collision, tile, stand.tile),
+    )
+}
+
+/// Whether a wall stands on the shared edge of the in-line neighbours `a`
+/// and `b`: the `W_*` face of either tile toward the other in the packed
+/// walk word (the client stamps a wall on both). `false` for tiles that are
+/// not in-line neighbours on one level.
+fn wall_between(collision: &WorldCollision, a: WorldTile, b: WorldTile) -> bool {
+    if a.level != b.level {
+        return false;
+    }
+    let (a_face, b_face) = match (b.x - a.x, b.z - a.z) {
+        (0, 1) => (CollisionFlag::W_N, CollisionFlag::W_S),
+        (0, -1) => (CollisionFlag::W_S, CollisionFlag::W_N),
+        (1, 0) => (CollisionFlag::W_E, CollisionFlag::W_W),
+        (-1, 0) => (CollisionFlag::W_W, CollisionFlag::W_E),
+        _ => return false,
+    };
+    collision.walkable_word(a.x, a.z, a.level) & a_face as u32 != 0
+        || collision.walkable_word(b.x, b.z, b.level) & b_face as u32 != 0
 }
 
 /// The access tile BankBudget walks to: the nearest stand (same level,
-/// then Chebyshev to `from`) that has a standable neighbour, then that
-/// neighbour nearest `from`. `None` when no packed stand has an access
-/// tile.
+/// then Chebyshev to `from`) that has an access tile, then that stand's
+/// access tile nearest `from`. `None` when no packed stand has one.
 pub fn nearest_bank_access(
     collision: &WorldCollision,
     stands: &[BankStand],
@@ -57,11 +90,7 @@ pub fn nearest_bank_access(
 ) -> Option<WorldTile> {
     stands
         .iter()
-        .flat_map(|stand| {
-            bank_access_tiles(collision, stand)
-                .into_iter()
-                .map(move |tile| (stand, tile))
-        })
+        .flat_map(|stand| bank_access_tiles(collision, stand).map(move |tile| (stand, tile)))
         .min_by_key(|(stand, tile)| {
             (
                 i32::from(stand.tile.level != from.level),
@@ -89,7 +118,9 @@ pub enum BankStep {
     /// Withdraw `count` of the obj from the open bank: an `item_req`
     /// count, or 1 for a `worn_req` the session then wears.
     Withdraw { id: i32, count: i32 },
-    /// Wear/wield the obj from the inventory (`worn_req`).
+    /// Wear/wield the obj from the inventory (`worn_req`). A bank trip
+    /// wears only after [`BankStep::Close`]: the client cannot wear from
+    /// the backpack while the bank is open.
     Wear { id: i32 },
     /// Close the bank.
     Close,
@@ -123,8 +154,8 @@ pub struct BankFetch {
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to that access tile, opens
-/// the bank, deposits the backpack, withdraws every missing item (a
-/// `worn_req` one is then worn), and closes. The deposit supplies the
+/// the bank, deposits the backpack, withdraws every missing item, closes,
+/// and then wears each `worn_req` one. The deposit supplies the
 /// bank with the carried stack, so a `worn_req` alternative that is
 /// merely carried is fetchable after it; every needed amount must be
 /// covered by bank + carried stacks combined. `None` when the plan
@@ -212,9 +243,10 @@ pub fn plan_bank_fetch(
         BankStep::DepositAll,
     ];
     // The deposit clears the backpack; the withdrawals rebuild it to
-    // exactly what the strict gate needs.
+    // exactly what the strict gate needs. Wearing waits for the close.
     let mut post = state.clone();
     post.inv.clear();
+    let mut wear = Vec::new();
     for r in missing {
         match r {
             MissingReq::Carry { id, count } => {
@@ -231,12 +263,13 @@ pub fn plan_bank_fetch(
                     .copied()
                     .expect("the supply check passed an alternative");
                 steps.push(BankStep::Withdraw { id, count: 1 });
-                steps.push(BankStep::Wear { id });
+                wear.push(BankStep::Wear { id });
                 post.worn.insert(id);
             }
         }
     }
     steps.push(BankStep::Close);
+    steps.append(&mut wear);
     Some(BankFetch { steps, state: post })
 }
 
