@@ -61,14 +61,14 @@ pub fn prepare(
         CARD.schema_version,
         revision,
         bag,
-        Prepared {
+        Arc::new(Prepared {
             selected: Arc::clone(&cx.selected),
             catalog,
             settings,
             method_bits,
             methods,
             excluded_targets,
-        },
+        }),
     ))
 }
 
@@ -77,21 +77,14 @@ pub fn create(
     config: Arc<PreparedConfig>,
     retained: &mut RetainedMemory,
 ) -> Result<Box<dyn crate::native::Script>, StartError> {
-    let prepared = config.get::<Prepared>().ok_or_else(|| {
+    let prepared = config.get::<Arc<Prepared>>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Gatherer"))
     })?;
     let retained = *retained.gather();
     Ok(Box::new(Gatherer::new(
         run,
         Arc::clone(&config),
-        Arc::new(Prepared {
-            selected: Arc::clone(&prepared.selected),
-            catalog: Arc::clone(&prepared.catalog),
-            settings: prepared.settings.clone(),
-            method_bits: prepared.method_bits,
-            methods: Arc::clone(&prepared.methods),
-            excluded_targets: Arc::clone(&prepared.excluded_targets),
-        }),
+        Arc::clone(prepared),
         retained,
     )))
 }

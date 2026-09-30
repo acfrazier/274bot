@@ -97,6 +97,16 @@ impl Owner {
                     .is_ok()
             })
     }
+    /// Check whether a disposal authority can be reserved without consuming a
+    /// request id. The caller must still acquire the slot after charging its
+    /// event budget because only the request id identifies the reservation.
+    pub fn disposal_available(&self) -> bool {
+        self.live()
+            && self
+                .disposal
+                .iter()
+                .any(|slot| slot.load(Ordering::Acquire) == 0)
+    }
 
     pub fn disposal_live(&self, request: NonZeroU64) -> bool {
         self.live()

@@ -2,8 +2,8 @@
 //!
 //! The cells use the operator Start path: a loopback profile is bound, a
 //! slot is spawned, `Play::script_start` prepares and commits the compiled
-//! card, and the worker observes a real Client.  Products and receipts are
-//! never injected.  Fixture placement is supplied by the local engine via
+//! card, and the worker observes a real Client. Selected logs/ores and dispatch
+//! receipts are never injected. Fixture placement is supplied by the engine via
 //! `GATHERER_WC_TILE` and `GATHERER_MINE_TILE` (`x,z,level`); the selected
 //! catalogue and nav pack are supplied by `GATHERER_CATALOG_ROOT` and
 //! `GATHERER_NAV_PACK`.
@@ -13,6 +13,10 @@
 //! (including a `CloseModal` + four-drop batch when the fixture presents a
 //! modal) are part of the live witness.  Power cells check observed empty
 //! slots, not merely dispatch receipts.
+//! The mining power fixture optionally documents the incidental-gem keep policy
+//! with `GATHERER_MINE_KEEP_GEM=1`: it seeds one uncut sapphire, treats that
+//! occupied slot as unavailable to ore, and proves the gem remains present
+//! through both full-pack ore-disposal cycles and subsequent gathers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -37,6 +41,7 @@ const COPPER_ID: i32 = 436;
 const TIN_ID: i32 = 438;
 const IRON_ID: i32 = 440;
 const COAL_ID: i32 = 453;
+const UNCUT_SAPPHIRE_ID: i32 = 1623;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cell {
@@ -250,6 +255,9 @@ struct Witness {
     cycle_drop_start: u32,
     cycle_confirmed_start: u32,
     cycle_xp_start: i32,
+    gem_observed: bool,
+    gem_retained: bool,
+    gem_count: i32,
     methods: BTreeSet<String>,
     targets: BTreeSet<String>,
     wedge_triggered: bool,
@@ -271,6 +279,7 @@ struct GatherSlot {
     case: LiveCase,
     target: WorldTile,
     tool_id: i32,
+    keep_gem: bool,
     tool_alias: String,
     requested_level: i32,
     phase: Prep,
@@ -294,6 +303,8 @@ impl GatherSlot {
             target,
             tool_id: cell.tool_id(),
             tool_alias: cell.tool_alias(),
+            keep_gem: cell == Cell::Mining
+                && std::env::var("GATHERER_MINE_KEEP_GEM").as_deref() == Ok("1"),
             requested_level: cell.level(),
             phase: Prep::WaitIngame,
             snapshot: GameSnapshot::new(),
@@ -402,6 +413,17 @@ impl GatherSlot {
             .is_some_and(|id| observation.inventory.values().any(|row| row.id == id))
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
+        }
+        if self.keep_gem {
+            let gem_count = observation
+                .inventory
+                .values()
+                .filter(|row| row.id == UNCUT_SAPPHIRE_ID)
+                .map(|row| row.count.max(0))
+                .sum();
+            self.witness.gem_observed |= gem_count > 0;
+            self.witness.gem_count = gem_count;
+            self.witness.gem_retained = gem_count > 0;
         }
         // Inventory and equipment arrive in separate packets. A removed tool
         // must reappear in an observed container within the settlement bound.
@@ -578,6 +600,9 @@ impl GatherSlot {
                 // Isolate gathering from the mine's aggressive scorpions.
                 send_cheat(client, "setstat defence 99")?;
                 send_cheat(client, "setstat hitpoints 99")?;
+                if self.keep_gem {
+                    send_cheat(client, "give uncut_sapphire 1")?;
+                }
                 send_cheat(client, &format!("give {} 1", self.tool_alias))?;
                 send_cheat(
                     client,
@@ -701,6 +726,23 @@ impl GatherSlot {
                 self.cell.name()
             ));
         }
+        if self.keep_gem {
+            let gem_count = baseline
+                .inventory
+                .values()
+                .filter(|row| row.id == UNCUT_SAPPHIRE_ID)
+                .map(|row| row.count.max(0))
+                .sum();
+            if gem_count == 0 {
+                return Err(
+                    "Mining Start baseline lacks the requested retained uncut sapphire fixture"
+                        .into(),
+                );
+            }
+            self.witness.gem_observed = true;
+            self.witness.gem_retained = true;
+            self.witness.gem_count = gem_count;
+        }
         self.baseline = Some(baseline);
         self.phase = Prep::Running;
         self.started = true;
@@ -812,6 +854,15 @@ impl GatherSlot {
                         "{} confirmed only {} empty product slots",
                         self.cell.name(),
                         self.witness.confirmed_drops
+                    ));
+                }
+                if self.keep_gem && (!self.witness.gem_observed || !self.witness.gem_retained) {
+                    return Err(format!(
+                        "{} retained-gem proof incomplete: observed={} retained={} count={}",
+                        self.cell.name(),
+                        self.witness.gem_observed,
+                        self.witness.gem_retained,
+                        self.witness.gem_count
                     ));
                 }
                 if self.witness.last_status_yielded <= 0
@@ -1246,9 +1297,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 slot.error = Some(error);
             }
         }
-        let (witness, latest) = {
+        let (witness, latest, product_capacity) = {
             let slot = state.lock().map_err(|_| "live state poisoned")?;
-            (slot.witness.clone(), slot.latest.clone())
+            (
+                slot.witness.clone(),
+                slot.latest.clone(),
+                slot.cycle_product_capacity(),
+            )
         };
         if reported
             != (
@@ -1271,6 +1326,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     "cycles": witness.cycles,
                     "post_drop_gathers": witness.post_drop_gathers,
                     "confirmed_drops": witness.confirmed_drops,
+                    "product_capacity": product_capacity,
+                    "gem_observed": witness.gem_observed,
+                    "gem_retained": witness.gem_retained,
+                    "gem_count": witness.gem_count,
                     "yielded": witness.last_status_yielded,
                     "dropped": witness.last_status_dropped,
                     "xp": witness.last_xp,
@@ -1315,11 +1374,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         }
         std::thread::sleep(POLL_INTERVAL);
     };
-    let witness = state
-        .lock()
-        .map_err(|_| "live state poisoned")?
-        .witness
-        .clone();
+    let (witness, product_capacity) = {
+        let slot = state.lock().map_err(|_| "live state poisoned")?;
+        (slot.witness.clone(), slot.cycle_product_capacity())
+    };
     println!(
         "{}",
         json!({
@@ -1330,6 +1388,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "post_drop_gathers": witness.post_drop_gathers,
             "confirmed_drops": witness.confirmed_drops,
             "full_pack_seen": witness.full_pack_seen,
+            "product_capacity": product_capacity,
+            "gem_observed": witness.gem_observed,
+            "gem_retained": witness.gem_retained,
+            "gem_count": witness.gem_count,
             "stopped_before_drain": witness.stopped_before_drain,
             "death_command_sent": witness.death_command_sent,
             "death_blocked": witness.death_blocked,
@@ -1337,7 +1399,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "death_restart_gathered": witness.death_restart_gathered,
             "run_key_changed": witness.run_key_changed,
             "modal_command_sent": witness.modal_command_sent,
-            "modal_observed": witness.modal_observed,
             "banked_unusable_tool": witness.banked_unusable_tool,
             "yielded": witness.last_status_yielded,
             "dropped": witness.last_status_dropped,

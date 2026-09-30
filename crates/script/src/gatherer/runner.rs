@@ -7,7 +7,6 @@ use super::select::{select, AvoidedTile, PlacementClass, SelectedTarget, Selecti
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
 use super::{GatherRetained, RecoveryState};
-use crate::gather_tools::can_wield_tool;
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
@@ -183,9 +182,11 @@ impl Gatherer {
         self.target = None;
     }
 
-    fn set_event(&mut self, event: impl Into<Arc<str>>) {
-        self.last_event = event.into();
-        self.dirty = true;
+    fn set_event(&mut self, event: &str) {
+        if self.last_event.as_ref() != event {
+            self.last_event = Arc::from(event);
+            self.dirty = true;
+        }
     }
 
     fn sync_retained(&mut self, tick: &mut NativeTick<'_>) {
@@ -202,7 +203,7 @@ impl Gatherer {
 
     fn apply_pending(&mut self) -> Option<u64> {
         let config = self.pending.take()?;
-        let Some(prepared) = config.get::<Prepared>() else {
+        let Some(prepared) = config.get::<Arc<Prepared>>() else {
             self.fail(
                 "config-identity",
                 "pending Gatherer settings were malformed",
@@ -214,14 +215,7 @@ impl Gatherer {
         if self.prepared.methods != prepared.methods {
             self.observed_progress = None;
         }
-        self.prepared = Arc::new(Prepared {
-            selected: Arc::clone(&prepared.selected),
-            catalog: Arc::clone(&prepared.catalog),
-            settings: prepared.settings.clone(),
-            method_bits: prepared.method_bits,
-            methods: Arc::clone(&prepared.methods),
-            excluded_targets: Arc::clone(&prepared.excluded_targets),
-        });
+        self.prepared = Arc::clone(prepared);
         self.config = config;
         self.needs_validate = true;
         self.dirty = true;
@@ -390,20 +384,22 @@ impl Gatherer {
     }
 
     fn can_wield(&self, tool: ToolState, inventory: &[ItemView], stats: &[StatView]) -> bool {
-        if tool.worn {
+        if tool.worn || !inventory.iter().any(|row| row.def.id == tool.id) {
             return false;
         }
-        let Some(row) = inventory.iter().find(|row| row.def.id == tool.id) else {
-            return false;
-        };
-        let Some(name) = row.def.name.as_deref() else {
-            return false;
-        };
-        let attack = stats
-            .iter()
-            .find(|stat| stat.name.eq_ignore_ascii_case("attack"))
-            .map_or(0, |stat| stat.base);
-        can_wield_tool(name, attack)
+        self.prepared.methods.iter().any(|&index| {
+            known_rows(&self.prepared.catalog.methods()[index].tools)
+                .iter()
+                .any(|candidate| {
+                    candidate.item == tool.id
+                        && candidate.wield_gate.is_none_or(|gate| {
+                            stats.iter().any(|stat| {
+                                stat.index == i32::from(gate.skill)
+                                    && stat.base >= i32::from(gate.level)
+                            })
+                        })
+                })
+        })
     }
 
     fn begin_wear(&mut self, tick: &mut NativeTick<'_>) {
@@ -492,7 +488,12 @@ impl Gatherer {
             protected,
             protected_len,
         };
-        if products_len == 0 || inventory.value.is_empty() {
+        if !inventory.value.iter().any(|row| {
+            row.count > 0
+                && row.def.name.is_some()
+                && products[..products_len].contains(&row.def.id)
+                && !protected[..usize::from(protected_len)].contains(&row.def.id)
+        }) {
             self.fail(
                 "inventory-blocked",
                 "no observed product rows can be dropped",
@@ -621,27 +622,6 @@ impl Gatherer {
                 self.set_event("inventory full");
                 self.start_drop(tick);
             }
-            GatherEnd::Depleted => {
-                if let Some(target) = target {
-                    self.avoid(
-                        target.tile,
-                        tick.cx
-                            .evidence()
-                            .tick
-                            .saturating_add(u64::from(target.respawn_max)),
-                    );
-                }
-                self.set_event("resource depleted");
-            }
-            GatherEnd::Hazard => {
-                if let Some(target) = target {
-                    self.avoid(
-                        target.tile,
-                        tick.cx.evidence().tick.saturating_add(IDLE_AVOID_TICKS),
-                    );
-                }
-                self.set_event("resource hazard");
-            }
             GatherEnd::TargetGone => self.set_event("target gone"),
             GatherEnd::Idle => {
                 if let Some(target) = target {
@@ -662,10 +642,24 @@ impl Gatherer {
         self.dirty = true;
     }
 
-    fn handle_drop(&mut self, result: DropResult) {
-        self.dropped = self.dropped.saturating_add(result.dropped);
-        self.retained.dropped = self.dropped;
+    fn handle_drop(&mut self, result: DropResult, tick: &mut NativeTick<'_>) {
         match result.end {
+            DropEnd::Cleared
+                if tick.cx.snapshot().inventory().is_some_and(|inventory| {
+                    tick.cx
+                        .snapshot()
+                        .inventory_capacity()
+                        .is_some_and(|capacity| {
+                            inventory.value.len() >= usize::from(capacity.value)
+                        })
+                }) =>
+            {
+                self.fail(
+                    "inventory-blocked",
+                    "full inventory has nothing left to drop",
+                    true,
+                );
+            }
             DropEnd::Cleared => self.set_event("drop confirmed by empty slots"),
             DropEnd::Blocked { remaining } => {
                 self.fail(
@@ -709,17 +703,28 @@ impl Gatherer {
                     self.action_failure(error);
                 }
             },
-            Active::Drop(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Drop(handle),
-                Poll::Ready(Ok(result)) => {
-                    self.fence.seal();
-                    self.handle_drop(result);
+            Active::Drop(handle) => {
+                let result = tick.actions.poll(&handle, &mut tick.cx);
+                // Credit observed empty slots on every poll, not just at batch
+                // completion: cancellation must not discard confirmed progress.
+                let dropped = tick.cx.retained().gather().dropped;
+                if self.dropped != dropped {
+                    self.dropped = dropped;
+                    self.retained.dropped = dropped;
+                    self.dirty = true;
                 }
-                Poll::Ready(Err(error)) => {
-                    self.fence.seal();
-                    self.action_failure(error);
+                match result {
+                    Poll::Pending => self.active = Active::Drop(handle),
+                    Poll::Ready(Ok(result)) => {
+                        self.fence.seal();
+                        self.handle_drop(result, tick);
+                    }
+                    Poll::Ready(Err(error)) => {
+                        self.fence.seal();
+                        self.action_failure(error);
+                    }
                 }
-            },
+            }
             Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Walk(handle),
                 Poll::Ready(Ok(result)) => {
@@ -1052,15 +1057,16 @@ impl Script for Gatherer {
 
     fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
         let prepared = next
-            .get::<Prepared>()
+            .get::<Arc<Prepared>>()
             .ok_or_else(|| ConfigError::new("", "config-identity", "not Gatherer"))?;
         if self
             .prepared
             .settings
             .restart_required_changed(&prepared.settings)
         {
-            self.pending = Some(next);
-            self.dirty = true;
+            // The slot replaces its pending revision with this edit. An older
+            // boundary edit is no longer eligible to activate either.
+            self.pending = None;
             return Ok(SettingsApply::RestartRequired);
         }
         if self.prepared.settings.boundary_changed(&prepared.settings) {

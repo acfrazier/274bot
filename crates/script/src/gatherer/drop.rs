@@ -73,7 +73,13 @@ impl NativeMachine for DropBatch {
             return Poll::Pending;
         };
         let mut settled = false;
+        let previous_dropped = self.dropped;
         let retry_round = self.reconcile(cx, inventory.value, &mut settled);
+        let confirmed = self.dropped.saturating_sub(previous_dropped);
+        if confirmed != 0 {
+            let retained = cx.retained().gather();
+            retained.dropped = retained.dropped.saturating_add(confirmed);
+        }
         if settled {
             self.rounds_without_settle = 0;
         } else if retry_round {
@@ -105,7 +111,7 @@ impl NativeMachine for DropBatch {
             self.packets += 1;
         }
 
-        while self.packets < MAX_BATCH as u8 && self.entry_count() < MAX_BATCH {
+        while self.packets < MAX_BATCH as u8 {
             let Some(row) = self.next_candidate(inventory.value) else {
                 break;
             };
@@ -147,12 +153,17 @@ impl NativeMachine for DropBatch {
 }
 
 impl DropBatch {
-    fn entry_count(&self) -> usize {
-        self.entries.iter().flatten().count()
+    fn can_track(&self, slot: i32) -> bool {
+        self.has_slot(slot) || self.entries.iter().any(Option::is_none)
     }
-
     fn insert(&mut self, entry: Entry) {
-        if let Some(slot) = self.entries.iter_mut().find(|entry| entry.is_none()) {
+        if let Some(slot) = self
+            .entries
+            .iter_mut()
+            .find(|row| row.is_some_and(|row| row.slot == entry.slot))
+        {
+            *slot = Some(entry);
+        } else if let Some(slot) = self.entries.iter_mut().find(|entry| entry.is_none()) {
             *slot = Some(entry);
         }
     }
@@ -184,16 +195,18 @@ impl DropBatch {
                     *settled = true;
                 }
                 Some(_) => {
-                    if let Some(request) = entry.request {
-                        if let Some(receipt) = cx.interaction_receipt(request) {
-                            if cx.evidence().tick > entry.sent_tick
-                                && (!receipt.accepted
-                                    || cx.evidence().tick >= entry.sent_tick.saturating_add(2))
-                            {
-                                self.entries[index] = None;
-                                retry_round = true;
-                            }
-                        }
+                    let refused = entry
+                        .request
+                        .and_then(|request| cx.interaction_receipt(request))
+                        .is_some_and(|receipt| !receipt.accepted);
+                    if entry.request.is_some()
+                        && cx.evidence().tick > entry.sent_tick
+                        && (refused || cx.evidence().tick >= entry.sent_tick.saturating_add(2))
+                    {
+                        // Keep observing the slot until it is re-sent. A late
+                        // empty observation still confirms the original drop.
+                        self.entries[index].as_mut().unwrap().request = None;
+                        retry_round = true;
                     }
                 }
             }
@@ -205,7 +218,12 @@ impl DropBatch {
         rows.iter().find(|row| {
             self.is_product(row.def.id)
                 && !self.is_protected(row.def.id)
-                && !self.has_slot(row.slot)
+                && self.can_track(row.slot)
+                && !self
+                    .entries
+                    .iter()
+                    .flatten()
+                    .any(|entry| entry.slot == row.slot && entry.request.is_some())
                 && row.count > 0
                 && row.def.name.is_some()
         })

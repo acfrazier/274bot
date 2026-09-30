@@ -33,8 +33,6 @@ pub struct TargetPlan {
     pub products: [i32; MAX_PRODUCTS],
     pub products_len: u8,
     pub skill_stat: i32,
-    pub respawn_max: u32,
-    pub class: TargetClass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,10 +303,6 @@ fn make_plan(
         products,
         products_len: products_len as u8,
         skill_stat,
-        respawn_max: respawn_max(catalog, method, spot),
-        class: known_targets(method)
-            .and_then(|rows| rows.iter().find(|target| target.entity == spot.entity))
-            .map_or(TargetClass::Resource, |target| target.class),
     }
 }
 

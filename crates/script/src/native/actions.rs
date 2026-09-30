@@ -76,6 +76,9 @@ impl ActionContext<'_> {
                 LazyLock::new(|| Arc::from("disposal requires a slot-exact Drop"));
             return Err(ActionError::Unavailable(Arc::clone(&REASON)));
         }
+        if !owner.disposal_available() {
+            return Err(ActionError::BudgetExhausted);
+        }
         if !self.budget.event(true) {
             return Err(ActionError::BudgetExhausted);
         }
@@ -596,6 +599,50 @@ mod tests {
             cx.ledger.as_mut().unwrap().revoke();
             assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
             assert!(!owner.live());
+        });
+    }
+    #[test]
+    fn full_disposal_authority_refusal_preserves_budget_and_ids() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = Owner::new(cx.run(), cx.ledger.as_mut().unwrap().next_id().unwrap());
+            cx.ledger.as_mut().unwrap().owner = Some(Arc::clone(&owner));
+            cx.action_id = owner.id.get();
+
+            let requests: Vec<_> = (0..4)
+                .map(|slot| cx.emit_disposal(drop_request(slot)).unwrap())
+                .collect();
+            let reserved = cx.ledger.as_mut().unwrap().next_id().unwrap();
+            assert!(owner.acquire_disposal(reserved));
+
+            assert_eq!(
+                cx.emit_disposal(drop_request(4)),
+                Err(ActionError::BudgetExhausted),
+                "a full authority set must not consume its remaining event allowance"
+            );
+            owner.cancel_interaction(reserved);
+
+            let fifth = cx
+                .emit_disposal(drop_request(4))
+                .expect("releasing an authority leaves the allowance available");
+            assert_eq!(
+                fifth,
+                reserved.get() + 1,
+                "a refused full-set reservation must not consume an ID"
+            );
+
+            cx.cancel_request(requests[0]);
+            assert_eq!(
+                cx.emit_disposal(drop_request(5)),
+                Err(ActionError::BudgetExhausted),
+                "an exhausted event allowance must not reserve a disposal authority"
+            );
+
+            cx.budget.observe(2);
+            let next = cx
+                .emit_disposal(drop_request(5))
+                .expect("the released authority remains available on the next tick");
+            assert_eq!(next, fifth + 1);
         });
     }
 
