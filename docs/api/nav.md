@@ -292,8 +292,9 @@ the result.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
-NPC-backed hops use
-the live NPC tile (search radius 8). Glider landings settle Chebyshev 1.
+NPC-backed hops use the live NPC tile (search radius 8). A paid Al Kharid
+toll Door hop returns `Blocked` when the packed `item_req` is short at the
+gate. Glider landings settle Chebyshev 1.
 Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.

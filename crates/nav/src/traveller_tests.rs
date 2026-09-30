@@ -3481,6 +3481,8 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
 
 const ALKHARID_TOLL_LOC_ID: i32 = 2882;
 const COINS_OBJ: i32 = 995;
+/// Not obj 995 — the no-coins follow test must fail if the follower hard-codes coins.
+const TEST_TOLL_COIN_OBJ: i32 = 4242;
 
 fn alkharid_toll_edge() -> TransportEdge {
     TransportEdge {
@@ -3623,7 +3625,22 @@ fn follow_alkharid_toll_answers_yes_ok_from_content_then_arrives() {
 /// answering "Yes, ok." — the engine would only then say there isn't enough.
 #[test]
 fn follow_alkharid_toll_refuses_without_coins_instead_of_paying() {
-    let (mut c, mut snap, mut rec, mut t, route) = alkharid_toll_follow_start(false);
+    let mut edge = alkharid_toll_edge();
+    edge.item_req = vec![(TEST_TOLL_COIN_OBJ, 10)];
+    let route = Route {
+        dest: edge.to,
+        ticks: 1.0,
+        legs: vec![Leg::Transport { edge }],
+    };
+    let mut c = scene_client();
+    plant_loc(&mut c, ALKHARID_TOLL_LOC_ID, "Gate", "Open", 2, 1);
+    let mut snap = snap_at(&mut c, 1, 1);
+    assert_eq!(snap.inv_count(TEST_TOLL_COIN_OBJ), 0);
+    let mut rec = FollowRec {
+        route: Some((1, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
     let mut options = TravelOptions {
         close_enough: 0,
         ..TravelOptions::default()
