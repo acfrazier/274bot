@@ -100,7 +100,7 @@ pub struct Gatherer {
     wait_until: Option<u64>,
     widen: WidenCursor,
     tried_groups: [TriedGroup; 4],
-    hazard_escape: bool,
+    hazard_escape: Option<WorldTile>,
     last_gameplay_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
@@ -144,7 +144,7 @@ impl Gatherer {
             wait_until: None,
             widen: WidenCursor::default(),
             tried_groups: [TriedGroup::default(); 4],
-            hazard_escape: false,
+            hazard_escape: None,
             last_gameplay_tick: 0,
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
@@ -686,10 +686,10 @@ impl Gatherer {
                 self.set_event("resource depleted");
             }
             GatherEnd::Hazard => {
-                if let Some(target) = target {
+                if let Some(target) = &target {
                     self.avoid(target.tile, tick.cx.evidence().tick.saturating_add(60));
                 }
-                self.hazard_escape = true;
+                self.hazard_escape = target.map(|target| target.tile);
                 self.set_event("hazard observed; cancelling queued gather");
             }
             GatherEnd::Idle => {
@@ -904,12 +904,12 @@ impl Gatherer {
         self.zone_gated = selected.zone_gated;
         match selected.target {
             Some(target) => {
-                self.hazard_escape = false;
+                self.hazard_escape = None;
                 self.wait_until = None;
                 self.absent = 0;
                 self.start_target(target, tick);
             }
-            None if self.hazard_escape => self.escape_hazard(tick),
+            None if self.hazard_escape.is_some() => self.escape_hazard(tick),
             None => match selected.outcome {
                 Selection::Absent { absent } => {
                     self.absent = absent;
@@ -962,10 +962,19 @@ impl Gatherer {
         let Some(here) = tick.cx.snapshot().here().map(|row| row.value) else {
             return;
         };
+        let Some(hazard) = self.hazard_escape else {
+            return;
+        };
+        let mut dx = here.x.saturating_sub(hazard.x).signum();
+        let dz = here.z.saturating_sub(hazard.z).signum();
+        if dx == 0 && dz == 0 {
+            dx = 1;
+        }
         let request = WalkRequest {
             target: WorldTile {
-                x: here.x.saturating_add(1),
-                ..here
+                x: here.x.saturating_add(dx),
+                z: here.z.saturating_add(dz),
+                level: here.level,
             },
             radius: 0,
             options: FindOptions {
@@ -979,7 +988,7 @@ impl Gatherer {
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
                 self.active = Active::Walk(handle);
-                self.hazard_escape = false;
+                self.hazard_escape = None;
                 self.set_event("walking away from hazard");
             }
             Err(error) => self.action_failure(error),
