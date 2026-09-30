@@ -66,7 +66,28 @@ Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per
 profile; **script** and **parameters** default closed.
 
+## Log and panel layout
+
+The structured **Log** section is in the panel by default. **Detach log**
+moves the same retained view (filters, follow position and ring history) to a
+separate floating window; **Attach log** returns it without clearing anything.
+This runner intentionally keeps ImGui multi-viewports disabled, so the
+detached window remains in the application. A backend that already supports
+multi-viewports may promote that floating window to an OS-level viewport; the
+panel never enables that capability itself.
+
+General config's **session log file** checkbox shows `writing <logfile>` on
+the line below while it is enabled. The path is the rotated file under
+`~/.274bot/logs/`.
+
+Status omits walk, queue and modal rows when their value is empty, `—`, or
+`-1`; meaningful values remain visible. The active server revision appears
+once when a session is bound, while the revision selector is only shown before
+binding. Profiles uses a wider, scrollable list so the profile editor, Save,
+Cancel, and Close controls remain usable at narrow window sizes.
+
 ## Wiring
+
 
 `Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
 via `host_play::run_with_io`, then selects the restored `last_focus` (or

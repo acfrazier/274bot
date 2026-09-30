@@ -3,7 +3,7 @@
 //! Copy and Save log…. The section fills the side panel's leftover height
 //! when it is the last section, and is a resizable box otherwise.
 
-use dear_imgui_rs::{ChildFlags, Ui};
+use dear_imgui_rs::{ChildFlags, ConfigFlags, Ui};
 use frontend_core::log::{
     default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
@@ -116,8 +116,11 @@ pub fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
 }
 
 /// The log section body. `last` is whether it is the last visible panel
-/// section (then it fills the leftover height).
+/// section (then it fills the leftover height). The same body is reused by
+/// the detached window so filters, follow state and retained lines survive
+/// moving the log.
 pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
+    log_mode_row(ui, session);
     let focused = session.core.selected();
     let pane = &mut session.log_pane;
     pane.refresh(focused);
@@ -158,6 +161,33 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
                 ui.set_scroll_here_y(1.0);
             }
         });
+}
+
+/// Move the shared log between the panel and its floating window. The panel
+/// runner deliberately leaves `VIEWPORTS_ENABLE` off, so this is an in-app
+/// floating window today; a backend that already enables multi-viewports may
+/// promote the same window to an OS viewport without a second log store.
+fn log_mode_row(ui: &Ui, session: &mut Session) {
+    let detached = session.ui.log_detached;
+    if ui.button(if detached { "Attach log" } else { "Detach log" }) {
+        session.ui.log_detached = !detached;
+        crate::ui_state::save(&session.ui);
+    }
+    ui.same_line();
+    if detached {
+        let label = if ui
+            .io()
+            .config_flags()
+            .contains(ConfigFlags::VIEWPORTS_ENABLE)
+        {
+            "floating · OS pop-out supported"
+        } else {
+            "floating · OS pop-out unavailable in this backend"
+        };
+        ui.text_disabled(label);
+    } else {
+        ui.text_disabled("in panel");
+    }
 }
 
 fn log_row(ui: &Ui, entry: &LogEntry, all: bool) {
@@ -274,6 +304,7 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
     }
     drop(_disabled);
     ui.modal_popup(SAVE_POPUP, || {
+        crate::app::keep_popup_inside_work_area(ui);
         ui.text(format!(
             "{} line(s) with the current filters",
             pane.view.len()
@@ -299,10 +330,19 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
     if ui.checkbox("session log file", &mut on) {
         session.ui.session_log_file = on;
         crate::ui_state::save(&session.ui);
-        let path = apply_session_log(on);
-        session.log_pane.status = path.map(|p| (true, format!("writing {}", p.display())));
+        apply_session_log(on);
     }
     ui.set_item_tooltip("write this session's log to ~/.274bot/logs/ (rotated, off by default)");
+    if on {
+        // The preference is applied during startup, but resolving the path
+        // here also makes a newly enabled checkbox immediately self-describing.
+        let path = global().file_path().or_else(|| apply_session_log(true));
+        if let Some(path) = path {
+            ui.text_disabled(format!("writing {}", path.display()));
+        } else {
+            ui.text_disabled("writing <logfile>");
+        }
+    }
 }
 
 /// Start the session file at launch when the saved preference is on.

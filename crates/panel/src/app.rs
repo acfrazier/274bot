@@ -2029,6 +2029,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
 
 fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
+        keep_popup_inside_work_area(ui);
         let dests = debug_dest_cheats();
         let avail = PANEL_WIDTH;
         let cols = (1usize..=6)
@@ -3433,8 +3434,9 @@ fn edit_parameters_enabled() -> bool {
 }
 
 /// status: the selected bot's rows from the shared detail projection
-/// (state, player, world, tile, walk, queue, modals, welcome, random, the
-/// last login error while retrying, the newest operation, mem), wrapped.
+/// (state, player, world, tile, meaningful walk/queue/modal values, welcome,
+/// random, the last login error while retrying, the newest operation, mem),
+/// wrapped.
 fn status_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "status") {
         return;
@@ -3443,7 +3445,7 @@ fn status_section(ui: &Ui, session: &mut Session) {
     let mem = Session::mem_notice_text(session.focused_lowmem(), session.focused_memory_notice());
     let Some(d) = session.core.fleet_view().detail() else {
         kv_row(ui, "state", "no bot selected");
-        kv_row(ui, "walk", &walk);
+        status_kv_row(ui, "walk", &walk);
         kv_row(ui, "mem", &mem);
         return;
     };
@@ -3457,13 +3459,13 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "world", &format!("w{world}"));
     }
     kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
-    kv_row(ui, "walk", &walk);
+    status_kv_row(ui, "walk", &walk);
     let queue = d
         .row
         .queue
         .map_or_else(|| "—".to_string(), |q| q.to_string());
-    kv_row(ui, "queue", &queue);
-    kv_row(ui, "modals", &d.modal.to_string());
+    status_kv_row(ui, "queue", &queue);
+    status_kv_row(ui, "modals", &d.modal.to_string());
     if let Some(welcome) = d.welcome.as_deref() {
         kv_row(ui, "welcome", welcome);
     }
@@ -3481,6 +3483,12 @@ fn status_section(ui: &Ui, session: &mut Session) {
     kv_row(ui, "mem", &mem);
 }
 
+fn status_kv_row(ui: &Ui, label: &str, value: &str) {
+    if status_value_visible(label, value) {
+        kv_row(ui, label, value);
+    }
+}
+
 fn resource_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "resource") {
         return;
@@ -3493,7 +3501,44 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    crate::log_pane::log_body(ui, session, last);
+    if session.ui.log_detached {
+        ui.text_disabled("log is floating in a separate window");
+        if ui.button("Attach log") {
+            session.ui.log_detached = false;
+            crate::ui_state::save(&session.ui);
+        }
+    } else {
+        crate::log_pane::log_body(ui, session, last);
+    }
+}
+
+/// Draw the shared log in a separate in-app window. With a backend that
+/// already enables ImGui multi-viewports, `NO_DOCKING` lets ImGui promote
+/// this floating window to an OS viewport; this runner keeps that flag off.
+fn floating_log_window(ui: &Ui, session: &mut Session) {
+    if !session.ui.log_detached {
+        return;
+    }
+    let viewport = ui.main_viewport();
+    let work_pos = viewport.work_pos();
+    let work_size = viewport.work_size();
+    let size = [PANEL_WIDTH, (work_size[1] - 80.0).clamp(240.0, 560.0)];
+    let pos = [
+        work_pos[0] + ((work_size[0] - size[0]) * 0.5).max(0.0),
+        work_pos[1] + ((work_size[1] - size[1]) * 0.5).max(0.0),
+    ];
+    let mut open = true;
+    ui.window("Log")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_DOCKING)
+        .position(pos, Condition::FirstUseEver)
+        .size(size, Condition::FirstUseEver)
+        .size_constraints([280.0, 180.0], [f32::MAX, 720.0])
+        .build(|| crate::log_pane::log_body(ui, session, false));
+    if !open {
+        session.ui.log_detached = false;
+        crate::ui_state::save(&session.ui);
+    }
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -3511,6 +3556,7 @@ const MEM_POPUP: &str = "mem-pick";
 /// button the same way Teles opens dests.
 fn mem_popup(ui: &Ui, session: &mut Session) {
     ui.popup(MEM_POPUP, || {
+        keep_popup_inside_work_area(ui);
         ui.text_disabled("mem");
         let low = session.focused_lowmem();
         if inverted_button(ui, "highmem", !low, [0.0, 0.0]) {
@@ -3678,33 +3724,37 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.accent_rgba());
         ui.text_wrapped(session.server_label());
     }
-    let revision_preview = session
-        .effective_revision_label()
-        .unwrap_or_else(|error| format!("invalid: {error}"));
-    let revision_label = if session.profile_bound() {
-        "Bound session revision"
+    if session.profile_bound() {
+        // `server_label` already carries the active revision (for example
+        // "local-289 · revision 289"); don't repeat a second bare 289.
+        ui.text_disabled("revision fixed for this session");
     } else {
-        "Revision before session"
-    };
-    ui.text(revision_label);
-    ui.set_next_item_width(-1.0);
-    if let Some(_open) = ui.begin_combo("##session_revision", &revision_preview) {
-        for revision in [274_u16, 289] {
-            let selected = revision_preview == revision.to_string();
-            if ui
-                .selectable_config(revision.to_string())
-                .selected(selected)
-                .build()
-            {
-                session.error = session.set_server_revision(revision).err();
-            }
-            if selected {
-                ui.set_item_default_focus();
+        let revision_preview = session
+            .effective_revision_label()
+            .unwrap_or_else(|error| format!("invalid: {error}"));
+        ui.text("Revision before session");
+        ui.set_next_item_width(-1.0);
+        if let Some(_open) = ui.begin_combo("##session_revision", &revision_preview) {
+            for revision in [274_u16, 289] {
+                let selected = revision_preview == revision.to_string();
+                if ui
+                    .selectable_config(revision.to_string())
+                    .selected(selected)
+                    .build()
+                {
+                    session.error = session.set_server_revision(revision).err();
+                }
+                if selected {
+                    ui.set_item_default_focus();
+                }
             }
         }
+        ui.text_wrapped(
+            "Restart to apply a revision change; explicit CLI/environment selection still wins.",
+        );
     }
-    ui.text_wrapped("The active server profile is immutable. Restart to apply a revision change; explicit CLI/environment selection still wins.");
     ui.spacing();
+    ui.text_colored(session.ui.chrome.accent_rgba(), "Session");
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Slot:");
     ui.same_line();
     let slot = session.focused_name().unwrap_or_else(|| "—".into());
@@ -3920,6 +3970,7 @@ fn scary_confirm_popup(
 ) -> bool {
     let mut did = false;
     ui.popup(id, || {
+        keep_popup_inside_work_area(ui);
         if confirm_dismiss_key(ui) {
             *understood = false;
             ui.close_current_popup();
@@ -3949,6 +4000,51 @@ fn scary_confirm_popup(
         }
     });
     did
+}
+
+/// Keep a popup rectangle inside the viewport's usable work area. ImGui
+/// normally anchors popups at the item that opened them; that anchor can be
+/// flush-right in the Profiles list, leaving the trailing button clipped.
+pub fn popup_position_in_work_area(
+    work_pos: [f32; 2],
+    work_size: [f32; 2],
+    popup_pos: [f32; 2],
+    popup_size: [f32; 2],
+    margin: f32,
+) -> [f32; 2] {
+    let margin = margin.max(0.0);
+    let left = work_pos[0] + margin;
+    let top = work_pos[1] + margin;
+    let right = (work_pos[0] + work_size[0] - popup_size[0] - margin).max(left);
+    let bottom = (work_pos[1] + work_size[1] - popup_size[1] - margin).max(top);
+    [
+        popup_pos[0].clamp(left, right),
+        popup_pos[1].clamp(top, bottom),
+    ]
+}
+
+/// Clamp the current popup after ImGui has measured its content. This uses
+/// the viewport work area rather than the Profiles window, so a prompt opened
+/// by an item at the far right remains wholly actionable.
+pub fn keep_popup_inside_work_area(ui: &Ui) {
+    let viewport = ui.main_viewport();
+    let current = ui.window_pos();
+    let clamped = popup_position_in_work_area(
+        viewport.work_pos(),
+        viewport.work_size(),
+        current,
+        ui.window_size(),
+        8.0,
+    );
+    if clamped != current {
+        ui.set_window_pos(clamped);
+    }
+}
+
+/// Status values that carry no information are omitted instead of showing
+/// placeholder punctuation. Other rows keep their existing text unchanged.
+pub fn status_value_visible(label: &str, value: &str) -> bool {
+    !matches!(label, "walk" | "queue" | "modals") || !matches!(value.trim(), "" | "—" | "-1")
 }
 
 /// Scary confirm before "only render selected" can be unchecked: OK stays
@@ -4326,8 +4422,8 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Profiles")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([RAIL_W, 480.0], Condition::FirstUseEver)
-        .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
+        .size([PANEL_WIDTH, 560.0], Condition::FirstUseEver)
+        .size_constraints([PANEL_WIDTH, 260.0], [f32::MAX, 720.0])
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(0.0);
             if session.core.vault().is_none() {
@@ -4347,6 +4443,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 session.begin_edit_profile(None);
             }
             ui.spacing();
+            ui.text_colored(ACCENT, "Vault profiles");
             let mut picked: Option<String> = None;
             let mut removed: Option<String> = None;
             let mut edit: Option<String> = None;
@@ -4354,8 +4451,14 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 ui.text_disabled("vault is empty — New profile then Save");
             } else {
                 const ROW_H: f32 = 24.0;
-                let vp_h = ui.main_viewport().size()[1];
-                let max_list = (vp_h - 240.0).clamp(88.0, 480.0);
+                let viewport_h = ui.main_viewport().work_size()[1];
+                // Leave room for the edit form when it is open; the list has
+                // its own scroll region, so a long vault remains usable.
+                let max_list = if session.chooser_edit.is_some() {
+                    220.0
+                } else {
+                    (viewport_h - 280.0).clamp(120.0, 360.0)
+                };
                 let need = (names.len() as f32) * ROW_H + 8.0;
                 let list_h = need.min(max_list);
                 ui.child_window("##profiles-list")
@@ -5220,6 +5323,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
+    floating_log_window(ui, &mut state.session);
     crate::fleet::window(ui, &mut state.session);
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
