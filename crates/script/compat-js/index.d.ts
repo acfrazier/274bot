@@ -4,399 +4,200 @@
 // the shim implementation and the host natives. Do not regenerate.
 // O-SCRIPT-API: add a typed module .d.ts under compat-js/ and export it from
 // the @rs2b0t/api barrel below.
+//
+// Public barrel exports only typed re-exports (plus unknown stubs for catalog
+// ABI names with no shim). Check this file with skipLibCheck: false:
+//   npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe
+// that command must report zero diagnostics in this file.
 
 declare module '@rs2b0t/api' {
   export function defineBot(manifest: { name: string; create: () => unknown; [key: string]: unknown }): unknown;
-  export const ALL_FISHING_GEAR_NAMES: any;
 
-  export const AL_KHARID_BANK: any;
-
-  export const ARDOUGNE_PICKPOCKET_TARGETS: any;
-
-  export const AXES: any;
-
-  export const AXE_BAR_FOR: any;
-
-  export const AXE_SHOP_COSTS: any;
-
-  export const AXE_SMITH_LEVEL: any;
-
-  export class AbstractBot {
-    loopDelay: any;
-    loopCadence: any;
-    onStart(): any;
-    onStop(): any;
-    onPause(): any;
-    onResume(): any;
-    onPaint(): any;
-    loop(): any;
-    recoveryAnchor(): any;
-    grindTargets(): any;
-    ignoredRandoms(): any;
-    on(event: any, cb: any): any;
-    log(message: any): any;
-    get settings(): any;
-  }
+  export { AbstractBot } from '*api/bot/Bot.js';
   export { AL_KHARID_BANK } from '*data/cowKillerLocations.js';
   export { ARDOUGNE_PICKPOCKET_TARGETS } from '*api/thieving/targets.js';
+  export { axeReq } from '*api/acquisition/Tools.js';
   export { AXES } from '*api/acquisition/Tools.js';
-  export const AXE_BAR_FOR: unknown;
-  export const AXE_SHOP_COSTS: unknown;
-  export const AXE_SMITH_LEVEL: unknown;
-  export { AbstractBot } from '*api/bot/Bot.js';
-  export class AcquireTask {
-    constructor();
-    execute(...args: any): any;
-    validate(...args: any): any;
-  }
-  export class Area {
-    constructor();
-    static circular(...args: any): any;
-    contains(...args: any): any;
-    getRandomTile(...args: any): any;
-    static rectangular(...args: any): any;
-  }
-  export { BANK_LOCATIONS } from '*api/bank/BankLocations.js';
-  export const BOB_VENDOR: unknown;
-  export const BROKEN_AXE: unknown;
-  export { BROKEN_PICKAXE } from '*data/miningRocks.js';
   export { Bank } from '*api/bank/Bank.js';
+  export { BANK_LOCATIONS } from '*api/bank/BankLocations.js';
+  export { bankHasBetterGatherTool } from '*api/acquisition/Tools.js';
   export { Banking } from '*api/bank/Banking.js';
-  export class BranchTask {
-    constructor();
-    failure(...args: any): any;
-    success(...args: any): any;
-    validate(...args: any): any;
-  }
+  export { bankUnlocked } from '*api/bank/BankLocations.js';
+  export { bestAxe } from '*api/acquisition/Tools.js';
+  export { bestFromTiers } from '*api/acquisition/Tools.js';
+  export { bestPickaxe } from '*api/acquisition/Tools.js';
+  export { BROKEN_PICKAXE } from '*data/miningRocks.js';
+  export { canWieldTool } from '*api/acquisition/Tools.js';
+  export { ChatDialog } from '*api/ui/dialogue/ChatDialog.js';
   export { CHISEL } from '*api/acquisition/Tools.js';
   export { COINS } from '*api/combat/hunting/supply.js';
   export { COMMON_BANK_LOOT } from '*api/bank/Banking.js';
-  export { COW_LOCATIONS } from '*data/cowKillerLocations.js';
   export { COW_LOCATION_OPTIONS } from '*data/cowKillerLocations.js';
-  export { ChatDialog } from '*api/ui/dialogue/ChatDialog.js';
-  export const DEFAULT_BOOTH_NAME: any;
-
-  export const DEFAULT_BOOTH_OP: any;
-
-  export const DEFAULT_RUNE: any;
-
-  export const DirectNavigator: {
-    walk(dest: any): any;
-    walkTo(dest: any, radius?: any, timeoutMs?: any): Promise<any>;
-  };
-  export const DEFAULT_BOOTH_OP: unknown;
+  export { COW_LOCATIONS } from '*data/cowKillerLocations.js';
   export { DEFAULT_RUNE } from '*data/runeCraftLocations.js';
+  export { depositAllExcept } from '*api/bank/Banking.js';
+  export { depositMatcher } from '*api/bank/Banking.js';
   export { DirectNavigator } from '*api/walking/DirectNavigator.js';
   export { ENT_LIFE_TICKS } from '*data/woodcuttingLocations.js';
   export { ENT_NPC_IDS } from '*data/woodcuttingLocations.js';
   export { EntityQuery } from '*api/query/Query.js';
+  export { entNpcOnTile } from '*data/woodcuttingLocations.js';
   export { Equipment } from '*api/equipment/Equipment.js';
+  export { exactTool } from '*api/acquisition/Tools.js';
   export { Execution } from '*api/execution/Execution.js';
-  export const FISHING_LOCATIONS: any;
-
-  export const FISHING_LOCATION_OPTIONS: any;
-
-  export const FISHING_METHODS: any;
-
-  export const FISHING_METHOD_OPTIONS: any;
-
-  export const FISHING_SHOP_COSTS: any;
-
-  export const FORGETFUL_BANK_ODDS: any;
-
-  export const FORGETFUL_BANK_SETTING: any;
-
-  export const GAS_ROCK_IDS: any;
-
-  export const GAS_ROCK_TICKS: any;
-
-  export const GERRANT_ONLY_FISHING: any;
-
-  export const GERRANT_VENDOR: any;
-
-  export const Game: {
-    ingame(): any;
-    tile(): any;
-    tick(): any;
-    inCombat(): any;
-    animating(): any;
-    runEnabled(): any;
-    autoRetaliate(): any;
-    autoRetaliateOn(): any;
-    myName(): any;
-    combatMode(): any;
-    combatStyles(): any;
-    hasCombatStyle(style: any): any;
-    combatStyleResolution(style: any): any;
-    setCombatMode(mode: any): any;
-    setCombatStyle(style: any): any;
-    setAutoRetaliate(on: any): any;
-    openSideTab(tab: any): Promise<any>;
-    castOnItem(spell: any, item: any): Promise<any>;
-    castOnLoc(spell: any, loc: any): Promise<any>;
-    teleport(name: any): Promise<any>;
-    energy(): any;
-    weight(): any;
-    cameraYaw(): any;
-    cameraPitch(): any;
-    setCameraYaw(yaw: any): any;
-    combatStyleMode(): any;
-    sceneReady(): any;
-    sceneState(): any;
-    attackedByPlayer(): any;
-    castOnNpc(): Promise<any>;
-  };
-  export const FISHING_LOCATION_OPTIONS: unknown;
-  export const FISHING_METHODS: unknown;
-  export const FISHING_METHOD_OPTIONS: unknown;
-  export const FISHING_SHOP_COSTS: unknown;
-  export const FORGETFUL_BANK_ODDS: unknown;
-  export const FORGETFUL_BANK_SETTING: unknown;
+  export { Game } from '*api/game/Game.js';
   export { GAS_ROCK_IDS } from '*data/miningRocks.js';
   export { GAS_ROCK_TICKS } from '*data/miningRocks.js';
-  export const GERRANT_ONLY_FISHING: unknown;
-  export const GERRANT_VENDOR: unknown;
-  export { Game } from '*api/game/Game.js';
   export { GroundItem } from '*api/grounditems/GroundItems.js';
   export { GroundItems } from '*api/grounditems/GroundItems.js';
   export { HAMMER } from '*api/acquisition/Tools.js';
-  export const HARRY_VENDOR: unknown;
-  export const InvItem: unknown;
+  export { hasAllTools } from '*api/acquisition/Tools.js';
+  export { hasToolReq } from '*api/acquisition/Tools.js';
   export { Inventory } from '*api/inventory/Inventory.js';
+  export { isEntNpcId } from '*data/woodcuttingLocations.js';
   export { KNIFE } from '*api/acquisition/Tools.js';
-  export const LeafTask: unknown;
   export { Loc } from '*api/locs/Locs.js';
   export { Locs } from '*api/locs/Locs.js';
   export { LoopingBot } from '*api/bot/Bot.js';
-  export const MAP_SQUARE: any;
-
-  export const MINING_LOCATIONS: any;
-
-  export const MINING_LOCATION_OPTIONS: any;
-
-  export const MINING_LOCATION_OPTION_LABELS: any;
-
-  export const NAV_PURE_WALK: {
-    policy(...args: any): any;
-    useTeleportCatalog(...args: any): any;
-  };
-  export const MINING_LOCATIONS: unknown;
-  export const MINING_LOCATION_OPTIONS: unknown;
-  export const MINING_LOCATION_OPTION_LABELS: unknown;
-  export const NAV_PURE_WALK: unknown;
-  export const NAV_WITH_TELES: {
-    policy(...args: any): any;
-    useTeleportCatalog(...args: any): any;
-  };
-  export const NEARBY_BANK_RADIUS: any;
-
-  export const NEEDLE: any;
-
-  export const NURMOF_VENDOR: any;
-
-  export class Npc {
-    constructor(row: any);
-    snap: any;
-    get name(): any;
-    get id(): any;
-    get index(): any;
-    get inCombat(): any;
-    get health(): any;
-    get level(): any;
-    get size(): any;
-    networkOrigin(): any;
-    networkTile(): any;
-    targetsMe(): any;
-    targetsAnotherPlayer(): any;
-    tile(): any;
-    distance(): any;
-    actions(): any;
-    valid(): any;
-    interact(action: any): any;
-  }
-  export { NEEDLE } from '*api/acquisition/Tools.js';
-  export const NURMOF_VENDOR: unknown;
-  export { Npc } from '*api/model/Npc.js';
-  export { Npcs } from '*api/npcs/Npcs.js';
-  export { PERIODIC_BANK_SETTINGS } from '*api/bank/Banking.js';
-  export { PICKAXES } from '*api/acquisition/Tools.js';
-  export const PICKAXE_SHOP_COSTS: unknown;
-  export { PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
-  export { PICKPOCKET_TARGET_NAMES } from '*api/thieving/targets.js';
-  export { Player } from '*api/model/Player.js';
-  export { Players } from '*api/players/Players.js';
-  export { Quests } from '*api/ui/questlog/Quests.js';
-  export { RANDOM_EVENT_CASKET_ID } from '*api/bank/Banking.js';
-  export { ROCK_OPTIONS } from '*data/miningRocks.js';
-  export { ROCK_TYPES } from '*data/miningRocks.js';
-  export { RUNES } from '*data/runeCraftLocations.js';
-  export { RUNE_OPTIONS } from '*data/runeCraftLocations.js';
-  export { Shop } from '*api/shop/Shop.js';
-  export { Skills } from '*api/skills/Skills.js';
-  export { Special } from '*api/combat/Special.js';
-  export { TINDERBOX } from '*api/acquisition/Tools.js';
-  export const TOLL_COIN_TARGET: unknown;
-  export const TOOL_ACQUIRE_OPTIONS: unknown;
-  export const TOOL_ACQUIRE_SETTING: unknown;
-  export { TaskBot } from '*api/bot/Bot.js';
-  export { Tile } from '*geometry/Tile.js';
-  export { Trade } from '*api/trade/Trade.js';
-  export { Traversal } from '*api/walking/Traversal.js';
-  export { TreeBot } from '*api/bot/Bot.js';
-  export const VARROCK_ANVIL_BANK: any;
-
-  export const VARROCK_ANVIL_STAND: any;
-
-  export const WALK_DESTINATIONS: any;
-
-  export const WALK_OPTIONS: any;
-
-  export const WHIRLPOOL_IDS: any;
-
-  export const WOODCUTTING_LOCATIONS: any;
-
-  export const WOODCUTTING_LOCATION_OPTIONS: any;
-
-  export function acquireKeepNames(...args: any): any;
-
-  export const apiVersion: number;
-
-  export function axeReq(): any;
-
-  export function axeShopOffers(...args: any): any;
-
-  export function bankDistance(...args: any): any;
-
-  export function bankHasBetterGatherTool(): any;
-
-  export function bankUnlocked(bank: any): any;
-
-  export function bestAffordableShopTier(...args: any): any;
-
-  export function bestAxe(level: any, available: any): any;
-
-  export function bestFromTiers(level: any, tiers: any, available: any): any;
-
-  export function bestHeldToolNames(...args: any): any;
-
-  export function bestOwnedTier(...args: any): any;
-
-  export function bestPickaxe(level: any, available: any): any;
-
-  export function bestSmithableAxe(...args: any): any;
-
-  export function boothFields(...args: any): any;
-
-  export function buyPlansCost(...args: any): any;
-
-  export function canFundPlan(...args: any): any;
-
-  export function canWieldTool(name: any, attack: any): any;
-
-  export function coinsToWithdraw(...args: any): any;
-
-  export function depositAllExcept(keep: any): any;
-
-  export function depositMatcher(own: any, includeCommon: any): any;
-
-  export function entNpcOnTile(npcs: any, tile: any): any;
-
-  export const events: {
-    off(...args: any): any;
-    on(...args: any): any;
-  };
-  export const VARROCK_ANVIL_STAND: unknown;
-  export const WALK_DESTINATIONS: unknown;
-  export const WALK_OPTIONS: unknown;
-  export const WHIRLPOOL_IDS: unknown;
-  export const WOODCUTTING_LOCATIONS: unknown;
-  export const WOODCUTTING_LOCATION_OPTIONS: unknown;
-  export const acquireKeepNames: unknown;
-  export const apiVersion: unknown;
-  export { axeReq } from '*api/acquisition/Tools.js';
-  export const axeShopOffers: unknown;
-  export const bankDistance: unknown;
-  export { bankHasBetterGatherTool } from '*api/acquisition/Tools.js';
-  export { bankUnlocked } from '*api/bank/BankLocations.js';
-  export const bestAffordableShopTier: unknown;
-  export { bestAxe } from '*api/acquisition/Tools.js';
-  export { bestFromTiers } from '*api/acquisition/Tools.js';
-  export const bestHeldToolNames: unknown;
-  export const bestOwnedTier: unknown;
-  export { bestPickaxe } from '*api/acquisition/Tools.js';
-  export const bestSmithableAxe: unknown;
-  export const boothFields: unknown;
-  export const buyPlansCost: unknown;
-  export const canFundPlan: unknown;
-  export { canWieldTool } from '*api/acquisition/Tools.js';
-  export const coinsToWithdraw: unknown;
-  export { depositAllExcept } from '*api/bank/Banking.js';
-  export { depositMatcher } from '*api/bank/Banking.js';
-  export { entNpcOnTile } from '*data/woodcuttingLocations.js';
-  export const events: unknown;
-  export { exactTool } from '*api/acquisition/Tools.js';
-  export function fishingGearShopCart(...args: any): any;
-  export function fishingRestockPlan(...args: any): any;
-  export function fishingShopCost(...args: any): any;
-  export function fishingVendorFor(...args: any): any;
-  export function gearKeepNames(...args: any): any;
-  export function gearLabel(...args: any): any;
-  export function hasAll(...args: any): any;
-  export { hasAllTools } from '*api/acquisition/Tools.js';
-  export function hasFishingGear(...args: any): any;
-  export { hasToolReq } from '*api/acquisition/Tools.js';
-  export function held(...args: any): any;
-  export function isCowFieldLootTile(...args: any): any;
-  export { isEntNpcId } from '*data/woodcuttingLocations.js';
-  export function isFishingBaitPiece(...args: any): any;
-  export function locationOptions(...args: any): any;
   export { matchesCommonBankLoot } from '*api/bank/Banking.js';
-  export function miningLocationLabel(...args: any): any;
-  export function missingFishingGear(...args: any): any;
   export { missingToolLabels } from '*api/acquisition/Tools.js';
   export { nearestBank } from '*api/bank/BankLocations.js';
   export { nearestCowLocation } from '*data/cowKillerLocations.js';
   export { nearestUsableBank } from '*api/bank/BankLocations.js';
-  export function needsTollCoins(...args: any): any;
+  export { NEEDLE } from '*api/acquisition/Tools.js';
+  export { Npc } from '*api/model/Npc.js';
+  export { Npcs } from '*api/npcs/Npcs.js';
   export { parseBankStrategy } from '*api/bank/Banking.js';
-  export function parseToolAcquireMode(...args: any): any;
+  export { PERIODIC_BANK_SETTINGS } from '*api/bank/Banking.js';
   export { pickaxeReq } from '*api/acquisition/Tools.js';
-  export function pickaxeShopOffers(...args: any): any;
-  export function planAxeAcquire(...args: any): any;
-  export function planBrokenToolRepair(...args: any): any;
-  export function planFishingGearAcquire(...args: any): any;
-  export function planFishingGearBuys(...args: any): any;
-  export function planGatherToolAcquire(...args: any): any;
-  export function planPickaxeAcquire(...args: any): any;
+  export { PICKAXES } from '*api/acquisition/Tools.js';
+  export { PICKPOCKET_TARGET_NAMES } from '*api/thieving/targets.js';
+  export { PICKPOCKET_TARGETS } from '*data/pickpocketTargets.js';
+  export { Player } from '*api/model/Player.js';
+  export { Players } from '*api/players/Players.js';
+  export { Quests } from '*api/ui/questlog/Quests.js';
+  export { RANDOM_EVENT_CASKET_ID } from '*api/bank/Banking.js';
   export { reader } from '*adapter/ClientAdapter.js';
-  export function registerScript(...args: any): any;
-  export function resolveBankOpenRoute(...args: any): any;
   export { resolveCowLocation } from '*data/cowKillerLocations.js';
-  export function resolveDestination(...args: any): any;
-  export function resolveFishMethod(...args: any): any;
-  export function resolveFishingLocation(...args: any): any;
-  export function resolveGatheringLocation(...args: any): any;
-  export function resolveMiningLocation(...args: any): any;
   export { resolveRockIds } from '*data/miningRocks.js';
-  export function resolveWoodcuttingLocation(...args: any): any;
-  export function sameMapSquare(...args: any): any;
-  export function shopableMissingFishingGear(...args: any): any;
+  export { ROCK_OPTIONS } from '*data/miningRocks.js';
+  export { ROCK_TYPES } from '*data/miningRocks.js';
+  export { RUNE_OPTIONS } from '*data/runeCraftLocations.js';
+  export { RUNES } from '*data/runeCraftLocations.js';
+  export { Shop } from '*api/shop/Shop.js';
   export { shouldBankNow } from '*api/bank/bankRules.js';
-  export function shouldBootstrapTollCoins(...args: any): any;
-  export function spotMatchesMethod(...args: any): any;
-  export function surplusHeldToolNames(...args: any): any;
+  export { Skills } from '*api/skills/Skills.js';
+  export { Special } from '*api/combat/Special.js';
+  export { TaskBot } from '*api/bot/Bot.js';
+  export { Tile } from '*geometry/Tile.js';
+  export { TINDERBOX } from '*api/acquisition/Tools.js';
   export { tinderboxReq } from '*api/acquisition/Tools.js';
-  export function toolAttackLevel(...args: any): any;
   export { toolKeepNames } from '*api/acquisition/Tools.js';
   export { toolKitLabel } from '*api/acquisition/Tools.js';
   export { toolRestockPlan } from '*api/acquisition/Tools.js';
-  export function toolsNeedingEquip(...args: any): any;
-  export function withBaitTarget(...args: any): any;
+  export { Trade } from '*api/trade/Trade.js';
+  export { Traversal } from '*api/walking/Traversal.js';
+  export { TreeBot } from '*api/bot/Bot.js';
   export { withdrawOp } from '*api/bank/Bank.js';
+
   export type { WorldTile, PaintContext, Task, SettingsView } from '*api/bot/Bot.js';
   export type { InvItem } from '*api/inventory/Inventory.js';
   export type { SettingsSchema } from '*runtime/Settings.js';
   export type { MeleeCombatStyle } from '*api/combat/CombatStyle.js';
+
+  export function acquireKeepNames(...args: unknown[]): unknown;
+  export const AcquireTask: unknown;
+  export const ALL_FISHING_GEAR_NAMES: unknown;
+  export const apiVersion: unknown;
+  export const Area: unknown;
+  export const AXE_BAR_FOR: unknown;
+  export const AXE_SHOP_COSTS: unknown;
+  export const AXE_SMITH_LEVEL: unknown;
+  export function axeShopOffers(...args: unknown[]): unknown;
+  export function bankDistance(...args: unknown[]): unknown;
+  export function bestAffordableShopTier(...args: unknown[]): unknown;
+  export function bestHeldToolNames(...args: unknown[]): unknown;
+  export function bestOwnedTier(...args: unknown[]): unknown;
+  export function bestSmithableAxe(...args: unknown[]): unknown;
+  export const BOB_VENDOR: unknown;
+  export function boothFields(...args: unknown[]): unknown;
+  export const BranchTask: unknown;
+  export const BROKEN_AXE: unknown;
+  export function buyPlansCost(...args: unknown[]): unknown;
+  export function canFundPlan(...args: unknown[]): unknown;
+  export function coinsToWithdraw(...args: unknown[]): unknown;
+  export const DEFAULT_BOOTH_NAME: unknown;
+  export const DEFAULT_BOOTH_OP: unknown;
+  export const events: unknown;
+  export const FISHING_LOCATION_OPTIONS: unknown;
+  export const FISHING_LOCATIONS: unknown;
+  export const FISHING_METHOD_OPTIONS: unknown;
+  export const FISHING_METHODS: unknown;
+  export const FISHING_SHOP_COSTS: unknown;
+  export function fishingGearShopCart(...args: unknown[]): unknown;
+  export function fishingRestockPlan(...args: unknown[]): unknown;
+  export function fishingShopCost(...args: unknown[]): unknown;
+  export function fishingVendorFor(...args: unknown[]): unknown;
+  export const FORGETFUL_BANK_ODDS: unknown;
+  export const FORGETFUL_BANK_SETTING: unknown;
+  export function gearKeepNames(...args: unknown[]): unknown;
+  export function gearLabel(...args: unknown[]): unknown;
+  export const GERRANT_ONLY_FISHING: unknown;
+  export const GERRANT_VENDOR: unknown;
+  export const HARRY_VENDOR: unknown;
+  export function hasAll(...args: unknown[]): unknown;
+  export function hasFishingGear(...args: unknown[]): unknown;
+  export function held(...args: unknown[]): unknown;
+  export function isCowFieldLootTile(...args: unknown[]): unknown;
+  export function isFishingBaitPiece(...args: unknown[]): unknown;
+  export const LeafTask: unknown;
+  export function locationOptions(...args: unknown[]): unknown;
+  export const MAP_SQUARE: unknown;
+  export const MINING_LOCATION_OPTION_LABELS: unknown;
+  export const MINING_LOCATION_OPTIONS: unknown;
+  export const MINING_LOCATIONS: unknown;
+  export function miningLocationLabel(...args: unknown[]): unknown;
+  export function missingFishingGear(...args: unknown[]): unknown;
+  export const NAV_PURE_WALK: unknown;
+  export const NAV_WITH_TELES: unknown;
+  export const NEARBY_BANK_RADIUS: unknown;
+  export function needsTollCoins(...args: unknown[]): unknown;
+  export const NURMOF_VENDOR: unknown;
+  export function parseToolAcquireMode(...args: unknown[]): unknown;
+  export const PICKAXE_SHOP_COSTS: unknown;
+  export function pickaxeShopOffers(...args: unknown[]): unknown;
+  export function planAxeAcquire(...args: unknown[]): unknown;
+  export function planBrokenToolRepair(...args: unknown[]): unknown;
+  export function planFishingGearAcquire(...args: unknown[]): unknown;
+  export function planFishingGearBuys(...args: unknown[]): unknown;
+  export function planGatherToolAcquire(...args: unknown[]): unknown;
+  export function planPickaxeAcquire(...args: unknown[]): unknown;
+  export function registerScript(...args: unknown[]): unknown;
+  export function resolveBankOpenRoute(...args: unknown[]): unknown;
+  export function resolveDestination(...args: unknown[]): unknown;
+  export function resolveFishingLocation(...args: unknown[]): unknown;
+  export function resolveFishMethod(...args: unknown[]): unknown;
+  export function resolveGatheringLocation(...args: unknown[]): unknown;
+  export function resolveMiningLocation(...args: unknown[]): unknown;
+  export function resolveWoodcuttingLocation(...args: unknown[]): unknown;
+  export function sameMapSquare(...args: unknown[]): unknown;
+  export function shopableMissingFishingGear(...args: unknown[]): unknown;
+  export function shouldBootstrapTollCoins(...args: unknown[]): unknown;
+  export function spotMatchesMethod(...args: unknown[]): unknown;
+  export function surplusHeldToolNames(...args: unknown[]): unknown;
+  export const TOLL_COIN_TARGET: unknown;
+  export const TOOL_ACQUIRE_OPTIONS: unknown;
+  export const TOOL_ACQUIRE_SETTING: unknown;
+  export function toolAttackLevel(...args: unknown[]): unknown;
+  export function toolsNeedingEquip(...args: unknown[]): unknown;
+  export const VARROCK_ANVIL_BANK: unknown;
+  export const VARROCK_ANVIL_STAND: unknown;
+  export const WALK_DESTINATIONS: unknown;
+  export const WALK_OPTIONS: unknown;
+  export const WHIRLPOOL_IDS: unknown;
+  export function withBaitTarget(...args: unknown[]): unknown;
+  export const WOODCUTTING_LOCATION_OPTIONS: unknown;
+  export const WOODCUTTING_LOCATIONS: unknown;
 }
 
 declare module '*adapter/ClientAdapter.js' {
@@ -481,8 +282,8 @@ declare module '*api/acquisition/Tools.js' {
   export function axeReq(): unknown;
   export function pickaxeReq(): unknown;
   export function toolKeepNames(reqs: unknown): unknown;
-  export function hasToolReq(req: unknown, skillLevel: unknown, count: number): boolean;
-  export function hasAllTools(reqs: unknown, skillLevel: unknown, count: number): boolean;
+  export function hasToolReq(req: unknown, skillLevel: unknown, count: number | ((name: string) => number)): boolean;
+  export function hasAllTools(reqs: unknown, skillLevel: unknown, count: number | ((name: string) => number)): boolean;
   export function bestAxe(level: number, available: unknown): unknown;
   export function bestPickaxe(level: number, available: unknown): unknown;
   export function bestFromTiers(level: number, tiers: unknown, available: unknown): unknown;
@@ -501,7 +302,7 @@ declare module '*api/ai/clues/ClueExecutor.js' {
 
 declare module '*api/ai/clues/SolveClue.js' {
   export class SolveClue {
-    constructor(hostArg: unknown): unknown;
+    constructor(hostArg: unknown);
     host: unknown;
     token: unknown;
     status: unknown;
@@ -628,9 +429,9 @@ declare module '*api/bank/Bank.js' {
     count(name: string): number;
     deposit(name: string): Promise<boolean>;
     depositInventory(): Promise<void>;
-    depositAllMatching(predicate: (item: BankItem) => boolean, log?: (msg: string) => void): Promise<void>;
+    depositAllMatching(predicate: (name: string, id: number) => boolean, log?: (msg: string) => void): Promise<void>;
     depositAllExcept(keep: Iterable<string>): Promise<void>;
-    withdraw(name: string, amount?: number): Promise<boolean>;
+    withdraw(name: string, amount?: number | string): Promise<boolean>;
     setNoteMode(on: boolean): Promise<boolean>;
     close(): Promise<boolean>;
     withdrawById(id: number, op?: string): Promise<boolean>;
@@ -651,21 +452,35 @@ declare module '*api/bank/Bank.js' {
 }
 
 declare module '*api/bank/BankLocations.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
+  export type BankAccess = {
+    name: string;
+    op: string;
+    openFirst?: { name: string; op: string };
+  };
+  export type NpcBankAccess = {
+    name: string;
+    op: string;
+    choose?: string;
+  };
   export type BankLocation = {
     name?: string;
-    tile?: WorldTile;
+    tile?: Tile;
+    approach?: Tile;
+    access?: BankAccess;
+    npcAccess?: NpcBankAccess;
     [key: string]: unknown;
   };
-  export const USE_MAGE_BANK: any;
-  export const USE_ZANARIS_BANK: any;
+  export const USE_MAGE_BANK: string;
+  export const USE_ZANARIS_BANK: string;
   export const BANK_LOCATIONS: BankLocation[];
-  export function approachOf(bank: BankLocation | unknown): WorldTile | unknown;
+  export function approachOf(bank: BankLocation | unknown): Tile | WorldTile | undefined;
   export function bankUnlocked(bank: BankLocation | unknown): boolean;
   export function nearestBank(here: WorldTile | unknown): BankLocation | null;
   export function nearestBanks(here: WorldTile | unknown): BankLocation[];
   export function nearestUsableBank(here: WorldTile | unknown, usable: unknown): BankLocation | null;
-  export function nearestBankReachable(here: WorldTile | unknown, _navigator: unknown): Promise<boolean>;
+  export function nearestBankReachable(here: WorldTile | unknown, _navigator: unknown): Promise<BankLocation | null>;
 }
 
 declare module '*api/bank/Banking.js' {
@@ -727,7 +542,7 @@ declare module '*api/bank/bankSort.js' {
   export const ARRANGE_SWAP_COM: any;
   export const ARRANGE_INSERT_COM: any;
   export const BANK_INSERT_VARP: any;
-  export function sortBank(): Promise<boolean>;
+  export function sortBank(opts?: unknown): Promise<BankSortResult>;
 }
 
 declare module '*api/bank/bankSortRules.js' {
@@ -769,7 +584,7 @@ declare module '*api/bot/Bot.js' {
     grindTargets(): unknown[];
     ignoredRandoms(): unknown[];
     on(event: 'chat.message', cb: (payload: ChatMessage) => unknown): void;
-    on(event: string, cb: (payload: any) => unknown): void;
+    on(event: string, cb: (payload: unknown) => unknown): void;
     log(message: unknown): void;
     get settings(): SettingsView;
   }
@@ -794,7 +609,7 @@ declare module '*api/bot/Bot.js' {
     grindTargets(): unknown[];
     ignoredRandoms(): unknown[];
     on(event: 'chat.message', cb: (payload: ChatMessage) => unknown): void;
-    on(event: string, cb: (payload: any) => unknown): void;
+    on(event: string, cb: (payload: unknown) => unknown): void;
     log(message: unknown): void;
     get settings(): SettingsView;
   }
@@ -829,7 +644,7 @@ declare module '*api/combat/CombatStyle.js' {
     meleeStyle: MeleeCombatStyle;
     legacyMigrated: MeleeCombatStyle | null;
   };
-  export function parseRangeStyle(name: string): RangeStyle;
+  export function parseRangeStyle(name: string): number;
   export function describeCombatStyle(resolution: CombatStyleResolution | unknown): string;
 }
 
@@ -927,7 +742,7 @@ declare module '*api/combat/hunting/combat.js' {
   export type CombatHost = { log?: (msg: string) => void; [key: string]: unknown };
 
   class HuntTask {
-    constructor(family: string, host: unknown, site: unknown): unknown;
+    constructor(family: string, host: unknown, site: unknown);
     family: unknown;
     host: unknown;
     site: unknown;
@@ -940,26 +755,26 @@ declare module '*api/combat/hunting/combat.js' {
   export function hooksOf(host: unknown, site: unknown, leave: unknown): unknown;
   export function anchorFor(site: unknown, style: unknown, index: number): unknown;
   export class Fight extends HuntTask {
-    constructor(host: unknown, site: unknown): unknown;
+    constructor(host: unknown, site: unknown);
     execute(): Promise<void>;
     reset(): unknown;
     interruptWatch(): unknown;
     blocksLoot(): unknown;
   }
   export class Retreat extends HuntTask {
-    constructor(host: unknown, site: unknown): unknown;
+    constructor(host: unknown, site: unknown);
     execute(): Promise<void>;
   }
   export class HoldSafespot extends HuntTask {
-    constructor(host: unknown, site: unknown): unknown;
+    constructor(host: unknown, site: unknown);
     execute(): Promise<void>;
   }
   export class WalkToSpot extends HuntTask {
-    constructor(host: unknown, site: unknown): unknown;
+    constructor(host: unknown, site: unknown);
     execute(): Promise<void>;
   }
   export class EnterLair extends HuntTask {
-    constructor(host: unknown, site: unknown): unknown;
+    constructor(host: unknown, site: unknown);
     execute(): Promise<void>;
   }
   export function cell(host: unknown, site: unknown): Promise<unknown>;
@@ -1105,14 +920,14 @@ declare module '*api/duel/ClueDuel.js' {
   export function clueDuelName(name: string): unknown;
   export function leaveClueDuel(log: (msg: string) => void): Promise<boolean>;
   export class ClueDuelHandshake {
-    constructor(partner: unknown, initiator: unknown, log: (msg: string) => void): unknown;
+    constructor(partner: unknown, initiator: unknown, log: (msg: string) => void);
     partner: unknown;
     initiator: unknown;
     log: unknown;
     tick(): Promise<boolean>;
   }
   export class ClueDuelHelper {
-    constructor(partner: unknown, log: (msg: string) => void): unknown;
+    constructor(partner: unknown, log: (msg: string) => void);
     partner: unknown;
     log: unknown;
     validate(): boolean;
@@ -1205,11 +1020,11 @@ declare module '*api/firemaking/Firemaking.js' {
   export function fireReactionTicks(): number;
   export function runInDir(from: unknown, plot: unknown, dir: unknown, occupied: unknown, walkable: unknown, canStep: unknown, cap: number): unknown;
   export function findBurnLane(plot: unknown, here: unknown, occupied: unknown, want?: unknown, _walkable?: unknown, _canStep?: unknown, directions?: unknown): unknown;
-  export function lightFire(logName: string): Promise<boolean>;
+  export function lightFire(logName: string): Promise<string>;
 }
 
 declare module '*api/firemaking/LightFire.js' {
-  export function lightFire(logName: string): Promise<boolean>;
+  export function lightFire(logName: string): Promise<string>;
 }
 
 declare module '*api/game/Game.js' {
@@ -1259,14 +1074,15 @@ declare module '*api/game/Game.js' {
 }
 
 declare module '*api/grounditems/GroundItems.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class GroundItem {
     constructor(row: unknown);
-    snap: any;
+    snap: unknown;
     get name(): string | null;
     get id(): number;
     get count(): number;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     interact(action: string): boolean;
@@ -1347,13 +1163,14 @@ declare module '*api/loadout/loadoutSetting.js' {
 }
 
 declare module '*api/locs/Locs.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Loc {
     constructor(row: unknown);
     snap: { name?: string | null; id?: number; x?: number; z?: number; level?: number; distance?: number; actions?: unknown };
     get name(): string | null;
     get id(): number;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     interact(action: string): boolean;
@@ -1407,13 +1224,14 @@ declare module '*api/market/catalog.js' {
 }
 
 declare module '*api/model/Loc.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Loc {
     constructor(row: unknown);
     snap: { name?: string | null; id?: number; x?: number; z?: number; level?: number; distance?: number; actions?: unknown };
     get name(): string | null;
     get id(): number;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     interact(action: string): boolean;
@@ -1421,10 +1239,11 @@ declare module '*api/model/Loc.js' {
 }
 
 declare module '*api/model/Npc.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Npc {
     constructor(row: unknown);
-    snap: any;
+    snap: unknown;
     get name(): string | null;
     get id(): number;
     get index(): number;
@@ -1432,11 +1251,11 @@ declare module '*api/model/Npc.js' {
     get health(): number | null;
     get level(): number;
     get size(): number;
-    networkOrigin(): WorldTile;
-    networkTile(): WorldTile;
+    networkOrigin(): Tile;
+    networkTile(): Tile;
     targetsMe(): boolean;
     targetsAnotherPlayer(): boolean;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     valid(): boolean;
@@ -1445,16 +1264,17 @@ declare module '*api/model/Npc.js' {
 }
 
 declare module '*api/model/Player.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Player {
     constructor(row: unknown);
-    snap: any;
+    snap: unknown;
     get name(): string | null;
     get index(): number;
     get inCombat(): boolean;
     get combatLevel(): number;
     targetsMe(): boolean;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     interact(action: string): boolean;
@@ -1462,10 +1282,11 @@ declare module '*api/model/Player.js' {
 }
 
 declare module '*api/npcs/Npcs.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Npc {
     constructor(row: unknown);
-    snap: any;
+    snap: unknown;
     get name(): string | null;
     get id(): number;
     get index(): number;
@@ -1473,11 +1294,11 @@ declare module '*api/npcs/Npcs.js' {
     get health(): number | null;
     get level(): number;
     get size(): number;
-    networkOrigin(): WorldTile;
-    networkTile(): WorldTile;
+    networkOrigin(): Tile;
+    networkTile(): Tile;
     targetsMe(): boolean;
     targetsAnotherPlayer(): boolean;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     valid(): boolean;
@@ -1507,16 +1328,17 @@ declare module '*api/npcs/Npcs.js' {
 }
 
 declare module '*api/players/Players.js' {
+  import Tile from '*geometry/Tile.js';
   export interface WorldTile { x: number; z: number; level: number }
   export class Player {
     constructor(row: unknown);
-    snap: any;
+    snap: unknown;
     get name(): string | null;
     get index(): number;
     get inCombat(): boolean;
     get combatLevel(): number;
     targetsMe(): boolean;
-    tile(): WorldTile;
+    tile(): Tile;
     distance(): number;
     actions(): string[];
     interact(action: string): boolean;
@@ -1558,11 +1380,11 @@ declare module '*api/prayer/Prayer.js' {
 
 declare module '*api/query/Query.js' {
   export function matchesEntityName(actual: unknown, configured: unknown): boolean;
-  export class EntityQuery<T = any> {
+  export class EntityQuery<T = unknown> {
     constructor(supplySnaps: () => unknown[], wrap: (snap: unknown) => T);
     supplySnaps: () => unknown[];
     wrap: (snap: unknown) => T;
-    snapFilters: Array<(s: any) => boolean>;
+    snapFilters: Array<(s: unknown) => boolean>;
     entityFilters: Array<(e: T) => boolean>;
     static fromSnapshots<U>(supply: () => unknown[], wrap: (snap: unknown) => U): EntityQuery<U>;
     name(...names: string[]): this;
@@ -1626,7 +1448,7 @@ declare module '*api/sustain/Sustain.js' {
 }
 
 declare module '*api/tasks/Anchor.js' {
-  export const HOME_ARRIVE_RADIUS: any;
+  export const HOME_ARRIVE_RADIUS: number;
   export function shouldWalkHomeToGatherAnchor(_distToAnchor: unknown, _arriveRadius: unknown): unknown;
   export function shouldSoftHomeFromGatherMiss(_distToAnchor: unknown, _leash: unknown): unknown;
   export function beyondLeash(bot: unknown, here?: unknown, slack?: unknown): unknown;
@@ -1646,7 +1468,7 @@ declare module '*api/tasks/ContinueDialog.js' {
 
 declare module '*api/tasks/DeathRecovery.js' {
   export class DeathRecovery {
-    constructor(_bot: unknown, opts: unknown): unknown;
+    constructor(_bot: unknown, opts: unknown);
     opts: unknown;
     validate(): boolean;
     execute(): Promise<void>;
@@ -1655,7 +1477,7 @@ declare module '*api/tasks/DeathRecovery.js' {
 
 declare module '*api/tasks/PeriodicBank.js' {
   export class PeriodicBank {
-    constructor(opts: unknown): unknown;
+    constructor(opts: unknown);
     opts: unknown;
     validate(): boolean;
     execute(): Promise<void>;
@@ -1663,9 +1485,9 @@ declare module '*api/tasks/PeriodicBank.js' {
 }
 
 declare module '*api/thieving/CakeStall.js' {
-  export function carriedCakes(): unknown;
-  export function needsCakeRestock(target: unknown): unknown;
-  export function stealCakes(opts?: unknown): Promise<boolean>;
+  export function carriedCakes(): number;
+  export function needsCakeRestock(target: unknown): boolean;
+  export function stealCakes(opts?: unknown): Promise<string>;
 }
 
 declare module '*api/thieving/cakeStallData.js' {
@@ -1697,13 +1519,14 @@ declare module '*api/thieving/stealRules.js' {
 }
 
 declare module '*api/thieving/targets.js' {
-  export function targetSpot(target: unknown): unknown;
-  export function requiredThieving(target: unknown): unknown;
-  export const HOSTILE_NAMES: any;
+  import Tile from '*geometry/Tile.js';
+  export function targetSpot(target: unknown): { anchor: Tile; leash: number };
+  export function requiredThieving(target: unknown): number;
+  export const HOSTILE_NAMES: readonly string[];
   export function isHostileAttacker(c: unknown, maxDistance: unknown): boolean;
   export function chooseTarget(candidatesNearestFirst: unknown, reachable: unknown): unknown;
-  export const PICKPOCKET_TARGET_NAMES: any;
-  export const ARDOUGNE_PICKPOCKET_TARGETS: any;
+  export const PICKPOCKET_TARGET_NAMES: unknown;
+  export const ARDOUGNE_PICKPOCKET_TARGETS: unknown;
 }
 
 declare module '*api/trade/PartnerTrade.js' {
@@ -1767,12 +1590,13 @@ declare module '*api/ui/dialogue/ChatDialog.js' {
 
 declare module '*api/ui/questlog/Quests.js' {
   export type QuestStatus = string;
+  export type QuestRow = { name: string; status: QuestStatus };
 
   export const Quests: {
-    all(): unknown;
-    status(name: string): unknown;
+    all(): QuestRow[];
+    status(name: string): QuestStatus;
     journal(): unknown;
-    points(): unknown;
+    points(): number;
   };
 }
 
@@ -1795,8 +1619,8 @@ declare module '*api/walking/DirectNavigator.js' {
 
 declare module '*api/walking/Reach.js' {
   export const Reach: {
-    entityOp(opts: unknown): Promise<boolean>;
-    npcDialog(opts: unknown): Promise<boolean>;
+    entityOp(opts: unknown): Promise<string>;
+    npcDialog(opts: unknown): Promise<string>;
   };
 }
 
@@ -1932,10 +1756,29 @@ declare module '*event/webwalk/DirectNavigator.js' {
 }
 
 declare module '*event/webwalk/Navigator.js' {
+  export interface WorldTile { x: number; z: number; level: number }
+  export interface InspectHop {
+    kind: string;
+    locId: number;
+    locName: string;
+    action: string;
+    option: number;
+    from: WorldTile;
+    to: WorldTile;
+    ticks: number;
+  }
+  export interface InspectPath {
+    ok: boolean;
+    reason: string;
+    bankPlanned: boolean;
+    ticks: number;
+    hops: InspectHop[];
+    request_id: number;
+  }
   export const Navigator: {
     start(): unknown;
     isReady(): boolean;
-    findPath(from: unknown, to: unknown, opts?: unknown): Promise<boolean>;
+    findPath(from: unknown, to: unknown, opts?: unknown): Promise<InspectPath | null>;
   };
   export default Navigator;
 }
@@ -1978,7 +1821,7 @@ declare module '*geometry/Tile.js' {
     toString(): string;
   }
   export default Tile;
-  export function tileFromPosted(value: unknown): WorldTile | null;
+  export function tileFromPosted(value: unknown): Tile | null;
 }
 
 declare module '*input/Input.js' {
@@ -2068,8 +1911,13 @@ declare module '*paint/levelProgress.js' {
     gained?: number;
     [key: string]: unknown;
   }
+  export interface LevelProgress {
+    level: number;
+    fraction: number;
+    remaining: number;
+  }
   export function xpAtLevel(level: number): number;
-  export function levelProgress(level: number, xp: number): number;
+  export function levelProgress(level: number, xp: number): LevelProgress;
   export function etaHours(remaining: number, xpPerHour: number): number | null;
   export function levelRow(g: unknown, mins: number): string;
 }
@@ -2088,12 +1936,14 @@ declare module '*runtime/BotHost.js' {
 }
 
 declare module '*runtime/RecoveryHints.js' {
+  import Tile from '*geometry/Tile.js';
+  export interface WorldTile { x: number; z: number; level: number }
   export const RecoveryHints: {
     get pendingRecovery(): unknown;
     set pendingRecovery(value: number);
-    get anchor(): unknown;
-    set anchor(value: number);
-    takeAnchor(): unknown;
+    get anchor(): Tile | null;
+    set anchor(value: WorldTile | null);
+    takeAnchor(): Tile | null;
     clear(): unknown;
   };
 }

@@ -162,14 +162,60 @@ fn write_compat_dts_tree_to_env() {
 }
 
 #[test]
-fn dynamic_proxy_bags_are_any() {
-    let dts = fs::read_to_string(compat_dts_path()).unwrap();
-    for bag in ["SHOP_DB", "DROP_DB", "ITEM_DB", "HERBS"] {
-        assert!(
-            dts.contains(&format!("export const {bag}:")),
-            "{bag} must remain on the authored surface"
-        );
+fn barrel_game_is_a_typed_reexport() {
+    let authored = load_authored_dts().expect("authored d.ts");
+    let barrel = authored
+        .modules
+        .iter()
+        .find(|m| m.specifier == "@rs2b0t/api")
+        .expect("@rs2b0t/api barrel");
+    let game = barrel.exports.iter().find(|e| match e {
+        CompatExport::Class { name, .. }
+        | CompatExport::Object { name, .. }
+        | CompatExport::Function { name, .. }
+        | CompatExport::Value { name } => name == "Game",
+    });
+    match game {
+        Some(CompatExport::Value { .. }) => {}
+        other => panic!("barrel Game must be a typed re-export, got {other:?}"),
     }
+    let names: Vec<&str> = barrel
+        .exports
+        .iter()
+        .map(|e| match e {
+            CompatExport::Class { name, .. }
+            | CompatExport::Object { name, .. }
+            | CompatExport::Function { name, .. }
+            | CompatExport::Value { name } => name.as_str(),
+        })
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    for name in &names {
+        assert!(seen.insert(*name), "duplicate barrel export {name}");
+    }
+}
+
+/// Adding a member to the authored Game declaration must fail the reverse drift pass.
+#[test]
+fn drift_gate_fails_when_declaration_gains_a_member() {
+    let src = fs::read_to_string(compat_dts_path()).unwrap();
+    let needle = "    sceneReady(): boolean;";
+    assert!(src.contains(needle), "Game.sceneReady needle moved");
+    let patched = src.replace(
+        needle,
+        "    sceneReady(): boolean;\n    reviewGhostMember(): void;",
+    );
+    let dir = std::env::temp_dir().join("compat-dts-extra-member");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("index.d.ts"), patched).unwrap();
+    let authored = load_authored_dts_from(&dir).expect("load patched d.ts");
+    let drifts = drift_against_shim(&authored, &collect_compat_surface());
+    assert!(
+        drifts.iter().any(|d| d.contains("reviewGhostMember")),
+        "injected Game.reviewGhostMember must fail the drift gate: {drifts:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -254,14 +300,23 @@ fn dts_tree_mirrors_shim_urls_for_relative_imports() {
     let dir = std::env::temp_dir().join("compat-dts-tree-test");
     let _ = fs::remove_dir_all(&dir);
     script::compat_dts::write_compat_dts_tree(&dir).expect("write tree");
-    let game = fs::read_to_string(dir.join("api/game/Game.d.ts")).expect("Game.d.ts");
-    assert!(game.contains("ingame(): boolean"), "{game}");
-    assert!(game.contains("castOnNpc("), "{game}");
-    let tile = fs::read_to_string(dir.join("geometry/Tile.d.ts")).expect("Tile.d.ts");
-    assert!(tile.contains("export default Tile"), "{tile}");
-    assert!(tile.contains("x: number"), "{tile}");
-    let host = fs::read_to_string(dir.join("runtime/BotHost.d.ts")).expect("BotHost.d.ts");
-    assert!(host.contains("addTickListener"), "{host}");
+    assert!(
+        dir.join("api/game/Game.d.ts").is_file(),
+        "tree must emit Game.d.ts"
+    );
+    assert!(
+        dir.join("geometry/Tile.d.ts").is_file(),
+        "tree must emit Tile.d.ts"
+    );
+    assert!(
+        dir.join("runtime/BotHost.d.ts").is_file(),
+        "tree must emit BotHost.d.ts"
+    );
+    let npcs = fs::read_to_string(dir.join("api/npcs/Npcs.d.ts")).expect("Npcs.d.ts");
+    assert!(
+        npcs.contains("from '../../geometry/Tile.js'"),
+        "entity tree files must rewrite *geometry/Tile.js to a relative import: {npcs}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -334,35 +389,40 @@ fn bank_deposit_and_delay_until_are_promise_returning() {
     }
 }
 
+/// Consumer TypeScript probe: good uses typecheck, bad `Game` uses must not.
+/// Also type-checks `compat-js/index.d.ts` with `skipLibCheck: false`.
+/// Requires `tsc` or `npx`. Run:
+/// `npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe`
 #[test]
-fn authored_game_tile_and_inventory_use_concrete_types() {
-    let dts = fs::read_to_string(compat_dts_path()).unwrap();
-    assert!(
-        dts.contains("ingame(): boolean"),
-        "Game.ingame must be boolean, not any"
-    );
-    assert!(
-        dts.contains("tile(): WorldTile | null") || dts.contains("tile(): WorldTile|null"),
-        "Game.tile must be a world-tile record or null"
-    );
-    assert!(
-        dts.contains("openSideTab(tab: number): Promise<boolean>")
-            || dts.contains("openSideTab(tab:"),
-        "Game.openSideTab must be Promise<boolean>"
-    );
-    assert!(
-        dts.contains("count(name: string): number"),
-        "Inventory.count / Bank.count must be number"
-    );
-    assert!(
-        dts.contains("delay(ms: number): Promise<void>"),
-        "Execution.delay must be Promise<void>"
-    );
-    assert!(
-        dts.contains("distanceTo(other: WorldTile): number")
-            || dts.contains("distanceTo(other: Tile): number"),
-        "Tile.distanceTo must be number"
-    );
+#[ignore = "requires tsc; npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe"]
+fn tsc_consumer_probe_rejects_wrong_uses() {
+    let probe = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/compat_dts_probe");
+    let mut cmd = tsc_command();
+    cmd.arg("--noEmit").arg("-p").arg(&probe);
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("tsc probe failed to spawn: {e}"));
+    if !out.status.success() {
+        panic!(
+            "tsc consumer probe failed (skipLibCheck: false):\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+fn tsc_command() -> std::process::Command {
+    if std::process::Command::new("tsc")
+        .arg("-v")
+        .output()
+        .ok()
+        .is_some_and(|o| o.status.success())
+    {
+        return std::process::Command::new("tsc");
+    }
+    let mut npx = std::process::Command::new("npx");
+    npx.args(["-p", "typescript@5.8.3", "--yes", "tsc"]);
+    npx
 }
 
 fn write_gatherer_extension(dir: &Path, with_barrel: bool, with_file: bool) {

@@ -4,7 +4,13 @@
 //! prelude). Types live in the authored `compat-js/index.d.ts` (and extra
 //! `.d.ts` files beside it). This module walks the live shim and **gates**
 //! that file: module/export/member names, shorthand properties, arity, and
-//! Promise-returning wrappers must match.
+//! Promise-returning wrappers must match. An authored export or member that
+//! is absent from the live shim is also drift.
+//!
+//! The `@rs2b0t/api` barrel re-exports those typed modules (plus unknown
+//! stubs for catalog ABI names with no shim). Check the authored file with
+//! `skipLibCheck: false`:
+//! `npx -p typescript@5.8.3 --yes tsc --noEmit -p crates/script/tests/compat_dts_probe`
 //!
 //! O-SCRIPT-API extends the surface by adding a typed module declaration
 //! file under `compat-js/` plus a barrel export in `@rs2b0t/api`.
@@ -2602,7 +2608,14 @@ pub fn write_authored_dts_tree(authored: &AuthoredSurface, root: &Path) -> Resul
         }
         let mut src =
             String::from("// Compat JS API v1 — copied from authored compat-js declarations.\n");
-        src.push_str(module.body.trim_start());
+        let from_dir = Path::new(&rel)
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        src.push_str(&rewrite_quoted_star_imports(
+            module.body.trim_start(),
+            &from_dir,
+        ));
         if !src.ends_with('\n') {
             src.push('\n');
         }
@@ -2687,6 +2700,11 @@ pub fn drift_against_shim(authored: &AuthoredSurface, shim: &CompatSurface) -> V
             }
         }
     }
+    if let Some(barrel) = barrel {
+        for dup in barrel_duplicate_value_exports(&barrel.body) {
+            drifts.push(format!("@rs2b0t/api duplicate export {dup}"));
+        }
+    }
     drifts.sort();
     drifts.dedup();
     drifts
@@ -2719,6 +2737,20 @@ fn compare_module(shim: &ShimModule, authored: &AuthoredModule, drifts: &mut Vec
             continue;
         };
         compare_export(&label, exp, dts, drifts);
+    }
+    for exp in &authored.exports {
+        let name = export_ident(exp);
+        if name.starts_with("__") {
+            continue;
+        }
+        let found = shim
+            .exports
+            .iter()
+            .chain(shim.privates.iter())
+            .any(|e| export_ident(e) == name);
+        if !found {
+            drifts.push(format!("{label} extra authored export {name}"));
+        }
     }
     for exp in &shim.privates {
         let name = export_ident(exp);
@@ -2852,6 +2884,11 @@ fn compare_members(
             }
         }
     }
+    for d in dts {
+        if !shim.iter().any(|m| m.name == d.name) {
+            drifts.push(format!("{label} {owner} extra authored member {}", d.name));
+        }
+    }
 }
 
 fn compare_params(
@@ -2885,6 +2922,109 @@ fn compare_params(
             }
         }
     }
+}
+
+fn rewrite_quoted_star_imports(body: &str, from_dir: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    let bytes = body.as_bytes();
+    while i < bytes.len() {
+        let q = bytes[i];
+        if (q == b'\'' || q == b'"') && bytes.get(i + 1) == Some(&b'*') {
+            if let Some(end) = body[i + 2..].find(q as char) {
+                let inner = &body[i + 2..i + 2 + end];
+                if !inner.contains('\n') && (inner.ends_with(".js") || inner.ends_with(".ts")) {
+                    out.push(q as char);
+                    out.push_str(&relative_from_dir(from_dir, inner));
+                    out.push(q as char);
+                    i = i + 3 + end;
+                    continue;
+                }
+            }
+        }
+        let ch = body[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn relative_from_dir(from_dir: &str, target: &str) -> String {
+    if from_dir.is_empty() {
+        return format!("./{target}");
+    }
+    let from: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
+    let to: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
+    let mut i = 0;
+    while i < from.len() && i < to.len() && from[i] == to[i] {
+        i += 1;
+    }
+    let mut parts: Vec<&str> = std::iter::repeat_n("..", from.len() - i).collect();
+    parts.extend(to[i..].iter().copied());
+    if parts.is_empty() {
+        format!("./{}", to.last().copied().unwrap_or(target))
+    } else {
+        parts.join("/")
+    }
+}
+
+fn barrel_duplicate_value_exports(body: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut dups = Vec::new();
+    for name in barrel_value_export_names(body) {
+        if !seen.insert(name.clone()) {
+            dups.push(name);
+        }
+    }
+    dups.sort();
+    dups.dedup();
+    dups
+}
+
+fn barrel_value_export_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.starts_with("export type ") {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("export {") {
+            if let Some(inside) = rest.split('}').next() {
+                for n in inside.split(',') {
+                    let n = n.trim();
+                    if !n.is_empty() {
+                        names.push(n.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("export const ") {
+            if let Some(n) = rest.split(|c: char| c == ':' || c.is_whitespace()).next() {
+                if !n.is_empty() {
+                    names.push(n.to_string());
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("export function ") {
+            if let Some(n) = rest.split('(').next() {
+                let n = n.trim();
+                if !n.is_empty() {
+                    names.push(n.to_string());
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("export class ") {
+            if let Some(n) = rest.split(|c: char| c.is_whitespace() || c == '{').next() {
+                if !n.is_empty() {
+                    names.push(n.to_string());
+                }
+            }
+        }
+    }
+    names
 }
 
 pub fn check_compat_dts_drift() -> Result<(), String> {
