@@ -148,8 +148,7 @@ fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
     with_tick(&snapshot, &mut ledger, 1, |t| {
         assert!(matches!(
             t.actions.begin::<JournalMachine>(request, &mut t.cx),
-            Err(ActionError::Failed(reason))
-                if reason.contains("root 123") && reason.contains("dialogue")
+            Err(ActionError::Busy)
         ))
     });
     assert!(ledger.as_ref().unwrap().outbox.is_empty());

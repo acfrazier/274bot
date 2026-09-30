@@ -1231,3 +1231,51 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
         });
     });
 }
+
+#[test]
+fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(4882, vec![]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    id: 0,
+                    npc: Arc::from("Aubury"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        t.cx.active_now = Duration::from_secs(30);
+        assert!(
+            t.actions.poll(&handle, &mut t.cx).is_pending(),
+            "host delay without game progress cannot end a conversation"
+        );
+    });
+    snapshot.seed_chat_modal(4893, vec![]);
+    with_tick(&snapshot, &mut ledger, 4, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    for tick in 5..9 {
+        with_tick(&snapshot, &mut ledger, tick, |t| {
+            assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        });
+    }
+    with_tick(&snapshot, &mut ledger, 9, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Ok(true))
+        ));
+    });
+}
