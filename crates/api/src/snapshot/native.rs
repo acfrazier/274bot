@@ -17,6 +17,12 @@ pub struct JournalModalView<'a> {
     pub texts: &'a [String],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BankSessionView {
+    pub open: bool,
+    pub generation: u64,
+}
+
 /// A journal page borrowed from the currently open main root. The caller
 /// supplies the selected catalog's root and title component; widget order is
 /// never used to infer which text is the title.
@@ -99,6 +105,55 @@ impl<'a> SnapshotView<'a> {
         let snapshot = self.snapshot?;
         (snapshot.ingame() && snapshot.bank_loaded()).then(|| Observed {
             value: snapshot.bank(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Whether the bank modal is open, with the current session generation.
+    /// `bank()` remains the separate readiness gate for its item table.
+    pub fn bank_session(&self) -> Option<Observed<BankSessionView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: BankSessionView {
+                open: snapshot.bank_component_id() >= 0,
+                generation: snapshot.bank_session_generation(),
+            },
+            stamp: self.stamp,
+        })
+    }
+
+    /// The bank-side backpack once an open bank has published that container.
+    pub fn bank_side(&self) -> Option<Observed<&[ItemView]>> {
+        let snapshot = self.ingame()?;
+        (snapshot.bank_component_id() >= 0).then(|| Observed {
+            value: snapshot.bank_side(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Current shop modal and its posted stock/player containers.
+    pub fn shop(&self) -> Option<Observed<&super::ShopView>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.shop(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Products and quantity buttons posted by the chat make menu.
+    pub fn make_products(&self) -> Option<Observed<&[super::MakeProductView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.make_products(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Whether the numeric count-entry dialog is currently open.
+    pub fn count_dialog_open(&self) -> Option<Observed<bool>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.count_dialog_open(),
             stamp: self.stamp,
         })
     }

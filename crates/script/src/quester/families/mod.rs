@@ -1369,6 +1369,13 @@ struct UseOnTarget {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UseOnUntil {
+    obj: String,
+    qty: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseOnArgs {
     item: String,
     target: UseOnTarget,
@@ -1380,6 +1387,8 @@ struct UseOnArgs {
     product: Option<String>,
     #[serde(default)]
     settle_ms: Option<u64>,
+    #[serde(default)]
+    until: Option<UseOnUntil>,
 }
 
 fn compile_use_on(
@@ -1440,6 +1449,15 @@ fn compile_use_on(
         .as_deref()
         .map(|name| resolve_obj(cx, name))
         .transpose()?;
+    let until = arg
+        .until
+        .map(|until| {
+            if until.qty < 1 {
+                return Err(CompileError::code("invalid-args"));
+            }
+            Ok((resolve_obj(cx, &until.obj)?, until.qty))
+        })
+        .transpose()?;
     Ok(Arc::new(UseOnPlan {
         item: Arc::from(item_name),
         item_id,
@@ -1447,6 +1465,7 @@ fn compile_use_on(
         target_id,
         target_name: Some(target_name),
         product,
+        until,
         tile,
         radius: arg.radius.max(1),
         settle_ms: arg.settle_ms,
@@ -1458,6 +1477,7 @@ struct UseOnPlan {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, i32)>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1471,6 +1491,7 @@ impl StepPlan for UseOnPlan {
             item_id: self.item_id,
             target_id: self.target_id,
             product: self.product,
+            until: self.until,
             kind: Arc::clone(&self.kind),
             target_name: self.target_name.clone(),
             tile: self.tile,
@@ -1479,6 +1500,7 @@ impl StepPlan for UseOnPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             interaction: None,
+            round_before: None,
             accepted: false,
         }))
     }
@@ -1492,6 +1514,7 @@ struct UseOnRun {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, i32)>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1501,6 +1524,7 @@ struct UseOnRun {
     walk: Option<ActionHandle<Walk>>,
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
+    round_before: Option<i32>,
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -1531,6 +1555,15 @@ impl StepRun for UseOnRun {
             let Some(inventory) = snapshot.inventory() else {
                 return Poll::Pending;
             };
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            self.round_before = observed_id.map(|id| {
+                inventory
+                    .value
+                    .iter()
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum()
+            });
             let Some(source) = inventory
                 .value
                 .iter()
@@ -1614,13 +1647,29 @@ impl StepRun for UseOnRun {
                 Poll::Ready(Ok(())) => self.accepted = true,
             }
         }
-        if self.product.is_some_and(|id| {
-            !cx.tick.cx.snapshot().inventory().is_some_and(|inv| {
+        let held = |id| {
+            cx.tick.cx.snapshot().inventory().map(|inv| {
                 inv.value
                     .iter()
-                    .any(|row| row.def.id == id && row.count > 0)
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum::<i32>()
             })
-        }) {
+        };
+        if let Some(before) = self.round_before {
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            if observed_id.and_then(held).is_none_or(|count| count <= before) {
+                return Poll::Pending;
+            }
+        }
+        if let Some((id, qty)) = self.until {
+            if !held(id).is_some_and(|count| count >= qty) {
+                self.interaction = None;
+                self.accepted = false;
+                self.round_before = None;
+                return Poll::Pending;
+            }
+        } else if self.product.is_some_and(|id| !held(id).is_some_and(|count| count > 0)) {
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
