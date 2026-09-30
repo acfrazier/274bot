@@ -401,6 +401,39 @@ fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
 }
 
 #[test]
+fn repeated_busy_transactions_report_retry_limit_and_cause() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+
+    snapshot.seed_main_modal(123, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    snapshot.seed_main_modal(-1, vec![]);
+    for tick in 3..=5 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert_eq!(script.journal_attempts, 2);
+
+    snapshot.seed_main_modal(123, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    snapshot.seed_main_modal(-1, vec![]);
+    for tick in 8..=10 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+    }
+    drive(&mut script, &snapshot, &mut ledger, 11);
+    assert_eq!(script.journal_attempts, 3);
+
+    snapshot.seed_main_modal(123, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 12);
+    assert!(script.parked);
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "journal read retry limit reached (journal remained busy during read)"
+    );
+}
+
+#[test]
 fn ownership_lost_before_close_retries_without_closing_another_modal() {
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
@@ -485,11 +518,63 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
     }
     assert!(script.parked);
     assert_eq!(clicks, 3, "a logical read must not spray row clicks");
-    assert_eq!(script.park_reason, "journal read retry limit reached");
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "journal read retry limit reached (journal ownership repeatedly lost)"
+    );
     script.read_journal().unwrap();
     drive(&mut script, &snapshot, &mut ledger, 81);
     finish_read(&mut script, &mut snapshot, &mut ledger, 82, "seeded branch");
     assert!(!script.parked, "operator retry gets a fresh read budget");
+}
+
+#[test]
+fn colour_only_read_wait_preserves_colour_failure_with_open_chat() {
+    let (mut script, mut snapshot) = fixture(false);
+    snapshot.seed_quest_statuses(vec![], false);
+    snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
+    let mut ledger = None;
+    for tick in 1..=35 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if script.parked {
+            break;
+        }
+    }
+
+    assert!(script.parked);
+    assert_eq!(
+        script.blocked_failure().message.as_ref(),
+        "quest colour unavailable or unknown stage"
+    );
+}
+
+#[test]
+fn quiet_gate_wait_names_open_chat_when_it_parks() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    ack(&mut ledger, 2);
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 4);
+    assert!(script.journal_retry_pending);
+
+    snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
+    for tick in 5..=40 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if script.parked {
+            break;
+        }
+    }
+
+    assert!(script.parked);
+    assert_eq!(script.park_reason, "journal retry quiet period unavailable");
+    assert!(script
+        .blocked_failure()
+        .message
+        .contains("modal root 4882 (Aubury)"));
 }
 
 #[test]
