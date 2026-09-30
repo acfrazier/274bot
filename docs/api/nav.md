@@ -190,8 +190,11 @@ two tiles; the reverse crossing lands back on `at`, not on a second tile
 behind the loc. Both landings must be standable, so this reconnects enclosed
 shop floors without jumping over scenery or snapping a standable origin.
 The follower requires crossing the wall before completing a hop, including
-arrival on `at` for the reverse. Diagonal doors keep their separate
-content-derived geometry.
+arrival on `at` for the reverse. That holds for the exact arrival production
+walks use (`close_enough` 0). With a looser `close_enough`, a corner tile on
+the approach side of the loc's row or column can count as crossed before the
+door opens, so callers must not relax it for door hops. Diagonal doors keep
+their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`.
 It changes no wire fields: the pack format stays `274V11`. The generator

@@ -2938,6 +2938,12 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         .iter()
         .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2526)
         .collect();
+    assert_eq!(elena.len(), 2, "both Elena door crossings: {elena:?}");
+    assert_eq!(
+        elena.iter().filter(|d| d.to == d.at).count(),
+        1,
+        "exactly the reverse crossing lands on the loc tile: {elena:?}"
+    );
     for d in &elena {
         assert_eq!(d.varp_req, vec![(165, 28)]);
         assert!(d.quest_req.is_empty());
@@ -7293,6 +7299,10 @@ param=next_loc_stage,loc_1564
     );
     assert_eq!(extras[0].dir, Some(DoorDir::W));
     assert_eq!(extras[1].dir, Some(DoorDir::E));
+    assert_eq!(
+        extras[1].to, extras[1].at,
+        "the toll's reverse crossing lands back on the gate tile"
+    );
     for e in &extras {
         assert_eq!(e.kind, TransportKind::Door, "{e:?}");
         assert_eq!(e.option, 1, "Open {e:?}");
