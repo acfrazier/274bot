@@ -20,9 +20,9 @@ use crate::overlay::{draw_queue_card_for, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::rail::{
-    light_rgb, next_os_window_size, os_window_size, rail_preview_open, rail_split_ratio,
-    BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, STATUS_GLYPH, TILE_H, TILE_W,
-    UNFOLD_GLYPH,
+    draw_status_dot, light_rgb, next_os_window_size, os_window_size, rail_preview_open,
+    rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, TILE_H,
+    TILE_W, UNFOLD_GLYPH,
 };
 use crate::script_picker::{
     self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
@@ -4163,10 +4163,11 @@ fn rail_cap(
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     let _id = ui.push_id(row.name.as_str());
-    let colour = light_rgb(row.light());
+    let light = row.light();
+    let colour = light_rgb(light);
     let marker_x = ui.cursor_pos_x();
     if labels.world.is_empty() {
-        ui.text_colored(colour, STATUS_GLYPH);
+        draw_status_dot(ui, light, DOT_W);
     } else {
         world_marker(ui, &labels.world, colour, DOT_W);
         ui.set_item_tooltip(&labels.world_tip);
@@ -4198,7 +4199,7 @@ fn rail_cap(
 /// `width`-wide status cell and on the text line, with the world number
 /// knocked out in the background colour. Drawn as geometry so the digit is
 /// the rail's own font and the disc size does not depend on glyph metrics.
-/// Occupies one text line, like the status glyph it replaces.
+/// Occupies one text line, like the local-profile status marker.
 fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32) {
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
