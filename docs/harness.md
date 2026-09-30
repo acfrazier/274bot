@@ -63,6 +63,12 @@ observable even if another skill or an item is watched first.
 step begins, so an earlier trip cannot qualify a later bank-return phase.
 Scenarios without `StartScript` retain first-watch cumulative baselines.
 
+Compiled-card scenarios wait for Start to reach Running and fail immediately
+with the recorded rejection or preparation error. Stashed cards survive setup
+settlement: a scenario Stop revokes the script walk and bank selection, verifies
+the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
+resume, restart and login fixtures use this same compiled Start outcome gate.
+
 A scenario that waits for a card's clean stop (`wait_script_stop`) must
 also watch the card's own work. Its post-Start watch and terminal proof must
 be an outcome its pre-Start seed cannot already satisfy, or the run passes
