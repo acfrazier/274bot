@@ -1104,6 +1104,7 @@ impl LoadIsolate {
             lease.revoke();
             lease.set_host_generation(u64::MAX);
         }
+        // No game ticks arrive while disconnected, so preserve the active
         // execution's existing runaway horizon before clearing `in_flight`.
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
         // Fold what the tick thread already sent under the ended generation,
@@ -1549,6 +1550,7 @@ impl LoadIsolate {
 impl Drop for LoadIsolate {
     fn drop(&mut self) {
         self.revoke_compat_journal();
+        // Best-effort: unblock a stuck tick and close the channel; the
         // thread exits and drops its Runtime by itself (no join here,
         // and no cancel — the thread clears the terminate once the tick
         // has returned). After a successful join the hook is Done: do

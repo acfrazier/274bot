@@ -1273,9 +1273,10 @@ fn wait_until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
 fn wait_relogged(play: &super::Play, state: &Arc<Mutex<SetupState>>) {
     wait_until("live account relog", Duration::from_secs(90), || {
         state.lock().expect("setup state").relog_ready
-            && play.statuses().iter().any(|status| {
-                status.username.starts_with("jq") && status.ingame && status.scene_state == 2
-            })
+            && play
+                .statuses()
+                .iter()
+                .any(|status| status.ingame && status.scene_state == 2)
     });
 }
 
