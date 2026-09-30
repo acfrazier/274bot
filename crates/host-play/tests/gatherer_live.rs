@@ -361,7 +361,19 @@ impl GatherSlot {
     }
 
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
+        let previous_chat_root = self.snapshot.modals().chat;
         let observation = self.publish(client);
+        if self.started && self.snapshot.modals().chat != previous_chat_root {
+            println!(
+                "gatherer-chat {}",
+                json!({
+                    "previous_root": previous_chat_root,
+                    "root": self.snapshot.modals().chat,
+                    "texts": self.snapshot.chat_modal_texts(),
+                    "xp": observation.xp,
+                })
+            );
+        }
         if self.started && self.witness.modal_command_sent && self.snapshot.modals().main >= 0 {
             self.witness.modal_observed = true;
         }
