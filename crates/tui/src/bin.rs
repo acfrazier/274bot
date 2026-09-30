@@ -2033,7 +2033,9 @@ impl TuiSession {
             .is_some_and(|p| p.settings.lowmem != settings.lowmem);
         if lowmem_changed {
             match self.core.set_memory_mode(&name, settings.lowmem) {
-                Ok(op) => app.settings_save.submitted(op, name.clone()),
+                Ok(op) => app
+                    .settings_save
+                    .submitted(&mut self.core, op, Some(&name), &name),
                 Err(e) => {
                     let reason = format!("settings: {e}");
                     app.settings_save.refused(reason.clone());

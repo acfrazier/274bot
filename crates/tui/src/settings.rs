@@ -103,10 +103,15 @@ impl<'a> SettingsPane<'a> {
     /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`], nav
     /// rows flip session find opt-ins, the map-bake row flips ask / always,
     /// the memory row flips highmem / lowmem); `r` relogs the bound member
-    /// only while its login mode differs; Esc closes.
+    /// only while its login mode differs and no relog is already queued;
+    /// Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
-            KeyCode::Char('r') if self.memory.is_some_and(MemoryNotice::differs) => {
+            KeyCode::Char('r')
+                if self
+                    .memory
+                    .is_some_and(|notice| notice.differs() && !notice.relog_pending) =>
+            {
                 SettingsKey::MemoryRelog
             }
             KeyCode::Char('r') => SettingsKey::Consumed,
@@ -266,9 +271,9 @@ impl Widget for SettingsPane<'_> {
             let bottom = inner.y + inner.height;
             let mut y = inner.y
                 + ROWS
-                + memory_note
-                    .as_deref()
-                    .map_or(0, |note| wrapped_rows(note, usize::from(inner.width).max(1)));
+                + memory_note.as_deref().map_or(0, |note| {
+                    wrapped_rows(note, usize::from(inner.width).max(1))
+                });
             match notice.error() {
                 Some(reason) => {
                     let red = Style::default().fg(Color::Red);
@@ -285,8 +290,8 @@ impl Widget for SettingsPane<'_> {
 }
 
 /// The popup's rows: random events, lamp skill, lamp auto, three nav
-/// opt-ins and the map-bake choice. The notice starts under them.
-const ROWS: u16 = 7;
+/// opt-ins, the map-bake choice and memory. Notices start under them.
+const ROWS: u16 = 8;
 
 /// The width in columns of one character, as [`Span`] measures it.
 fn char_width(text: &str, at: usize, ch: char) -> usize {
@@ -503,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn r_requests_relog_only_while_the_server_mode_differs() {
+    fn r_requests_relog_only_while_the_server_mode_differs_and_none_is_queued() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
@@ -522,6 +527,12 @@ mod tests {
         assert_eq!(
             pane.on_key(key(KeyCode::Char('r'))),
             SettingsKey::MemoryRelog
+        );
+        pane.memory.as_mut().unwrap().relog_pending = true;
+        assert_eq!(
+            pane.on_key(key(KeyCode::Char('r'))),
+            SettingsKey::Consumed,
+            "a queued relog cannot be restarted"
         );
         assert!(settings.lowmem, "r never flips the setting itself");
     }

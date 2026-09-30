@@ -1949,6 +1949,30 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
 }
 
 #[test]
+fn failed_memory_relog_login_clears_the_queued_state() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-relog-login-failed");
+    s.request_memory_relog("alice", &mut surface);
+    park_alice(&s);
+    s.poll();
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+
+    let alice = arm(&s, "alice");
+    alice.hold_login_on_error_for_test();
+    s.poll();
+
+    assert!(!alice.wants_login(), "the failed login remains held");
+    let notice = s.memory_status("alice").unwrap();
+    assert!(
+        !notice.relog_pending,
+        "a failed login half is no longer queued"
+    );
+    assert!(
+        notice.differs(),
+        "the failed handshake keeps the memory-mode notice"
+    );
+}
+
+#[test]
 fn manual_login_supersedes_a_pending_relog() {
     let mut s = session("mem-supersede", &[("alice", 1, true)]);
     let mut surface = Recorder::default();
@@ -1984,7 +2008,7 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     assert!(s
         .take_write_failures()
         .iter()
-        .any(|f| f.starts_with("memory: ")));
+        .any(|failure| failure.label == "memory"));
     assert!(
         s.vault().unwrap().get("alice").unwrap().settings.lowmem,
         "the staged edit is rolled back to the durable value"
