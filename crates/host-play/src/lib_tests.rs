@@ -5665,17 +5665,19 @@ fn compiled_arming(handle: &ScriptStartHandle) -> live_start::StartArming {
 }
 
 fn fire_compiled_until_settled(
-    pending: &mut Vec<live_start::PendingCatalogStart>,
+    pending: &mut [live_start::PendingCatalogStart],
     handle: &ScriptStartHandle,
 ) -> live_start::StartScriptPump {
     assert_eq!(
-        live_start::fire_pending_catalog_start(pending, true, || compiled_arming(handle)),
+        live_start::fire_pending_catalog_start(pending, true, false, || compiled_arming(handle)),
         live_start::StartScriptPump::Continue,
         "compiled Start is admitted before preparation settles"
     );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match live_start::fire_pending_catalog_start(pending, true, || compiled_arming(handle)) {
+        match live_start::fire_pending_catalog_start(pending, true, false, || {
+            compiled_arming(handle)
+        }) {
             live_start::StartScriptPump::Continue | live_start::StartScriptPump::Hold => {
                 assert!(Instant::now() < deadline, "compiled Start did not settle");
                 std::thread::yield_now();
@@ -5694,6 +5696,20 @@ fn compiled_catalog_start_pump_reaches_running() {
         serde_json::Map::new(),
     )];
     let handle = play.script_start_handle();
+    assert_eq!(
+        fire_compiled_until_settled(&mut pending, &handle),
+        live_start::StartScriptPump::CompiledRunning
+    );
+    assert_eq!(handle.run_state("alice"), script::RunState::Running);
+    assert!(pending[0].started && pending[0].settled);
+    assert_eq!(
+        live_start::fire_pending_catalog_start(&mut pending, false, true, || {
+            compiled_arming(&handle)
+        }),
+        live_start::StartScriptPump::Continue
+    );
+    assert!(handle.idle("alice"));
+    assert!(!pending[0].started && !pending[0].settled);
     assert_eq!(
         fire_compiled_until_settled(&mut pending, &handle),
         live_start::StartScriptPump::CompiledRunning
@@ -5964,37 +5980,29 @@ fn live_start_retains_the_card_for_a_second_start() {
         vec![],
         vec![],
     )];
-    assert!(crate::live_start::fire_pending_catalog_start(
-        &mut pending,
-        true,
-        false,
-        arming
-    ));
+    assert_eq!(
+        crate::live_start::fire_pending_catalog_start(&mut pending, true, false, arming),
+        crate::live_start::StartScriptPump::Continue
+    );
     wait_script_state(&play, "alice", script::RunState::Running);
-    assert!(crate::live_start::fire_pending_catalog_start(
-        &mut pending,
-        false,
-        false,
-        arming
-    ));
+    assert_eq!(
+        crate::live_start::fire_pending_catalog_start(&mut pending, false, false, arming),
+        crate::live_start::StartScriptPump::Continue
+    );
     assert_eq!(
         pending.len(),
         1,
         "setup settlement must preserve a restartable card"
     );
-    assert!(crate::live_start::fire_pending_catalog_start(
-        &mut pending,
-        false,
-        true,
-        arming
-    ));
+    assert_eq!(
+        crate::live_start::fire_pending_catalog_start(&mut pending, false, true, arming),
+        crate::live_start::StartScriptPump::Continue
+    );
     wait_script_state(&play, "alice", script::RunState::Idle);
-    assert!(crate::live_start::fire_pending_catalog_start(
-        &mut pending,
-        true,
-        false,
-        arming
-    ));
+    assert_eq!(
+        crate::live_start::fire_pending_catalog_start(&mut pending, true, false, arming),
+        crate::live_start::StartScriptPump::Continue
+    );
     wait_script_state(&play, "alice", script::RunState::Running);
     play.script_stop("alice");
 }

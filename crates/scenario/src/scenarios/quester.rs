@@ -78,7 +78,7 @@ pub fn quester_stage(
             budget_ticks: 200,
         },
     });
-    steps.push(start_catalog_step());
+    steps.push(start_compiled_step());
     steps.push(Step {
         name: "watch the quest tab turn complete",
         kind: StepKind::Perform {
@@ -192,7 +192,7 @@ pub(crate) fn quester_cook_restart_scenario() -> Scenario {
                     budget_ticks: 10,
                 },
             },
-            start_catalog_step(),
+            start_compiled_step(),
         ],
     );
     scenario
