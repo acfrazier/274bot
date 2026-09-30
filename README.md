@@ -165,6 +165,8 @@ cargo run -p nav --bin nav-pack
 
 Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **11**). **Rebake existing v10 packs after updating:** v11 binds the selected quest family and carries typed quest-stage gates; `decode` rejects v10 as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
+**External v11 packs keep the gates they were baked with.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-checked. One baked by an earlier 274bot can still plan members-only crossings on a free-to-play or unrecognised world (for example the Duel Arena gates, the Shantay pass doorway, the Entrana boat or the Camelot teleport), and the bot is then turned away in game. Rebake it with `nav-pack`.
+
 ## Live tests and suite runner
 
 Require the local engine for the profile under test. Quiet unless `BOT_DEBUG=1`. Failures print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`.
