@@ -3,7 +3,7 @@
 //! the shared `panel-ui.json` preferences store.
 
 use std::io::{self, ErrorKind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Play;
@@ -97,7 +97,12 @@ pub fn background_bots_acked() -> bool {
 /// One top-level value of `panel-ui.json`; `None` when the file, the key or
 /// a readable JSON object is absent.
 pub fn panel_ui_value(key: &str) -> Option<serde_json::Value> {
-    let data = std::fs::read(panel_ui_path()).ok()?;
+    panel_ui_value_at(&panel_ui_path(), key)
+}
+
+/// Read one top-level preference from an explicitly supplied store.
+pub fn panel_ui_value_at(path: &Path, key: &str) -> Option<serde_json::Value> {
+    let data = std::fs::read(path).ok()?;
     let mut value: serde_json::Value = serde_json::from_slice(&data).ok()?;
     value.as_object_mut()?.remove(key)
 }
@@ -122,8 +127,16 @@ pub fn persist_background_bots_ack() -> io::Result<()> {
 
 /// Set one top-level key of `panel-ui.json`, preserving every other key.
 pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result<()> {
-    let path = panel_ui_path();
-    let mut document = match std::fs::read(&path) {
+    persist_panel_ui_value_at(&panel_ui_path(), key, value)
+}
+
+/// Set one top-level key in an explicitly supplied preference store.
+pub fn persist_panel_ui_value_at(
+    path: &Path,
+    key: &str,
+    value: serde_json::Value,
+) -> io::Result<()> {
+    let mut document = match std::fs::read(path) {
         Ok(data) => match serde_json::from_slice(&data) {
             Ok(document) => document,
             Err(error) => {
@@ -150,7 +163,7 @@ pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result
                         ),
                     ));
                 }
-                if let Err(rename_error) = std::fs::rename(&path, &backup) {
+                if let Err(rename_error) = std::fs::rename(path, &backup) {
                     eprintln!(
                         "host-play: could not preserve invalid {} as {}: {rename_error}",
                         path.display(),
@@ -173,7 +186,7 @@ pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result
     obj.insert(key.into(), value);
     let data = serde_json::to_vec_pretty(&document)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    vault::write_private_file(&path, &data)
+    vault::write_private_file(path, &data)
 }
 
 #[cfg(test)]
