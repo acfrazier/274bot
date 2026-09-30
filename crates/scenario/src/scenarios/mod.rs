@@ -8,6 +8,7 @@ pub(crate) mod boat_fare;
 pub(crate) mod combat;
 pub(crate) mod enter_lair;
 pub(crate) mod fight_field;
+pub(crate) mod gatherer;
 pub(crate) mod hold_spot;
 pub(crate) mod leave_lair;
 pub(crate) mod line_of_sight;
@@ -28,6 +29,7 @@ pub(crate) use acquire_key::acquire_key_v2_scenario;
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use bank::bank_v2_scenario;
 pub(crate) use cell::cell_v2_scenario;
+pub(crate) use gatherer::gatherer_scenario;
 pub(crate) use clue::{
     sherlock_coord_scenario, sherlock_dig_scenario, sherlock_search_scenario,
     sherlock_talk_scenario,
