@@ -290,3 +290,130 @@ fn stopping_mid_read_revokes_host_click_and_quiet_lease() {
     assert!(ledger.quiet_read(std::time::Instant::now()).is_none());
     assert!(script.last_journal().is_none());
 }
+
+#[test]
+fn read_journal_retries_a_park_with_fresh_failure_budgets() {
+    let (mut script, snapshot) = fixture(true);
+    script.parked = true;
+    script.fail_streak = 3;
+    script.attempts = 3;
+    script.empty_reads = 2;
+    script.unreadable_reads = 2;
+    script.unreadable_since = Some(Duration::ZERO);
+    script.last_error = Some(Arc::from("previous step failure"));
+    script.park_reason = "previous watchdog park";
+    for _ in 0..9 {
+        script.watchdog.observe(None, None, &[], &[], 0);
+    }
+    assert_eq!(
+        script.watchdog.observe(None, None, &[], &[], 0),
+        WatchdogAction::Park
+    );
+    script.read_journal().unwrap();
+    assert!(!script.parked);
+    assert_eq!(script.fail_streak, 0);
+    assert_eq!(script.attempts, 0);
+    assert_eq!(script.empty_reads, 0);
+    assert_eq!(script.unreadable_reads, 0);
+    assert!(script.last_error.is_none());
+    assert!(script.unreadable_since.is_none());
+    assert_eq!(
+        script.watchdog.observe(None, None, &[], &[], 0),
+        WatchdogAction::None,
+        "Read now on a park must reset the watchdog too"
+    );
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    assert!(matches!(
+        ack(&mut ledger, 2),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id: 42 })
+    ));
+}
+
+#[test]
+fn blocked_slot_read_journal_reopens_dispatch_and_emits_a_real_read() {
+    let (mut script, snapshot) = fixture(true);
+    script.parked = true;
+    script.run.session = 0;
+    let mut slot = crate::SlotScript::new();
+    slot.bind_incarnation(1);
+    slot.start_test_script(Box::new(script), None).unwrap();
+    let tick = |slot: &mut crate::SlotScript, tick| {
+        slot.on_game_tick(&mut crate::ScriptCtx {
+            driver: &mut crate::ctx::test_support::NullDriver::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick::default(),
+        });
+    };
+    tick(&mut slot, 1);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    let run = slot.native_run().unwrap();
+    slot.read_journal_compiled(run).unwrap();
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    assert!(slot.native_status().unwrap().failure.is_none());
+    tick(&mut slot, 2);
+    tick(&mut slot, 3);
+    let action = slot.take_native_action().expect("Read now must dispatch");
+    assert!(action.live());
+    assert!(matches!(
+        action.effect,
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id: 42 })
+    ));
+}
+
+#[test]
+fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    snapshot.seed_main_modal(123, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    assert!(!script.parked, "first in-flight Busy must not park");
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 4, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    for tick in 1..40 {
+        snapshot.seed_main_modal(-1, vec![]);
+        drive(&mut script, &snapshot, &mut ledger, tick * 2 - 1);
+        snapshot.seed_main_modal(123, vec![]);
+        drive(&mut script, &snapshot, &mut ledger, tick * 2);
+        if script.parked {
+            break;
+        }
+    }
+    assert!(script.parked, "transient retry must still have a wall");
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
+fn ownership_lost_before_close_retries_without_closing_another_modal() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    ack(&mut ledger, 2);
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 4);
+    assert!(!script.parked);
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    drive(&mut script, &snapshot, &mut ledger, 5);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 6, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(!script.parked);
+    assert_eq!(script.last_journal().unwrap().acquired.tick, 7);
+}

@@ -213,14 +213,11 @@ impl Quester {
                 value: StatusValue::Text(Arc::clone(text)),
             });
         }
-        if let Some(hint) = self.stage.as_ref().and_then(|stage| {
-            self.path
-                .progress
-                .rules
-                .iter()
-                .find(|rule| &rule.stage == stage)
-                .and_then(|rule| rule.varp)
-        }) {
+        if let Some(hint) = self
+            .stage
+            .as_ref()
+            .and_then(|stage| self.path.progress.varp_hint(stage))
+        {
             fields.push(StatusField {
                 key: "varp_hint",
                 label: "Fixture stage hint",
@@ -306,8 +303,21 @@ impl Quester {
                 Poll::Pending => return false,
                 Poll::Ready(Err(error)) => {
                     self.journal = None;
-                    self.record_failure(error);
-                    self.parked = true;
+                    match error {
+                        ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted => {
+                            return self.wait_for_read(tick, "journal remained busy during read");
+                        }
+                        ActionError::Failed(reason)
+                            if reason.as_ref() == "journal ownership lost before close"
+                                || reason.as_ref() == "journal ownership lost while closing" =>
+                        {
+                            return self.wait_for_read(tick, "journal ownership repeatedly lost");
+                        }
+                        error => {
+                            self.record_failure(error);
+                            self.parked = true;
+                        }
+                    }
                     return false;
                 }
                 Poll::Ready(Ok(read)) => {
@@ -718,9 +728,7 @@ impl Script for Quester {
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
         if self.parked {
-            self.parked = false;
-            self.unreadable_since = None;
-            self.unreadable_reads = 0;
+            self.retry()?;
         }
         self.read_requested = true;
         self.dirty = true;

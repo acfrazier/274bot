@@ -680,7 +680,10 @@ mod tests {
 
     #[test]
     fn normalization_joins_wrapped_lines_and_ignores_window_chrome() {
-        assert_eq!(normalize_text("@red@HELLO|\n World\tagain"), "hello world again");
+        assert_eq!(
+            normalize_text("@red@HELLO|\n World\tagain"),
+            "hello world again"
+        );
         let lines: Arc<[Arc<str>]> = Arc::from(vec![
             Arc::<str>::from("Close Window"),
             Arc::<str>::from("@red@Speak to"),
@@ -772,7 +775,6 @@ mod tests {
         assert_eq!(progress.flags[0].truth, Truth::True);
         assert_eq!(progress.flags[0].count, Some(3));
     }
-
 
     #[test]
     fn normalization_and_no_match_are_explicit() {
