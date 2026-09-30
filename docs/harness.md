@@ -86,11 +86,9 @@ command sent while the journal is open. The overlap proof requires the host
 chat-reply candidate and the journal's own fresh evidence and close sequence;
 temporal debug replies are never command acknowledgements or journal progress.
 
-Journal fixture names include separate process and monotonically increasing
-run identifiers, so simultaneous processes do not share an account. Set
-`BOT_QUESTER_ACCOUNT_PREFIX` to a two-character alphanumeric prefix when
-isolating an operator's fixtures (default `qj`); this also applies to the
-fresh Cook fixture in the same test module. Keep the strict journal click
+The journal and fresh Cook fixtures mint their accounts like every other live
+run, so simultaneous processes do not share an account and
+`BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
 A scenario that waits for a card's clean stop (`wait_script_stop`) must

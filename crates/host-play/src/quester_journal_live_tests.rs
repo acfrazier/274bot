@@ -15,7 +15,6 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -139,63 +138,13 @@ fn live_options(home: &Path) -> ProfileOptions {
     }
 }
 
+/// Fresh per-run account from the shared minter: its randomly seeded
+/// counter keeps simultaneous processes apart, and `BOT_LIVE_NAME_PREFIX`
+/// tags an owner's runs.
 fn account_name() -> String {
-    static NEXT: std::sync::LazyLock<AtomicU64> = std::sync::LazyLock::new(|| {
-        AtomicU64::new(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|value| value.as_millis() as u64)
-                .unwrap_or(0),
-        )
-    });
-    let prefix = std::env::var("BOT_QUESTER_ACCOUNT_PREFIX").unwrap_or_else(|_| "qj".into());
-    fixture_account_name(
-        &prefix,
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed),
-    )
-}
-
-fn fixture_account_name(prefix: &str, pid: u32, serial: u64) -> String {
-    // Process and monotonically increasing run fields remain distinct even
-    // for starts in the same millisecond. Six base-36 run digits wrap only
-    // after ~25 days of timestamp seeds (or 2 billion runs in one process).
-    assert!(prefix.len() == 2 && prefix.bytes().all(|byte| byte.is_ascii_alphanumeric()));
-    assert!(
-        u64::from(pid) < 36_u64.pow(4),
-        "fixture PID exceeds name budget"
-    );
-    let mut name = [b'0'; 12];
-    name[..2].copy_from_slice(prefix.as_bytes());
-    fn encode(digits: &mut [u8], mut value: u64) {
-        for digit in digits.iter_mut().rev() {
-            *digit = b"0123456789abcdefghijklmnopqrstuvwxyz"[(value % 36) as usize];
-            value /= 36;
-        }
-    }
-    encode(&mut name[2..6], u64::from(pid));
-    encode(&mut name[6..], serial);
-    String::from_utf8(name.to_vec()).expect("ASCII account name")
-}
-
-#[test]
-fn journal_accounts_do_not_collide_between_processes_or_runs() {
-    let serial = 1_234_567_890;
-    let first = fixture_account_name("qj", 12345, serial);
-    let other_process = fixture_account_name("qj", 12346, serial);
-    let other_run = fixture_account_name("qj", 12345, serial + 1);
-    assert_ne!(
-        first, other_process,
-        "simultaneous processes need separate accounts"
-    );
-    assert_ne!(
-        first, other_run,
-        "same-process fixtures need separate accounts"
-    );
-    for name in [first, other_process, other_run] {
-        assert!(name.len() <= 12);
-        assert!(name.bytes().all(|byte| byte.is_ascii_alphanumeric()));
-    }
+    crate::mint_live_names(1)
+        .pop()
+        .expect("minting one live name")
 }
 
 fn profile(name: &str) -> Profile {
