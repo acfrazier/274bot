@@ -386,6 +386,70 @@ fn a_logout_issued_while_the_spawn_waits_holds_the_new_worker_logged_out() {
     s.play_mut().unwrap().stop_slot("b");
 }
 
+#[test]
+fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
+    let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle");
+    s.load_all(&mut surface);
+
+    s.set_memory_mode("b", false).unwrap();
+    let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
+    assert!(
+        !deferred.profile.settings.lowmem,
+        "the disposable spawn profile follows the toggle"
+    );
+    assert_eq!(
+        deferred.arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
+        Some(false),
+        "the deferred arm agrees with the panel gate before spawn"
+    );
+
+    finish_stopping(&mut s, release);
+    assert_eq!(
+        s.play()
+            .unwrap()
+            .arm("b")
+            .expect("b's replacement worker spawns")
+            .lowmem_handshake(),
+        Some(false),
+        "the spawned profile and arm retain the toggled mode"
+    );
+    s.play_mut().unwrap().stop_slot("b");
+}
+
+#[test]
+fn failed_memory_toggle_resets_a_deferred_profile_and_arm() {
+    let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle-fail");
+    s.load_all(&mut surface);
+    let blocked = block_writes(&vault_path("deferred-memory-toggle-fail"));
+
+    s.set_memory_mode("b", false).unwrap();
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
+    assert!(
+        deferred.profile.settings.lowmem,
+        "a refused toggle restores the disposable spawn profile"
+    );
+    assert_eq!(
+        deferred.arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
+        Some(true),
+        "a refused toggle restores the deferred arm"
+    );
+
+    finish_stopping(&mut s, release);
+    assert_eq!(
+        s.play()
+            .unwrap()
+            .arm("b")
+            .expect("b's replacement worker spawns")
+            .lowmem_handshake(),
+        Some(true),
+        "the replacement worker starts on the restored durable mode"
+    );
+    s.play_mut().unwrap().stop_slot("b");
+}
+
 /// A member removed and loaded again before a poll saw its removal settle
 /// (its worker already gone): the Remove completes when the new lifetime
 /// starts. Pending reports are never evicted, so a Remove left pending by
@@ -1857,14 +1921,18 @@ fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
     );
     assert!(!alice.login_latched());
     assert!(
-        !s.memory_status("alice").unwrap().relog_pending,
-        "the sequencing resolves exactly once"
+        s.memory_status("alice").unwrap().relog_pending,
+        "the queued state remains visible through the login half"
     );
     assert!(
         s.memory_status("alice").unwrap().differs(),
         "re-arming cannot claim the login succeeded"
     );
     publish_alice_login(&mut s, false);
+    assert!(
+        !s.memory_status("alice").unwrap().relog_pending,
+        "the successful login handshake settles the relog"
+    );
     assert!(
         !s.memory_status("alice").unwrap().differs(),
         "the worker-published successful handshake settles the notice"
