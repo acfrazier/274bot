@@ -276,3 +276,21 @@ fn hop_dialog_choice_preserves_spirit_tree_gate_choice() {
         Some(2)
     );
 }
+
+#[test]
+fn hop_dialog_choice_rides_the_young_spirit_tree_single_destination() {
+    // The young tree (loc 1317) has one destination, so its dialogue is a
+    // yes/no page and the ride is choice 1, never "No thank you".
+    let mut young = edge(TransportKind::SpiritTree);
+    young.loc_id = 1317;
+    let leg = Leg::Transport {
+        edge: young.clone(),
+    };
+    let packed = vec![young];
+    let chat_options = options(&["Yes please.", "No thank you."]);
+
+    assert_eq!(
+        hop_dialog_choice(&leg, None, Some(&packed), &chat_options),
+        Some(1)
+    );
+}

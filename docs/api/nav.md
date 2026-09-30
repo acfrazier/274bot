@@ -312,7 +312,9 @@ on_leg, troll_doors }`.
   scene-route cost, re-picking reachable same-type NPCs and retargeting a
   wandering NPC before the old approach settles. The shared stand predicate
   requires a cardinal shared edge without a wall and excludes the NPC's
-  footprint; diagonals are considered only when no cardinal stand exists.
+  footprint. A diagonal stand is tried only when no cardinal stand exists; it is
+  a bounded probe, not engine parity (the engine's NPC reach has no diagonal
+  case), so it usually ends in the retry limit rather than a ride.
   A fresh server reach failure permits at most three actual interactions in
   one leg budget, including approach and fare dialogue. Retry watermarks
   advance after each send, failed stands/instances lose priority, and an
