@@ -417,6 +417,100 @@ fn gas_replacement_cancels_the_queued_mine_with_a_walk_when_no_other_target_is_l
     slot.stop();
 }
 
+fn observed_npc(kind: usize, tile: WorldTile) -> api::snapshot::NpcView {
+    api::snapshot::NpcView {
+        index: 42,
+        r#type: Some(kind),
+        name: None,
+        actions: vec![Some("Net".into())],
+        tile,
+        distance: 2,
+        animation: -1,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
+}
+
+fn assert_npc_hazard_escape(slot: &mut SlotScript, frame: &GameSnapshot) {
+    let mut walked = false;
+    for now in 6..12 {
+        tick(slot, frame, now);
+        while let Some(action) = slot.take_native_action() {
+            let HostEffect::Walk(request) = action.effect else {
+                panic!("hazard replacement must cancel gathering, never click");
+            };
+            let hazard = frame.npcs()[0].tile;
+            let distance =
+                |tile: WorldTile| tile.x.abs_diff(hazard.x).max(tile.z.abs_diff(hazard.z));
+            assert!(
+                distance(request.target)
+                    > distance(frame.local_player().unwrap().player.actor.tile),
+                "the escape must increase distance, not merely move sideways"
+            );
+            walked = true;
+        }
+        if walked {
+            break;
+        }
+    }
+    assert!(walked, "hazard replacement must produce an escape walk");
+}
+
+#[test]
+fn observed_ent_replacing_the_only_live_tree_cancels_chopping_with_a_walk() {
+    let selected = selected();
+    let mut slot = started(4264, &selected);
+    let mut frame = depleted_snapshot(&selected);
+    let mut locs = frame.locs().to_vec();
+    locs[0].id = 1276;
+    let tile = locs[0].tile;
+    frame.seed_locs(locs);
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = tile;
+    frame.seed_local_player(player);
+    tick(&mut slot, &frame, 1);
+    let action = slot.take_native_action().expect("initial chop");
+    assert!(matches!(
+        action.effect,
+        HostEffect::Interaction(InteractReq::Loc { .. })
+    ));
+    let authority = action.authority();
+    slot.complete_native_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 1,
+                sequence: 1,
+            },
+            accepted: true,
+        },
+    );
+    let mut locs = frame.locs().to_vec();
+    locs.remove(0);
+    frame.seed_locs(locs);
+    frame.seed_npcs(vec![observed_npc(444, tile)]);
+    assert_npc_hazard_escape(&mut slot, &frame);
+    slot.stop();
+}
+
 #[test]
 fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
     let selected = selected();
@@ -454,33 +548,7 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
     net.def = def(303, "Small fishing net");
     frame.seed_inventory(vec![net], 28);
     frame.seed_equipment(Vec::new());
-    frame.seed_npcs(vec![api::snapshot::NpcView {
-        index: 42,
-        r#type: Some(330),
-        name: Some("Fishing spot".into()),
-        actions: vec![Some("Net".into())],
-        tile,
-        distance: 2,
-        animation: -1,
-        pose_animation: -1,
-        orientation: 0,
-        target_orientation: 0,
-        overhead_text: None,
-        spot_animation: -1,
-        health: 0,
-        total_health: 0,
-        face_entity: -1,
-        target: None,
-        moving: false,
-        running: false,
-        in_combat: false,
-        level: 0,
-        size: 1,
-        network: tile,
-        x: 0,
-        z: 0,
-        yaw: 0,
-    }]);
+    frame.seed_npcs(vec![observed_npc(330, tile)]);
     let mut observed_op = false;
     for now in 1..6 {
         tick(&mut slot, &frame, now);
@@ -496,6 +564,19 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
                 "observed fishing targets must not route onto their water tile"
             );
             observed_op = true;
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: now,
+                        sequence: 1,
+                    },
+                    accepted: true,
+                },
+            );
         }
         if observed_op {
             break;
@@ -505,6 +586,8 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
         observed_op,
         "the nonadjacent observed spot must be approached by its NPC op"
     );
+    frame.seed_npcs(vec![observed_npc(404, tile)]);
+    assert_npc_hazard_escape(&mut slot, &frame);
     slot.stop();
 }
 
