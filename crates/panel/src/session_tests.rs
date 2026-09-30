@@ -59,6 +59,31 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
     s.set_memory_override(Some(false));
 
     s.load("alice");
+    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    assert_eq!(
+        arm.lowmem_handshake(),
+        Some(false),
+        "the session override seeds the effective handshake mode"
+    );
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(false),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
+    assert!(
+        !s.core.memory_status("alice").unwrap().differs(),
+        "the override must not create a permanent false notice"
+    );
 
     assert!(s.audio.music_on("alice"), "spawn must use explicit highmem");
     assert!(
@@ -6020,6 +6045,18 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     s.select("alice");
     assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
+    assert!(s.set_focused_lowmem(false));
+    s.core.flush_writes();
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the memory switch is persisted before an unrelated raster write"
+    );
     assert!(s.set_focused_raster(vault::RasterMode::Off));
     assert_eq!(s.focused_raster(), vault::RasterMode::Off);
     assert_eq!(
@@ -6042,6 +6079,16 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
             .settings
             .raster,
         vault::RasterMode::Cpu
+    );
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "changing raster must not restore the pre-toggle memory mode"
     );
 }
 
@@ -7461,6 +7508,21 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     s.core.set_vault(Some(vault));
     assert!(s.load("alice"));
     s.select("alice");
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
 
     let clean = s
         .focused_memory_notice()
@@ -7472,10 +7534,6 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     assert!(s.mem_toggled.contains("alice"));
     let notice = s.focused_memory_notice().expect("recorded login");
     assert!(notice.differs(), "server tabs/sound still follow lowmem");
-    assert_eq!(
-        Session::mem_notice_text(s.focused_lowmem(), Some(notice)),
-        "highmem (login lowmem — tabs + sound at next login)"
-    );
     assert_eq!(
         s.core
             .play()
@@ -7509,6 +7567,21 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     vault.upsert(profile("alice", "pw", 42)).unwrap();
     s.core.set_vault(Some(vault));
     assert!(s.load("alice"));
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
     s.select("alice");
 
     assert!(!s.focused_memory_relog_warning(), "no script runs");

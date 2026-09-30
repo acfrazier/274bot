@@ -53,8 +53,8 @@ pub enum SettingsKey {
     /// The remembered map-bake choice changed — persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
-    /// Relog the bound member now so a memory-mode switch reaches the
-    /// server (the binary confirms first when a script would stop).
+    /// Relog the bound member now so a pending memory-mode switch reaches
+    /// the server.
     MemoryRelog,
     /// The key was consumed but nothing changed (navigation, Esc).
     Consumed,
@@ -103,10 +103,13 @@ impl<'a> SettingsPane<'a> {
     /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`], nav
     /// rows flip session find opt-ins, the map-bake row flips ask / always,
     /// the memory row flips highmem / lowmem); `r` relogs the bound member
-    /// now so a memory switch reaches the server; Esc closes.
+    /// only while its login mode differs; Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
-            KeyCode::Char('r') => SettingsKey::MemoryRelog,
+            KeyCode::Char('r') if self.memory.is_some_and(MemoryNotice::differs) => {
+                SettingsKey::MemoryRelog
+            }
+            KeyCode::Char('r') => SettingsKey::Consumed,
             KeyCode::Up | KeyCode::Char('k') => {
                 self.state.row = self.state.row.saturating_sub(1);
                 SettingsKey::Consumed
@@ -500,16 +503,26 @@ mod tests {
     }
 
     #[test]
-    fn r_key_requests_a_memory_relog_from_any_row() {
+    fn r_requests_relog_only_while_the_server_mode_differs() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState { open: true, row: 0 };
-        let outcome = {
-            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
-            pane.on_key(key(KeyCode::Char('r')))
-        };
-        assert_eq!(outcome, SettingsKey::MemoryRelog);
+        let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+        assert_eq!(
+            pane.on_key(key(KeyCode::Char('r'))),
+            SettingsKey::Consumed,
+            "no divergence means no relog"
+        );
+        pane.memory = Some(MemoryNotice {
+            login_lowmem: false,
+            desired_lowmem: true,
+            relog_pending: false,
+        });
+        assert_eq!(
+            pane.on_key(key(KeyCode::Char('r'))),
+            SettingsKey::MemoryRelog
+        );
         assert!(settings.lowmem, "r never flips the setting itself");
     }
 
@@ -531,25 +544,6 @@ mod tests {
         let text = render(pane, 60, 14);
         assert!(text.contains("memory: highmem (login lowmem)"), "{text:?}");
         assert!(text.contains("r = relog now"), "{text:?}");
-    }
-
-    #[test]
-    fn popup_shows_a_queued_relog() {
-        let mut settings = ProfileSettings {
-            lowmem: false,
-            ..ProfileSettings::default()
-        };
-        let mut nav = NavFindSettings::default();
-        let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 7 };
-        let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
-        pane.memory = Some(MemoryNotice {
-            login_lowmem: true,
-            desired_lowmem: false,
-            relog_pending: true,
-        });
-        let text = render(pane, 60, 14);
-        assert!(text.contains("relog queued"), "{text:?}");
     }
 
     #[test]

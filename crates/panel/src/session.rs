@@ -12,6 +12,7 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -3143,6 +3144,13 @@ impl Session {
                     self.audio.set_music(name, !profile.settings.lowmem);
                 }
             }
+            if let Some(lowmem) = self
+                .focused_name()
+                .and_then(|name| self.core.vault().and_then(|v| v.get(&name)))
+                .map(|profile| profile.settings.lowmem)
+            {
+                self.ui.lowmem = lowmem;
+            }
         }
     }
 
@@ -3773,7 +3781,6 @@ impl Session {
         };
         if let Some(mut p) = self.core.vault().and_then(|v| v.get(&name)).cloned() {
             p.settings.raster = self.ui.raster;
-            p.settings.lowmem = self.ui.lowmem;
             if let Err(e) =
                 self.core
                     .save_profile(p, frontend_core::ArmMirror::None, "render prefs")
@@ -3840,18 +3847,19 @@ impl Session {
         self.core.memory_status(&name)
     }
 
-    /// Whether the focused slot runs a script a Relog-now would interrupt.
+    /// Whether the focused slot has work a Relog-now would interrupt or
+    /// discard, including a Start still waiting for admission.
     pub fn focused_memory_relog_warning(&self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
         };
-        self.core.memory_relog_warning(&name)
+        self.core.memory_relog_warning(&name) || self.scripts.start_queue_place(&name).is_some()
     }
 
     /// Mem-popup Relog-now: log the focused bot out and back in through the
     /// login FIFO so the toggled mode reaches the server. Returns whether
-    /// a relog started; with a running script the first call only arms the
-    /// button (its label says so) and the second starts it.
+    /// a relog started; with running or queued script work the first call
+    /// only arms the warning button and the second starts it.
     pub fn request_focused_memory_relog(&mut self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
@@ -3889,15 +3897,18 @@ impl Session {
 
     /// Status-row mem cell: the live mode, plus the login mode while the
     /// server still runs it (Relog-now in the mem picker applies it).
-    pub fn mem_notice_text(lowmem: bool, notice: Option<frontend_core::MemoryNotice>) -> String {
+    pub fn mem_notice_text(
+        lowmem: bool,
+        notice: Option<frontend_core::MemoryNotice>,
+    ) -> Cow<'static, str> {
         let live = Self::mem_status_text(lowmem);
         match notice {
-            Some(n) if n.differs() => format!(
+            Some(n) if n.differs() => Cow::Owned(format!(
                 "{} (login {} — tabs + sound at next login)",
                 live,
                 Self::mem_status_text(n.login_lowmem)
-            ),
-            _ => live.to_string(),
+            )),
+            _ => Cow::Borrowed(live),
         }
     }
 

@@ -3320,6 +3320,85 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
     }
 }
 
+#[test]
+fn memory_notice_gets_its_own_readable_popup_row() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("memory-popup-layout");
+    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    vault
+        .upsert(vault::Profile {
+            username: "alice".into(),
+            password: "pw".into(),
+            uid: 1,
+            settings: vault::ProfileSettings::default(),
+        })
+        .unwrap();
+    let play = host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let mut session = crate::session::Session::new();
+    session.core.set_spawn_workers(false);
+    session.core.start(vault, play);
+    assert!(session.load("alice"));
+    session.select("alice");
+    session
+        .core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(host_play::SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..host_play::SlotStatus::default()
+        });
+    session.core.poll();
+    assert!(session.set_focused_lowmem(false));
+
+    let mut ctx = dear_imgui_rs::Context::create();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for frame in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("memory-layout")
+                .size([330.0, 350.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    if frame == 0 {
+                        ui.open_popup(super::MEM_POPUP);
+                    }
+                    super::mem_popup(ui, &mut session);
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("server tabs + sound follow"),
+        "notice must wrap by words on its own row, not one letter per line: {text:?}"
+    );
+}
+
 /// What one frame of the Profiles window showed.
 struct Shown {
     text: String,

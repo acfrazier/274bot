@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -156,14 +156,12 @@ pub struct SlotArm {
     /// An operator Logout issued while offline still ends held script work.
     /// The slot thread consumes this once at the next session/title boundary.
     logout_work_reset_pending: AtomicBool,
-    /// Operator-toggled memory mode for the next handshake. `None` (a fresh
-    /// arm) leaves the live client alone: the handshake uses whatever the
-    /// spawn profile and the front-end live toggle converged on. `Some` is
-    /// set by the shared memory-mode command and applied by the slot pump
-    /// before every handshake and on every observed frame, so a toggle on
-    /// a parked slot (whose hooks never run) still reaches the server on
-    /// the next login. Never automatic: only an operator toggle writes it.
-    lowmem_handshake: QueueMutex<Option<bool>>,
+    /// Effective memory mode for the live client and the next handshake.
+    /// 0 = no front-end-owned value, 1 = highmem, 2 = lowmem. A surface
+    /// seeds this from its disposable spawn profile (including session-only
+    /// overrides); operator toggles then replace it. The slot pump reads it
+    /// every frame without taking a lock.
+    lowmem_handshake: AtomicU8,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
@@ -215,7 +213,7 @@ impl SlotArm {
             script_active: AtomicBool::new(false),
             session_online: AtomicBool::new(false),
             logout_work_reset_pending: AtomicBool::new(false),
-            lowmem_handshake: QueueMutex::new(None),
+            lowmem_handshake: AtomicU8::new(0),
             password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -388,16 +386,22 @@ impl SlotArm {
         self.intent.lock().login_latch
     }
 
-    /// Record the operator-toggled memory mode for the next handshake.
-    /// Set by the shared frontend-core memory command (never automatically).
+    /// Record the effective memory mode for the live client and next
+    /// handshake.
     pub fn set_lowmem_handshake(&self, lowmem: bool) {
-        *self.lowmem_handshake.lock() = Some(lowmem);
+        self.lowmem_handshake
+            .store(if lowmem { 2 } else { 1 }, Ordering::Relaxed);
     }
 
-    /// The toggled mode the next handshake must send, `None` when no
-    /// toggle is outstanding (the handshake keeps the live client mode).
+    /// The effective front-end-owned mode, or `None` before a surface seeds
+    /// it. Relaxed ordering is sufficient: the value is an independent
+    /// idempotent configuration latch.
     pub fn lowmem_handshake(&self) -> Option<bool> {
-        *self.lowmem_handshake.lock()
+        match self.lowmem_handshake.load(Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
+        }
     }
 
     pub(super) fn logout_work_reset_pending(&self) -> bool {

@@ -116,7 +116,7 @@ impl TuiApp {
             );
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
-            pane.memory = self.memory;
+            pane.memory = self.settings_memory;
             frame.render_widget(pane, area);
         }
         self.draw_modal(frame);

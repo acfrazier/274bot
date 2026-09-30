@@ -3505,7 +3505,6 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
             .focused_memory_notice()
             .is_some_and(|notice| notice.differs())
         {
-            gap_line(ui);
             ui.text_wrapped("server tabs + sound follow at the next login");
             let notice = session.focused_memory_notice().expect("checked above");
             if notice.relog_pending {
@@ -3514,7 +3513,10 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
                 if ui.button_with_size("Relog now", [0.0, 0.0]) {
                     session.request_focused_memory_relog();
                 }
-            } else if ui.button_with_size("Relog now (stops script — click again)", [0.0, 0.0]) {
+            } else if ui.button_with_size(
+                "Relog now (interrupts script work — click again)",
+                [0.0, 0.0],
+            ) {
                 session.request_focused_memory_relog();
             }
         }

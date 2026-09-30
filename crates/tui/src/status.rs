@@ -280,26 +280,4 @@ mod tests {
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(text.contains("last error: code 5"), "{text:?}");
     }
-
-    #[test]
-    fn a_pending_memory_switch_shows_its_own_notice_line() {
-        let detail = SlotDetail {
-            row: FleetRow {
-                name: "alice".into(),
-                phase: Phase::Ready,
-                ..FleetRow::default()
-            },
-            state: "ingame scene 2".into(),
-            ..SlotDetail::default()
-        };
-        let text = render(
-            StatusPane::new(Some(&detail), "—", "highmem (login lowmem)").mem_notice(Some(
-                "server tabs + sound follow at the next login (settings: r = relog now)",
-            )),
-            60,
-            14,
-        );
-        assert!(text.contains("mem: highmem (login lowmem)"), "{text:?}");
-        assert!(text.contains("server tabs + sound follow"), "{text:?}");
-    }
 }

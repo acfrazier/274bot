@@ -700,6 +700,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         |_, _, _| {},
     );
     let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(false);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
@@ -717,6 +718,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
             .contains("transferred in: 0 seconds")
             && row.startup_phase == StartupPhase::Connecting
             && row.error.is_none()
+            && row.login_lowmem.is_none()
     }));
     assert!(
         play.queue.lock().status_owner(arm.queue_owner).is_none(),
@@ -754,7 +756,9 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
             .iter()
             .find(|status| status.username == "alice")
             .unwrap();
-        row.startup_phase == StartupPhase::LoadingScene && row.error.is_none()
+        row.startup_phase == StartupPhase::LoadingScene
+            && row.error.is_none()
+            && row.login_lowmem == Some(false)
     }));
 
     arm.stop.store(true, Ordering::Relaxed);
