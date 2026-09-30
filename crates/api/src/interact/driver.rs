@@ -7,6 +7,13 @@ pub const RUN_ORB_OFF: i32 = 152;
 /// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
 pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
+/// Diagnostic checkpoint of the actual encrypted packet sink. Captured only
+/// when interaction tracing is enabled; never part of per-bot retained state.
+pub struct PacketCheckpoint {
+    start: usize,
+    cipher: Option<client::io::Isaac>,
+}
+
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.
 pub trait Driver {
@@ -70,6 +77,15 @@ pub trait Driver {
     fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
     /// The outbound packet sink (ISAAC-encrypted writes only).
     fn out(&mut self) -> &mut dyn Out;
+    /// Optional real-sink instrumentation, not an estimate from action costs.
+    fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
+        None
+    }
+    /// Visit opcodes actually written since the checkpoint. `false` means the
+    /// sink could not be decoded completely and must not be used as proof.
+    fn trace_packets(&self, _checkpoint: PacketCheckpoint, _visit: &mut dyn FnMut(u8)) -> bool {
+        false
+    }
     /// Dismiss the local amount prompt after a successful count submission,
     /// matching the client's keyboard path. Recorders may have no local UI.
     fn count_dialog_submitted(&mut self) {}
@@ -199,6 +215,60 @@ impl Driver for Client {
 
     fn out(&mut self) -> &mut dyn Out {
         &mut self.out
+    }
+
+    fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
+        Some(Box::new(PacketCheckpoint {
+            start: self.out.pos,
+            cipher: self.out.random.clone(),
+        }))
+    }
+
+    fn trace_packets(&self, mut checkpoint: PacketCheckpoint, visit: &mut dyn FnMut(u8)) -> bool {
+        let Some(bytes) = self.out.data().get(checkpoint.start..self.out.pos) else {
+            return false;
+        };
+        let mut cursor = 0;
+        while cursor < bytes.len() {
+            let random = checkpoint
+                .cipher
+                .as_mut()
+                .map_or(0, |cipher| cipher.next_int());
+            let opcode = bytes[cursor].wrapping_sub(random as u8);
+            cursor += 1;
+            let row = crate::prot::LEGAL_SEND
+                .iter()
+                .map(|row| {
+                    client::io::map_client_prot(
+                        Client::revision(self),
+                        client::io::ClientProt {
+                            id: row.id,
+                            length: row.length,
+                        },
+                    )
+                })
+                .find(|row| row.id == i32::from(opcode));
+            let Some(row) = row else {
+                return false;
+            };
+            let length = match row.length {
+                length if length >= 0 => length as usize,
+                -1 => {
+                    let Some(&length) = bytes.get(cursor) else {
+                        return false;
+                    };
+                    cursor += 1;
+                    usize::from(length)
+                }
+                _ => return false,
+            };
+            let Some(end) = cursor.checked_add(length).filter(|&end| end <= bytes.len()) else {
+                return false;
+            };
+            visit(opcode);
+            cursor = end;
+        }
+        true
     }
 
     fn count_dialog_submitted(&mut self) {

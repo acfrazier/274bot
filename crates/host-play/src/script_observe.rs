@@ -1050,6 +1050,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         }
                         match action.effect {
                             script::native::HostEffect::Interaction(request) => {
+                                let packet_trace = api::hostlog::enabled(Category::InteractTrace)
+                                    .then(|| driver.packet_checkpoint())
+                                    .flatten();
                                 let accepted = dispatch_script_interact_cached(
                                     driver,
                                     snapshot,
@@ -1063,6 +1066,26 @@ pub(crate) fn script_observe_cached_with_channels(
                                     cache.clone(),
                                     obj_names_arc.clone(),
                                 );
+                                if let Some(checkpoint) = packet_trace {
+                                    let mut count = 0;
+                                    let decoded = driver.trace_packets(*checkpoint, &mut |opcode| {
+                                        count += 1;
+                                        host_log!(
+                                            Category::InteractTrace,
+                                            Level::Debug,
+                                            "native-packet account={name} run={:?} tick={tick} request={} opcode={opcode}",
+                                            authority.run(),
+                                            authority.request_id(),
+                                        );
+                                    });
+                                    host_log!(
+                                        Category::InteractTrace,
+                                        Level::Debug,
+                                        "native-packets account={name} run={:?} tick={tick} request={} count={count} decoded={decoded} accepted={accepted}",
+                                        authority.run(),
+                                        authority.request_id(),
+                                    );
+                                }
                                 wrote |= accepted;
                                 slot.complete_native_interaction(
                                     &authority,

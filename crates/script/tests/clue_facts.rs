@@ -1528,6 +1528,7 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
     let dig = InteractReq::Held {
         name: "Spade".to_string(),
         action: "Dig".to_string(),
+        slot: None,
     };
 
     assert_eq!(
@@ -1680,6 +1681,7 @@ fn v2_clue_run_reads_puzzle_board_and_generation() {
         vec![InteractReq::Held {
             name: "Puzzle box".to_string(),
             action: "Open".to_string(),
+            slot: None,
         }]
     );
 

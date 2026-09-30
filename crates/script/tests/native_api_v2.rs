@@ -301,7 +301,7 @@ export function tick(api) {
     assert!(
         reqs.iter().any(|r| matches!(
             r,
-            InteractReq::Held { name, action } if name == "Bones" && action == "Bury"
+            InteractReq::Held { name, action, .. } if name == "Bones" && action == "Bury"
         )),
         "{reqs:?}"
     );
