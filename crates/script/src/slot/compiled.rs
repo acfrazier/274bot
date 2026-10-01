@@ -157,6 +157,36 @@ impl NativeOutput for Output {
     }
 }
 
+/// One frame's native authority/evidence for compiled runs and API reads.
+pub(super) fn frame_context<'a>(
+    ctx: &'a ScriptCtx<'_>,
+    run: RunKey,
+    pin: &'a SelectedPin,
+    retained: &'a mut RetainedMemory,
+    runtime: &'a mut crate::native::ledger::Runtime,
+) -> ActionContext<'a> {
+    let evidence = EvidenceStamp {
+        run,
+        tick: ctx.tick,
+        sequence: ctx.tick,
+    };
+    let now = Instant::now();
+    runtime.budget.observe(ctx.tick);
+    ActionContext {
+        evidence,
+        pin,
+        snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
+            .with_reach(ctx.compiled.reach),
+        retained,
+        action_id: 0,
+        active_now: runtime.clock.now(now),
+        wall_now: now,
+        ledger: &mut runtime.ledger,
+        budget: &mut runtime.budget,
+        eligible: !ctx.compiled.hold,
+    }
+}
+
 impl CompiledRun {
     fn latest_config(&self) -> &PreparedConfig {
         self.pending
@@ -193,29 +223,12 @@ impl CompiledRun {
         retained: &mut RetainedMemory,
         runtime: &mut crate::native::ledger::Runtime,
     ) -> Result<ScriptFlow, ScriptFailure> {
-        let evidence = EvidenceStamp {
-            run: self.run,
-            tick: ctx.tick,
-            sequence: ctx.tick,
-        };
-        let now = Instant::now();
-        runtime.budget.observe(ctx.tick);
+        #[cfg(feature = "load")]
+        let interacts = ctx.compiled.interacts.take();
         let result = {
             let mut tick = NativeTick {
                 actions: &mut self.actions,
-                cx: ActionContext {
-                    evidence,
-                    pin: &self.pin,
-                    snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
-                        .with_reach(ctx.compiled.reach),
-                    retained,
-                    action_id: 0,
-                    active_now: runtime.clock.now(now),
-                    wall_now: now,
-                    ledger: &mut runtime.ledger,
-                    budget: &mut runtime.budget,
-                    eligible: !ctx.compiled.hold,
-                },
+                cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
                 output: &mut self.output,
                 pairs: None,
                 #[cfg(feature = "load")]
@@ -228,7 +241,7 @@ impl CompiledRun {
                         reach: ctx.compiled.reach,
                         hold: ctx.compiled.hold,
                         #[cfg(feature = "load")]
-                        interacts: ctx.compiled.interacts.take(),
+                        interacts,
                     },
                 },
             };

@@ -32,17 +32,17 @@ use crate::isolate_fb::{
     ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow, QuestStatus, Row,
     SceneEntity, Snapshot, Stat,
 };
+use api::line_of_sight::CollisionQuery;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
 use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
-use api::line_of_sight::CollisionQuery;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 type StringVector<'a> = Option<Vector<'a, ForwardsUOffset<&'a str>>>;
@@ -809,10 +809,13 @@ fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
     }
     match page.kind() {
         1 => Some(ProgressPage::Reading { token }),
-        2 => page.row().and_then(read_progress_row).map(|row| ProgressPage::Done {
-            token,
-            row: Arc::new(row),
-        }),
+        2 => page
+            .row()
+            .and_then(read_progress_row)
+            .map(|row| ProgressPage::Done {
+                token,
+                row: Arc::new(row),
+            }),
         3 => page.reason().map(|reason| ProgressPage::Refused {
             token,
             reason: Arc::from(reason),
@@ -840,7 +843,9 @@ fn read_progress_row(row: QuestProgressRow<'_>) -> Option<ApiQuestProgressRow> {
             let truth = progress_truth(flag.truth())?;
             let count = match flag.count() {
                 -1 => None,
-                count if (0..=crate::isolate_fb::MAX_PROGRESS_FLAG_COUNT as i32).contains(&count) => {
+                count
+                    if (0..=crate::isolate_fb::MAX_PROGRESS_FLAG_COUNT as i32).contains(&count) =>
+                {
                     Some(count as u32)
                 }
                 _ => return None,

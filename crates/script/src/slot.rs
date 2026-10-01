@@ -1310,6 +1310,10 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_delta_with_native(
             self.last_snapshot.as_ref(),
             input,
@@ -1331,6 +1335,10 @@ impl SlotScript {
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_wake_with_native(
             self.last_snapshot.as_mut(),
             input,

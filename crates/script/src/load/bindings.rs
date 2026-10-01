@@ -576,7 +576,9 @@ pub(super) fn wire_runtime(
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
-    super::progress_methods_v8::install(runtime).map_err(|e| format!("progress methods v8: {e}"))?;
+    super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
+    super::progress_methods_v8::install(runtime)
+        .map_err(|e| format!("progress methods v8: {e}"))?;
     super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
     super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
     super::clue_logic_v8::install(runtime).map_err(|e| format!("clue logic v8: {e}"))?;

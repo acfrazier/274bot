@@ -1518,3 +1518,99 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
         }
     }
 }
+
+#[test]
+fn progress_supersede_across_reconnect_drops_first_queue_admits_second_and_settles_once() {
+    use script::shim::InteractReq;
+    let mut rig = GatherReconnectRig::with_source(
+        r#"export const apiVersion = 2;
+export function tick(api) { globalThis.__api = api; }"#,
+    );
+    rig.snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    rig.isolate_tick_without_host_drain();
+    rig.probe(
+        "globalThis.__firstSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__first=out; __firstSettles++}); true",
+    );
+    rig.isolate_tick_without_host_drain();
+    let queued = |rig: &GatherReconnectRig| {
+        let cell = rig.slot();
+        let mut slot = cell.lock().unwrap();
+        let batch = slot.drain_interacts();
+        let tokens: Vec<_> = batch
+            .iter()
+            .filter_map(|row| {
+                if let InteractReq::ProgressRead { request_id, .. } = row {
+                    Some(*request_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        slot.restore_interacts(batch);
+        tokens
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let first_token = loop {
+        let tokens = queued(&rig);
+        if tokens.len() == 1 {
+            break tokens[0];
+        }
+        assert!(Instant::now() < deadline);
+        rig.probe("true");
+        std::thread::yield_now();
+    };
+    rig.reconnect();
+    assert!(
+        queued(&rig).is_empty(),
+        "actual reconnect drops the first queued read"
+    );
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    rig.probe(
+        "globalThis.__secondSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__second=out; __secondSettles++}); true",
+    );
+    rig.isolate_tick_without_host_drain();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let second_token = loop {
+        let tokens = queued(&rig);
+        if tokens.len() == 1 {
+            break tokens[0];
+        }
+        assert!(Instant::now() < deadline);
+        rig.probe("true");
+        std::thread::yield_now();
+    };
+    assert_ne!(first_token, second_token);
+    assert_eq!(
+        rig.probe("globalThis.__first"),
+        serde_json::json!({"kind":"aborted","reason":"superseded"})
+    );
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty() && owned);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while rig.probe("globalThis.__second || null").is_null() {
+        rig.frame();
+        assert!(Instant::now() < deadline, "second progress waiter stranded");
+        std::thread::yield_now();
+    }
+    let terminal = rig.probe("globalThis.__second");
+    assert_eq!(terminal["kind"], "done");
+    assert_eq!(terminal["value"]["end"], "done");
+    assert_eq!(terminal["value"]["token"], second_token);
+    assert_eq!(terminal["value"]["row"]["stage"]["value"], "cook:2");
+    assert_eq!(rig.probe("globalThis.__firstSettles"), 1);
+    assert_eq!(rig.probe("globalThis.__secondSettles"), 1);
+    rig.reconnect();
+    rig.isolate_tick_without_host_drain();
+    assert!(
+        queued(&rig).is_empty(),
+        "retained terminal cannot resurrect a read"
+    );
+    assert_eq!(rig.probe("globalThis.__secondSettles"), 1);
+}

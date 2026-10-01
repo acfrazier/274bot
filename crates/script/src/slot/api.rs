@@ -5,12 +5,19 @@ use crate::native::{ScriptStatus, SettingsBag, StartError, StatusValue};
 use api::selected::RunKey;
 use std::sync::Mutex;
 
+#[path = "progress.rs"]
+mod progress;
+use progress::ProgressSeat;
+
 #[derive(Default)]
 pub(super) struct ApiSeat {
     gather: GatherSeat,
     pub(super) page: Option<Arc<GatherPage>>,
     pub(super) terminal: Option<GatherEnd>,
     pub(super) retiring: Vec<Preparation>,
+    progress: ProgressSeat,
+    pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
+    progress_retiring: Vec<progress::ProgressJob>,
     dropped_rows: usize,
     reported_drops: usize,
 }
@@ -78,6 +85,14 @@ impl ApiSeat {
                 index += 1;
             }
         }
+        let mut index = 0;
+        while index < self.progress_retiring.len() {
+            if self.progress_retiring[index].is_finished() {
+                let _ = self.progress_retiring.swap_remove(index).join();
+            } else {
+                index += 1;
+            }
+        }
     }
 }
 
@@ -85,7 +100,7 @@ impl SlotScript {
     pub fn api_owns_foreground(&self) -> bool {
         self.api
             .as_ref()
-            .is_some_and(|seat| seat.gather.token().is_some())
+            .is_some_and(|seat| seat.gather.token().is_some() || seat.progress.token().is_some())
     }
 
     pub(super) fn api_status(&self) -> Option<Arc<ScriptStatus>> {
@@ -95,7 +110,7 @@ impl SlotScript {
     pub(super) fn api_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         match &self.api.as_ref()?.gather {
             GatherSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
-            _ => None,
+            _ => self.api.as_ref()?.progress.selected(),
         }
     }
 
@@ -110,8 +125,9 @@ impl SlotScript {
             crate::shim::InteractReq::GatherStop { request_id } => {
                 self.stop_api_gather(*request_id)
             }
-            // Reserved wire operation only. Slice B owns its admission and machine.
-            crate::shim::InteractReq::ProgressRead { .. } => {}
+            crate::shim::InteractReq::ProgressRead { request_id, name } => {
+                self.start_api_progress(*request_id, name);
+            }
             _ => unreachable!("API control admission"),
         }
     }
@@ -130,7 +146,10 @@ impl SlotScript {
         {
             return;
         }
-        if seat.gather.token().is_some() || seat.retiring.len() >= 4 {
+        if seat.gather.token().is_some()
+            || seat.progress.token().is_some()
+            || seat.retiring.len() + seat.progress_retiring.len() >= 4
+        {
             // Genuine callers keep their family Busy until consuming the old
             // terminal; this also fails closed if a reserved control races it.
             seat.terminal = Some(GatherEnd::Refused {
@@ -341,6 +360,7 @@ impl SlotScript {
                 seat.terminal = Some(terminal);
             }
         }
+        self.tick_api_progress(&mut seat, ctx);
         self.api = Some(seat);
         if !self.api_owns_foreground() {
             self.log_api_drop_total();
@@ -381,6 +401,7 @@ impl SlotScript {
                         Arc::make_mut(page).status = run.output.status.clone();
                     }
                 }
+                seat.progress.rekey(self.work_epoch);
             }
         } else if let Some(seat) = self.api.as_mut() {
             match std::mem::take(&mut seat.gather) {
@@ -392,6 +413,8 @@ impl SlotScript {
                 }
                 GatherSeat::Idle => {}
             }
+            seat.progress.reset(&mut seat.progress_retiring);
+            seat.progress_page = None;
             seat.page = None;
             seat.terminal = None;
         }

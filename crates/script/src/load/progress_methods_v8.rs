@@ -31,9 +31,7 @@ fn progress_callback(
     }
 }
 
-fn quest_paths<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> Result<v8::Local<'s, v8::Value>, String> {
+fn quest_paths<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let rows = crate::quester::card::released_paths();
     let length = i32::try_from(rows.len()).map_err(|_| "quest-paths".to_string())?;
     let values = v8::Array::new(scope, length);
@@ -63,8 +61,9 @@ fn quest_paths<'s>(
             .ok_or_else(|| "quest-paths".to_string())?;
     }
 
-    let rows = helper_ok(scope, values.into())?;
-    Ok(rows)
+    let value = v8::Object::new(scope);
+    set_key(scope, value, "rows", values.into());
+    helper_ok(scope, value.into())
 }
 
 fn helper_ok<'s>(
