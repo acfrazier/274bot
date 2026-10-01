@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
@@ -51,9 +50,9 @@ use crate::session::{
     script_pause_enabled, script_stop_enabled, ProfilePreparationCompletion, Session,
 };
 use crate::theme::{
-    applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
-    integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, DOCKHOST_PADDING,
-    ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
+    applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
+    panel_scale, panel_split_ratio, scale_px, scale_size, ui_scale, ACCENT, ACCENT_HOVER, BG,
+    DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
@@ -89,17 +88,39 @@ pub fn runner_config() -> window::PanelConfig {
     }
 }
 
-/// Scale all ImGui style sizes for a window DPI. Held for Task 7: the loop
-/// runs under `HiDpiMode::Default`, which already sets
-/// `display_framebuffer_scale`, so applying this on top of that would double
-/// every size on Retina.
+/// Apply the panel's single physical layout scale to ImGui's style and font.
+/// Call on an unscaled theme style; monitor changes restore that baseline first.
 pub fn apply_ui_scale(style: &mut dear_imgui_rs::Style, dpi: f32) {
-    let s = integer_ui_scale(dpi);
+    let scale = panel_scale(dpi);
+    style.set_font_scale_dpi(scale);
+    // SAFETY: `style` is the live ImGuiStyle owned by the context; ScaleAllSizes
+    // mutates only that structure using the Dear ImGui API.
     unsafe {
-        dear_imgui_rs::sys::ImGuiStyle_ScaleAllSizes(style.raw_mut(), s);
+        dear_imgui_rs::sys::ImGuiStyle_ScaleAllSizes(style.raw_mut(), scale);
     }
 }
 
+fn scaled_button_row_layout(ui: &Ui, avail: f32, count: usize) -> (f32, bool) {
+    let scale = ui_scale(ui);
+    let (width, stack) = button_row_layout(avail / scale, count);
+    (width * scale, stack)
+}
+
+fn scaled_button_cells(ui: &Ui, avail: f32, count: usize) -> Vec<(f32, bool)> {
+    let scale = ui_scale(ui);
+    button_cells(avail / scale, count)
+        .into_iter()
+        .map(|(width, same_line)| (width * scale, same_line))
+        .collect()
+}
+
+fn scaled_button_cells_min(ui: &Ui, avail: f32, count: usize, min_width: f32) -> Vec<(f32, bool)> {
+    let scale = ui_scale(ui);
+    button_cells_min(avail / scale, count, min_width)
+        .into_iter()
+        .map(|(width, same_line)| (width * scale, same_line))
+        .collect()
+}
 /// Push the amber CRT palette over Theme::Dark (kills default imgui blue).
 fn amber_style(ctx: &mut dear_imgui_rs::Context) {
     apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
@@ -1093,7 +1114,8 @@ impl OsWindow for winit::window::Window {
 /// it back when the strip leaves — MultiBox off, Grid, or the rail tab
 /// X (`set_multibox(false)`). Falling edge of [`DockLayout::Rail`].
 ///
-/// `current` is ImGui `display_size` (logical, updated from `Resized`).
+/// `current_physical` is ImGui `display_size` in framebuffer pixels: the
+/// platform is locked to a 1× framebuffer and DPI is applied to layout.
 /// Do not call `Window::inner_size()` here: that is a per-frame X11
 /// `GetGeometry` round trip and panics with BadDrawable if the drawable
 /// is already gone.
@@ -1101,13 +1123,19 @@ impl OsWindow for winit::window::Window {
 /// opening the rail on a small screen shrinks and repositions instead of
 /// pushing the frame off the right edge. The fit (and its OS queries)
 /// runs once per change of the need; see [`take_fit_need`].
-fn ensure_window_fits(state: &mut PanelState, rail_open: bool, current: [f32; 2]) {
+fn ensure_window_fits(
+    state: &mut PanelState,
+    rail_open: bool,
+    current_physical: [f32; 2],
+    scale: f32,
+) {
     let Some(window) = state.os_window.as_ref() else {
         return;
     };
+    let current = (current_physical[0] / scale, current_physical[1] / scale);
     let rail_was_open = state.dock_layout == Some(DockLayout::Rail);
-    let need = next_os_window_size((current[0], current[1]), rail_was_open, rail_open);
-    if take_fit_need(&mut state.last_fit_need, need, (current[0], current[1])) {
+    let need = next_os_window_size(current, rail_was_open, rail_open);
+    if take_fit_need(&mut state.last_fit_need, need, current) {
         window.fit_to_work_area((f64::from(need.0), f64::from(need.1)));
     }
 }
@@ -1131,19 +1159,20 @@ fn take_fit_need(last: &mut Option<(f32, f32)>, need: (f32, f32), current: (f32,
     true
 }
 
-/// Fullscreen dock host: game left, 330px panel right, optional 264px rail.
-/// Rebuilds when MultiBox/grid toggles or the OS window size changes so
-/// panel/rail widths stay fixed; they only grow vertically.
+/// Fullscreen dock host: game left, 330 logical px panel at 100% scale,
+/// optional 264 logical px rail. Both widths scale with monitor DPI and stay
+/// fixed as the OS window grows.
 fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
     let rail_open = state.session.multibox && !state.session.wall.grid;
-    ensure_window_fits(state, rail_open, ui.io().display_size());
+    let scale = ui_scale(ui);
+    ensure_window_fits(state, rail_open, ui.io().display_size(), scale);
     let viewport = ui.main_viewport();
     let pos = viewport.pos();
     let vs = viewport.size();
     let (need_w, _) = os_window_size(rail_open);
     // Until winit applies a grow, lay out against the need so the blit
     // is not parked under the panel/rail for a frame.
-    let size = [vs[0].max(need_w), vs[1].max(1.0)];
+    let size = [vs[0].max(need_w * scale), vs[1].max(1.0)];
     // Zero host padding: the dockspace must span the viewport, because the
     // split ratio below divides the viewport width. Default 8px padding
     // narrowed the dockspace by 16px, starving the game leaf below the
@@ -1181,7 +1210,7 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                 DockBuilder::set_node_size(ui, dock_id, [size[0], size[1]]);
                 match want {
                     DockLayout::Single => {
-                        let ratio = panel_split_ratio(size[0]);
+                        let ratio = panel_split_ratio(size[0], scale);
                         let (right, left) =
                             DockBuilder::split_node(ui, dock_id, SplitDirection::Right, ratio);
                         dock_panel_tabs(ui, right);
@@ -1191,10 +1220,11 @@ fn dock_host(ui: &Ui, state: &mut PanelState, game_title: &str) {
                         state.rail_dock_node = None;
                     }
                     DockLayout::Rail => {
-                        let rail_ratio = rail_split_ratio(size[0]);
+                        let rail_ratio = rail_split_ratio(size[0], scale);
                         let (rail, main) =
                             DockBuilder::split_node(ui, dock_id, SplitDirection::Right, rail_ratio);
-                        let panel_ratio = panel_split_ratio((size[0] - RAIL_W).max(1.0));
+                        let panel_ratio =
+                            panel_split_ratio((size[0] - RAIL_W * scale).max(1.0), scale);
                         let (panel, game) =
                             DockBuilder::split_node(ui, main, SplitDirection::Right, panel_ratio);
                         DockBuilder::dock_window(ui, RAIL_WINDOW, rail);
@@ -1243,7 +1273,7 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
 /// Single-bot / rail Game pane: native 765×503, centred in the leaf.
 /// Does not scale with the host window; grid mode fits cells to avail.
 fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
-    let size = native_applet();
+    let size = scale_size(ui, native_applet());
     let cursor = ui.cursor_pos();
     let off = applet_offset(avail, size);
     ui.set_cursor_pos([cursor[0] + off[0], cursor[1] + off[1]]);
@@ -1493,9 +1523,9 @@ fn title_row(ui: &Ui, session: &mut Session) {
     ui.text_colored(ACCENT, session.app_title());
     ui.same_line();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 2);
+    let (w, stack) = scaled_button_row_layout(ui, avail, 2);
     if !stack {
-        let total = w * 2.0 + BUTTON_GAP;
+        let total = w * 2.0 + scale_px(ui, BUTTON_GAP);
         ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - total).max(0.0));
     }
     if ui.button_with_size("MultiBox", [w, 0.0]) {
@@ -1708,7 +1738,7 @@ fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
 
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
 fn gap_line(ui: &Ui) {
-    ui.same_line_with_spacing(0.0, BUTTON_GAP);
+    ui.same_line_with_spacing(0.0, scale_px(ui, BUTTON_GAP));
 }
 
 fn mock_button(ui: &Ui, label: &str, hint: &str, size: [f32; 2]) {
@@ -1846,7 +1876,7 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     let min = ui.item_rect_min();
     let max = ui.item_rect_max();
     let h = max[1] - min[1];
-    if h <= 2.0 {
+    if h <= scale_px(ui, 2.0) {
         return;
     }
     let x0 = max[0] - h;
@@ -1881,7 +1911,7 @@ fn logout_enabled(
 /// be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
-    let cells = button_cells(avail, 2);
+    let cells = scaled_button_cells(ui, avail, 2);
     let vault_open = session.core.vault().is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
@@ -1940,7 +1970,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
 /// Game/Grid wall, so the wall's rendering controls remain unchanged.
 fn walkto_button(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
-    let cells = button_cells(avail, 2);
+    let cells = scaled_button_cells(ui, avail, 2);
     if ui.button_with_size("WalkTo", [cells[0].0, 0.0]) {
         session.walkto_open = !session.walkto_open;
     }
@@ -1976,7 +2006,8 @@ fn debug_section(ui: &Ui, session: &mut Session) {
     // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
     // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
     // buttons.
-    let w = equal_button_width(avail, main.len());
+    let scale = ui_scale(ui);
+    let w = equal_button_width(avail / scale, main.len()) * scale;
     for (i, label) in main.iter().enumerate() {
         if i > 0 {
             gap_line(ui);
@@ -2030,12 +2061,14 @@ fn debug_section(ui: &Ui, session: &mut Session) {
 fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
         let dests = debug_dest_cheats();
+        let scale = ui_scale(ui);
         let avail = PANEL_WIDTH;
         let cols = (1usize..=6)
             .rev()
             .find(|&n| equal_button_width(avail, n) >= MIN_BUTTON)
             .unwrap_or(1);
         let (bw, _) = button_row_layout(avail, cols);
+        let bw = bw * scale;
         for (i, dest) in dests.iter().enumerate() {
             if i > 0 && i % cols != 0 {
                 gap_line(ui);
@@ -2106,7 +2139,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         }
     }
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 3);
+    let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     {
         let _browse = if active {
             Some(ui.begin_disabled())
@@ -2163,7 +2196,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         session.cancel_reload();
     }
 
-    let (sw, sstack) = button_row_layout(ui.content_region_avail()[0], SCRIPT_ROW.len());
+    let (sw, sstack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
         let _start = if active {
             Some(ui.begin_disabled())
@@ -2239,9 +2272,10 @@ fn script_category_chips(ui: &Ui, session: &mut Session, order: &[String]) {
     let avail = ui.content_region_avail()[0];
     let style = ui.clone_style();
     let gap = style.item_spacing()[0];
-    let pad = chip_frame_padding(style.frame_padding());
+    let mut pad = chip_frame_padding(style.frame_padding());
+    pad[1] = pad[1].max(scale_px(ui, script_picker::CHIP_PAD_Y));
     let _pad = ui.push_style_var(StyleVar::FramePadding(pad));
-    let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
+    let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(scale_px(ui, 1.0)));
     let _border = ui.push_style_color(StyleColor::Border, ACCENT);
     let mut used = 0.0;
     let font_sz = ui.current_font_size();
@@ -2339,7 +2373,7 @@ fn browse_script_card(
                 .calc_text_size(font_sz, f32::MAX, 0.0, &badge)[0];
             let gap = ui.clone_style().item_spacing()[0];
             let title_w = title_clip_width(inner, badge_w, gap);
-            let badges_below = title_w < 32.0;
+            let badges_below = title_w < scale_px(ui, 32.0);
             let title_color = if card.unloadable().is_some() {
                 TEXT_DIM
             } else {
@@ -2428,7 +2462,7 @@ fn browse_script_card(
     card_rect_activated(
         ui.is_mouse_hovering_rect(min, max),
         ui.is_mouse_released(MouseButton::Left),
-        ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0),
+        ui.is_mouse_dragging_with_threshold(MouseButton::Left, scale_px(ui, 5.0)),
     )
     .then_some(selection)
 }
@@ -2439,18 +2473,18 @@ fn browse_card_grid(
     cards: &[&BrowseCard<'_>],
 ) -> Option<script::ScriptSel> {
     let avail = ui.content_region_avail()[0];
-    let cols = card_columns(avail, CARD_MIN_W, CARD_GAP);
-    let w = card_width(avail, cols, CARD_GAP);
+    let scale = ui_scale(ui);
+    let cols = card_columns(avail / scale, CARD_MIN_W, CARD_GAP);
+    let w = card_width(avail / scale, cols, CARD_GAP) * scale;
     let mut selected = None;
     for (i, card) in cards.iter().enumerate() {
         if i > 0 && i % cols != 0 {
-            ui.same_line_with_spacing(0.0, CARD_GAP);
+            ui.same_line_with_spacing(0.0, scale_px(ui, CARD_GAP));
         }
         selected = browse_script_card(ui, session, **card, w).or(selected);
     }
     selected
 }
-
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
     let validating = session.reload_validation_pending();
@@ -2550,7 +2584,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let cards: Vec<BrowseCard<'_>> = session.scripts.browse_cards().collect();
     let mut picked = None;
     ui.child_window("##script-list")
-        .size([0.0, ui.content_region_avail()[1].max(80.0)])
+        .size([0.0, ui.content_region_avail()[1].max(scale_px(ui, 80.0))])
         .build(ui, || {
             let filter = session.browse_category_filter.clone();
             let mut any = false;
@@ -2580,18 +2614,18 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     }
 }
 
-fn overlay_right_strip(session: &Session) -> f32 {
+fn overlay_right_strip(ui: &Ui, session: &Session) -> f32 {
     let rail = if session.multibox && !session.wall.grid {
         RAIL_W
     } else {
         0.0
     };
-    PANEL_WIDTH + rail
+    scale_px(ui, PANEL_WIDTH + rail)
 }
 
 fn overlay_spawn_pos(ui: &Ui, session: &Session, win: [f32; 2]) -> [f32; 2] {
     let vp = ui.main_viewport();
-    overlay_first_pos(vp.pos(), vp.size(), overlay_right_strip(session), win)
+    overlay_first_pos(vp.pos(), vp.size(), overlay_right_strip(ui, session), win)
 }
 
 /// Browse picker: script cards with category tabs. Non-modal window
@@ -2600,12 +2634,13 @@ fn overlay_spawn_pos(ui: &Ui, session: &Session, win: [f32; 2]) -> [f32; 2] {
 fn browse_window(ui: &Ui, session: &mut Session) {
     if session.script_browse_open {
         let mut open = true;
-        let pos = overlay_spawn_pos(ui, session, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
+        let size = scale_size(ui, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
+        let pos = overlay_spawn_pos(ui, session, size);
         ui.window(BROWSE_WINDOW_TITLE)
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
             .position(pos, Condition::FirstUseEver)
-            .size([SCRIPTS_FIRST_W, SCRIPTS_FIRST_H], Condition::FirstUseEver)
+            .size(size, Condition::FirstUseEver)
             .build(|| browse_window_body(ui, session));
         session.script_browse_open = open;
     }
@@ -2628,17 +2663,15 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
 }
 
 fn file_dialog_windows(ui: &Ui, session: &mut Session) {
-    let pos = overlay_spawn_pos(ui, session, [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H]);
+    let size = scale_size(ui, [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H]);
+    let pos = overlay_spawn_pos(ui, session, size);
     if session.script_load_open {
         let mut open = true;
         ui.window("Load script")
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
-            .size(
-                [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H],
-                Condition::FirstUseEver,
-            )
+            .size(size, Condition::FirstUseEver)
             .build(|| file_dialog_body(ui, session, DialogMode::File));
         session.script_load_open &= open;
     }
@@ -2648,10 +2681,7 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
             .opened(&mut open)
             .flags(WindowFlags::NO_COLLAPSE)
             .position(pos, Condition::FirstUseEver)
-            .size(
-                [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H],
-                Condition::FirstUseEver,
-            )
+            .size(size, Condition::FirstUseEver)
             .build(|| file_dialog_body(ui, session, DialogMode::Folder));
         session.rs2b0t_catalog_open &= open;
     }
@@ -2673,10 +2703,15 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         DialogMode::Folder => session.rs2b0t_catalog_dir.clone(),
     };
     let avail = ui.content_region_avail();
-    let side_w = 150.0_f32.min(avail[0] * 0.28).max(120.0);
+    let side_w = scale_px(ui, 150.0)
+        .min(avail[0] * 0.28)
+        .max(scale_px(ui, 120.0));
     let home = script::bot_home();
     ui.child_window("##fd-side")
-        .size([side_w, (avail[1] - 8.0).max(80.0)])
+        .size([
+            side_w,
+            (avail[1] - scale_px(ui, 8.0)).max(scale_px(ui, 80.0)),
+        ])
         .border(true)
         .build(ui, || {
             for place in script_picker::sidebar_places(&home) {
@@ -2693,8 +2728,8 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     ui.same_line();
     ui.child_window("##fd-main")
         .size([
-            (avail[0] - side_w - 8.0).max(80.0),
-            (avail[1] - 8.0).max(80.0),
+            (avail[0] - side_w - scale_px(ui, 8.0)).max(scale_px(ui, 80.0)),
+            (avail[1] - scale_px(ui, 8.0)).max(scale_px(ui, 80.0)),
         ])
         .build(ui, || {
             let crumbs = script_picker::breadcrumb_prefixes(&cwd);
@@ -2742,7 +2777,8 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
             if session.script_load_sel >= rows.len() {
                 session.script_load_sel = rows.len().saturating_sub(1);
             }
-            let table_h = (ui.content_region_avail()[1] - 48.0).max(80.0);
+            let table_h =
+                (ui.content_region_avail()[1] - scale_px(ui, 48.0)).max(scale_px(ui, 80.0));
             if let Some(_t) = ui.begin_table_with_sizing(
                 "##fd-table",
                 2,
@@ -2791,7 +2827,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
             }
             ui.spacing();
             let fw = ui.content_region_avail()[0];
-            let btn_w = 96.0;
+            let btn_w = scale_px(ui, 96.0);
             match mode {
                 DialogMode::File => {
                     let name = rows
@@ -2800,7 +2836,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                         .map(|r| r.name.as_str())
                         .unwrap_or("");
                     ui.text_disabled(name);
-                    let x = centered_row_x(fw, 2, btn_w, BUTTON_GAP);
+                    let x = centered_row_x(fw, 2, btn_w, scale_px(ui, BUTTON_GAP));
                     ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
                     if ui.button_with_size("Load", [btn_w, 0.0]) {
                         if let Some(row) = rows.get(session.script_load_sel).filter(|r| !r.is_dir) {
@@ -2821,8 +2857,8 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     }
                     let n =
                         1 + usize::from(has_index) + usize::from(session.rs2b0t_catalog_defer_ok);
-                    let folder_btn = 140.0;
-                    let x = centered_row_x(fw, n, folder_btn, BUTTON_GAP);
+                    let folder_btn = scale_px(ui, 140.0);
+                    let x = centered_row_x(fw, n, folder_btn, scale_px(ui, BUTTON_GAP));
                     ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
                     if has_index {
                         if ui.button_with_size("Use this folder", [folder_btn, 0.0]) {
@@ -2865,7 +2901,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Nav config")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([360.0, 480.0], Condition::FirstUseEver)
+        .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
             let mut nav = session.ui.nav.clone();
             let mut changed = false;
@@ -2948,7 +2984,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 fn nav_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
     let [r, g, b] = crate::nav_settings::parse_html_color(color, [0xff, 0xff, 0xff]);
     let mut rgb = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
-    ui.set_next_item_width(148.0);
+    ui.set_next_item_width(scale_px(ui, 148.0));
     let edited = ui
         .color_edit3_config(format!("{label}##nav-color-{label}"), &mut rgb)
         .display_mode(ColorDisplayMode::Hex)
@@ -3273,7 +3309,7 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Script prefs")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([360.0, 480.0], Condition::FirstUseEver)
+        .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
             if ui.checkbox(
                 "Show parameters in rail",
@@ -3385,7 +3421,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
 fn slot_config_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     for row in [CONFIG_HOST_ROW, CONFIG_SCRIPT_ROW] {
-        let cells = button_cells_min(avail, row.len(), CONFIG_MIN);
+        let cells = scaled_button_cells_min(ui, avail, row.len(), CONFIG_MIN);
         for (i, &(w, same_line)) in cells.iter().enumerate() {
             if same_line {
                 gap_line(ui);
@@ -3525,7 +3561,14 @@ fn floating_log_window(ui: &Ui, session: &mut Session) {
     let viewport = ui.main_viewport();
     let work_pos = viewport.work_pos();
     let work_size = viewport.work_size();
-    let size = [PANEL_WIDTH, (work_size[1] - 80.0).clamp(240.0, 560.0)];
+    let scale = ui_scale(ui);
+    let size = scale_size(
+        ui,
+        [
+            PANEL_WIDTH,
+            (work_size[1] / scale - 80.0).clamp(240.0, 560.0),
+        ],
+    );
     let pos = [
         work_pos[0] + ((work_size[0] - size[0]) * 0.5).max(0.0),
         work_pos[1] + ((work_size[1] - size[1]) * 0.5).max(0.0),
@@ -3536,7 +3579,10 @@ fn floating_log_window(ui: &Ui, session: &mut Session) {
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_DOCKING)
         .position(pos, Condition::FirstUseEver)
         .size(size, Condition::FirstUseEver)
-        .size_constraints([280.0, 180.0], [f32::MAX, 720.0])
+        .size_constraints(
+            scale_size(ui, [280.0, 180.0]),
+            [f32::MAX, scale_px(ui, 720.0)],
+        )
         .build(|| crate::log_pane::log_body(ui, session, true));
     if !open {
         session.ui.log_detached = false;
@@ -3595,7 +3641,7 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
 fn raster_picker(ui: &Ui, session: &mut Session) {
     let cur = session.focused_raster();
     let avail = ui.content_region_avail()[0];
-    let cells = button_cells(avail, 3);
+    let cells = scaled_button_cells(ui, avail, 3);
     if inverted_button(ui, "none", cur == vault::RasterMode::Off, [cells[0].0, 0.0]) {
         session.request_focused_raster(vault::RasterMode::Off);
     }
@@ -3640,7 +3686,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     let accent = session.ui.chrome.accent_rgba();
     let bg_deep = session.ui.chrome.bg_deep_rgba();
     let open = {
-        let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(1.0));
+        let _border_sz = ui.push_style_var(StyleVar::FrameBorderSize(scale_px(ui, 1.0)));
         let _text = ui.push_style_color(StyleColor::Text, accent);
         let _header = ui.push_style_color(StyleColor::Header, bg_deep);
         let _header_h = ui.push_style_color(StyleColor::HeaderHovered, bg_deep);
@@ -3704,7 +3750,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
 fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
     let [r, g, b] = crate::nav_settings::parse_html_color(color, [0xff, 0xb0, 0x00]);
     let mut rgb = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
-    ui.set_next_item_width(148.0);
+    ui.set_next_item_width(scale_px(ui, 148.0));
     let edited = ui
         .color_edit3_config(format!("{label}##chrome-color-{label}"), &mut rgb)
         .display_mode(ColorDisplayMode::Hex)
@@ -3897,7 +3943,7 @@ pub fn apply_only_render_selected(current: bool, checked: bool) -> (bool, bool) 
 /// `set_draw` from it every frame).
 fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 2);
+    let (w, stack) = scaled_button_row_layout(ui, avail, 2);
     if ui.button_with_size("Login all", [w, 0.0]) {
         state.session.login_all();
     }
@@ -3907,7 +3953,7 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     if ui.button_with_size("Logout all", [w, 0.0]) {
         state.session.logout_all();
     }
-    let (w, stack) = button_row_layout(ui.content_region_avail()[0], 2);
+    let (w, stack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], 2);
     if ui.button_with_size("Start all", [w, 0.0]) {
         state.session.script_start_all();
     }
@@ -3940,7 +3986,7 @@ const DIALOG_W: f32 = 400.0;
 /// collapses to a sliver. Fixed-width `DIALOG_W` windows keep
 /// `text_wrapped`: their edge is fixed and accounts for a scrollbar.
 fn popup_text(ui: &Ui, text: &str) {
-    let edge = DIALOG_W - ui.clone_style().window_padding()[0];
+    let edge = scale_px(ui, DIALOG_W) - ui.clone_style().window_padding()[0];
     let _wrap = ui.push_text_wrap_pos(edge);
     ui.text(text);
 }
@@ -3982,7 +4028,7 @@ fn scary_confirm_popup(
         ui.checkbox("I understand", understood);
         ui.spacing();
         let avail = ui.content_region_avail()[0];
-        let (w, stack) = button_row_layout(avail, 2);
+        let (w, stack) = scaled_button_row_layout(ui, avail, 2);
         let ok = {
             let _off = ui.begin_disabled_with_cond(!*understood);
             ui.button_with_size(confirm, [w, 0.0])
@@ -4021,9 +4067,12 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     ui.window("Render all wall members?")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .size_constraints(
+            scale_size(ui, [DIALOG_W, 80.0]),
+            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
+        )
         .build(|| {
-            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
             ui.text_wrapped(
                 "This runs a GPU renderer for every client. Much lighter than the old CPU path, \
                  but a full wall still drives real GPU load on this machine.",
@@ -4035,7 +4084,7 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
             }
             ui.spacing();
             let avail = ui.content_region_avail()[0];
-            let (w, stack) = button_row_layout(avail, 2);
+            let (w, stack) = scaled_button_row_layout(ui, avail, 2);
             let ok_clicked = {
                 let _disabled = ui.begin_disabled_with_cond(!understood);
                 ui.button_with_size("OK", [w, 0.0])
@@ -4073,9 +4122,12 @@ fn background_ack_window(ui: &Ui, session: &mut Session) {
     ui.window("Other profiles keep running")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .size_constraints(
+            scale_size(ui, [DIALOG_W, 80.0]),
+            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
+        )
         .build(|| {
-            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
             ui.text_wrapped(&body);
             ui.spacing();
             let w = ui.content_region_avail()[0];
@@ -4163,25 +4215,37 @@ fn rail_cap(
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     let _id = ui.push_id(row.name.as_str());
+    let [screen_x, screen_y] = ui.cursor_screen_pos();
+    // Fractional scaled spacing can leave the next rail row between pixels.
+    ui.set_cursor_screen_pos([screen_x, screen_y.round()]);
     let light = row.light();
     let colour = light_rgb(light);
+    let btn = scale_px(ui, BTN);
+    let dot_w = scale_px(ui, DOT_W);
     let marker_x = ui.cursor_pos_x();
     if labels.world.is_empty() {
-        draw_status_dot(ui, light, DOT_W);
+        draw_status_dot(ui, light, dot_w);
     } else {
-        world_marker(ui, &labels.world, colour, DOT_W);
+        world_marker(ui, &labels.world, colour, dot_w);
         ui.set_item_tooltip(&labels.world_tip);
     }
-    ui.same_line_with_pos(marker_x + DOT_W + BUTTON_GAP);
-    let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
+    #[cfg(test)]
+    record_test_rail_item(ui);
+    ui.same_line_with_pos(marker_x + dot_w + scale_px(ui, BUTTON_GAP));
+    let name_w =
+        (width - btn * 2.0 - dot_w - scale_px(ui, BUTTON_GAP * 3.0)).max(scale_px(ui, 10.0));
     let clicked = ui
         .selectable_config(&labels.title)
         .selected(is_focused)
         .size([name_w, 0.0])
         .build();
+    #[cfg(test)]
+    record_test_rail_item(ui);
     gap_line(ui);
     let fold_g = if preview { FOLD_GLYPH } else { UNFOLD_GLYPH };
-    let folded = ui.button_with_size(fold_g, [BTN, 0.0]);
+    let folded = ui.button_with_size(fold_g, [btn, 0.0]);
+    #[cfg(test)]
+    record_test_rail_item(ui);
     ui.set_item_tooltip(if preview {
         "fold preview"
     } else {
@@ -4189,10 +4253,42 @@ fn rail_cap(
     });
     gap_line(ui);
     let red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(REMOVE_GLYPH, [BTN, 0.0]);
+    let removed = ui.button_with_size(REMOVE_GLYPH, [btn, 0.0]);
+    #[cfg(test)]
+    record_test_rail_item(ui);
     red.pop();
     ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     (clicked, removed, folded)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_RAIL_ITEM_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn record_test_rail_item(ui: &Ui) {
+    let min = ui.item_rect_min();
+    let max = ui.item_rect_max();
+    TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(|bounds| bounds.push([min[0], min[1], max[0], max[1]]));
+}
+
+#[cfg(test)]
+pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4]) {
+    let row = FleetRow {
+        name: "pixel-layout".into(),
+        ..FleetRow::default()
+    };
+    let labels = CapLabels {
+        title: "pixel-layout".into(),
+        ..CapLabels::default()
+    };
+    let colour = light_rgb(row.light());
+    TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    let _ = rail_cap(ui, &row, &labels, true, width, false);
+    let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
+    (bounds, colour)
 }
 
 /// Public world marker: a disc in the status colour, centred in the
@@ -4204,7 +4300,7 @@ fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32) {
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
     let center = [x + width * 0.5, y + line_h * 0.5];
-    let radius = (line_h * 0.5 + 1.5).min(width * 0.5);
+    let radius = (line_h * 0.5 + scale_px(ui, 1.5)).min(width * 0.5);
     let [text_w, text_h] =
         ui.current_font()
             .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, number);
@@ -4286,7 +4382,7 @@ fn cell_body(
 
 /// Rail tile body: the fixed `TILE_W`×`TILE_H` case of [`cell_body`].
 fn rail_body(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, name: &str, draw: bool) -> bool {
-    cell_body(ui, gpu, state, name, [TILE_W, TILE_H], draw)
+    cell_body(ui, gpu, state, name, scale_size(ui, [TILE_W, TILE_H]), draw)
 }
 
 /// `+ add bot`: opens the profile picker (same window as Profiles).
@@ -4368,7 +4464,7 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
         popup_text(ui, &switch.prompt);
         ui.spacing();
         let avail = ui.content_region_avail()[0];
-        let (w, stack) = button_row_layout(avail, 2);
+        let (w, stack) = scaled_button_row_layout(ui, avail, 2);
         if ui.button_with_size("Discard", [w, 0.0]) {
             session.confirm_pending_edit_switch();
             ui.close_current_popup();
@@ -4403,7 +4499,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Profiles")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([PANEL_WIDTH, 560.0], Condition::FirstUseEver)
+        .size(scale_size(ui, [PANEL_WIDTH, 560.0]), Condition::FirstUseEver)
         .build(|| {
             let right = chooser_right_edge(ui);
             // Wrap text where the on-screen part of the window ends.
@@ -4435,7 +4531,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 ui.text_disabled("vault is empty — New profile then Save");
             } else {
                 const ROW_H: f32 = 24.0;
-                let viewport_h = ui.main_viewport().work_size()[1];
+                let viewport_h = ui.main_viewport().work_size()[1] / ui_scale(ui);
                 // Leave room for the edit form when it is open; the list has
                 // its own scroll region, so a long vault remains usable.
                 let max_list = if session.chooser_edit.is_some() {
@@ -4444,7 +4540,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     (viewport_h - 280.0).clamp(120.0, 360.0)
                 };
                 let need = (names.len() as f32) * ROW_H + 8.0;
-                let list_h = need.min(max_list);
+                let list_h = scale_px(ui, need.min(max_list));
                 ui.child_window("##profiles-list")
                     .size([0.0, list_h])
                     .build(ui, || {
@@ -4536,7 +4632,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     None => {}
                 }
                 let avail = on_screen_avail(ui, right);
-                let (bw, stack) = button_row_layout(avail, 2);
+                let (bw, stack) = scaled_button_row_layout(ui, avail, 2);
                 // One Save at a time: the form follows a rename or a new
                 // profile only once its write is durable.
                 let saving = session.form_saving().then(|| ui.begin_disabled());
@@ -4608,8 +4704,14 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("General config")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
-        .size_constraints([280.0, 80.0], [f32::MAX, 720.0])
+        .size(
+            scale_size(ui, [PANEL_WIDTH, 480.0]),
+            Condition::FirstUseEver,
+        )
+        .size_constraints(
+            scale_size(ui, [280.0, 80.0]),
+            [f32::MAX, scale_px(ui, 720.0)],
+        )
         .build(|| {
             config_section(ui, session, "Global", |ui, session| {
                 global_config_section(ui, session);
@@ -4635,7 +4737,10 @@ fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Debug")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
+        .size(
+            scale_size(ui, [PANEL_WIDTH, 480.0]),
+            Condition::FirstUseEver,
+        )
         .build(|| {
             crate::debug_panel::draw(ui, session);
             if std::mem::take(&mut session.debug_open_teleports) {
@@ -4765,7 +4870,9 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, 
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
-    let name_w = (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0);
+    let edit_w = scale_px(ui, EDIT_W);
+    let x_w = scale_px(ui, X_W);
+    let name_w = (avail - edit_w - x_w - scale_px(ui, BUTTON_GAP * 2.0)).max(scale_px(ui, 10.0));
     let loaded = ui
         .selectable_config(name)
         .selected(selected)
@@ -4773,10 +4880,10 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, 
         .size([name_w, 0.0])
         .build();
     gap_line(ui);
-    let edit = ui.button_with_size(format!("Edit##edit-{name}"), [EDIT_W, 0.0]);
+    let edit = ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0]);
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("✕##{name}"), [X_W, 0.0]);
+    let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
     (loaded, removed, edit)
 }
 
@@ -4917,13 +5024,16 @@ fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Opti
     ui.window("Another 274bot is running")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .size_constraints(
+            scale_size(ui, [DIALOG_W, 80.0]),
+            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
+        )
         .build(|| {
-            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
             ui.text_wrapped(host_play::instance_conflict_message(holder));
             ui.spacing();
             let avail = ui.content_region_avail()[0];
-            let (w, stack) = button_row_layout(avail, 2);
+            let (w, stack) = scaled_button_row_layout(ui, avail, 2);
             if ui.button_with_size("Exit", [w, 0.0]) {
                 choice = Some(false);
             }
@@ -4983,8 +5093,6 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             .ok()
             .flatten()
             .is_some();
-    let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-    let frame_scale = Arc::clone(&scale);
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
     let mut instance_prompt = None;
     let mut running = None;
@@ -5017,10 +5125,6 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         amber_style,
         move |window, device, queue, _| {
             client::render::backend::inject_device(device.clone(), queue.clone());
-            scale.store(
-                integer_ui_scale(window.scale_factor() as f32).to_bits(),
-                Ordering::Relaxed,
-            );
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
         Arc::clone(&shot_state),
@@ -5071,7 +5175,6 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                     w.request_redraw();
                 }
             }
-            let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             let progress = startup_progress(startup, state.session.profile_generation());
             ui_frame(ui, gpu, state, progress, &live_failure_frame)
         },

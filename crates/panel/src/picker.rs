@@ -31,6 +31,7 @@ use nav::world::NavWorld;
 
 use crate::game_view::FrameGpu;
 use crate::session::Session;
+use crate::theme::scale_px;
 use crate::walk_map::{
     overlay_colors, snap_tile, view_from_canvas, OverlayLayers, WalkMapRenderer, MAX_LABELS,
     NSEW_PPT,
@@ -913,7 +914,9 @@ fn draw_walkto_toolbar(
         header_max_x: 0.0,
         search_max_x: 0.0,
     };
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    let combo_w = scale_px(ui, TOOLBAR_COMBO_W);
+    let search_min_w = scale_px(ui, TOOLBAR_SEARCH_MIN_W);
+    ui.set_next_item_width(combo_w);
     if ui.combo("##walkto-level", lvl_idx, levels, |l: &i32| {
         Cow::Owned(format!("level {l}"))
     }) {
@@ -923,11 +926,11 @@ fn draw_walkto_toolbar(
         }
     }
     note_toolbar_item(&mut geom, ui);
-    toolbar_continue(ui, TOOLBAR_COMBO_W);
+    toolbar_continue(ui, combo_w);
     let mut zoom = ZOOM
         .load(Ordering::Relaxed)
         .clamp(0, ZOOMS.len() as i32 - 1) as usize;
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    ui.set_next_item_width(combo_w);
     if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
         Cow::Owned(if *z < 1.0 {
             format!("{z}px/tile")
@@ -939,11 +942,11 @@ fn draw_walkto_toolbar(
     }
     note_toolbar_item(&mut geom, ui);
     let search_remain = remaining_on_row(ui);
-    if search_remain >= TOOLBAR_SEARCH_MIN_W {
+    if search_remain >= search_min_w {
         ui.same_line();
         ui.set_next_item_width(search_remain);
     } else {
-        ui.set_next_item_width(ui.content_region_avail()[0].max(TOOLBAR_SEARCH_MIN_W));
+        ui.set_next_item_width(ui.content_region_avail()[0].max(search_min_w));
     }
     ui.input_text("##walkto-search", &mut map.search)
         .hint("search / x,z,plane")
