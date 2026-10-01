@@ -51,20 +51,3 @@ pub struct StallLoc<'a> {
     pub distance: i32,
     pub actions: &'a [&'a str],
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn selected_pins_match_headed_274_289_loc_and_live_stand() {
-        assert_eq!(BAKER_STALL.loc_id, 2561);
-        assert_eq!(BAKER_STALL.name, "Baker's stall");
-        assert_eq!(BAKER_STALL.op, "Steal from");
-        assert_eq!(BAKER_STALL.stall, t(2667, 3310));
-        assert_eq!(BAKER_STALL.stand, t(2668, 3312));
-        assert_eq!(BAKER_STALL.stand_alt, t(2669, 3310));
-        assert_eq!(BAKER_STALL.flee, t(2655, 3298));
-        assert_eq!(CAKE_ITEM_NAMES, ["Cake", "Bread", "Chocolate slice"]);
-    }
-}

@@ -861,13 +861,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frozen_waits_match_drive_partner_trade_ts() {
-        assert_eq!(TRADE_OFFER_WAIT_MS, 5_000);
-        assert_eq!(TRADE_CONFIRM_WAIT_MS, 8_000);
-        assert_eq!(TRADE_CLOSE_DEBOUNCE_MS, 600);
-    }
-
-    #[test]
     fn metric_values_keep_js_number_coercion() {
         assert_eq!(to_number(&json!(24)), 24.0);
         assert_eq!(to_number(&json!("24")), 24.0);

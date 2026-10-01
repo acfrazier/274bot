@@ -6,6 +6,8 @@
 #[cfg(feature = "load")]
 pub mod api_gather;
 #[cfg(feature = "load")]
+pub mod api_progress;
+#[cfg(feature = "load")]
 mod api_session;
 /// Typed compiled cards, preparation, execution and output.
 /// Shared native bank selector and transfer machines.

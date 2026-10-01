@@ -1182,7 +1182,7 @@ fn frame_hook(
     state: Arc<Mutex<SetupState>>,
     mode: SetupMode,
     headed: bool,
-) -> impl Fn(&mut client::client::Client, &str, bool) + Send + Sync + 'static {
+) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
     move |client, _name, _hold| {
         if headed {
             client.set_draw(true);

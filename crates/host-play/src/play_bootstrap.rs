@@ -56,20 +56,20 @@ pub(crate) const LIVE_NAME_PREFIX_ENV: &str = "BOT_LIVE_NAME_PREFIX";
 
 const DEFAULT_LIVE_NAME_PREFIX: &str = "live";
 
-/// Validate a minted-name prefix: 1–4 lowercase ASCII letters. Capping it
-/// at the default's length keeps the random token at least as long as
-/// the default, so uniqueness never drops below the `live` form.
+/// Check a minted-name prefix's length: 1–4 bytes. Capping it at the
+/// default's length keeps the random token at least as long as the
+/// default's, so a long prefix can't shrink the token until runs collide
+/// and silently reuse an old save. Characters aren't checked here: the
+/// engine rejects a name it can't use at login, which fails the run loudly.
 pub(crate) fn parse_live_name_prefix(raw: Option<&str>) -> Result<&str, String> {
     let Some(prefix) = raw else {
         return Ok(DEFAULT_LIVE_NAME_PREFIX);
     };
-    if (1..=DEFAULT_LIVE_NAME_PREFIX.len()).contains(&prefix.len())
-        && prefix.bytes().all(|b| b.is_ascii_lowercase())
-    {
+    if (1..=DEFAULT_LIVE_NAME_PREFIX.len()).contains(&prefix.len()) {
         Ok(prefix)
     } else {
         Err(format!(
-            "{LIVE_NAME_PREFIX_ENV} must be 1-4 lowercase ASCII letters, got {prefix:?}"
+            "{LIVE_NAME_PREFIX_ENV} must be 1-4 characters, got {prefix:?}"
         ))
     }
 }
@@ -416,7 +416,7 @@ impl Play {
             ifaces,
             ifaces_mut_template,
             queue: Arc::new(QueueMutex::new(LoginQueue::default())),
-            per_frame: Arc::new(|_: &mut Client, _: &str, _hold: bool| {}),
+            per_frame: Arc::new(|_: &mut Client, _: &str, _: crate::SlotFrameInput| {}),
             spawned: HashSet::new(),
             arms: HashMap::new(),
             profiles: HashMap::new(),
@@ -444,6 +444,8 @@ pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
 /// returned by `per_slot` (called synchronously, keyed by username), and
 /// `per_frame` runs inside the observe hook on every 20 ms frame so callers
 /// can mirror panel state (e.g. `client.set_draw`) into the slot thread.
+/// The frame input carries pre-mainloop human movement intent and queued manual
+/// step counts before the callback's follow pump; sending remains slot-owned.
 /// The FIFO login queue and mainland hop are shared by every slot.
 pub fn run_with_io<F, G>(
     options: &PlayOptions,
@@ -453,7 +455,7 @@ pub fn run_with_io<F, G>(
 ) -> Play
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
-    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
     let mut play = Play::new(options);
     play.per_frame = Arc::new(per_frame);
@@ -475,7 +477,7 @@ pub fn run_with_template<F, G>(
 ) -> Result<Play, String>
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
-    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
     if !profiles.is_empty() {
         template.profile().require_bot_operation()?;
@@ -496,7 +498,7 @@ pub fn run_prepared_template<F, G>(
 ) -> Result<Play, String>
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
-    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
     let template = validated.template;
     if !profiles.is_empty() {

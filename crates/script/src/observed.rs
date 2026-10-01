@@ -27,16 +27,22 @@
 //! read from each.
 
 use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
+use crate::api_progress::{ProgressPage, QuestProgressRow as ApiQuestProgressRow};
 use crate::isolate_fb::{
-    ApiGather, ApiGatherOutcome, CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat,
+    ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow, QuestStatus, Row,
+    SceneEntity, Snapshot, Stat,
 };
 use api::line_of_sight::CollisionQuery;
+use api::quest_progress::{EvidenceStamp, ProgressFlag};
+use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
+use api::snapshot::QuestListStatus;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 type StringVector<'a> = Option<Vector<'a, ForwardsUOffset<&'a str>>>;
@@ -670,6 +676,7 @@ scene_pages! {
         walk_missing_carry: Vec<CarryRow>,
         api_gather: GatherObservation,
         api_gather_outcome: GatherOutcomeObservation,
+        api_progress: ProgressPage,
     }
 }
 
@@ -795,6 +802,111 @@ fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObserv
         _ => return None,
     };
     Some(GatherOutcomeObservation { request_id, end })
+}
+fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
+    let token = page.request_id();
+    if token == 0 {
+        return None;
+    }
+    match page.kind() {
+        1 => Some(ProgressPage::Reading { token }),
+        2 => page
+            .row()
+            .and_then(read_progress_row)
+            .map(|row| ProgressPage::Done {
+                token,
+                row: Arc::new(row),
+            }),
+        3 => page.reason().map(|reason| ProgressPage::Refused {
+            token,
+            reason: Arc::from(reason),
+        }),
+        _ => None,
+    }
+}
+
+fn read_progress_row(row: QuestProgressRow<'_>) -> Option<ApiQuestProgressRow> {
+    let colour = match row.colour() {
+        1 => QuestListStatus::NotStarted,
+        2 => QuestListStatus::InProgress,
+        3 => QuestListStatus::Complete,
+        4 => QuestListStatus::Unknown,
+        _ => return None,
+    };
+    let complete = progress_truth(row.complete())?;
+    let stage = progress_knowledge(row.stage()?, row.stage_gap()?);
+    let rule = progress_knowledge(row.rule()?, row.rule_gap()?);
+    let flags = row.flags()?;
+    let flags = flags
+        .iter()
+        .map(|flag| {
+            let name = flag.flag()?;
+            let truth = progress_truth(flag.truth())?;
+            let count = match flag.count() {
+                -1 => None,
+                count
+                    if (0..=crate::isolate_fb::MAX_PROGRESS_FLAG_COUNT as i32).contains(&count) =>
+                {
+                    Some(count as u32)
+                }
+                _ => return None,
+            };
+            Some(ProgressFlag {
+                flag: FactKey::new(name),
+                truth,
+                count,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(ApiQuestProgressRow {
+        quest: Arc::from(row.quest()?),
+        display: Arc::from(row.display()?),
+        colour,
+        stage,
+        rule,
+        complete,
+        flags: flags.into(),
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 0,
+                run: row.evidence_run(),
+                session: row.evidence_session(),
+            },
+            tick: row.evidence_tick(),
+            sequence: row.evidence_sequence(),
+        },
+        journal_read: row.journal_read(),
+        binding: Arc::from(row.binding()?),
+        role: row.role().map(Arc::from),
+    })
+}
+
+fn progress_knowledge(value: &str, gap: &str) -> Knowledge<Arc<str>> {
+    if gap.is_empty() {
+        Knowledge::Known(Arc::from(value))
+    } else {
+        let gap = Gap {
+            code: Arc::from(gap),
+            sources: Arc::from([]),
+        };
+        if value.is_empty() {
+            Knowledge::Unknown(gap)
+        } else {
+            Knowledge::Partial {
+                known: Arc::from(value),
+                gaps: Arc::from([gap]),
+            }
+        }
+    }
+}
+
+fn progress_truth(code: u8) -> Option<Truth> {
+    match code {
+        1 => Some(Truth::True),
+        2 => Some(Truth::False),
+        3 => Some(Truth::Unknown),
+        _ => None,
+    }
 }
 
 impl Scene {
@@ -1273,6 +1385,9 @@ impl Scene {
             if let Some(outcome) = read_gather_outcome(page) {
                 p.api_gather_outcome(outcome);
             }
+        }
+        if let Some(page) = snap.api_progress().and_then(read_api_progress) {
+            p.api_progress(page);
         }
         if snap.has_walk_outcome_seq() {
             p.walk_outcome(WalkOutcome {

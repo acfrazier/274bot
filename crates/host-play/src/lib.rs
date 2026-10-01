@@ -133,6 +133,7 @@ use play_login::{
 };
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
+pub use play_slots::SlotFrameInput;
 #[cfg(test)]
 use play_slots::{
     end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,

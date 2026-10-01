@@ -30,7 +30,8 @@ pub use random::{
 };
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
-    map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput, SlotPark, SlotWake,
+    map_image_to_applet, wake_channel, FrameBuf, InputEv, ManualMoveIntent, MouseOwner, SlotInput,
+    SlotPark, SlotWake,
 };
 #[cfg(feature = "journal-paint-proof")]
 pub use slot_io::{JournalPaintStamp, JournalProofFrame};
@@ -429,7 +430,8 @@ impl Host {
         client.set_external_reconnect_owner(true);
         client.set_hosted_title_label(Some(username));
         if let Some(inp) = input {
-            inp.consume_native_frame(&mut client.shell);
+            let owner = inp.consume_native_frame(&mut client.shell);
+            inp.classify_manual_move_intent(client, owner);
         } else {
             client.shell.latch_click();
         }

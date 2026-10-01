@@ -966,9 +966,11 @@ mod tests {
     fn unknown_keys_are_ignored() {
         let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
-        let mut map = Map::new(&world, &mut view, |_| {});
-        assert_eq!(map.on_key(key(KeyCode::F(1))), MapAction::Ignored);
-        assert_eq!(view.pan, (0, 0));
-        assert_eq!(view.selection, None);
+        let before = view.clone();
+        {
+            let mut map = Map::new(&world, &mut view, |_| {});
+            assert_eq!(map.on_key(key(KeyCode::F(1))), MapAction::Ignored);
+        }
+        assert_eq!(view, before, "ignored keys leave the view untouched");
     }
 }
