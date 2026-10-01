@@ -1134,7 +1134,7 @@ fn v2_retreat_settles_without_a_tile_and_walkspot_walks_the_world() {
 }
 
 #[test]
-fn v2_gather_methods_are_named_sync_helper_results_not_a_namespace() {
+fn v2_gather_catalog_helpers_are_named_sync_results() {
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -1159,7 +1159,6 @@ export function tick(api) {
     placementsThen: typeof placements.then,
     placementsRows: placements.value && placements.value.rows.length,
     placementsId: placements.value && placements.value.resource_ids[0].id,
-    namespace: api.gather,
     bestAxe: typeof api.bestAxe,
     bestPickaxe: typeof api.bestPickaxe,
     requested,
@@ -1187,7 +1186,6 @@ export function tick(api) {
     assert_eq!(probe["placementsThen"], "undefined", "{probe:?}");
     assert_eq!(probe["placementsRows"], 2, "{probe:?}");
     assert_eq!(probe["placementsId"], 1281, "{probe:?}");
-    assert!(probe["namespace"].is_null(), "{probe:?}");
     assert_eq!(probe["bestAxe"], "undefined", "{probe:?}");
     assert_eq!(probe["bestPickaxe"], "undefined", "{probe:?}");
     assert!(

@@ -435,6 +435,10 @@ mod memory_startup;
 mod tests;
 
 #[cfg(test)]
+mod api_gather_live_tests;
+#[cfg(test)]
+mod api_gather_tests;
+#[cfg(test)]
 mod bank_npc_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]

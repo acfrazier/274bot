@@ -1228,3 +1228,469 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     drop(prepared);
     drop(cold_prepared);
 }
+
+#[cfg(feature = "load")]
+mod api_gather_seat {
+    use super::*;
+    use crate::api_gather::{GatherEnd, GatherPhase};
+    use crate::shim::InteractReq;
+
+    fn load_slot(incarnation: u64, data: bool) -> SlotScript {
+        let mut slot = SlotScript::new();
+        slot.bind_incarnation(incarnation);
+        slot.start_load_with_settings_and_game_data(
+            "export function tick() {}".into(),
+            crate::load::LoadShape::NativeTick,
+            None,
+            vec![],
+            data.then(selected),
+            Arc::default(),
+        )
+        .unwrap();
+        assert_eq!(settle(&mut slot), StartOutcome::Ready);
+        slot.on_is_up(true);
+        slot
+    }
+
+    fn run(slot: &mut SlotScript, token: u64) {
+        slot.consume_api_control(&InteractReq::GatherRun {
+            request_id: token,
+            settings: Arc::new(SettingsBag::new()),
+        });
+    }
+
+    fn stop(slot: &mut SlotScript, token: u64) {
+        slot.consume_api_control(&InteractReq::GatherStop { request_id: token });
+    }
+
+    fn poll(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u64, hold: bool) {
+        slot.tick_api(&mut ScriptCtx {
+            driver: &mut NullDriver::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                hold,
+                ..Default::default()
+            },
+        });
+    }
+
+    fn installed(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            poll(slot, snapshot, 1, false);
+            if slot
+                .api
+                .as_ref()
+                .unwrap()
+                .page
+                .as_ref()
+                .is_some_and(|page| page.phase == GatherPhase::Running)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "API preparation stalled");
+            std::thread::yield_now();
+        }
+        assert!(
+            slot.api
+                .as_ref()
+                .unwrap()
+                .page
+                .as_ref()
+                .unwrap()
+                .status
+                .is_none(),
+            "install page has no status until the first tick"
+        );
+    }
+
+    #[test]
+    fn stop_during_preparation_is_prompt_clears_retention_and_never_installs() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(201, true);
+        run(&mut slot, 201);
+        let retention = Arc::clone(slot.retained.as_ref().unwrap());
+        retention.lock().unwrap().gather().yielded = 9;
+        stop(&mut slot, 201);
+        assert!(!slot.api_owns_foreground());
+        assert!(matches!(
+            slot.api.as_ref().unwrap().terminal,
+            Some(GatherEnd::Stopped { token: 201, .. })
+        ));
+        assert!(retention.lock().unwrap().gather().is_fresh());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !slot.api.as_ref().unwrap().retiring.is_empty() {
+            poll(&mut slot, &snapshot, 1, false);
+            assert!(Instant::now() < deadline, "retired preparation not reaped");
+            std::thread::yield_now();
+        }
+        assert!(slot.api.as_ref().unwrap().page.is_none());
+        assert!(!slot.has_native_actions());
+        stop(&mut slot, 201);
+        assert!(matches!(
+            slot.api.as_ref().unwrap().terminal,
+            Some(GatherEnd::Stopped { token: 201, .. })
+        ));
+        slot.stop();
+    }
+
+    #[test]
+    fn api_stop_revokes_five_undrained_native_drops_and_preserves_last_published_counts() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(202, true);
+        run(&mut slot, 202);
+        installed(&mut slot, &snapshot);
+        let mut authorities = Vec::new();
+        for tick in 2..18 {
+            poll(&mut slot, &snapshot, tick, false);
+            if slot.has_native_actions() {
+                authorities = slot
+                    .native_runtime
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .iter()
+                    .map(|action| action.authority())
+                    .collect();
+                break;
+            }
+        }
+        assert_eq!(authorities.len(), 5, "one bounded native drop batch");
+        let published = crate::slot::api_seat::counts(slot.native_status().as_deref());
+        let policy_override = api::run_policy::RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(77)),
+        };
+        slot.restore_interacts(vec![
+            InteractReq::Held {
+                name: "Logs".into(),
+                action: "Drop".into(),
+                slot: None,
+            },
+            InteractReq::RunPolicyOverride {
+                policy: Some(policy_override),
+            },
+            InteractReq::GatherStop { request_id: 202 },
+            InteractReq::InspectAck {
+                seq: 9,
+                generation: 7,
+            },
+            InteractReq::SetCameraYaw { yaw: 777 },
+        ]);
+        let (policy, rows, owned) = slot.drain_host_interacts();
+        assert_eq!(policy, Some(Some(policy_override)));
+        assert!(
+            owned,
+            "Stop retains ownership for its whole admission batch"
+        );
+        assert_eq!(
+            rows,
+            vec![
+                InteractReq::InspectAck {
+                    seq: 9,
+                    generation: 7,
+                },
+                InteractReq::SetCameraYaw { yaw: 777 },
+            ],
+            "the Stop edge drops game work but preserves host-local work"
+        );
+        assert!(authorities.iter().all(|authority| !authority.live()));
+        assert!(
+            slot.take_native_action().is_none(),
+            "Stop before Driver drain sends no packets"
+        );
+        assert!(
+            matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Stopped { token: 202, counts }) if counts == &published)
+        );
+        assert!(slot
+            .retained
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .gather()
+            .is_fresh());
+        slot.stop();
+    }
+
+    #[test]
+    fn reconnect_rekeys_actual_card_revokes_old_action_and_reposts_terminal() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(203, true);
+        run(&mut slot, 203);
+        installed(&mut slot, &snapshot);
+        for tick in 2..18 {
+            poll(&mut slot, &snapshot, tick, false);
+            if slot.has_native_actions() {
+                break;
+            }
+        }
+        let old = slot
+            .take_native_action()
+            .expect("native Gatherer action")
+            .authority();
+        let previous = old.run();
+        assert!(slot.reconnect_session_work());
+        assert!(slot.api_owns_foreground());
+        assert!(!old.live());
+        slot.on_is_up(true);
+        poll(&mut slot, &snapshot, 20, false);
+        let next = slot.native_status().unwrap().run;
+        assert_eq!(next.slot, previous.slot);
+        assert_eq!(next.run, previous.run);
+        assert_ne!(next.session, previous.session);
+        stop(&mut slot, 203);
+        assert!(slot.reconnect_session_work());
+        let page = slot.api.as_ref().unwrap();
+        assert!(page.page.is_none());
+        assert!(matches!(
+            &page.terminal,
+            Some(GatherEnd::Stopped { token: 203, .. })
+        ));
+        slot.stop();
+    }
+
+    #[test]
+    fn hold_pause_reset_and_watchdog_keep_only_the_authorized_retention() {
+        let snapshot = gatherer_snapshot();
+        let mut slot = load_slot(204, true);
+        run(&mut slot, 204);
+        installed(&mut slot, &snapshot);
+        for tick in 2..10 {
+            poll(&mut slot, &snapshot, tick, true);
+        }
+        assert!(!slot.has_native_actions(), "hold ineligible native actions");
+        assert!(slot.api_owns_foreground());
+        slot.pause();
+        let status = slot.native_status();
+        gatherer_tick(&mut slot, &snapshot, 10);
+        assert!(Arc::ptr_eq(
+            status.as_ref().unwrap(),
+            slot.native_status().as_ref().unwrap()
+        ));
+        slot.resume();
+        let retention = Arc::clone(slot.retained.as_ref().unwrap());
+        retention.lock().unwrap().gather().yielded = 7;
+        slot.reset_session_work();
+        assert!(!slot.api_owns_foreground());
+        assert!(slot.api.as_ref().unwrap().terminal.is_none());
+        assert_eq!(retention.lock().unwrap().gather().yielded, 7);
+        run(&mut slot, 205);
+        installed(&mut slot, &snapshot);
+        poll(&mut slot, &snapshot, 12, true);
+        let old_run = slot.native_status().unwrap().run;
+        slot.teardown_api(StopReason::Replaced);
+        assert!(slot.api.is_none());
+        assert_eq!(retention.lock().unwrap().gather().yielded, 7);
+        run(&mut slot, 206);
+        installed(&mut slot, &snapshot);
+        poll(&mut slot, &snapshot, 13, true);
+        assert_ne!(
+            old_run.run,
+            slot.native_status().unwrap().run.run,
+            "fresh action identity after seat recreation"
+        );
+        slot.stop();
+        assert!(slot.api.is_none());
+        assert!(slot.retained.is_none());
+    }
+
+    #[test]
+    fn missing_facts_refuses_and_duplicate_run_cannot_resurrect_the_terminal() {
+        let mut slot = load_slot(207, false);
+        run(&mut slot, 207);
+        assert!(
+            matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 207, reason }) if reason.as_ref() == "unavailable:selected game data unavailable")
+        );
+        run(&mut slot, 207);
+        assert!(!slot.api_owns_foreground());
+        assert_eq!(
+            slot.api
+                .as_ref()
+                .unwrap()
+                .terminal
+                .as_ref()
+                .unwrap()
+                .token(),
+            207
+        );
+        slot.stop();
+    }
+
+    #[test]
+    fn actual_blocked_terminal_wins_stop_race_and_next_run_keeps_retention() {
+        let mut snapshot = gatherer_snapshot();
+        let mut slot = load_slot(212, true);
+        run(&mut slot, 212);
+        installed(&mut slot, &snapshot);
+        poll(&mut slot, &snapshot, 2, false);
+        let retained = Arc::clone(slot.retained.as_ref().unwrap());
+        retained.lock().unwrap().gather().yielded = 8;
+        snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
+            type_: 0,
+            username: None,
+            text: "Oh dear, you are dead!".into(),
+            sequence: 1,
+        }]);
+        poll(&mut slot, &snapshot, 3, false);
+        assert!(!slot.api_owns_foreground());
+        assert!(slot.native_status().is_none());
+        assert!(
+            matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Blocked { token: 212, failure, .. }) if failure.code.as_ref() == "died")
+        );
+        let first = slot.api.as_ref().unwrap().terminal.clone();
+        stop(&mut slot, 212);
+        poll(&mut slot, &snapshot, 4, false);
+        assert_eq!(
+            slot.api.as_ref().unwrap().terminal,
+            first,
+            "first terminal is never replaced by late Stop/ticks"
+        );
+        assert!(!retained.lock().unwrap().gather().is_fresh());
+        snapshot.seed_chat_lines(Vec::new());
+        run(&mut slot, 213);
+        installed(&mut slot, &snapshot);
+        poll(&mut slot, &snapshot, 5, true);
+        assert_eq!(slot.api.as_ref().unwrap().page.as_ref().unwrap().token, 213);
+        assert!(slot.api_owns_foreground());
+        stop(&mut slot, 213);
+        assert!(retained.lock().unwrap().gather().is_fresh());
+        slot.stop();
+    }
+
+    #[test]
+    fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
+        let mut snapshot = gatherer_snapshot();
+        let mut warm = gatherer_slot(208);
+        let mut slot = load_slot(209, true);
+        assert!(
+            slot.api.is_none(),
+            "established Load baseline has no seat allocation"
+        );
+        let (prepared, instance, worker) = FamilyPreparation::run(|families| {
+            let selected = selected();
+            let cx = PrepareContext {
+                pin: selected.selected_pin().unwrap(),
+                selected,
+                banks: Arc::default(),
+                families,
+            };
+            let bag = Arc::new(SettingsBag::new());
+            let mut retained = RetainedMemory::default();
+            let mut prepared = None;
+            let mut instance = None;
+            let measured = allocation_counter::measure(|| {
+                let config = prepare_config(
+                    cx.families,
+                    crate::gatherer::CARD.id,
+                    1,
+                    bag,
+                    Arc::clone(&cx.selected),
+                    Arc::clone(&cx.banks),
+                )
+                .unwrap();
+                instance = Some(
+                    (crate::gatherer::CARD.create)(
+                        api::selected::RunKey {
+                            slot: 210,
+                            run: 1,
+                            session: 1,
+                        },
+                        Arc::clone(&config),
+                        &mut retained,
+                    )
+                    .unwrap(),
+                );
+                prepared = Some(config);
+            });
+            (prepared.unwrap(), instance.unwrap(), measured)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let live = allocation_counter::measure(|| {
+            run(&mut slot, 209);
+            installed(&mut slot, &snapshot);
+            for tick in 2..18 {
+                poll(&mut slot, &snapshot, tick, false);
+                if slot.has_native_actions() {
+                    break;
+                }
+            }
+        });
+        assert!(slot.has_native_actions(), "actual native batch measured");
+        let exclusive = worker.bytes_current + live.bytes_current;
+        println!("API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; host live={live:?}; exclusive={exclusive}B", std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>());
+        assert_eq!(
+            std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
+            8
+        );
+        assert!(
+            (0..=8192).contains(&exclusive),
+            "exclusive API seat exceeds 8KiB"
+        );
+        let stopped = allocation_counter::measure(|| stop(&mut slot, 209));
+        println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
+        assert!(!slot.api_owns_foreground());
+        // A second session uses the retained ledger and an animated observation
+        // to exercise the actual card's unchanged path without world copies.
+        snapshot.seed_inventory(Vec::new(), 28);
+        let mut player = snapshot.local_player().unwrap().clone();
+        player.player.actor.animation = 879;
+        snapshot.seed_local_player(player);
+        run(&mut slot, 211);
+        installed(&mut slot, &snapshot);
+        let mut first = None;
+        for tick in 20..36 {
+            poll(&mut slot, &snapshot, tick, false);
+            if let Some(action) = slot.take_native_action() {
+                let authority = action.authority();
+                slot.complete_native_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: action.request_id.get(),
+                        evidence: EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                    },
+                );
+                first = Some(tick + 1);
+                break;
+            }
+        }
+        let first = first.expect("live Gatherer click");
+        poll(&mut slot, &snapshot, first, false);
+        let page = Arc::clone(slot.api.as_ref().unwrap().page.as_ref().unwrap());
+        let steady = allocation_counter::measure(|| {
+            for tick in first + 1..first + 1001 {
+                poll(&mut slot, &snapshot, tick, false);
+            }
+        });
+        assert_eq!(
+            steady.count_total, 0,
+            "1,000 unchanged Load-seat native polls allocate nothing"
+        );
+        assert!(
+            Arc::ptr_eq(&page, slot.api.as_ref().unwrap().page.as_ref().unwrap()),
+            "unchanged status keeps the page identity"
+        );
+        println!(
+            "API gather unchanged polls=1000 allocations={}",
+            steady.count_total
+        );
+        slot.stop();
+        warm.stop();
+        drop(instance);
+        drop(prepared);
+    }
+}
