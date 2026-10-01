@@ -376,6 +376,10 @@ than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
 distant tile, or the old plane. Other transport arrival rules are unchanged.
 
+Native walks retain their action when a correlated host `RouteEnded` arrives
+before the observed player finishes moving. They settle on observed arrival
+or a stationary route end, bounded by the existing active walk deadline.
+This does not relax the requested radius.
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:
