@@ -1,5 +1,6 @@
 use super::owner::Owner;
 use super::{ActionError, InteractionReceipt, WalkReceipt, WalkRequest};
+use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use crate::shim::InteractReq;
 use api::selected::RunKey;
 use std::num::NonZeroU64;
@@ -32,6 +33,7 @@ pub struct HostAction {
 pub enum HostEffect {
     Interaction(InteractReq),
     Walk(WalkRequest),
+    BankPick(BankPickRequest),
 }
 
 /// A host continuation retains this fence after consuming the request payload.
@@ -73,7 +75,9 @@ pub struct QuietReadOwner {
 impl HostAction {
     pub fn live(&self) -> bool {
         match &self.effect {
-            HostEffect::Interaction(_) => self.owner.interaction_live(self.request_id),
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+                self.owner.interaction_live(self.request_id)
+            }
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
         }
     }
@@ -101,6 +105,8 @@ pub(crate) struct Ledger {
     pub walk: Option<WalkReceipt>,
     pub interaction: Option<InteractionReceipt>,
     pub interaction_request: Option<NonZeroU64>,
+    pub bank_pick: Option<BankPickReceipt>,
+    pub bank_pick_request: Option<NonZeroU64>,
     pub batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
@@ -115,6 +121,8 @@ impl Default for Ledger {
             walk: None,
             interaction: None,
             interaction_request: None,
+            bank_pick: None,
+            bank_pick_request: None,
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
             quiet_since: None,
@@ -174,6 +182,8 @@ impl Ledger {
         self.walk = None;
         self.interaction = None;
         self.interaction_request = None;
+        self.bank_pick = None;
+        self.bank_pick_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
         self.quiet_since = None;
@@ -199,6 +209,22 @@ impl Ledger {
         {
             self.interaction = Some(receipt);
         }
+    }
+
+    pub fn complete_bank_pick(&mut self, authority: &HostAuthority, receipt: BankPickReceipt) {
+        let request = authority.request_id();
+        if !authority.live()
+            || request.get() != receipt.request_id
+            || authority.run() != receipt.evidence.run
+            || self.bank_pick_request != Some(request)
+            || self.bank_pick.is_some()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return;
+        }
+        self.bank_pick = Some(receipt);
     }
 }
 
@@ -365,6 +391,90 @@ mod tests {
         ledger.commit_id_range(first, 2);
         assert_eq!(ledger.next_id, 0, "the last nonzero id may be consumed");
         assert_eq!(ledger.id_range(1), Err(ActionError::Cancelled));
+    }
+
+    #[test]
+    fn bank_pick_receipts_require_the_live_matching_owner_run_and_request() {
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
+        let mut ledger = Ledger::default();
+        let owner = Owner::new(run, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let old = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        let current = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        ledger.bank_pick_request = Some(current.request);
+        owner.set_interaction(current.request);
+        let receipt = BankPickReceipt {
+            request_id: current.request.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 4,
+                sequence: 4,
+            },
+            selected: crate::native_bank::SelectedBank {
+                bank_index: 7,
+                access_tile: api::snapshot::WorldTile {
+                    x: 100,
+                    z: 200,
+                    level: 0,
+                },
+                kind: crate::native_bank::PickKind::Reachable,
+                access: None,
+            },
+        };
+        ledger.complete_bank_pick(
+            &old,
+            BankPickReceipt {
+                request_id: old.request.get(),
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.bank_pick.is_none());
+        ledger.complete_bank_pick(
+            &current,
+            BankPickReceipt {
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: run.next_session().unwrap(),
+                    ..receipt.evidence
+                },
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.bank_pick.is_none());
+        ledger.complete_bank_pick(&current, receipt.clone());
+        assert_eq!(ledger.bank_pick, Some(receipt.clone()));
+        ledger.complete_bank_pick(
+            &current,
+            BankPickReceipt {
+                selected: crate::native_bank::SelectedBank {
+                    bank_index: 8,
+                    ..receipt.selected.clone()
+                },
+                ..receipt.clone()
+            },
+        );
+        assert_eq!(
+            ledger.bank_pick,
+            Some(receipt.clone()),
+            "a duplicate cannot replace the selected stand"
+        );
+        ledger.revoke();
+        ledger.complete_bank_pick(&current, receipt);
+        assert!(
+            ledger.bank_pick.is_none(),
+            "a late pick revived cancelled work"
+        );
     }
 
     #[test]

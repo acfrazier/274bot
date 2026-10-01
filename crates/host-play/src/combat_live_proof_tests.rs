@@ -216,7 +216,7 @@ struct LiveState {
     runner: ScenarioRunner,
     snapshot: GameSnapshot,
     pump: Pump,
-    start_handle: Option<ScriptStartHandle>,
+    start_context: Option<(ScriptStartHandle, Arc<api::named_banks::NamedBankFacts>)>,
     selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     path: Arc<CompiledPath>,
@@ -238,10 +238,10 @@ impl LiveState {
                 combat_proof::mark_invalid(&self.account, reason);
                 return;
             }
-            let Some(handle) = self.start_handle.as_ref() else {
+            let Some((handle, banks)) = self.start_context.as_ref() else {
                 combat_proof::mark_invalid(
                     &self.account,
-                    "StartScript reached before the test handle was installed",
+                    "StartScript reached before the native preparation context was installed",
                 );
                 return;
             };
@@ -254,6 +254,7 @@ impl LiveState {
                 Arc::clone(&self.path),
                 Arc::clone(&self.selected),
                 Arc::clone(&self.quests),
+                Arc::clone(banks),
             );
             match handle.start_test_script(
                 &self.account,
@@ -2362,7 +2363,7 @@ fn run_case(case: Case) {
         runner,
         snapshot: GameSnapshot::new(),
         pump: Pump::new(),
-        start_handle: None,
+        start_context: None,
         selected: Arc::clone(&selected),
         quests,
         path,
@@ -2402,7 +2403,7 @@ fn run_case(case: Case) {
     {
         let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
         state.runner.set_obj_names(obj_names);
-        state.start_handle = Some(play.script_start_handle());
+        state.start_context = Some((play.script_start_handle(), play.named_banks()));
     }
     play.focus(&account);
 

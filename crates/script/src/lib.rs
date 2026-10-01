@@ -3,6 +3,8 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+/// Shared native bank selector and transfer machines.
+pub mod bank;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;
@@ -40,7 +42,6 @@ pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 mod module_imports;
-/// Typed compiled cards, preparation, execution and output.
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;

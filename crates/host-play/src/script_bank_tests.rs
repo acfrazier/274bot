@@ -912,3 +912,67 @@ fn bank_pick_spawn_failure_settles_selection_or_refuses_walk_without_arming() {
         );
     }
 }
+
+#[test]
+fn native_bank_access_resolves_teller_and_object_metadata() {
+    let flags = vec![0; 4 * 16 * 16];
+    let (walk, blocked) = pack_walk(&flags);
+    let teller = nav::pack::BankStand {
+        name: "Gundai".to_owned(),
+        tile: tile(8, 8),
+        access: nav::pack::BankAccess::Npc {
+            name: "Gundai".to_owned(),
+            op: 4,
+            choose: None,
+        },
+    };
+    let world = NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![teller],
+    );
+    let definition = api::named_banks::BANK_CATALOG
+        .iter()
+        .find(|definition| definition.name == "Mage Arena")
+        .unwrap();
+    let mage_bank = api::named_banks::NamedBank {
+        name: definition.name,
+        tile: tile(8, 8),
+        definition: Some(definition),
+        routable: true,
+    };
+    let (access_tile, access) = native_bank_access(&world, mage_bank, tile(1, 1)).unwrap();
+    assert_ne!(access_tile, access.stand_tile);
+    assert_eq!(access_tile.level, access.stand_tile.level);
+    assert_eq!(access.kind, NativeAccessKind::Teller);
+    assert_eq!(access.name.as_deref(), Some("Gundai"));
+    assert_eq!(access.stand_op, 4);
+    assert_eq!(
+        access.choose.as_deref(),
+        Some("I'd like to access my bank account")
+    );
+
+    let shantay = api::named_banks::BANK_CATALOG
+        .iter()
+        .find(|definition| definition.name == "Shantay Pass")
+        .unwrap();
+    let shantay_bank = api::named_banks::NamedBank {
+        name: shantay.name,
+        tile: shantay.tile,
+        definition: Some(shantay),
+        routable: true,
+    };
+    let (access_tile, access) = native_bank_access(&world, shantay_bank, tile(1, 1)).unwrap();
+    assert_eq!(access_tile, shantay.tile);
+    assert_eq!(access.stand_tile, shantay.tile);
+    assert_eq!(access.kind, NativeAccessKind::Booth);
+    assert_eq!(access.name.as_deref(), Some("Shantay chest"));
+    assert_eq!(access.stand_op, 0);
+}

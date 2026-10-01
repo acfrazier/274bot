@@ -1418,6 +1418,16 @@ impl SlotScript {
         }
     }
 
+    pub fn complete_native_bank_pick(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native_bank::BankPickReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_bank_pick(authority, receipt);
+        }
+    }
+
     /// Drain the interact requests this slot's script queued, in tick order:
     /// the Load isolate's forwarded queue (the shim Bank/Banking queue), or
     /// the compiled card's own queue. The two are exclusive by construction —
