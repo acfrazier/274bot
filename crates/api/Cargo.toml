@@ -9,7 +9,11 @@ debug-catalog = []
 
 [dependencies]
 client = { workspace = true }
+flate2 = "=1.1.9"
 parking_lot = "0.12"
 serde = { version = "=1.0.219", features = ["derive", "rc"] }
 serde_json = "=1.0.140"
 sha2 = "=0.10.9"
+
+[build-dependencies]
+flate2 = "=1.1.9"
