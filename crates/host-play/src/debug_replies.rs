@@ -287,6 +287,7 @@ mod tests {
         let mut replies = DebugReplies::default();
 
         replies.sent_at("alice", "getcoord".into(), &snapshot, start);
+        assert_eq!(replies.pending.len(), 1, "sent command is observed");
         replies.observe_at("alice", &snapshot, start + WINDOW);
 
         assert!(replies.pending.is_empty());
@@ -300,6 +301,7 @@ mod tests {
         let mut replies = DebugReplies::default();
 
         replies.sent_at("alice", "getcoord".into(), &connected, start);
+        assert_eq!(replies.pending.len(), 1, "sent command is observed");
         replies.observe_at("alice", &disconnected, start + Duration::from_secs(1));
 
         assert!(replies.pending.is_empty());

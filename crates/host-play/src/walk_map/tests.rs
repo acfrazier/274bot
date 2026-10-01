@@ -82,6 +82,41 @@ fn world(origin: Tile, size: usize, blocks: &[(usize, usize, usize)]) -> NavWorl
         vec![],
     )
 }
+fn install_zone_wall(world: &mut NavWorld) {
+    let zones = (0..8)
+        .map(|z| {
+            nav::zones::Zone::npc(
+                wt(3203, 3200 + z, 0),
+                0,
+                nav::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )
+        })
+        .collect();
+    let kinds = vec![nav::zones::ZoneKind::new(
+        "test-barrier",
+        "Test barrier",
+        123,
+        0,
+        false,
+        false,
+    )];
+    world.graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            zones,
+            kinds,
+            vec![],
+            vec![],
+            vec![],
+            world.collision.origin,
+            world.collision.width as u32,
+            world.collision.height as u32,
+            &world.graph.wilderness,
+        )
+        .unwrap(),
+    );
+}
 fn record(
     entity: EntityKind,
     x: i32,
@@ -1428,7 +1463,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     let kinds: Vec<(&str, WalkSlotOutcomeKind)> = report
         .outcomes
         .iter()
-        .map(|o| (o.name.as_str(), o.kind))
+        .map(|o| (o.name.as_str(), o.kind.clone()))
         .collect();
     assert_eq!(
         kinds,
@@ -1504,11 +1539,58 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert!(!arms.contains_key("bot3"));
 }
 
+#[test]
+fn grouped_zone_refusal_keeps_its_named_detail() {
+    let mut nav = world(t(3200, 3200, 0), 8, &[]);
+    install_zone_wall(&mut nav);
+    let fixture = MapFixture::new(&nav, "local-289");
+    let play = fixture.play(t(3201, 3201, 0));
+    let dest_ctx = bound_context(&play);
+    let baked = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(dest_ctx);
+    let destination = t(3205, 3206, 0);
+    assert_eq!(model.select_tile(&baked, destination), Some(destination));
+    let plan = model
+        .confirm_walk_plan(&dest_ctx, FindOptions::default())
+        .unwrap();
+
+    let state = WorldState::empty();
+    let bank: [(i32, i32); 0] = [];
+    let request = [WalkSlotRequest {
+        name: "alice",
+        state: &state,
+        bank: &bank,
+    }];
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
+    assert!(!report.legacy_zones_unavailable);
+    let WalkSlotOutcomeKind::Failed(error) = &report.outcomes[0].kind else {
+        unreachable!("zone refusal must carry its error");
+    };
+    let ActionError::BlockedByZones {
+        detail: Some(detail),
+    } = error
+    else {
+        unreachable!("zone refusal must carry its named diagnosis");
+    };
+    assert!(error.to_string().contains("test-barrier@3203,"), "{error}");
+    assert!(detail.starts_with("blocked by danger zones:"), "{detail}");
+    assert!(detail.contains("test-barrier@3203,"), "{detail}");
+}
 /// Each failure keeps its own group-walk reason: a nav-identity mismatch reads
 /// "stale" and a membership refusal "members-only path", never a generic label.
 #[test]
 fn group_walk_reasons_label_stale_and_members_only_separately() {
     let reason = |error| WalkSlotOutcomeKind::Failed(error).reason();
+    assert_eq!(
+        reason(ActionError::BlockedByZones { detail: None }),
+        Some("blocked by danger zones")
+    );
+    assert_eq!(
+        ActionError::BlockedByZones { detail: None }.to_string(),
+        "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
+    );
     assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));
     assert_eq!(reason(ActionError::Stale), Some("stale"));
     assert_eq!(reason(ActionError::MembersOnly), Some("members-only path"));

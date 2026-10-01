@@ -1,7 +1,7 @@
 //! Nav: whole-world collision bake, transport graph, Dijkstra router
 //! (`find` / `find_with`), pollable `Traveller::follow`, WalkTo grid,
 //! arrival detection, and the content-derived bank stand table. Pack
-//! magic `274V`, version byte 11.
+//! magic `274V`, version byte 12.
 
 pub mod arrival;
 pub mod bake;
@@ -25,6 +25,7 @@ pub mod traveller;
 pub mod walk_destinations;
 pub mod world;
 pub mod world_state;
+pub mod zones;
 
 pub use world_state::WorldState;
 

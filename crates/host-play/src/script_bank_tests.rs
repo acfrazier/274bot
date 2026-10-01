@@ -591,7 +591,14 @@ fn bank_pick_walk_reset_abort_and_newer_route_lease_reject_late_results() {
                 let bot = all.get_mut("test").unwrap();
                 bot.route_generation = bot.route_generation.wrapping_add(1);
                 bot.walk_request_id = 91;
-                bot.requested_route = Some((tile(15, 15), 2, false, false, false));
+                bot.requested_route = Some((
+                    tile(15, 15),
+                    2,
+                    false,
+                    false,
+                    false,
+                    nav::zones::ZoneExempt::NONE,
+                ));
                 bot.note_failure(bot.route_generation, 91, tile(15, 15), 2, false);
             }
         }
@@ -637,7 +644,14 @@ fn bank_pick_latest_pending_selection_preserves_an_armed_walk() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("test").unwrap();
         bot.route = Some(route.clone());
-        bot.requested_route = Some((route.dest, 0, false, false, false));
+        bot.requested_route = Some((
+            route.dest,
+            0,
+            false,
+            false,
+            false,
+            nav::zones::ZoneExempt::NONE,
+        ));
         bot.walk_request_id = 91;
         bot.route_generation = 12;
     }

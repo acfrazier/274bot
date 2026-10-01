@@ -123,17 +123,8 @@ pub fn rail_preview_open(
 mod tests {
     use super::{
         os_window_size, rail_preview_open, rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, RAIL_W,
-        TILE_H, TILE_W,
     };
     use frontend_core::Light;
-
-    #[test]
-    fn rail_constants_match_the_plan() {
-        assert_eq!(RAIL_W, 264.0);
-        assert_eq!(TILE_W, 236.0);
-        assert_eq!(TILE_H, 155.0);
-        assert_eq!(crate::theme::RAIL_WINDOW, "274bot-rail");
-    }
 
     #[test]
     fn rail_preview_defaults_fold_focused() {

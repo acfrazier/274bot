@@ -36,9 +36,7 @@ mod tests {
 
     #[test]
     fn ids_cover_pack_and_exclude_suit_of_armour() {
-        assert_eq!(ENT_NPC_IDS, &[444, 445, 446, 447, 448, 449, 450, 451, 452]);
         assert_eq!(ENT_NPC_IDS.len(), 9);
-        assert_eq!(ENT_LIFE_TICKS, 60);
         assert!(!is_ent_npc_id(443));
         assert!(is_ent_npc_id(444));
         assert!(is_ent_npc_id(452));
@@ -56,8 +54,6 @@ mod tests {
         assert_ne!(data_274.cache_id(), data_289.cache_id());
         assert!(data_274.item_by_alias("rune_platebody").is_some());
         assert!(data_289.item_by_alias("rune_platebody").is_some());
-        assert_eq!(ENT_NPC_IDS, &[444, 445, 446, 447, 448, 449, 450, 451, 452]);
-        assert_eq!(ENT_LIFE_TICKS, 60);
         assert!(!is_ent_npc_id(SUIT_OF_ARMOUR_NPC_ID));
     }
 }

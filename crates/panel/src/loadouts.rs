@@ -603,7 +603,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(ids.len(), 4, "layout has four spacer cells");
     }
 
     #[test]

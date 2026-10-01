@@ -277,20 +277,21 @@ table ApiGatherOutcome {
   xp: int;
 }
 
-// Reserved for slice B (Snapshot VT 274); no runtime behavior in slice A.
+// One progress page for the most recent quest-progress request (Snapshot VT 274).
+// Counts are bounded at 999999999 by the progress resolver; -1 means no capture.
 table ProgressFlagRow {
   flag: string;
-  truth: ubyte;
+  truth: ubyte; // 1 true, 2 false, 3 unknown.
   count: int = -1;
 }
 
 table QuestProgressRow {
   quest: string;
   display: string;
-  colour: ubyte;
+  colour: ubyte; // 1 notStarted, 2 inProgress, 3 complete, 4 unknown.
   stage: string;
   stage_gap: string;
-  complete: ubyte;
+  complete: ubyte; // 1 true, 2 false, 3 unknown.
   rule: string;
   rule_gap: string;
   flags: [ProgressFlagRow];
@@ -566,6 +567,9 @@ table AvoidRect {
   min_z: int;
   max_z: int;
   level: int = -1;
+  // Additive FlatBuffer catalog reference; absent/empty retain rectangle form.
+  // Empty is reserved as the invalid-zone sentinel (never a real catalog id).
+  catalog_id: string;
 }
 
 // One shim interact request, tagged by `op`:
@@ -636,6 +640,9 @@ table Interact {
   run_energy_min: int = 0;
   // Typed native API controls; settings is present only for gather-run.
   settings: [SettingRow];
+  // Per-request named zone exemptions for world walks and inspect-route. The
+  // compat JSON surface has no wire field.
+  cross: [string];
 }
 
 // The tick's shim interact queue, forwarded to the host.

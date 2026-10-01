@@ -11,8 +11,121 @@ const COOK_KITCHEN: WorldTile = WorldTile {
     level: 0,
 };
 
+const SHEEP_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("sheep"),
+}];
+const RUNE_MYSTERIES_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("runemysteries"),
+}];
+const ROMEO_AND_JULIET_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quest",
+    value: ScriptInjectValue::Str("romeojuliet"),
+}];
+// Q2 route threshold: the Sheep and Rune legs cross bearded dark wizards
+// (vislevel 20, huntmode `ranged`) and young dark wizards (vislevel 7,
+// huntmode `ranged`). Engine `Npc.huntPlayers` skips a player whose combat
+// exceeds twice the hunter's vislevel (`Npc.ts`, `check_nottoostrong =
+// outside_wilderness` in `all.hunt [ranged]`), so the bearded wizard stays
+// passive only at combat 41+, the young at 15+, and Aubury's Mugger
+// (vislevel 6, `cowardly`) at 13+. Sheep and Rune therefore stage the
+// tested combat-41 minimum from the minme fresh base (all stats 1,
+// Hitpoints 10 — `ClientCheatHandler.ts` `minme`) and hold Start until the
+// posted stats prove it. "Minimum" is the combat threshold, not
+// individually minimal skills: Attack/Strength/Defence 40 follows the
+// existing combat-prep precedent (`combat.rs` `COMBAT_ATTACK_LEVEL`), and
+// Hitpoints 20 keeps the total at exactly 41 while adding a survivability
+// margin. This covers only the passive-threshold route hazard: Draynor
+// jail guards (vislevel 26, huntmode `aggressive_melee`,
+// `check_nottoostrong = off`) hunt at any combat level and remain a route
+// hazard until nav zones land. Romeo & Juliet stays at the fresh base —
+// no hunter reaches its stands — and is the unchanged baseline.
+const S2_ATTACK_STAT_ID: i32 = 0;
+const S2_DEFENCE_STAT_ID: i32 = 1;
+const S2_STRENGTH_STAT_ID: i32 = 2;
+const S2_HITPOINTS_STAT_ID: i32 = 3;
+/// Staged Attack/Strength/Defence: the existing combat-prep precedent
+/// (`combat.rs` `COMBAT_ATTACK_LEVEL`). No maxme: nothing above 40.
+const S2_SAFE_COMBAT_SKILL: i32 = 40;
+/// Staged Hitpoints. Engine `Player.getCombatLevel` posts exactly combat
+/// 41 for the tuple: base 0.25*(40+20) = 15, melee 0.325*(40+40) = 26,
+/// floor(41) = 41 — past twice the bearded wizard's 20. Dropping any one
+/// of the four staged stats by a level posts 40, still hunted.
+const S2_SAFE_HITPOINTS: i32 = 20;
+/// Fresh-base reset every S2 quest fixture emits before any seed.
+fn s2_reset_step() -> Step {
+    Step {
+        name: "reset fixture stats to the fresh base",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "minme");
+                true
+            }),
+        },
+        wait: Wait {
+            // Posted Defence back at base 1 before any seed lands. Fails
+            // closed while a reused account still carries a staged profile.
+            arm: Proof::StatAtMost {
+                id: S2_DEFENCE_STAT_ID,
+                max: 1,
+            },
+            budget_ticks: 80,
+        },
+    }
+}
+/// Shared combat-41 profile for the Sheep and Rune fixtures: one raise per
+/// tuple stat plus an observed guard per stat, so Start waits until the
+/// posted levels prove exactly combat 41 (see `S2_SAFE_HITPOINTS`). Observe
+/// before teleport/relog/Start; relog clears the stat-level-up UI. The
+/// guards say nothing about the jail guards, which hunt at any combat.
+fn s2_combat_profile_steps() -> Vec<Step> {
+    const PROFILE: [(i32, &str, i32); 4] = [
+        (S2_ATTACK_STAT_ID, "attack", S2_SAFE_COMBAT_SKILL),
+        (S2_DEFENCE_STAT_ID, "defence", S2_SAFE_COMBAT_SKILL),
+        (S2_STRENGTH_STAT_ID, "strength", S2_SAFE_COMBAT_SKILL),
+        (S2_HITPOINTS_STAT_ID, "hitpoints", S2_SAFE_HITPOINTS),
+    ];
+    PROFILE
+        .iter()
+        .map(|(id, skill, level)| {
+            let id = *id;
+            let skill = *skill;
+            let level = *level;
+            Step {
+                name: "stage combat-41 profile and observe it before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &format!("setstat {skill} {level}"));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id, min: level },
+                    budget_ticks: 80,
+                },
+            }
+        })
+        .collect()
+}
+/// Splice S2 safe-stat staging into a quest fixture ahead of its `setvar`
+/// stage seed. `profile` holds the quest's raises (empty for Romeo &
+/// Juliet, which stays at the fresh base). Cook fixtures are out of scope
+/// and keep the shared `quester_stage` path untouched.
+fn stage_s2_safe_stats(scenario: &mut Scenario, profile: Vec<Step>) {
+    let seed = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "reset quest stage")
+        .expect("quester fixture has a quest-stage seed step");
+    let mut prep = vec![s2_reset_step()];
+    prep.extend(profile);
+    scenario.steps.splice(seed..seed, prep);
+}
 /// Generic builder: jump a quest to a stage key with optional items, then
-/// Start Quester. `varp`/`value` seed via `setvar` (fixture only).
+/// Start Quester. `varp`/`value` seed via `setvar` (fixture only). The pack
+/// is always cleared first, even when `items` is empty, so a reused fixture
+/// account cannot carry quest items into the run.
 pub fn quester_stage(
     name: &'static str,
     quest_display: &'static str,
@@ -35,38 +148,27 @@ pub fn quester_stage(
             budget_ticks: 40,
         },
     });
-    if !items.is_empty() {
-        steps.push(Step {
-            name: "seed items",
-            kind: StepKind::Perform {
-                send: Box::new(move |c, _| {
-                    cheat(c, "~clearinv");
-                    for (alias, qty) in items {
-                        cheat(c, &format!("give {alias} {qty}"));
-                    }
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 0 },
-                budget_ticks: 80,
-            },
-        });
-    }
     steps.push(Step {
-        name: "relog so the quest tab colour matches the seeded varp",
-        kind: StepKind::Relog,
+        name: "clear and seed inventory",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                for (alias, qty) in items {
+                    cheat(c, &format!("give {alias} {qty}"));
+                }
+                true
+            }),
+        },
         wait: Wait {
-            arm: Proof::SideTabAvailable { index: 3 },
-            budget_ticks: 600,
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 80,
         },
     });
     steps.push(Step {
         name: "stand at the quest start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
-                cheat(c, &tele_args(stand.level, stand.x, stand.z));
-                true
+                cheat(c, &tele_args(stand.level, stand.x, stand.z)).is_sent()
             }),
         },
         wait: Wait {
@@ -76,6 +178,14 @@ pub fn quester_stage(
                 level: stand.level,
             },
             budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "relog so the quest tab colour matches the seeded varp",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
         },
     });
     steps.push(start_compiled_step());
@@ -124,6 +234,72 @@ pub(crate) fn quester_cook_scenario() -> Scenario {
         &[],
         COOK_KITCHEN,
     )
+}
+
+pub(crate) fn quester_sheep_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_sheep",
+        "Sheep Shearer",
+        "sheep",
+        0,
+        &[("coins", 100)],
+        WorldTile {
+            x: 3197,
+            z: 3266,
+            level: 0,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(SHEEP_SETTINGS);
+    // Bearded-dark-wizard leg: reset, then the combat-41 profile whose
+    // observed guards hold Start until the posted stats prove combat 41.
+    // No wool or weapon seed: the Path shears, spins and hands in from
+    // zero, buying shears with the seeded coins when none are banked.
+    stage_s2_safe_stats(&mut scenario, s2_combat_profile_steps());
+    scenario
+}
+
+/// Fresh Duke Horacio start: the fixture stands on the castle's upper floor
+/// by the Duke and plays the whole quest; nothing is seeded.
+pub(crate) fn quester_rune_mysteries_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_rune_mysteries",
+        "Rune Mysteries Quest",
+        "runemysteries",
+        0,
+        &[],
+        WorldTile {
+            x: 3212,
+            z: 3220,
+            level: 1,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(RUNE_MYSTERIES_SETTINGS);
+    // Same bearded-dark-wizard leg as Sheep: reset, then the combat-41
+    // profile whose observed guards hold Start until the posted stats prove
+    // combat 41. The stand is the Path's own `start-duke` anchor
+    // (paths/289/runemysteries.json, upstairs level 1).
+    stage_s2_safe_stats(&mut scenario, s2_combat_profile_steps());
+    scenario
+}
+
+pub(crate) fn quester_romeo_and_juliet_scenario() -> Scenario {
+    let mut scenario = quester_stage(
+        "quester_romeo_and_juliet",
+        "Romeo & Juliet",
+        "rjquest",
+        0,
+        &[],
+        WorldTile {
+            x: 3211,
+            z: 3425,
+            level: 0,
+        },
+    );
+    scenario.settings.script_settings_inject = Some(ROMEO_AND_JULIET_SETTINGS);
+    // Unchanged baseline: no hunter reaches its stands, so the fresh base
+    // (Tier A, passive 3) is the safe profile — reset, no raise.
+    stage_s2_safe_stats(&mut scenario, Vec::new());
+    scenario
 }
 
 /// Resume Cook from in-progress with the three products already held.

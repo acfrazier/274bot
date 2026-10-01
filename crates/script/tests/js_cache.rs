@@ -1,8 +1,6 @@
 //! Task 2: SHA content-addressed JS cache + hot-reload (never write `$RS2B0T`).
 
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
 
 use script::load::JsLibrary;
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
@@ -91,8 +89,17 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
     let first = cache
         .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta.clone())
         .unwrap();
+    // Backdate the object file instead of sleeping: a hit must leave the
+    // mtime exactly where we put it, on any filesystem granularity.
+    let object = cache.object_path(&first.sha256);
+    let backdated = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&object)
+        .expect("open cached object")
+        .set_modified(backdated)
+        .expect("backdate cached object");
     let mtime = object_mtime(&cache, &first.sha256);
-    thread::sleep(Duration::from_millis(20));
 
     let second = cache
         .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta)

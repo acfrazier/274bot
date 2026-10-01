@@ -362,6 +362,7 @@ pub struct WalkRequest {
     pub options: FindOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
+    pub cross: Box<[Arc<str>]>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
@@ -378,6 +379,8 @@ pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub end: WalkEnd,
+    pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
+    pub detail: Option<Arc<str>>,
 }
 
 /// Result of the host's dispatch attempt, not proof of a server-side change.
@@ -387,6 +390,9 @@ pub struct InteractionReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub accepted: bool,
+    /// Newest chat sequence in the host's pre-send snapshot, not in the
+    /// later snapshot where the script consumes this receipt.
+    pub chat_since: i32,
 }
 
 impl<'a> ActionContext<'a> {

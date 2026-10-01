@@ -60,3 +60,23 @@ pub fn compiled_id(name: &str) -> Option<CompiledId> {
 pub fn is_whale(name: &str) -> bool {
     WHALE_IDS.contains(&name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whale_gate_keeps_listed_whales_out_and_real_cards_in() {
+        for whale in ["Woodcutter", "RockCrab", "NatureCrafter", "ShopRunner"] {
+            assert!(is_whale(whale), "{whale} must stay whale-gated");
+        }
+        for listed in [
+            crate::gatherer::CARD.id.0,
+            crate::quester::CARD.id.0,
+            "BoneBurier",
+            "",
+        ] {
+            assert!(!is_whale(listed), "{listed} must not be whale-gated");
+        }
+    }
+}

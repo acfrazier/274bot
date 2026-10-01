@@ -20,6 +20,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }),
         "held" => Some(InteractReq::Held {
             name: text_field(step, "name")?.to_string(),
