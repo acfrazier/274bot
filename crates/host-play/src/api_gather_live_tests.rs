@@ -794,3 +794,181 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         serde_json::to_string_pretty(&receipt).expect("format receipt")
     );
 }
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_quest_progress_complete_cook_through_load_api() {
+    assert!(std::env::var("LIVE").is_ok_and(|value| value == "1"));
+    let evidence_dir = PathBuf::from(
+        std::env::var_os("BOT_EVIDENCE_DIR").expect("progress live evidence directory"),
+    );
+    let home = ThrowawayHome::enter("progress", &evidence_dir);
+    let template = live_options(&home.path)
+        .resolve(None)
+        .expect("resolve local profile")
+        .prepare_template()
+        .expect("prepare local cached template");
+    let names = play_bootstrap::mint_live_names(1);
+    let account = names[0].clone();
+    let credentials = mint_live_entries(&names);
+    let setup = Arc::new(Mutex::new((0u8, None::<String>)));
+    let frame_setup = Arc::clone(&setup);
+    let frame_account = account.clone();
+    let mut play = run_with_template(
+        template,
+        false,
+        vec![],
+        |_| (None, None),
+        move |client, username, hold| {
+            if username != frame_account {
+                return;
+            }
+            let mut state = frame_setup.lock().expect("progress setup lock");
+            if state.1.is_some() || state.0 == 7 {
+                return;
+            }
+            let mut snapshot = api::snapshot::GameSnapshot::new();
+            snapshot.rebuild(client);
+            if hold {
+                return;
+            }
+            let result = (|| -> Result<(), String> {
+                match state.0 {
+                    0 if client.ingame && client.scene_state == 2 => {
+                        // Own tutorial setup so the automatic mainland hop cannot race logout.
+                        api::interact::mainland_hop(client);
+                        state.0 = 1;
+                    }
+                    1 => {
+                        send_cheat(client, "getvar tutorial")?;
+                        state.0 = 2;
+                    }
+                    2 if snapshot.chat_lines().iter().any(|line| {
+                        line.text
+                            .to_ascii_lowercase()
+                            .contains("get tutorial: 1000")
+                    }) || snapshot
+                        .chat_modal_texts()
+                        .iter()
+                        .any(|line| line.to_ascii_lowercase().contains("get tutorial: 1000")) =>
+                    {
+                        let ifaces = Arc::clone(&client.ifaces);
+                        if !api::interact::logout(client, &ifaces) {
+                            return Err("tutorial logout interface unavailable".into());
+                        }
+                        state.0 = 3;
+                    }
+                    3 if client.ingame
+                        && client.scene_state == 2
+                        && snapshot
+                            .side_tabs()
+                            .iter()
+                            .any(|tab| tab.index == 3 && tab.available) =>
+                    {
+                        // The local 289 engine's variable is cookquest, not cook.
+                        send_cheat(client, "setvar cookquest 2")?;
+                        state.0 = 4;
+                    }
+                    4 => {
+                        send_cheat(client, "getvar cookquest")?;
+                        state.0 = 5;
+                    }
+                    5 if snapshot.chat_lines().iter().any(|line| {
+                        line.text.to_ascii_lowercase().contains("get cookquest: 2")
+                    }) =>
+                    {
+                        // setvar changes the varp, not the quest-list colour. Login's
+                        // update_questlist hydrates the actual server-side tab state.
+                        let ifaces = Arc::clone(&client.ifaces);
+                        if !api::interact::logout(client, &ifaces) {
+                            return Err("Cook seed logout interface unavailable".into());
+                        }
+                        state.0 = 6;
+                    }
+                    6 if snapshot.quest_statuses().iter().any(|row| {
+                        row.name == "Cook's Assistant"
+                            && row.status() == api::snapshot::QuestListStatus::Complete
+                    }) && client.ingame
+                        && client.scene_state == 2 =>
+                    {
+                        state.0 = 7;
+                    }
+                    _ => {}
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                state.1 = Some(error);
+            }
+        },
+    )
+    .expect("start progress live Play");
+    let (username, password) = &credentials[0];
+    play.try_spawn_slot(
+        Profile {
+            username: username.clone(),
+            password: password.clone().into(),
+            uid: 274_279_104,
+            settings: ProfileSettings::default(),
+        },
+        None,
+        None,
+        None,
+    )
+    .expect("spawn fresh progress account");
+    wait_until("Cook complete fixture", Duration::from_secs(240), || {
+        let state = setup.lock().expect("progress setup lock");
+        assert!(state.1.is_none(), "fixture error: {:?}", state.1);
+        state.0 == 7
+    });
+    play.script_start_load(
+        &account,
+        r#"export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  globalThis.__paths = api.questPaths();
+  globalThis.__progress = await api.questProgress({quest:'cook'});
+}"#
+        .into(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .expect("start progress public Load consumer");
+    wait_until("progress Load Running", Duration::from_secs(30), || {
+        play.script_state(&account) == script::RunState::Running
+    });
+    wait_until("questProgress terminal", Duration::from_secs(30), || {
+        !slot_probe(&play, &account, "globalThis.__progress || null").is_null()
+    });
+    let paths = slot_probe(&play, &account, "globalThis.__paths");
+    let terminal = slot_probe(&play, &account, "globalThis.__progress");
+    assert_eq!(paths["ok"], true);
+    assert_eq!(
+        paths["value"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["cook", "sheep", "runemysteries", "romeojuliet"]
+    );
+    assert_eq!(terminal["kind"], "done");
+    assert_eq!(terminal["value"]["end"], "done");
+    assert_eq!(terminal["value"]["row"]["stage"]["state"], "known");
+    assert_eq!(terminal["value"]["row"]["stage"]["value"], "cook:2");
+    assert_eq!(terminal["value"]["row"]["complete"], "true");
+    assert_eq!(terminal["value"]["row"]["journal_read"], false);
+    let receipt = serde_json::json!({
+        "proof": "fresh local-289 Cook complete through public Load API",
+        "account": account,
+        "seed": "setvar cookquest 2",
+        "paths": paths,
+        "terminal": terminal,
+        "journal_rule_witness": "design slice D owns the released Romeo & Juliet stage-30/stage-40 live quiet-lease witness",
+    });
+    let path = evidence_dir.join("api-progress-live-receipt.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();
+    println!("api-progress-live-receipt={}\n{receipt}", path.display());
+}

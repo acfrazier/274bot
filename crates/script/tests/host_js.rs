@@ -357,6 +357,137 @@ const invalid: GatherSettings = { radius: 'wide' };
 void invalid;
 "#;
 
+/// Quest progress consumer compile gate (pinned TypeScript 5.8.3): a
+/// temporary consumer exercises both slice-B calls and every row field
+/// positively and pins one `@ts-expect-error` non-object case.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_quest_progress_consumer_uses_both_calls() {
+    use std::process::Command;
+
+    let dir =
+        std::env::temp_dir().join(format!("host-js-progress-consumer-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear progress consumer dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create progress consumer dir");
+    std::fs::write(dir.join("quest_progress.d.ts"), render_host_js_dts())
+        .expect("write progress declarations");
+    std::fs::write(dir.join("consumer.ts"), QUEST_PROGRESS_CONSUMER)
+        .expect("write progress consumer");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(dir.join("consumer.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc progress consumer failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove progress consumer dir");
+    assert!(
+        output.status.success(),
+        "progress consumer failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// Temporary slice-B consumer fixture: uses `api.questPaths`,
+/// `api.questProgress`, and every path/row field, plus one rejected
+/// non-object row.
+const QUEST_PROGRESS_CONSUMER: &str = r#"
+import type {
+  Known,
+  NativeApi,
+  QuestPathRow,
+  QuestProgressEnd,
+  QuestProgressOutcome,
+  QuestProgressRow,
+  Truth3,
+} from "./quest_progress";
+
+declare const api: NativeApi;
+
+function paths(): QuestPathRow[] | null {
+  const out = api.questPaths();
+  if (!out.ok) {
+    const error: string = out.error;
+    void error;
+    return null;
+  }
+  for (const row of out.value.rows) {
+    const id: string = row.id;
+    const display: string = row.display;
+    const journal: boolean = row.journal;
+    const stages: string[] = row.stages;
+    void [id, display, journal, stages];
+  }
+  return out.value.rows;
+}
+
+async function progress(quest: string): Promise<QuestProgressRow | null> {
+  const outcome: QuestProgressOutcome = await api.questProgress({ quest });
+  if (outcome.kind === 'done') {
+    const end: QuestProgressEnd = outcome.value;
+    if (end.end === 'done') {
+      const row: QuestProgressRow = end.row;
+      const questId: string = row.quest;
+      const display: string = row.display;
+      const colour: 'notStarted' | 'inProgress' | 'complete' | 'unknown' = row.colour;
+      const stage: Known<string> = row.stage;
+      const stageText: string = stage.state === 'known' ? stage.value : stage.gap;
+      const complete: Truth3 = row.complete;
+      const rule: Known<string> = row.rule;
+      const ruleText: string = rule.state === 'known' ? rule.value : rule.gap;
+      const exhaustive: Truth3 = complete === 'true' ? 'false' : complete;
+      for (const flag of row.flags) {
+        const name: string = flag.flag;
+        const truth: Truth3 = flag.truth;
+        const count: number | null = flag.count;
+        void [name, truth, count];
+      }
+      const run: number = row.evidence.run;
+      const session: number = row.evidence.session;
+      const tick: number = row.evidence.tick;
+      const sequence: number = row.evidence.sequence;
+      const journalRead: boolean = row.journal_read;
+      const binding: string = row.binding;
+      const role: string | null = row.role;
+      void [questId, display, colour, stageText, ruleText, exhaustive, run, session, tick, sequence, journalRead, binding, role];
+      return row;
+    }
+    const reason: string = end.reason;
+    void reason;
+    return null;
+  }
+  if (outcome.kind === 'refused') {
+    const reason: string = outcome.reason;
+    void reason;
+    return null;
+  }
+  const aborted: 'reset' | 'superseded' | 'terminated' | 'unknown' = outcome.reason;
+  void aborted;
+  return null;
+}
+
+void paths();
+for (const quest of ['cook', 'sheep', 'runemysteries', 'romeojuliet']) {
+  void progress(quest);
+}
+
+// @ts-expect-error questProgress takes an object, not a bare string
+void api.questProgress('cook');
+"#;
+
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]
