@@ -102,9 +102,10 @@
             "id": "spin", "kind": "make", "version": 1,
             "args": {
               "loc": { "name": "spinningwheel", "op": "Spin" },
-              "anchor": { "tile": [3209, 3212, 1], "source": "289 maps/m50_50.jm2:8568 loc 2644, level 1 local 9,12; scripts/skill_crafting/configs/spinning/spinning_wheels.loc:5 forceapproach=south" },
+              "anchor": { "tile": [2982, 3315, 0], "source": "289 maps/m46_51.jm2:5345 loc 2644 at [2981,3314,0]; adjacent ground-floor approach anchor; scripts/skill_crafting/configs/spinning/spinning_wheels.loc:5 forceapproach=south" },
               "product": "ball_of_wool",
               "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } },
+              "make_x": true,
               "menu": { "obj": "wool", "source": "289 scripts/skill_crafting/scripts/spinning/spinning.rs2:48-52 input menu row" }
             },
             "skip_if": { "Any": [

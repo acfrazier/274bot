@@ -90,7 +90,7 @@ mod tests {
         }
     }
 
-    fn path(json: &str, data: &SelectedGameData, quests: &QuestCatalog) -> CompiledPath {
+    fn path(json: &str, data: &SelectedGameData, quests: &QuestCatalog) -> Arc<CompiledPath> {
         let document: PathDocument = serde_json::from_str(json).unwrap();
         compile_uncached_for_test(&document, data, quests).unwrap()
     }
@@ -144,7 +144,7 @@ mod tests {
                 flags
                     .iter()
                     .map(|(flag, truth, count)| ProgressFlag {
-                        flag: FactKey::new(*flag),
+                        flag: FactKey::new(flag),
                         truth: *truth,
                         count: *count,
                     })
@@ -411,6 +411,18 @@ mod tests {
             ),
             Choice::Step("collect-notes".into())
         );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &empty,
+                &quests,
+                std::slice::from_ref(&package_delivered),
+                &unknown_bank,
+            ),
+            Choice::Step("collect-notes".into()),
+            "after delivery, obtain Aubury's notes before generic bank recovery"
+        );
 
         let notes = inventory_snapshot(&data, &[("research_notes", 1)]);
         assert_eq!(
@@ -478,14 +490,8 @@ mod tests {
             Choice::Step("spin".into())
         );
 
-        let mixed_partial = inventory_snapshot(
-            &data,
-            &[
-                ("shears", 1),
-                ("ball_of_wool", 6),
-                ("wool", 10),
-            ],
-        );
+        let mixed_partial =
+            inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 6), ("wool", 10)]);
         assert_eq!(
             choice_for_stage(
                 &compiled,
@@ -499,7 +505,7 @@ mod tests {
             "existing wool plus held balls already meets the remaining shear target"
         );
 
-        let enough_balls = inventory_snapshot(&data, &[("ball_of_wool", 12)]);
+        let enough_balls = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 12)]);
         assert_eq!(
             choice_for_stage(
                 &compiled,
@@ -514,27 +520,13 @@ mod tests {
 
         let no_progress = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 8)]);
         assert_eq!(
-            choice_for_stage(
-                &compiled,
-                "sheep:1",
-                &no_progress,
-                &quests,
-                &[],
-                &bank,
-            ),
+            choice_for_stage(&compiled, "sheep:1", &no_progress, &quests, &[], &bank,),
             Choice::Unknown,
             "a partial inventory must wait for journal quantity evidence"
         );
         let full_supply = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 20)]);
         assert_eq!(
-            choice_for_stage(
-                &compiled,
-                "sheep:1",
-                &full_supply,
-                &quests,
-                &[],
-                &bank,
-            ),
+            choice_for_stage(&compiled, "sheep:1", &full_supply, &quests, &[], &bank,),
             Choice::Step("hand-in".into()),
             "the full hand-in quantity remains usable before the first journal read"
         );
