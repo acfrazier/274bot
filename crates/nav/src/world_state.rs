@@ -38,6 +38,9 @@ pub struct WorldState {
     pub worn: HashSet<i32>,
     /// skill id → effective level (the snapshot's `stats` family).
     pub stats: HashMap<i32, i32>,
+    /// Base-stat combat level; absent until all seven combat rows are ready.
+    /// Unknown levels activate every level-rule danger zone.
+    pub combat_level: Option<i32>,
     /// varp index → value (the snapshot's `varps` family).
     pub varps: HashMap<i32, i32>,
     /// Quest names completed (green in the quest journal).
@@ -83,6 +86,23 @@ impl WorldState {
             .iter()
             .map(|st| (st.index, st.effective))
             .collect();
+        let mut base = [0i64; 7];
+        for stat in s.stats() {
+            if let Ok(index) = usize::try_from(stat.index) {
+                if index < base.len() {
+                    base[index] = i64::from(stat.base);
+                }
+            }
+        }
+        let combat_level = base.iter().all(|&level| level > 0).then(|| {
+            let [attack, defence, strength, hitpoints, ranged, prayer, magic] = base;
+            let style = (attack + strength)
+                .max(ranged / 2 + ranged)
+                .max(magic / 2 + magic);
+            // Integer arithmetic preserves the engine's floor, without
+            // rounding boosted/effective levels into this base-stat fact.
+            ((10 * (defence + hitpoints + prayer / 2) + 13 * style) / 40) as i32
+        });
         let varps: HashMap<i32, i32> = s.varps().iter().map(|v| (v.index, v.value)).collect();
         let quests: HashSet<String> = s
             .quest_statuses()
@@ -94,6 +114,7 @@ impl WorldState {
             inv,
             worn,
             stats,
+            combat_level,
             varps,
             quests,
             map_members: false,

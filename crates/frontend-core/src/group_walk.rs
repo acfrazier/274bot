@@ -107,7 +107,8 @@ pub fn walk_marked<Io>(
         })
         .collect();
     let report = play.map_walk_group(plan, &context, &requests, walk.arms);
-    rows.extend(report.outcomes.into_iter().map(|outcome| {
+    let legacy_zones_unavailable = report.legacy_zones_unavailable;
+    rows.extend(report.outcomes.into_iter().enumerate().map(|(index, outcome)| {
         let reason = outcome.kind.reason().unwrap_or("not eligible");
         let result = match outcome.kind {
             WalkSlotOutcomeKind::Walking => BulkOutcome::Done,
@@ -117,6 +118,9 @@ pub fn walk_marked<Io>(
         let row = BulkRow::new(outcome.name, result);
         match outcome.detail {
             Some(detail) => row.with_detail(detail),
+            None if legacy_zones_unavailable && index == 0 => {
+                row.with_detail("zones: unavailable (legacy grid pack)")
+            }
             None => row,
         }
     }));

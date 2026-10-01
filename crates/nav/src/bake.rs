@@ -27,7 +27,6 @@ use crate::pack::{
     sha256_hex, FORMAT_ID,
 };
 use crate::paint::bake_reach;
-use crate::router::AvoidRect;
 use crate::transport::{
     assert_transmitted_varp_reqs, derive_transports_for_bake, require_members_guards,
     require_wilderness_teleport_legality,
