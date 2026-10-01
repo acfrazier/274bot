@@ -53,6 +53,10 @@ fn strictly_later(actual: EvidenceStamp, before: EvidenceStamp) -> bool {
     actual.meets(before) && actual != before
 }
 
+fn display_title(actual: &str) -> &str {
+    actual.strip_prefix("@dre@").unwrap_or(actual).trim()
+}
+
 fn foreign_modal_failure(root: i32, texts: &[String]) -> Option<ActionError> {
     if root >= 0 {
         let text = texts.iter().find(|text| !text.is_empty());
@@ -93,7 +97,12 @@ impl NativeMachine for JournalMachine {
         } else if pair.value.root == ROOT_289 {
             match snapshot.journal_widgets(ROOT_289, TITLE_289) {
                 Some(page) if title_matches(page.value.title, title) => Some(page.stamp),
-                Some(_) => return Err(ActionError::Busy),
+                Some(page) => {
+                    return Err(ActionError::Failed(Arc::from(format!(
+                        "journal blocked by quest journal '{}'",
+                        display_title(page.value.title)
+                    ))));
+                }
                 None => return Err(ActionError::Busy),
             }
         } else if pair.value.root != -1 || !pair.value.texts.is_empty() {
