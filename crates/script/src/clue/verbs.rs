@@ -24,6 +24,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
         "held" => Some(InteractReq::Held {
             name: text_field(step, "name")?.to_string(),
             action: text_field(step, "action")?.to_string(),
+            slot: None,
         }),
         "loc" => Some(InteractReq::Loc {
             x: i32_field(step, "x")?,

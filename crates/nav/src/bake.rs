@@ -27,7 +27,8 @@ use crate::pack::{
 };
 use crate::paint::bake_reach;
 use crate::transport::{
-    assert_transmitted_varp_reqs, derive_transports_for_bake, require_wilderness_teleport_legality,
+    assert_transmitted_varp_reqs, derive_transports_for_bake, require_members_guards,
+    require_wilderness_teleport_legality,
 };
 
 /// Door loc configs under `content/scripts/doors/configs`.
@@ -46,7 +47,7 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// quest-gate order and validation from `quest_gates.rs`); reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 40] = [
+pub const GENERATOR_SOURCES: [&str; 41] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -68,6 +69,7 @@ pub const GENERATOR_SOURCES: [&str; 40] = [
     "src/transport/door_members.rs",
     "src/transport/brass_key.rs",
     "src/transport/membergate.rs",
+    "src/transport/members_guard.rs",
     "src/transport/webs.rs",
     "src/transport/vertical.rs",
     "src/transport/shortcuts.rs",
@@ -307,6 +309,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let (graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
+    require_members_guards(content_root, &graph)?;
     if audit.converted != 0 {
         notes.push(format!(
             "converted {} non-transmitted varp requirements to completed journal gates",

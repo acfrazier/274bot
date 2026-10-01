@@ -140,17 +140,16 @@ pub(super) fn find_door_loc<'s>(
 /// Npc hop's `opnpc1` opens the ride's chat (the cart fare, Elkoy's
 /// escort), a jewellery rub opens its destination choice, a spirit tree's
 /// `oploc1` opens the dest dialog (`spirit_tree.rs2`: "Where can I go?"
-/// then the sibling list, or the young tree's "Yes please."), and the
-/// Shantay henge's gated branch (loc 4031 `oploc1` in `shantay_pass.rs2`)
-/// shows the pass handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
-/// `p_pausebutton` chat modal) before consuming the pass and teleporting.
-/// A plain door hop never opens chat, and the toll gates' branch choices
-/// differ (their follow is not driven here).
+/// then the sibling list, or the young tree's "Yes please."), and a
+/// dialogue Door hop — the Al Kharid border toll (`border_gate.rs2`
+/// `p_choice3`) or the Shantay henge (`shantay_pass.rs2` pass handover
+/// and first-crossing disclaimer) — opens chat before the crossing.
+/// A plain door hop never opens chat.
 pub(super) fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
     npc_backed(edge)
         || edge.kind == TransportKind::SpiritTree
         || (edge.kind == TransportKind::Teleport && edge.loc_id > 0)
-        || (edge.kind == TransportKind::Door && edge.loc_id == SHANTAY_HENGE_LOC_ID)
+        || (edge.kind == TransportKind::Door && is_dialogue_door_loc(edge.loc_id))
 }
 
 /// Whether the live loc family already reads **open**. Packed closed/open
@@ -518,17 +517,14 @@ impl FollowRun {
         // asks "Is that Ok?" with a "Yes please…" choice), a jewellery
         // rub opens the destination choice (the glory's "Where would you
         // like to teleport to?" with each location named — the dueling
-        // ring's single arena first and "Nowhere." last), and the Shantay
-        // henge's gated branch (loc 4031 `oploc1`) shows the pass
-        // handover (`~chatnpc`/`~objbox`/`~chatplayer`, each a
-        // `p_pausebutton` chat modal) before consuming the pass and
-        // teleporting. Drive the dialog the same way: press the modal's
-        // continue button while it is up (each press advances a page —
-        // including the post-choice "Great!" pages and mesboxes before
-        // the ride), and press the ride choice exactly once when the
-        // choice page is up, then keep watching `arrived(to)` for the
-        // ride. A plain door hop (and the toll gates, whose branch
-        // choices differ) never drives chat here.
+        // ring's single arena first and "Nowhere." last), a Shantay henge
+        // `oploc1` shows the pass handover (and the first-crossing
+        // disclaimer choice), and the Al Kharid toll `oploc1` opens the
+        // border-guard pay page. Drive the dialog the same way: press the
+        // modal's continue button while it is up, and press the content-
+        // defined choice exactly once when the choice page is up, then keep
+        // watching `arrived(to)`. Unknown Door pages and an Al Kharid pay
+        // page without 10 coins refuse instead of guessing.
         if drives_hop_dialogs(&edge) {
             if npc_hop
                 && (snapshot.chat_continue_component_id() != -1
@@ -574,6 +570,14 @@ impl FollowRun {
                         options.edges,
                         snapshot.chat_options(),
                     ) {
+                        if let Some(detail) = door_hop_choice_blocked(&edge, snapshot, choice) {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            return Poll::Terminal(TravelOutcome::Blocked {
+                                at: here,
+                                leg: self.leg_index,
+                                detail,
+                            });
+                        }
                         match ix.answer_choice(choice) {
                             SendResult::Sent { .. } => {
                                 hop.dialog_page = Some(page);
@@ -585,6 +589,7 @@ impl FollowRun {
                                     match edge.kind {
                                         TransportKind::SpiritTree => "spirit tree",
                                         TransportKind::Teleport => "jewellery",
+                                        TransportKind::Door => "door",
                                         _ => "npc",
                                     },
                                     edge.loc_id
@@ -592,6 +597,13 @@ impl FollowRun {
                             }
                             SendResult::Refused { .. } => {}
                         }
+                    } else if edge.kind == TransportKind::Door {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        return Poll::Terminal(TravelOutcome::Blocked {
+                            at: here,
+                            leg: self.leg_index,
+                            detail: "unrecognized journey dialogue".into(),
+                        });
                     } else {
                         hop.npc_recovery.detail = Some("unrecognized journey dialogue");
                     }

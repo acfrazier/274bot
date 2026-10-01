@@ -1531,3 +1531,79 @@ fn a_synchronous_kick_does_not_run_unrelated_microtasks() {
     );
     iso.join();
 }
+
+#[test]
+fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
+    use crate::isolate_fb::{IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput};
+    use crate::shim::InteractReq;
+
+    let iso = LoadIsolate::spawn(
+        r#"export const apiVersion = 2;
+           export async function tick(api) {
+             if (globalThis.__started) return;
+             globalThis.__started = true;
+             const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+             globalThis.__begin = begin;
+             if (begin.ok) globalThis.__out = await api.questJournalRun(begin.value);
+           }"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    let rows = [QuestStatusInput {
+        name: "Cook's Assistant",
+        status: "notStarted",
+        component_id: Some(1234),
+    }];
+    let mut buf = IsolateBuf::new();
+    let mut post = |tick, root, texts: &[String]| {
+        let mut snapshot = crate::isolate_fb::tests::empty_input(tick);
+        snapshot.scene_state = 2;
+        snapshot.side_tab = 2;
+        snapshot.main_modal_id = root;
+        let facts = NativeFactsInput {
+            quest_statuses: Some(&rows),
+            main_modal_texts: Some(MainModalTextsInput { root, texts }),
+            ..Default::default()
+        };
+        let (bytes, _) = buf.encode_snapshot_delta_with_native(None, &snapshot, facts, false);
+        iso.post_snapshot(bytes);
+        machine_tick(&iso, tick);
+    };
+    post(1, -1, &[]);
+    assert_eq!(iso.probe("globalThis.__begin.ok").unwrap(), true);
+    assert_eq!(iso.drain_interacts(), vec![if_button(1234)]);
+    assert!(
+        iso.compat_journal_paint_hidden(Instant::now()),
+        "the existing v2 journal consumer must hide before its row click"
+    );
+    let lines = ["@dre@The Cook's Quest".to_owned()];
+    post(2, 77, &lines);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::CloseModal]);
+    assert!(iso.compat_journal_paint_hidden(Instant::now()));
+    post(3, 77, &lines);
+    assert!(iso.drain_interacts().is_empty());
+    assert!(iso.compat_journal_paint_hidden(Instant::now()));
+    post(4, -1, &[]);
+    assert_eq!(
+        iso.probe("globalThis.__out.value.lines").unwrap(),
+        serde_json::json!(lines)
+    );
+    assert!(!iso.compat_journal_paint_hidden(Instant::now()));
+
+    iso.reset_session_work();
+    iso.probe("globalThis.__started = false; true").unwrap();
+    post(5, -1, &[]);
+    assert_eq!(iso.drain_interacts(), vec![if_button(1234)]);
+    assert!(
+        iso.compat_journal_paint_hidden(Instant::now()),
+        "reset binds the new generation"
+    );
+    iso.reset_session_work();
+    assert!(
+        !iso.compat_journal_paint_hidden(Instant::now()),
+        "reset clears before another tick"
+    );
+    iso.join();
+}

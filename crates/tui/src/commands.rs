@@ -56,6 +56,7 @@ pub enum Command {
     MapGroup,
     MapWalk,
     MapTeleport,
+    MapWilderness,
     LogSave,
     LogSessionFile,
 }
@@ -117,6 +118,7 @@ pub const MAP_KEYS: &[(char, Command)] = &[
     ('R', Command::MapRecenter),
     ('g', Command::MapGroup),
     ('t', Command::MapTeleport),
+    ('w', Command::MapWilderness),
 ];
 
 pub const LOG_KEYS: &[(char, Command)] = &[('w', Command::LogSave), ('F', Command::LogSessionFile)];
@@ -214,6 +216,7 @@ impl Command {
         Command::MapGroup,
         Command::MapWalk,
         Command::MapTeleport,
+        Command::MapWilderness,
         Command::LogSave,
         Command::LogSessionFile,
         Command::ShowMessage,
@@ -265,7 +268,8 @@ impl Command {
             | Command::MapRecenter
             | Command::MapGroup
             | Command::MapWalk
-            | Command::MapTeleport => Group::Map,
+            | Command::MapTeleport
+            | Command::MapWilderness => Group::Map,
             Command::LogSave | Command::LogSessionFile => Group::Logs,
         }
     }
@@ -318,6 +322,7 @@ impl Command {
             Command::MapGroup => "Map: toggle group send",
             Command::MapWalk => "Map: walk to selection",
             Command::MapTeleport => "Map: teleport (local debug)",
+            Command::MapWilderness => "Map: toggle wilderness overlay",
             Command::LogSave => "Log: save",
             Command::LogSessionFile => "Log: session file on/off",
         }
@@ -333,6 +338,7 @@ impl Command {
             Command::DismissNotice => "Got it",
             Command::MapWalk => "Walk",
             Command::MapTeleport => "Teleport",
+            Command::MapWilderness => "Wilderness",
             Command::MapGroup => "Group",
             Command::MapSearch => "Search",
             Command::ShowMessage => "Full message",
@@ -523,7 +529,10 @@ impl Command {
                 .as_ref()
                 .map(|_| ())
                 .ok_or("no script paint to toggle"),
-            Command::MapSearch | Command::MapRecenter | Command::MapGroup => map(),
+            Command::MapSearch
+            | Command::MapRecenter
+            | Command::MapGroup
+            | Command::MapWilderness => map(),
             Command::MapWalk | Command::MapTeleport => {
                 map()?;
                 app.map_model

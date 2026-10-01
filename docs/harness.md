@@ -32,6 +32,11 @@ cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
 ```
 
+Live runs mint fresh accounts named `live<token>_<i>` (at most 12
+characters). Set `BOT_LIVE_NAME_PREFIX` to 1–4 lowercase letters to replace
+`live`, for example `BOT_LIVE_NAME_PREFIX=tm`, so concurrent runs can be told
+apart in engine logs and player saves. An invalid value stops the run.
+
 Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`). The door test also accepts
 `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
@@ -68,6 +73,23 @@ with the recorded rejection or preparation error. Stashed cards survive setup
 settlement: a scenario Stop revokes the script walk and bank selection, verifies
 the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
 resume, restart and login fixtures use this same compiled Start outcome gate.
+
+The headless Quester journal fixtures run with
+`LIVE=1 cargo test -p host-play --lib live_quester_journal -- --ignored --nocapture --test-threads=1`.
+Set an inline disposable `HOME`, `BOT_ENGINE_DIR` to the local R289 engine,
+and `BOT_NAV_PACK` to a matching navigation pack; remove the disposable
+directory after the command finishes. `BOT_GAME_PORT` and `BOT_HTTP_PORT`
+override these fixtures' default local endpoints. The fixtures cover a
+synthetic Rune Mysteries stage advance, parked ReadJournal retry, Stop/Start
+and Pause/Resume with a retained journal page, and a DebugPanel `getcoord`
+command sent while the journal is open. The overlap proof requires the host
+chat-reply candidate and the journal's own fresh evidence and close sequence;
+temporal debug replies are never command acknowledgements or journal progress.
+
+The journal and fresh Cook fixtures mint their accounts like every other live
+run, so simultaneous processes do not share an account and
+`BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
+accounting: Stop/Pause recovery adopts the retained page without a new click.
 
 A scenario that waits for a card's clean stop (`wait_script_stop`) must
 also watch the card's own work. Its post-Start watch and terminal proof must
@@ -261,6 +283,12 @@ mainloop/observe/raster fields are cumulative **wall-time** counters, including
 waits, preemption and contention; they are not CPU time. Retired slot counters
 remain in the per-username process totals across relogs, while
 `host_profile_slots` counts only active slots.
+
+Sample JSON serialization is buffered to avoid a file write for every JSON
+token, including on shared VM volumes. Each complete row is explicitly flushed
+before the sample poll returns, so the frontend's immediate process exit does
+not leave completed rows in a userspace buffer. This does not change the sample
+fields or exclude sample-writing work from the whole-panel frame timer.
 
 Panel samples include a cumulative one-millisecond frame histogram whose final
 bucket means “at least 250 ms”, cumulative `ui_frame_count` and

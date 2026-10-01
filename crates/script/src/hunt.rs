@@ -610,6 +610,7 @@ impl<K: Kind> Hunt<K> {
                 cx.emit(InteractReq::Held {
                     name: string(effect, "name"),
                     action: "Bury".into(),
+                    slot: None,
                 });
                 self.reply = Some(json!({ "buried": true }));
             }
@@ -865,6 +866,7 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
         "held" => InteractReq::Held {
             name: string(effect, "name"),
             action: string(effect, "action"),
+            slot: None,
         },
         "close" => InteractReq::Close,
         _ => return None,

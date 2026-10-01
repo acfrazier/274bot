@@ -348,6 +348,40 @@ fn draw_map_paints_walkable_dots_after_explicit_activation() {
     );
     assert!(all.contains("coverage:"), "coverage is visible: {all:?}");
 }
+#[test]
+fn wilderness_persistence_errors_are_visible() {
+    let root =
+        std::env::temp_dir().join(format!("274bot-tui-map-pref-error-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let parent = root.join("not-a-directory");
+    std::fs::write(&parent, b"file").unwrap();
+
+    let mut app = TuiApp::new("274bot headless");
+    app.restore_map_preferences(parent.join("panel-ui.json"));
+    app.toggle_map_wilderness();
+
+    assert!(app.map.layers.wilderness);
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("map wilderness: ")),
+        "preference write failure must be surfaced: {:?}",
+        app.error
+    );
+
+    std::fs::remove_file(&parent).unwrap();
+    std::fs::create_dir(&parent).unwrap();
+    app.toggle_map_wilderness();
+    assert!(!app.map.layers.wilderness);
+    assert!(
+        app.error.is_none(),
+        "a later successful save clears the stale map error: {:?}",
+        app.error
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 /// The spec's WASD test: from (10,10) W steps north. +z is north on
 /// the client's axis (the map's north-up camera — see `map.rs`'s pan

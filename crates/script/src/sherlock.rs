@@ -1619,6 +1619,7 @@ mod tests {
                 InteractReq::Held {
                     name: "Spade".into(),
                     action: "Dig".into(),
+                    slot: None,
                 },
                 InteractReq::Loc {
                     x: 1,

@@ -46,7 +46,7 @@ RSA modulus from that world's `/client/client.js`, caches successful fetches
 per host and refreshes on a wrong-key login response; a failed fetch uses
 the baked key without caching it.
 
-`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision. Otherwise, `rs2b2t` declares members only when every configured world is an rs2b2t world (`w<N>.rs2b2t.com`, ASCII numeric label, case-insensitive, port 443). Other unresolved hosts, ports, and mixed rosters remain unknown and route as F2P.
+`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision. Otherwise, `rs2b2t` declares members only when every configured world is an rs2b2t world (`w<N>.rs2b2t.com`, ASCII numeric label, case-insensitive, port 443). Other unresolved hosts, ports, and mixed rosters remain unknown and route as F2P. Profile-bound clients also receive `members=false` for unknown or known-free worlds; that prevents members map squares from being prefetched and makes members-object interface counts unavailable, while login remains unaffected.`
 
 On the first launch after upgrading, a valid `~/.274bot/worlds.json` is copied
 into the `rs2b2t` roster. The original is untouched; `servers.json` is
@@ -164,6 +164,8 @@ cargo run -p nav --bin nav-pack
 ```
 
 Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **11**). **Rebake existing v10 packs after updating:** v11 binds the selected quest family and carries typed quest-stage gates; `decode` rejects v10 as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+
+**External v11 packs keep the gates they were baked with.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-checked. One baked by an earlier 274bot can still plan members-only crossings on a free-to-play or unrecognised world (for example the Duel Arena gates, the Shantay pass doorway, the Entrana boat or the Camelot teleport), and the bot is then turned away in game. Rebake it with `nav-pack`.
 
 ## Live tests and suite runner
 

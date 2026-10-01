@@ -2765,6 +2765,24 @@ fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
 fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     let iso = IsolatedEnv::enter("tui-settings-bind");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session
+        .core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .extend(["alice", "bob"].map(|name| host_play::SlotStatus {
+            username: name.into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..host_play::SlotStatus::default()
+        }));
+    session.core.poll();
+    session.core.set_memory_mode("alice", false).unwrap();
+    session.core.flush_writes();
     focus_member(&mut session, &mut app, "alice");
     let open = app.run_command(crate::commands::Command::Settings);
     dispatch(&mut session, &mut app, open);
@@ -2779,6 +2797,14 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     // Switch focus to bob: the popup stays open on alice's draft, titled
     // with the profile it is bound to.
     focus_member(&mut session, &mut app, "bob");
+    assert!(
+        !app.memory.unwrap().differs(),
+        "the status pane follows focused bob"
+    );
+    assert!(
+        app.settings_memory.unwrap().differs(),
+        "the popup notice stays bound to alice"
+    );
     assert!(
         app.settings_state.open,
         "a focus change never closes the form"
@@ -2926,11 +2952,12 @@ fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
     );
 }
 
-/// A persist that fails after it was accepted reports on the message line,
-/// as in 0.1.9, and never inside the settings popup.
+/// A persist that fails after it was accepted shows in the popup it came
+/// from, in red under the rows with "nothing was saved." under it, and on the
+/// message line; the popup goes back to what is saved.
 #[test]
 #[cfg(unix)]
-fn a_late_persist_failure_reports_on_the_message_line_only() {
+fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     use std::os::unix::fs::PermissionsExt;
 
     let iso = IsolatedEnv::enter("tui-settings-late-failure");
@@ -2941,6 +2968,7 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
     let held = gate.lock().unwrap();
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     session.pump(&mut app);
+    assert!(!app.settings.random_events, "the popup shows the edit");
 
     std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     drop(held);
@@ -2949,15 +2977,24 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
     std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
-        assert!(cell_of(&screen, "settings — alice").is_some(), "{w}x{h}");
+        let (left, top) = cell_of(&screen, "settings — alice").expect("the popup is drawn");
+        let (x, y) = cell_of(&screen, "random: ")
+            .unwrap_or_else(|| panic!("{w}x{h}: the failure shows in the popup"));
+        assert!(
+            x == left && y > top,
+            "{w}x{h}: inside the popup, under its rows"
+        );
+        assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Red, "{w}x{h}");
+        let (nx, ny) = cell_of(&screen, frontend_core::NOTHING_SAVED)
+            .unwrap_or_else(|| panic!("{w}x{h}: nothing-was-saved shows"));
+        assert!(nx == left && ny > y, "{w}x{h}: under the reason");
         assert!(
             cell_of(&screen, "msg: random:").is_some(),
-            "{w}x{h}: the message line reports the failure"
+            "{w}x{h}: and the message line reports it too"
         );
         assert!(
-            cell_of(&screen, "settings: random:").is_none()
-                && cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
-            "{w}x{h}: the popup never shows it"
+            cell_of(&screen, "random events: true").is_some(),
+            "{w}x{h}: the popup is back on what is saved"
         );
     }
     assert!(
@@ -2971,6 +3008,54 @@ fn a_late_persist_failure_reports_on_the_message_line_only() {
             .random_events,
         "nothing was saved"
     );
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: the next edit clears the failure"
+        );
+    }
+}
+
+/// A persist that fails after its popup was closed never shows in the popup
+/// opened next, here on another profile: the message line reports it.
+#[test]
+#[cfg(unix)]
+fn a_persist_failing_after_close_reaches_only_the_message_line() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let iso = IsolatedEnv::enter("tui-settings-late-closed");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    focus_member(&mut session, &mut app, "alice");
+    open_settings(&mut session, &mut app);
+    let gate = session.core.write_gate();
+    let held = gate.lock().unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    session.pump(&mut app);
+    focus_member(&mut session, &mut app, "bob");
+    open_settings(&mut session, &mut app);
+
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    drop(held);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(cell_of(&screen, "settings — bob").is_some(), "{w}x{h}");
+        assert!(
+            cell_of(&screen, "msg: random:").is_some(),
+            "{w}x{h}: the message line reports the failure"
+        );
+        assert!(
+            cell_of(&screen, frontend_core::NOTHING_SAVED).is_none(),
+            "{w}x{h}: alice's failure never shows in bob's popup"
+        );
+    }
 }
 
 /// A refused persist (the bound profile is gone) shows in the popup, in red
@@ -3488,4 +3573,146 @@ fn script_settings_rows(session: &TuiSession) -> SettingsRows {
         .profiles()
         .map(|row| (row.username.clone(), row.settings.script_settings.clone()))
         .collect()
+}
+
+#[test]
+fn memory_relog_warns_before_cancelling_a_queued_start() {
+    let iso = IsolatedEnv::enter("tui-relog-queued-start");
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir.join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.js.load(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("more Starts than one frame admits")
+        .to_string();
+    assert_eq!(
+        session.core.play().unwrap().script_state(&queued),
+        script::RunState::Idle,
+        "the warning subject is queued, not already running"
+    );
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog(queued.clone()),
+    );
+
+    assert!(
+        matches!(
+            &app.modal,
+            Some(crate::overlay::Modal::Confirm(confirm))
+                if confirm.kind == crate::overlay::ConfirmKind::MemoryRelog(queued.clone())
+        ),
+        "a queued Start must be disclosed before Relog-now cancels it"
+    );
+    assert!(
+        !session
+            .core
+            .play()
+            .unwrap()
+            .arm(&queued)
+            .unwrap()
+            .login_latched(),
+        "nothing relogs before confirmation"
+    );
+    session.scripts.stop_all(&mut session.core);
+}
+
+#[test]
+fn settings_memory_row_persists_and_arms_the_handshake() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let alice = SlotArm::new(7, true);
+    session
+        .core
+        .start(lifecycle_vault("mem-persist"), empty_play());
+    session
+        .core
+        .play_mut()
+        .unwrap()
+        .attach_arm("alice", Arc::clone(&alice));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    // Flip the memory row draft; the binary persists it on the next pump.
+    app.settings.lowmem = false;
+    app.settings_dirty = true;
+    session.pump(&mut app);
+
+    assert_eq!(
+        alice.lowmem_handshake(),
+        Some(false),
+        "the toggle arms the next handshake at once"
+    );
+    session.core.flush_writes();
+    assert!(
+        !session
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the setting is durable"
+    );
+}
+
+#[test]
+fn memory_relog_confirms_while_a_script_runs() {
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let alice = SlotArm::new(7, false);
+    play.attach_arm("alice", Arc::clone(&alice));
+    play.script_start_load(
+        "alice",
+        "export function tick(api) { api._n = (api._n||0)+1 }".to_string(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(play);
+    let mut app = TuiApp::new("tui");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog("alice".into()),
+    );
+    assert!(
+        matches!(
+            &app.modal,
+            Some(crate::overlay::Modal::Confirm(c))
+                if matches!(
+                    c.kind,
+                    crate::overlay::ConfirmKind::MemoryRelog(_)
+                )
+        ),
+        "a running script forces the confirm, nothing relogs yet"
+    );
+    assert!(!alice.login_latched());
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelogNow("alice".into()),
+    );
+    assert!(alice.login_latched(), "the confirmed relog logs out");
+    assert!(alice.wants_logout());
 }

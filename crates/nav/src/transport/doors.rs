@@ -84,14 +84,6 @@ pub(super) fn door_edges(
     );
     door_ids.extend(inherited.keys().copied());
     open_ids.extend(inherited.iter().map(|(&id, &open)| (id, open)));
-    // A gate admitted through its canonical members-check override opens
-    // only on a members world (`MAP_MEMBERS`).
-    let members_only: HashSet<i32> = members_gates
-        .keys()
-        .filter_map(|name| ids.get(name))
-        .copied()
-        .filter(|id| inherited.contains_key(id))
-        .collect();
     // Closed doors anywhere in the content whose effective handler is a
     // verified generic door category (West Ardougne's `loc_2997`, the
     // Rellekka/Troll Stronghold/games room members): the same crossing.
@@ -199,7 +191,7 @@ pub(super) fn door_edges(
                             varp_req.clone()
                         },
                         worn_req: vec![],
-                        members_req: members_only.contains(id),
+                        members_req: false,
                         wildy_cap: None,
                         quest_gates: None,
                     },

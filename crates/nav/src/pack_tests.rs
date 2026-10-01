@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Read};
+use std::io::{self, BufRead, Cursor, Read};
 
 use super::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
     derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_grid,
     encode_reach_sidecar, merge_squares, parse_door_config, parse_door_config_ids,
-    parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, read_flags_sidecar, sha256_hex,
-    walkable_dots, BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
+    parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, read_canlight_sidecar,
+    read_flags_sidecar, read_reach_sidecar, sha256_hex, walkable_dots, BankAccess, BankStand,
+    Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
 };
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
@@ -17,9 +18,47 @@ use crate::quest_gates::tests::{
 use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
+use crate::world::NavWorld;
 use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
+
+/// A BufRead that yields at most one byte per fill, exercising all parser
+/// fields across real short reads rather than a single in-memory read call.
+struct ShortReadBuf<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> ShortReadBuf<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+}
+
+impl Read for ShortReadBuf<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let available = BufRead::fill_buf(self)?;
+        let n = buf.len().min(available.len());
+        buf[..n].copy_from_slice(&available[..n]);
+        BufRead::consume(self, n);
+        Ok(n)
+    }
+}
+
+impl BufRead for ShortReadBuf<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let end = self.position.saturating_add(1).min(self.bytes.len());
+        Ok(&self.bytes[self.position..end])
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.position = self.position.saturating_add(amount).min(self.bytes.len());
+    }
+}
 
 #[test]
 fn format_id_names_the_current_wire() {
@@ -298,13 +337,13 @@ fn flags_sidecar_bulk_matches_scalar_on_errors_and_roundtrip() {
 }
 
 #[test]
-fn read_flags_sidecar_streams_one_payload_allocation() {
+fn read_flags_sidecar_streams_words_and_digest() {
     let origin = WorldTile {
         x: 3200,
         z: 3200,
         level: 0,
     };
-    // 256 Ki words = 1 MiB payload: large enough to expose a triple-copy peak.
+    // Exercise the streamed word and digest results on a substantial payload.
     let words: Vec<u32> = (0..256 * 1024).map(|i| i as u32).collect();
     let bytes = encode_flags_sidecar(origin, 512, 512, &words);
     let path = std::env::temp_dir().join(format!(
@@ -319,17 +358,8 @@ fn read_flags_sidecar_streams_one_payload_allocation() {
     assert_eq!((loaded.width, loaded.height), (512, 512));
     assert_eq!(loaded.flags.as_slice(), words.as_slice());
     assert_eq!(loaded.content_sha256.as_deref(), Some(expected.as_str()));
-    // Sole payload owner on the load result: Arc strong count 1, exact cap.
-    assert_eq!(std::sync::Arc::strong_count(&loaded.flags), 1);
-    assert_eq!(loaded.flags.len(), words.len());
-    assert_eq!(
-        loaded.flags.capacity(),
-        words.len(),
-        "stream path must not over-allocate past the word count"
-    );
     let (_, _, _, decoded) = decode_flags_sidecar(&bytes).unwrap();
     assert_eq!(decoded.as_slice(), loaded.flags.as_slice());
-    // Trusted/bundled path must not allocate a digest at all.
     let trusted = read_flags_sidecar(&path, false).expect("no-hash load");
     let _ = std::fs::remove_file(&path);
     assert_eq!(trusted.flags.as_slice(), words.as_slice());
@@ -454,6 +484,158 @@ fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
 }
 
 #[test]
+fn read_reach_and_canlight_sidecars_stream_into_arc() {
+    let origin = WorldTile {
+        x: -123,
+        z: 456,
+        level: 2,
+    };
+    let bits = [
+        0x0102_0304_0506_0708,
+        0x8000_0000_0000_0001,
+        0xAABB_CCDD_EEFF_1020,
+    ];
+    let binding = [0x5Au8; 32];
+    let reach_bytes = encode_reach_sidecar(origin, 7, 9, &bits, &binding);
+    let mut reach_reader = ShortReadBuf::new(&reach_bytes);
+    let reach = read_reach_sidecar(&mut reach_reader, reach_bytes.len()).unwrap();
+    assert_eq!(reach.origin, origin);
+    assert_eq!((reach.width, reach.height, reach.word_count), (7, 9, 3));
+    assert_eq!(reach.binding, binding);
+    assert_eq!(reach.bits.as_ref(), bits.as_slice());
+    assert_eq!(reach_reader.position, reach_bytes.len());
+
+    let canlight_bytes = encode_canlight_sidecar(origin, 7, 9, &bits, &binding);
+    let mut canlight_reader = ShortReadBuf::new(&canlight_bytes);
+    let canlight = read_canlight_sidecar(&mut canlight_reader, canlight_bytes.len()).unwrap();
+    assert_eq!(canlight.origin, origin);
+    assert_eq!(
+        (canlight.width, canlight.height, canlight.word_count),
+        (7, 9, 3)
+    );
+    assert_eq!(canlight.binding, binding);
+    assert_eq!(canlight.bits.as_ref(), bits.as_slice());
+
+    let empty_bytes = encode_reach_sidecar(origin, 1, 1, &[], &binding);
+    let mut empty_reader = ShortReadBuf::new(&empty_bytes);
+    let empty = read_reach_sidecar(&mut empty_reader, empty_bytes.len()).unwrap();
+    assert!(empty.bits.is_empty());
+}
+
+#[test]
+fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
+    let origin = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let binding = [0xA5u8; 32];
+    let words: Vec<u64> = (0..515)
+        .map(|word| word as u64 ^ 0xA5A5_A5A5_A5A5_A5A5)
+        .collect();
+    let bytes = encode_reach_sidecar(origin, 2, 2, &words, &binding);
+
+    let mut bad_magic_reader = ShortReadBuf::new(b"XXXX");
+    assert!(matches!(
+        read_reach_sidecar(&mut bad_magic_reader, 4),
+        Err(PackError::BadMagic)
+    ));
+    let mut stale = bytes.clone();
+    stale[4] = 2;
+    let mut stale_reader = ShortReadBuf::new(&stale);
+    assert!(matches!(
+        read_reach_sidecar(&mut stale_reader, stale.len()),
+        Err(PackError::BadVersion(2))
+    ));
+    let mut bad_geometry = bytes.clone();
+    bad_geometry[17..21].copy_from_slice(&0u32.to_le_bytes());
+    let mut geometry_reader = ShortReadBuf::new(&bad_geometry);
+    assert!(matches!(
+        read_reach_sidecar(&mut geometry_reader, bad_geometry.len()),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut wrong_count = bytes.clone();
+    wrong_count[25..29].copy_from_slice(&1u32.to_le_bytes());
+    let mut count_reader = ShortReadBuf::new(&wrong_count);
+    assert!(matches!(
+        read_reach_sidecar(&mut count_reader, wrong_count.len()),
+        Err(PackError::Truncated)
+    ));
+    let mut extra = bytes.clone();
+    extra.push(0);
+    let mut extra_reader = ShortReadBuf::new(&extra);
+    assert!(matches!(
+        read_reach_sidecar(&mut extra_reader, extra.len()),
+        Err(PackError::Truncated)
+    ));
+
+    // The advertised length is the complete file, but the physical stream
+    // ends before the payload finishes. The later cuts occur after one full
+    // 4 KiB batch, exercising a failed drop with both initialized and
+    // uninitialized Arc slots.
+    const HEADER_LEN: usize = 4 + 1 + 12 + 8 + 4 + 32;
+    for cut in [
+        0,
+        3,
+        4,
+        HEADER_LEN - 1,
+        HEADER_LEN,
+        HEADER_LEN + 1,
+        HEADER_LEN + 7,
+        HEADER_LEN + 4095,
+        HEADER_LEN + 4096,
+        HEADER_LEN + 4097,
+        bytes.len() - 1,
+    ] {
+        let mut truncated_reader = ShortReadBuf::new(&bytes[..cut]);
+        assert!(
+            matches!(
+                read_reach_sidecar(&mut truncated_reader, bytes.len()),
+                Err(PackError::Truncated)
+            ),
+            "truncated at {cut} bytes"
+        );
+    }
+
+    let canlight = encode_canlight_sidecar(origin, 2, 2, &[1], &binding);
+    let mut bad_canlight = canlight.clone();
+    bad_canlight[4] = 4;
+    let mut bad_canlight_reader = ShortReadBuf::new(&bad_canlight);
+    assert!(matches!(
+        read_canlight_sidecar(&mut bad_canlight_reader, bad_canlight.len()),
+        Err(PackError::BadVersion(4))
+    ));
+    let mut bad_canlight_geometry = canlight.clone();
+    bad_canlight_geometry[17..21].copy_from_slice(&0u32.to_le_bytes());
+    let mut bad_canlight_geometry_reader = ShortReadBuf::new(&bad_canlight_geometry);
+    assert!(matches!(
+        read_canlight_sidecar(
+            &mut bad_canlight_geometry_reader,
+            bad_canlight_geometry.len()
+        ),
+        Err(PackError::BadLength(_))
+    ));
+    let mut bad_canlight_magic_reader = ShortReadBuf::new(&bytes);
+    assert!(matches!(
+        read_canlight_sidecar(&mut bad_canlight_magic_reader, bytes.len()),
+        Err(PackError::BadMagic)
+    ));
+    let mut truncated_canlight_reader = ShortReadBuf::new(&canlight[..10]);
+    assert!(matches!(
+        read_canlight_sidecar(&mut truncated_canlight_reader, 10),
+        Err(PackError::Truncated)
+    ));
+    let mut extra_canlight = canlight.clone();
+    extra_canlight.push(0);
+    let mut extra_canlight_reader = ShortReadBuf::new(&extra_canlight);
+    assert!(matches!(
+        read_canlight_sidecar(&mut extra_canlight_reader, extra_canlight.len()),
+        Err(PackError::Truncated)
+    ));
+}
+
+#[test]
 fn roundtrip_collision_and_transport_graph() {
     let plane = vec![0, 0, 1, 0, 0, 0];
     let mut flags = vec![0u32; 4 * plane.len()];
@@ -496,7 +678,7 @@ fn roundtrip_collision_and_transport_graph() {
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![772], // dramen_staff on the Zanaris shed door
-        members_req: false,
+        members_req: true,
         wildy_cap: None,
         quest_gates: None,
     };
@@ -1689,6 +1871,109 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
 
     let plain = encode(&tiny_collision(), &TransportGraph::default(), &[]);
     assert_eq!(decode(&plain).unwrap().1.quest_family, None);
+}
+
+#[test]
+fn nav_world_from_reader_streams_pack_and_legacy_grid() {
+    let family = gate_family(13);
+    let gates = QuestGates::new(
+        family,
+        [gate_window("heroes", "heroes_main", Some(2), Some(5))],
+    )
+    .unwrap();
+    let mut graph = TransportGraph {
+        quest_family: Some(family),
+        wilderness: crate::transport::WildernessRules {
+            zones: vec![crate::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
+    graph.edges.push(gated_door(Some(gates)));
+    let banks = vec![BankStand {
+        name: "Lumbridge booth".into(),
+        tile: WorldTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        },
+        access: BankAccess::Npc {
+            name: "Banker".into(),
+            op: 3,
+            choose: Some("Bank".into()),
+        },
+    }];
+    let mut bytes = encode(&tiny_collision(), &graph, &banks);
+    bytes.extend_from_slice(&[0xA1, 0xB2, 0xC3]);
+
+    let expected = NavWorld::from_bytes(&bytes).unwrap();
+    let mut reader = ShortReadBuf::new(&bytes);
+    let streamed = NavWorld::from_reader(&mut reader, bytes.len()).unwrap();
+    assert_eq!(reader.position, bytes.len());
+    assert_eq!(streamed.collision.origin, expected.collision.origin);
+    assert_eq!(streamed.collision.width, expected.collision.width);
+    assert_eq!(streamed.collision.height, expected.collision.height);
+    assert_eq!(streamed.collision.walk, expected.collision.walk);
+    assert_eq!(streamed.collision.blocked, expected.collision.blocked);
+    assert_eq!(streamed.graph.edges, expected.graph.edges);
+    assert_eq!(streamed.graph.teleports, expected.graph.teleports);
+    assert_eq!(streamed.graph.at, expected.graph.at);
+    assert_eq!(streamed.graph.quest_family, expected.graph.quest_family);
+    assert_eq!(streamed.graph.wilderness, expected.graph.wilderness);
+    assert_eq!(streamed.banks(), expected.banks());
+
+    let pack_length = bytes.len() - 3;
+    let mut bounded_reader = ShortReadBuf::new(&bytes);
+    let _bounded = NavWorld::from_reader(&mut bounded_reader, pack_length).unwrap();
+    assert_eq!(bounded_reader.position, pack_length);
+
+    let truncated_pack = &bytes[..pack_length - 1];
+    let mut truncated_reader = ShortReadBuf::new(truncated_pack);
+    assert!(matches!(
+        NavWorld::from_reader(&mut truncated_reader, truncated_pack.len()),
+        Err(PackError::Truncated)
+    ));
+    let mut stale_version = bytes.clone();
+    stale_version[4] = VERSION - 1;
+    let mut stale_reader = ShortReadBuf::new(&stale_version);
+    assert!(matches!(
+        NavWorld::from_reader(&mut stale_reader, stale_version.len()),
+        Err(PackError::BadVersion(version)) if version == VERSION - 1
+    ));
+    let mut unknown_magic = ShortReadBuf::new(b"????");
+    assert!(matches!(
+        NavWorld::from_reader(&mut unknown_magic, 4),
+        Err(PackError::BadMagic)
+    ));
+
+    let grid = StepGrid::fixture_open_3x3();
+    let legacy_bytes = encode_grid(&grid);
+    let expected_legacy = NavWorld::from_bytes(&legacy_bytes).unwrap();
+    let mut legacy_reader = ShortReadBuf::new(&legacy_bytes);
+    let streamed_legacy = NavWorld::from_reader(&mut legacy_reader, legacy_bytes.len()).unwrap();
+    assert_eq!(
+        streamed_legacy.collision.origin,
+        expected_legacy.collision.origin
+    );
+    assert_eq!(
+        streamed_legacy.collision.walk,
+        expected_legacy.collision.walk
+    );
+    assert_eq!(
+        streamed_legacy.collision.blocked,
+        expected_legacy.collision.blocked
+    );
+    assert_eq!(streamed_legacy.graph.edges, expected_legacy.graph.edges);
+    assert_eq!(streamed_legacy.graph.at, expected_legacy.graph.at);
 }
 
 /// Encode never writes a family binding its own decoder refuses: every

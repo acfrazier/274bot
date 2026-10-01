@@ -1343,6 +1343,24 @@ impl SlotScript {
         self.native_runtime.ledger.as_mut()?.quiet_read(now)
     }
 
+    /// Whether a native or compatibility journal currently owns the hidden
+    /// paint lease. Both paths are wall-clock revalidated on every read.
+    pub fn journal_paint_hidden(&mut self, now: std::time::Instant) -> bool {
+        if self.native_quiet_read(now).is_some() {
+            return true;
+        }
+        #[cfg(feature = "load")]
+        {
+            self.load
+                .as_ref()
+                .is_some_and(|isolate| isolate.compat_journal_paint_hidden(now))
+        }
+        #[cfg(not(feature = "load"))]
+        {
+            false
+        }
+    }
+
     /// Queued native work the host may dispatch now. Work queued before a
     /// watchdog recovery hold waits for it to end; Blocked revoked its work.
     pub fn has_native_actions(&self) -> bool {

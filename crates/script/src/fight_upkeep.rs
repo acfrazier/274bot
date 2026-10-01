@@ -73,6 +73,7 @@ impl Family for BuryInFight {
             cx.emit(InteractReq::Held {
                 name: bones.name_or_empty().to_string(),
                 action: op.to_string(),
+                slot: None,
             });
             Begin::Run(Self {
                 before,

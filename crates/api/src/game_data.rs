@@ -663,6 +663,28 @@ pub struct QuestIdentityRow {
     #[serde(default)]
     pub journal_script: Option<String>,
 }
+/// A content-script-derived quest start target. Rows are intentionally sparse:
+/// no row means the map marker remains the generic `Quest Start` label.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartRow {
+    pub quest: String,
+    pub target: QuestStartTarget,
+    pub op: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartTarget {
+    pub kind: String,
+    pub id: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestStartFacts {
+    pub schema: u16,
+    pub revision: i32,
+    pub content_id: String,
+    pub rows: Vec<QuestStartRow>,
+}
 
 /// Pack-joined NPC identity for Path compile (`npc:cook`).
 #[derive(Debug, Deserialize, Clone)]
@@ -927,6 +949,26 @@ where
         .map_err(serde::de::Error::custom)
 }
 
+/// One pinned row of the selected core's `gather_resources` slice, carried so
+/// the UI never decodes the gathering family. `key` is the selectable setting
+/// value: the resource key for woodcutting/mining, the method id for fishing.
+/// A row with `selectable == false` carries the admission `gap` code; the UI
+/// shows it with that code and Start refuses it.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GatherResourceOption {
+    pub skill: String,
+    pub method: String,
+    pub key: String,
+    pub resources: Vec<String>,
+    pub label: String,
+    #[serde(default)]
+    pub level: u16,
+    pub selectable: bool,
+    #[serde(default)]
+    pub gap: Option<String>,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -965,6 +1007,8 @@ pub struct SelectedGameData {
     #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
+    quest_starts: Option<QuestStartFacts>,
+    #[serde(default)]
     npc_names: Option<NpcNameFacts>,
     #[serde(default)]
     loc_names: Option<LocNameFacts>,
@@ -982,6 +1026,8 @@ pub struct SelectedGameData {
     cook_surfaces: Option<crate::cook_locations::CookSurfaceFacts>,
     #[serde(default)]
     mining_hazards: Option<Vec<crate::gather_methods::MiningHazard>>,
+    #[serde(default)]
+    gather_resources: Vec<GatherResourceOption>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -1151,6 +1197,25 @@ impl SelectedGameData {
                 return Err(
                     "quest_identity empty mustHave cannot carry items or skills".to_string()
                 );
+            }
+        }
+        if let Some(facts) = &data.quest_starts {
+            if facts.schema != 1 || facts.revision != data.revision {
+                return Err("quest_starts schema or revision mismatch".to_string());
+            }
+            if data.provenance.cache_identity.content_id.as_deref()
+                != Some(facts.content_id.as_str())
+            {
+                return Err("quest_starts content identity mismatch".to_string());
+            }
+            if facts.rows.iter().any(|row| {
+                row.quest.is_empty()
+                    || row.op == 0
+                    || row.op > 5
+                    || row.target.id < 0
+                    || !matches!(row.target.kind.as_str(), "npc" | "loc")
+            }) {
+                return Err("quest_starts contains an invalid target row".to_string());
             }
         }
         if let Some(facts) = &data.npc_names {
@@ -1475,6 +1540,9 @@ impl SelectedGameData {
     pub fn quest_identity(&self) -> Option<&QuestIdentityFacts> {
         self.quest_identity.as_ref()
     }
+    pub fn quest_starts(&self) -> Option<&QuestStartFacts> {
+        self.quest_starts.as_ref()
+    }
 
     pub fn npc_names(&self) -> Option<&NpcNameFacts> {
         self.npc_names.as_ref()
@@ -1553,6 +1621,35 @@ impl SelectedGameData {
     /// decoded. `None` when not generated.
     pub fn mining_hazards(&self) -> Option<&[crate::gather_methods::MiningHazard]> {
         self.mining_hazards.as_deref()
+    }
+
+    /// Pinned per-skill gather option rows in generator (content) order; empty
+    /// when not generated. The UI reads these, never the gathering family.
+    pub fn gather_resources(&self) -> &[GatherResourceOption] {
+        &self.gather_resources
+    }
+
+    /// Pinned gather option rows for one skill (`woodcutting`, `mining`,
+    /// `fishing`; trimmed, ASCII case-insensitive), in generator order.
+    pub fn gather_resources_for<'a>(
+        &'a self,
+        skill: &'a str,
+    ) -> impl Iterator<Item = &'a GatherResourceOption> {
+        let wanted = skill.trim();
+        self.gather_resources
+            .iter()
+            .filter(move |row| row.skill.eq_ignore_ascii_case(wanted))
+    }
+
+    /// One pinned gather option by skill and selectable key (both trimmed,
+    /// ASCII case-insensitive). Used by prepare to resolve a setting value to
+    /// its method.
+    pub fn gather_option(&self, skill: &str, key: &str) -> Option<&GatherResourceOption> {
+        let skill = skill.trim();
+        let key = key.trim();
+        self.gather_resources
+            .iter()
+            .find(|row| row.skill.eq_ignore_ascii_case(skill) && row.key.eq_ignore_ascii_case(key))
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

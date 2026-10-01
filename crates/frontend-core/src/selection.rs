@@ -1,4 +1,4 @@
-//! Shared marked-bot selection and the small bulk command adapter.
+//! Shared marked-bot selection used by the panel, TUI and frontend commands.
 //!
 //! A mark is keyed by [`ProfileIdentity`], never by the profile's display
 //! name.  Usernames are editable presentation data; the vault UID is the
@@ -338,5 +338,41 @@ mod tests {
         marked.set(id, true);
         marked.set(id, true);
         assert_eq!(marked.len(), 1);
+    }
+
+    #[test]
+    fn marked_command_uses_snapshot_and_reports_each_admission() {
+        let alice = ProfileIdentity::uid(11);
+        let bob = ProfileIdentity::uid(22);
+        let missing = ProfileIdentity::uid(33);
+        let mut marked = MarkedSelection::default();
+        marked.mark_all([alice, bob, missing]);
+        let mut admitted = Vec::new();
+        let report = crate::marked::run_marked_command(
+            &marked,
+            vec![(alice, "alice".to_string()), (bob, "bob".to_string())],
+            |profile| {
+                admitted.push(profile.to_string());
+                (profile == "alice")
+                    .then_some(())
+                    .ok_or_else(|| "not ready".to_string())
+            },
+        );
+        assert_eq!(admitted, ["alice", "bob"]);
+        assert_eq!(report.accepted, 1);
+        assert_eq!(report.total(), 3);
+        assert_eq!(
+            report.skipped,
+            vec![
+                super::BulkSkip {
+                    profile: "bob".into(),
+                    reason: "not ready".into(),
+                },
+                super::BulkSkip {
+                    profile: format!("profile#{}", missing.raw()),
+                    reason: "profile unavailable".into(),
+                },
+            ]
+        );
     }
 }

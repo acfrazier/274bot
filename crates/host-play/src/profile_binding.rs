@@ -1,6 +1,61 @@
 use super::*;
 use api::host_log;
 use api::hostlog::{Category, Level};
+use sha2::{Digest, Sha256};
+use std::io::{BufRead, BufReader, Read};
+
+// Hash the very bytes the decoder reads, without reopening the resource or
+// retaining a full-file staging allocation. Bundled identities need no hash.
+struct NavReader<'a> {
+    file: std::fs::File,
+    digest: Option<Sha256>,
+    completed: u64,
+    total: u64,
+    observer: &'a ProfileProgressObserver,
+}
+
+impl Read for NavReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.file.read(buffer)?;
+        if let Some(digest) = &mut self.digest {
+            digest.update(&buffer[..count]);
+            self.completed += count as u64;
+            if self.completed < self.total {
+                self.observer.report(ProfileProgress::bytes(
+                    ProfileProgressStage::CheckingNavigationFiles,
+                    self.completed,
+                    self.total,
+                ));
+            }
+        }
+        Ok(count)
+    }
+}
+
+fn open_nav_file(path: &Path) -> std::io::Result<(std::fs::File, usize)> {
+    let file = std::fs::File::open(path)?;
+    let length = usize::try_from(file.metadata()?.len())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    Ok((file, length))
+}
+
+fn finish_nav_hash(mut reader: BufReader<NavReader<'_>>) -> std::io::Result<String> {
+    // Byte decoders historically accept trailing bytes. They still contribute
+    // to the external identity, including bytes already buffered by BufReader.
+    std::io::copy(&mut reader, &mut std::io::sink())?;
+    let mut reader = reader.into_inner();
+    let hash = format!(
+        "{:x}",
+        reader.digest.take().expect("external nav hash").finalize()
+    );
+    reader.observer.report(ProfileProgress::bytes(
+        ProfileProgressStage::CheckingNavigationFiles,
+        reader.completed,
+        reader.completed,
+    ));
+    Ok(hash)
+}
+
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 struct LoadedNav {
     availability: NavAvailability,
@@ -80,6 +135,30 @@ fn verify_source_inputs<'a>(
         Ok(total)
     } else {
         Err(GameDataSourceRejection { total, failures })
+    }
+}
+
+#[cfg(feature = "debug-catalog")]
+impl ServerProfile {
+    /// Independently verify and decode on Debug-tab demand, never on bind.
+    /// The caller owns the catalog; closing the tab releases its heap.
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
+        if self.profile_class() != ProfileClass::Local {
+            return Err("Debug commands require a Local profile".into());
+        }
+        let data = self.game_data().ok_or_else(|| {
+            format!(
+                "Debug catalog unavailable: {}",
+                self.game_data_status().detail()
+            )
+        })?;
+        let catalog = api::debug_commands::DebugCatalog::load(self.revision(), data)?;
+        verify_source_inputs(catalog.source_inputs(), &self.debug_engine_dir, &self.content_dir)
+            .map_err(|rejection| format!(
+                "Debug catalog withheld: {} of {} debug inputs failed verification; other generated facts remain available",
+                rejection.failures.len(), rejection.total
+            ))?;
+        Ok(Arc::new(catalog))
     }
 }
 
@@ -314,26 +393,17 @@ impl ProfileSelection {
         let unpack_dir = runtime_cache
             .as_ref()
             .map_or(self.unpack_dir.as_path(), |p| p.unpack_root());
-        let availability = if let Some(p) = &runtime_cache {
-            CacheAvailability::Ready {
-                version: p.version.clone(),
-                published: true,
-                source: if p.source == "update-server" {
-                    "update-server"
-                } else {
-                    "local-store"
-                },
-            }
-        } else {
-            crate::cache::prepare(
+        let cache_preparation = if runtime_cache.is_none() {
+            Some(crate::cache::prepare(
                 cache_dir,
                 unpack_dir,
                 self.transport(),
                 &self.asset_host,
                 self.asset_port,
                 observer,
-            )
-            .availability
+            ))
+        } else {
+            None
         };
         let mut archives = std::collections::BTreeMap::new();
         let mut crcs = [0; 9];
@@ -349,8 +419,15 @@ impl ProfileSelection {
             archive_total,
         ));
         for (index, name) in JAGS.iter().enumerate() {
-            let bytes =
-                std::fs::read(cache_dir.join(name)).map_err(|e| format!("cache {name}: {e}"))?;
+            let bytes = std::fs::read(cache_dir.join(name)).map_err(|error| {
+                let archive_error = format!("cache {name}: {error}");
+                match cache_preparation.as_ref().map(|prep| &prep.availability) {
+                    Some(crate::cache::CacheAvailability::Degraded(reason)) => {
+                        format!("{archive_error}; cache preparation degraded: {reason}")
+                    }
+                    _ => archive_error,
+                }
+            })?;
             archives.insert((*name).into(), hash_bytes_with_progress(&bytes, |_, _| {}));
             crcs[index + 1] = Packet::getcrc(&bytes, 0, bytes.len());
             let completed = index as u64 + 1;
@@ -488,6 +565,21 @@ impl ProfileSelection {
                 }
             }
         }
+        let availability = if let Some(p) = &runtime_cache {
+            CacheAvailability::Ready {
+                version: p.version.clone(),
+                published: true,
+                source: if p.source == "update-server" {
+                    "update-server"
+                } else {
+                    "local-store"
+                },
+            }
+        } else {
+            cache_preparation
+                .expect("non-runtime cache preparation")
+                .availability
+        };
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
             transport: self.transport(),
@@ -535,6 +627,8 @@ impl ProfileSelection {
             canlight: loaded.canlight,
             nav: loaded.availability,
             content_dir: self.content_dir.clone(),
+            #[cfg(feature = "debug-catalog")]
+            debug_engine_dir: self.engine_dir.clone(),
             vault_path: self.vault_path.clone(),
             catalog_root: self.catalog_root.clone(),
             world_members: self.world_members.clone(),
@@ -669,12 +763,25 @@ impl ProfileSelection {
                 counters,
             });
         }
-        let bytes = std::fs::read(pack_path)
+        let (file, length) = open_nav_file(pack_path)
             .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
+        let mut reader = BufReader::with_capacity(
+            64 * 1024,
+            NavReader {
+                file,
+                digest: (!origin.is_bundled()).then(Sha256::new),
+                completed: 0,
+                total: length as u64,
+                observer,
+            },
+        );
         counters.pack_reads = 1;
+        let prefix = reader
+            .fill_buf()
+            .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
         if !origin.is_bundled()
-            && bytes.starts_with(b"274V")
-            && bytes
+            && prefix.starts_with(b"274V")
+            && prefix
                 .get(4)
                 .is_some_and(|version| *version < nav::pack::VERSION)
         {
@@ -692,6 +799,8 @@ impl ProfileSelection {
                 counters,
             });
         }
+        let world_result =
+            decode_nav_world(&mut reader, length, pack_path, observer, &mut counters);
         let identity = match origin {
             NavOrigin::Bundled { identity, .. } => NavManifest {
                 revision: identity.revision,
@@ -705,18 +814,13 @@ impl ProfileSelection {
                 source_sha256: identity.source_sha256.clone(),
             },
             NavOrigin::External { .. } => {
-                let nav_hash = hash_bytes_with_progress(&bytes, |completed, total| {
-                    observer.report(ProfileProgress::bytes(
-                        ProfileProgressStage::CheckingNavigationFiles,
-                        completed,
-                        total,
-                    ));
-                });
+                let nav_hash = finish_nav_hash(reader)
+                    .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
                 counters.pack_hashes = 1;
                 let manifest_path = nav_manifest_path(pack_path);
                 if !manifest_path.exists() {
                     if self.revision() == ClientRevision::R274 && content_id.is_none() {
-                        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+                        let world = world_result?;
                         let identity = NavManifest {
                             revision,
                             cache_id: cache.identity(),
@@ -750,7 +854,7 @@ impl ProfileSelection {
                 manifest
             }
         };
-        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+        let world = world_result?;
         let reach = if origin.is_bundled() {
             if identity.reach_sha256.is_none() {
                 return Err("bundled navigation reach identity is missing".into());
@@ -807,10 +911,11 @@ fn load_bundled_reach(
             reach_path.display()
         ));
     }
-    let bytes = std::fs::read(&reach_path)
+    let (file, length) = open_nav_file(&reach_path)
         .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     counters.reach_reads = 1;
-    let side = decode_reach_sidecar(&bytes)
+    let side = nav::pack::read_reach_sidecar(&mut reader, length)
         .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
     if sha256_hex(&side.binding) != nav_sha256 {
         return Err(format!(
@@ -831,7 +936,7 @@ fn load_bundled_reach(
             reach_path.display()
         ));
     }
-    Ok(Arc::from(side.bits))
+    Ok(side.bits)
 }
 
 fn load_bundled_canlight(
@@ -848,10 +953,11 @@ fn load_bundled_canlight(
             canlight_path.display()
         ));
     }
-    let bytes = std::fs::read(&canlight_path)
+    let (file, length) = open_nav_file(&canlight_path)
         .map_err(|e| format!("bundled navigation {}: {e}", canlight_path.display()))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     counters.canlight_reads = 1;
-    let side = decode_canlight_sidecar(&bytes).map_err(|e| match e {
+    let side = nav::pack::read_canlight_sidecar(&mut reader, length).map_err(|e| match e {
         nav::pack::PackError::BadMagic => {
             format!("bundled navigation {}: bad magic", canlight_path.display())
         }
@@ -885,11 +991,12 @@ fn load_bundled_canlight(
             canlight_path.display()
         ));
     }
-    Ok(Arc::from(side.bits))
+    Ok(side.bits)
 }
 
 fn decode_nav_world(
-    bytes: &[u8],
+    reader: &mut impl BufRead,
+    length: usize,
     pack_path: &Path,
     observer: &ProfileProgressObserver,
     counters: &mut NavLoadCounters,
@@ -899,7 +1006,7 @@ fn decode_nav_world(
         0,
         1,
     ));
-    let world = NavWorld::from_bytes(bytes)
+    let world = NavWorld::from_reader(reader, length)
         .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
     counters.pack_decodes = 1;
     observer.report(ProfileProgress::steps(

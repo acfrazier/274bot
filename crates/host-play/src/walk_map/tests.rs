@@ -579,6 +579,53 @@ fn present_blocked_origin_is_not_a_missing_player_and_does_not_arm_walk() {
 }
 
 #[test]
+fn walk_failure_names_membership_when_a_members_only_route_exists() {
+    let base = world(t(0, 0, 0), 2, &[]);
+    let from = wt(0, 0, 0);
+    let to = wt(0, 0, 1);
+    let mut graph = TransportGraph::default();
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::Boat,
+        at: from,
+        to,
+        loc_id: 657,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: true,
+        wildy_cap: None,
+        quest_gates: None,
+    });
+    graph.at.insert(from, vec![0]);
+    let nav = NavWorld::from_parts(base.collision, graph, vec![]);
+    let mut context = context();
+    context.nav = digest(1);
+    let mut model = MapModel::default();
+    model.bind(context);
+    assert_eq!(model.select_tile(&nav, t(0, 0, 1)), Some(t(0, 0, 1)));
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &context,
+            Some(t(0, 0, 0)),
+            FindOptions::default(),
+        )
+        .expect("selected members-only destination");
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let error = command
+        .walk_on(&nav, &context, "alice", &WorldState::empty(), &[], &arms)
+        .expect_err("F2P must refuse the members-only route");
+    assert_eq!(error, ActionError::MembersOnly);
+    assert_eq!(error.to_string(), "This route requires a members' world");
+}
+
+#[test]
 fn debug_authority_requires_local_profile_and_loopback_host() {
     use crate::ProfileClass;
     assert!(!super::debug_teleport_authorized(
@@ -1455,4 +1502,14 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
     assert!(!arms.contains_key("bot3"));
+}
+
+/// Each failure keeps its own group-walk reason: a nav-identity mismatch reads
+/// "stale" and a membership refusal "members-only path", never a generic label.
+#[test]
+fn group_walk_reasons_label_stale_and_members_only_separately() {
+    let reason = |error| WalkSlotOutcomeKind::Failed(error).reason();
+    assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));
+    assert_eq!(reason(ActionError::Stale), Some("stale"));
+    assert_eq!(reason(ActionError::MembersOnly), Some("members-only path"));
 }

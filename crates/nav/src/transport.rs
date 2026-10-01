@@ -48,6 +48,7 @@ mod index;
 mod levers;
 mod magic_guild;
 mod membergate;
+mod members_guard;
 mod npc_hops;
 mod observable;
 mod quest_doors;
@@ -81,6 +82,8 @@ pub(crate) use index::{loc_ids_by_name, loc_positions, npc_ids_by_name, npc_posi
 use levers::*;
 use magic_guild::*;
 use membergate::*;
+pub(crate) use members_guard::require_members_guards;
+use members_guard::{apply_members_guards, MembersGuards};
 use npc_hops::*;
 pub(crate) use observable::{assert_transmitted_varp_reqs, VarpGateAudit};
 use observable::{JournalLinks, ObservableGates};
@@ -171,9 +174,13 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
-    /// WORLD membership required (`MAP_MEMBERS`). False on every existing
-    /// deriver; only the canonical `membergatel`/`membergater` family sets
-    /// this. Packed as a `u8` on the v9 wire after `worn_req`.
+    /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
+    /// handler (see `members_guard`): an F2P refusal on its leading path
+    /// gates every edge through it; gliders, Zanaris, spirit trees, stage
+    /// doors and the spell table read their own `map_members` shape. The
+    /// bake refuses a graph whose free edge's source reads `map_members`,
+    /// or whose members edge has no refusal or pinned members arm. Packed
+    /// as a `u8` on the v9 wire.
     pub members_req: bool,
     /// Content-derived max wilderness level this teleport may be used from
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
@@ -377,6 +384,9 @@ fn derive_transports_with_audit(
         &mut audit,
     );
     teleport_edges(content_root, &mut graph, &mut skipped);
+    // After every producer: the members gate each edge's source handler
+    // declares, read once for every kind.
+    apply_members_guards(&MembersGuards::from_content(content_root), &mut graph);
 
     // The derivers visit hash sets and directory listings whose order varies
     // per run and per filesystem. A revision's pack must be a fixed point of
@@ -801,6 +811,21 @@ fn straight_door_landing(
 /// the traveller drives the gated branch's pass-handover chat dialogs
 /// for this loc (see [`crate::traveller`]).
 pub(crate) const SHANTAY_HENGE_LOC_ID: i32 = 4031;
+/// `border_gate_toll_left` in `pack/loc.pack`: the southern Al Kharid
+/// border gate (m51_50 (4,27) = (3268,3227)).
+pub(crate) const AL_KHARID_TOLL_LEFT_LOC_ID: i32 = 2882;
+/// `border_gate_toll_right` in `pack/loc.pack`: the northern Al Kharid
+/// border gate (m51_50 (4,28) = (3268,3228)).
+pub(crate) const AL_KHARID_TOLL_RIGHT_LOC_ID: i32 = 2883;
+
+/// Dialogue-driven Door hops: the Al Kharid border toll (`border_gate.rs2`
+/// `oploc1` → border-guard `p_choice3`) and the Shantay henge
+/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer).
+pub(crate) fn is_dialogue_door_loc(loc_id: i32) -> bool {
+    loc_id == SHANTAY_HENGE_LOC_ID
+        || loc_id == AL_KHARID_TOLL_LEFT_LOC_ID
+        || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID
+}
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]

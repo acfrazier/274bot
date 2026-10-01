@@ -29,6 +29,7 @@ deno_ast = { version = "=0.49.0" }
 # Rust bindings are checked-in pinned `flatc` output, so builds need no generator.
 flatbuffers = { version = "=25.12.19", optional = true }
 deno_core = { version = "=0.355.0", optional = true }
+parking_lot = "=0.12.5"
 rustyscript = { version = "=0.12.3", optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
@@ -40,6 +41,7 @@ vault = { path = "../vault" }
 v8 = { version = "=137.2.1", default-features = false, optional = true }
 
 [dev-dependencies]
+allocation-counter = "=0.8.1"
 # Integration tests use isolate seams without exposing them in normal builds.
 script = { path = ".", features = ["test-hooks"] }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
@@ -157,6 +159,9 @@ name = "ent"
 required-features = ["load"]
 [[test]]
 name = "dialog"
+required-features = ["load"]
+[[test]]
+name = "compat_dts"
 required-features = ["load"]
 [[test]]
 name = "host_js"

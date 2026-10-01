@@ -3479,6 +3479,229 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     );
 }
 
+const ALKHARID_TOLL_LOC_ID: i32 = 2882;
+const COINS_OBJ: i32 = 995;
+/// Not obj 995 — the no-coins follow test must fail if the follower hard-codes coins.
+const TEST_TOLL_COIN_OBJ: i32 = 4242;
+
+fn alkharid_toll_edge() -> TransportEdge {
+    TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3203,
+            z: 3201,
+            level: 0,
+        },
+        loc_id: ALKHARID_TOLL_LOC_ID,
+        option: 1,
+        ticks: 1,
+        dir: Some(DoorDir::E),
+        open_loc_id: Some(1562),
+        skill_req: vec![],
+        item_req: vec![(COINS_OBJ, 10)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
+}
+
+fn alkharid_toll_route() -> Route {
+    let edge = alkharid_toll_edge();
+    Route {
+        dest: edge.to,
+        ticks: 1.0,
+        legs: vec![Leg::Transport { edge }],
+    }
+}
+
+fn alkharid_toll_follow_start(
+    with_coins: bool,
+) -> (Client, GameSnapshot, FollowRec, Traveller, Route) {
+    let mut c = scene_client();
+    plant_loc(&mut c, ALKHARID_TOLL_LOC_ID, "Gate", "Open", 2, 1);
+    if with_coins {
+        plant_inv_stack(&mut c, COINS_OBJ, 10);
+    }
+    let snap = snap_at(&mut c, 1, 1);
+    if with_coins {
+        assert_eq!(snap.inv_count(COINS_OBJ), 10);
+    } else {
+        assert_eq!(snap.inv_count(COINS_OBJ), 0);
+    }
+    let rec = FollowRec {
+        route: Some((1, 1)),
+        ..FollowRec::default()
+    };
+    (c, snap, rec, Traveller::new(), alkharid_toll_route())
+}
+
+/// The Al Kharid toll's `oploc1` opens the border-guard chat, then
+/// `p_choice3` with the pay option last. A Door hop must continue the
+/// talk pages and answer "Yes, ok." — never the first "walk around"
+/// refuse — then settle `arrived(to)`.
+#[test]
+fn follow_alkharid_toll_answers_yes_ok_from_content_then_arrives() {
+    let (mut c, mut snap, mut rec, mut t, route) = alkharid_toll_follow_start(true);
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1, "the OP_LOC1 Open went out");
+    assert_eq!(rec.if_buttons, 0, "no answer before the dialog opens");
+
+    plant_continue_dialog(&mut c);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.pause_buttons, 1, "the chatplayer page is continued");
+
+    plant_continue_dialog(&mut c);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.pause_buttons, 2, "the chatnpc toll page is continued");
+
+    plant_choice_dialog(
+        &mut c,
+        &[
+            "No thank you, I'll walk around.",
+            "Who does my money go to?",
+            "Yes, ok.",
+        ],
+    );
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.if_buttons, 1, "the pay choice is pressed");
+    assert_eq!(
+        rec.if_button_components,
+        vec![103],
+        "Yes, ok. is the third option, not the refuse branch"
+    );
+
+    plant_continue_dialog(&mut c);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.pause_buttons, 3,
+        "the post-pay chatplayer page is continued"
+    );
+
+    c.chat_modal_id = -1;
+    plant_player(&mut c, 3, 1);
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Arrived { at }) => {
+            assert_eq!(
+                at,
+                WorldTile {
+                    x: 3203,
+                    z: 3201,
+                    level: 0
+                }
+            );
+        }
+        other => panic!("expected Arrived, got {other:?}"),
+    }
+}
+
+/// With the pay page up and fewer than 10 coins, the hop refuses instead of
+/// answering "Yes, ok." — the engine would only then say there isn't enough.
+#[test]
+fn follow_alkharid_toll_refuses_without_coins_instead_of_paying() {
+    let mut edge = alkharid_toll_edge();
+    edge.item_req = vec![(TEST_TOLL_COIN_OBJ, 10)];
+    let route = Route {
+        dest: edge.to,
+        ticks: 1.0,
+        legs: vec![Leg::Transport { edge }],
+    };
+    let mut c = scene_client();
+    plant_loc(&mut c, ALKHARID_TOLL_LOC_ID, "Gate", "Open", 2, 1);
+    let mut snap = snap_at(&mut c, 1, 1);
+    assert_eq!(snap.inv_count(TEST_TOLL_COIN_OBJ), 0);
+    let mut rec = FollowRec {
+        route: Some((1, 1)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1);
+
+    plant_choice_dialog(
+        &mut c,
+        &[
+            "No thank you, I'll walk around.",
+            "Who does my money go to?",
+            "Yes, ok.",
+        ],
+    );
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Blocked { detail, .. }) => {
+            assert!(
+                detail.contains("coins"),
+                "refusal must name the missing coins, got {detail}"
+            );
+        }
+        other => panic!("expected Blocked for missing coins, got {other:?}"),
+    }
+    assert_eq!(
+        rec.if_buttons, 0,
+        "the pay option is not answered without coins"
+    );
+}
+
+/// An unrecognized option page is not guessed. Choice 1 would be the
+/// "walk around" refuse on the real toll page.
+#[test]
+fn follow_alkharid_toll_does_not_answer_unknown_pages() {
+    let (mut c, mut snap, mut rec, mut t, route) = alkharid_toll_follow_start(true);
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1);
+
+    plant_choice_dialog(&mut c, &["An unexpected route.", "No thanks."]);
+    bump_rebuild(&mut c, &mut snap);
+    match t.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Blocked { detail, .. }) => {
+            assert!(
+                detail.contains("unrecognized"),
+                "refusal must name the unknown page, got {detail}"
+            );
+        }
+        other => panic!("expected Blocked for unknown dialogue, got {other:?}"),
+    }
+    assert_eq!(rec.if_buttons, 0, "unknown pages are not answered");
+}
+
 /// Reciprocal stand→teleport Door hops (Ranging 2514) are Chebyshev 2.
 /// Default `close_enough` 2 must not complete from the origin stand,
 /// a forcemove wait, or an adjacent/wrong-side tile; only the packed
@@ -4346,6 +4569,11 @@ fn lumbridge_spell_edge() -> TransportEdge {
 /// Rub op in slot 4: the container the jewellery-rub arm reads the
 /// packed item from.
 fn plant_inv_item(c: &mut Client, obj_id: i32) {
+    plant_inv_stack(c, obj_id, 1);
+}
+
+/// Inventory tab (side 3) carrying `count` of `obj_id` (stored `obj_id + 1`).
+fn plant_inv_stack(c: &mut Client, obj_id: i32, count: i32) {
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
         while cache.objs.len() <= obj_id as usize {
@@ -4381,7 +4609,7 @@ fn plant_inv_item(c: &mut Client, obj_id: i32) {
         301,
         IfTypeMut {
             link_obj_type: Some(vec![obj_id + 1]),
-            link_obj_number: Some(vec![1]),
+            link_obj_number: Some(vec![count]),
             ..Default::default()
         },
     );

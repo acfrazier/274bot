@@ -183,7 +183,7 @@ impl TuiApp {
             return "Up/Down/Tab row · Enter/Space act · type into fields · Esc close";
         }
         if self.settings_state.open {
-            return "Up/Down row · Enter/Space toggle · Esc close";
+            return "Up/Down row · Enter/Space toggle · r relog now · Esc close";
         }
         if let Some(modal) = &self.modal {
             return modal.hints();
@@ -398,6 +398,7 @@ impl TuiApp {
             Command::MapSearch => self.open_map_search(),
             Command::MapRecenter => self.recenter_map(),
             Command::MapGroup => self.toggle_walk_send_mode(),
+            Command::MapWilderness => self.toggle_map_wilderness(),
             Command::MapWalk => return self.map_enter(),
             Command::MapTeleport => {
                 if let Some(pending) = self.map_model.pending() {
@@ -581,12 +582,18 @@ impl TuiApp {
             &mut self.map_bake,
             &mut self.settings_state,
         );
+        pane.memory = self.settings_memory;
         match pane.on_key(key) {
             SettingsKey::Changed => {
                 self.settings_dirty = true;
                 // The draft moved on: a notice about its last save no
                 // longer describes it.
                 self.settings_save.edited();
+            }
+            SettingsKey::MemoryRelog => {
+                if let Some(name) = self.settings_profile.clone() {
+                    return AppAction::MemoryRelog(name);
+                }
             }
             SettingsKey::MapBake => self.map_bake_dirty = true,
             SettingsKey::Consumed | SettingsKey::Ignored => {}
@@ -688,7 +695,7 @@ impl TuiApp {
         let popup = SettingsPane::popup_rect(self.regions.area);
         let first = popup.y + 1;
         if contains(popup, col, row) && row >= first && row < popup.y + popup.height - 1 {
-            self.settings_state.row = usize::from(row - first).min(6);
+            self.settings_state.row = usize::from(row - first).min(7);
             return self.settings_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         AppAction::None

@@ -31,6 +31,7 @@ serde_json = "=1.0.140"
 
 [dev-dependencies]
 bzip2 = "0.4"
+png = "=0.18.1"
 script = { path = "../script", features = ["test-hooks"] }
 
 # These harnesses use the optional scenario runner even for their offline tests.
@@ -50,6 +51,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [features]
+debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
 memory-profile = ["script/memory-profile", "host/performance-profile", "dep:scenario"]
@@ -64,3 +66,8 @@ live-harness = ["dep:scenario"]
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
 test-support = ["script/test-hooks"]
+
+# Windows-only headed Quester journal paint proof. The code remains gated by
+# both this feature and `cfg(windows)` so ordinary Mac/headless tests never
+# construct a native window.
+journal-paint-proof = ["client/headed-fixture", "host/journal-paint-proof"]

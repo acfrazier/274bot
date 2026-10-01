@@ -124,6 +124,9 @@ mod tests {
         let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
             panic!("never-skip start must select");
         };
+        let SelectionDecision::Selected(picked) = select(&compiled, 0, &pred) else {
+            panic!("never-skip start must select");
+        };
         assert_eq!(picked.step.id.0.as_ref(), "start");
         assert!(!picked.prelude);
 

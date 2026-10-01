@@ -163,6 +163,12 @@ pub enum AppAction {
     Logout,
     /// Log out every member (after the scope confirmation).
     LogoutAll,
+    /// Relog the settings-bound member for a memory-mode switch (the
+    /// settings popup's `r` key): the binary confirms first when a
+    /// running script would be interrupted.
+    MemoryRelog(String),
+    /// Confirmed memory Relog-now: log out and back in through the FIFO.
+    MemoryRelogNow(String),
     /// Remove this member from the fleet (clean logout, then stop). The
     /// name was frozen when the operator confirmed.
     Remove(String),
@@ -411,6 +417,13 @@ pub struct TuiApp {
     /// The popup's save feedback: an inline refusal, or `Saved <name>.`
     /// once its last persist is durable.
     pub settings_save: frontend_core::ProfileFormSave,
+    /// Login-time vs effective mode for the focused slot; the status pane
+    /// reads it. Copied from the core each pump.
+    pub memory: Option<frontend_core::MemoryNotice>,
+    /// Login-time vs effective mode for [`Self::settings_profile`]. The
+    /// popup stays bound across focus changes, so this is deliberately
+    /// separate from [`Self::memory`].
+    pub settings_memory: Option<frontend_core::MemoryNotice>,
     /// Remembered WalkTo terrain-bake choice (shared `panel-ui.json` key).
     pub map_bake: MapBakeChoice,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
@@ -520,6 +533,8 @@ impl TuiApp {
             settings_profile: None,
             settings_title: crate::settings::TITLE.to_string(),
             settings_save: frontend_core::ProfileFormSave::default(),
+            memory: None,
+            settings_memory: None,
             map_bake: MapBakeChoice::Ask,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
@@ -557,7 +572,28 @@ impl TuiApp {
             script_area: Rect::default(),
         }
     }
+    /// Restore shared map preferences from the path selected by the binary.
+    /// Tests pass an isolated path; constructing an app never reads `$HOME`.
+    pub fn restore_map_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
+        self.map.restore_persisted_wilderness(path);
+    }
 
+    pub(crate) fn toggle_map_wilderness(&mut self) {
+        match self.map.toggle_wilderness() {
+            Ok(()) => {
+                if self
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("map wilderness:"))
+                {
+                    self.error = None;
+                }
+            }
+            Err(error) => {
+                self.error = Some(format!("map wilderness: {error}"));
+            }
+        }
+    }
     /// The header title (profile, server and revision).
     pub fn title(&self) -> &str {
         &self.title
@@ -1047,8 +1083,8 @@ impl TuiApp {
     }
 
     /// The Map tab's own keys (after the router tried the `MAP_KEYS`
-    /// commands and Esc-to-leave): plane, layers, the group toggle for the
-    /// selected bot, Enter select/confirm, pan and zoom.
+    /// commands and Esc-to-leave): plane, diagnostic layers, the group
+    /// toggle for the selected bot, Enter select/confirm, pan and zoom.
     pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
@@ -1589,7 +1625,7 @@ impl TuiApp {
         }
 
         let title = format!(
-            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search · g group · t teleport · Esc back",
+            "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search",
             self.map.plane,
             self.map_catalogue_status,
             self.walk_send.walk_label()
@@ -1667,13 +1703,18 @@ impl TuiApp {
                 )
             }),
             Line::from(format!(
-                "legend: @ * + B T X N#  POIs:{} obs:{} {}",
+                "legend: @ * + shade B T X N #  POIs:{} obs:{} {} · w wilderness:{}",
                 poi_count,
                 self.map_observed.len(),
                 if self.route.is_some() {
                     "route"
                 } else {
                     "none"
+                },
+                if self.map.layers.wilderness {
+                    "on"
+                } else {
+                    "off"
                 }
             )),
         ];
@@ -1720,12 +1761,33 @@ impl TuiApp {
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
             .unwrap_or_else(|| "—".into());
-        let mem = if self.settings.lowmem {
+        let mode = if self.settings.lowmem {
             "lowmem"
         } else {
             "highmem"
         };
-        let pane = StatusPane::new(self.focused_detail(), &walk, mem)
+        let login = self.memory.filter(|n| n.differs()).map(|n| {
+            if n.login_lowmem {
+                "lowmem"
+            } else {
+                "highmem"
+            }
+        });
+        let mem: String;
+        let note: Option<&str>;
+        match login {
+            Some(login) => {
+                mem = format!("{mode} (login {login})");
+                note =
+                    Some("server tabs + sound follow at the next login (settings: r = relog now)");
+            }
+            None => {
+                mem = mode.to_string();
+                note = None;
+            }
+        }
+        let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
+            .mem_notice(note)
             .resources(&self.resources)
             .notice(self.background_notice.as_deref());
         frame.render_widget(pane, area);

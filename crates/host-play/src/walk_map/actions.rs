@@ -63,6 +63,7 @@ pub enum ActionError {
     Stale,
     NoNavigation,
     NoPath,
+    MembersOnly,
     Unauthorized,
     WrongAction,
     InvalidCoordinates,
@@ -79,6 +80,7 @@ impl fmt::Display for ActionError {
             Self::Stale => "Map selection expired: nav identity or map binding changed",
             Self::NoNavigation => "Navigation unavailable",
             Self::NoPath => "No path to the selected destination with these routing options",
+            Self::MembersOnly => "This route requires a members' world",
             Self::Unauthorized => "Debug Teleport requires a local loopback engine target",
             Self::WrongAction => "Map confirmation has a different action",
             Self::InvalidCoordinates => "Enter x,z,plane (plane 0–3)",
@@ -99,6 +101,7 @@ impl ActionError {
             Self::Stale => "stale",
             Self::NoNavigation => "navigation unavailable",
             Self::NoPath => "no path",
+            Self::MembersOnly => "members-only path",
             Self::Unauthorized => "not authorised",
             Self::WrongAction => "wrong action",
             Self::InvalidCoordinates => "invalid coordinates",
@@ -869,7 +872,7 @@ impl MapCommand {
         if !safe_standable(world, world_tile(self.destination)) {
             return Err(ActionError::Blocked);
         }
-        crate::arm_walk_on(
+        let result = crate::arm_walk_on(
             world,
             self.origin,
             self.destination,
@@ -878,8 +881,28 @@ impl MapCommand {
             bank,
             arms,
             Some(name),
-        )
-        .map_err(|_| ActionError::NoPath)
+        );
+        match result {
+            Ok(route) => Ok(route),
+            Err(_) if !state.map_members => {
+                let members_state = state.clone().with_map_members(true);
+                if nav::router::find_with(
+                    &world.collision,
+                    &world.graph,
+                    world_tile(self.origin),
+                    world_tile(self.destination),
+                    self.options,
+                    &members_state,
+                )
+                .is_ok()
+                {
+                    Err(ActionError::MembersOnly)
+                } else {
+                    Err(ActionError::NoPath)
+                }
+            }
+            Err(_) => Err(ActionError::NoPath),
+        }
     }
 }
 impl Play {

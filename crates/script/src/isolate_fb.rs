@@ -3342,6 +3342,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .action()
                     .ok_or_else(|| "held has no action".to_string())?
                     .to_string(),
+                slot: None,
             }),
             "inv-button" => out.push(crate::shim::InteractReq::InvButton {
                 id: row
@@ -3998,7 +3999,8 @@ fn interact_off<'b>(
             table.add_name(name_off.unwrap());
             table.add_bank_generation(*bank_generation);
         }
-        InteractReq::Held { .. } => {
+        InteractReq::Held { slot, .. } => {
+            debug_assert!(slot.is_none(), "slot-exact Held is native-only");
             table.add_name(name_off.unwrap());
             table.add_action(action_off.unwrap());
         }
@@ -4990,6 +4992,30 @@ pub(crate) mod tests {
         assert_eq!(view.my_name(), Some(""), "None encodes as empty string");
     }
 
+    #[test]
+    fn held_wire_roundtrip_retains_legacy_unspecified_slot() {
+        let request = InteractReq::Held {
+            name: "Logs".into(),
+            action: "Drop".into(),
+            slot: None,
+        };
+        assert_eq!(
+            decode_interact_batch(&encode_interact_batch(std::slice::from_ref(&request))).unwrap(),
+            vec![request]
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "slot-exact Held is native-only")]
+    fn slot_exact_held_cannot_cross_the_isolate_wire() {
+        encode_interact_batch(&[InteractReq::Held {
+            name: "Logs".into(),
+            action: "Drop".into(),
+            slot: Some(7),
+        }]);
+    }
+
     /// One reusable builder encodes snapshot, then paint, then interact —
     /// the per-slot / per-V8 buffer, reset between messages, never a
     /// JSON document and never `FlatBufferBuilder::new()` per tick.
@@ -5004,6 +5030,7 @@ pub(crate) mod tests {
             InteractReq::Held {
                 name: "Bones".into(),
                 action: "Bury".into(),
+                slot: None,
             },
             InteractReq::Walk {
                 x: 1,

@@ -117,6 +117,40 @@ fn minimal_json(tail: &str) -> String {
     )
 }
 
+fn debug_catalog() -> crate::debug_commands::DebugCatalog {
+    crate::debug_commands::DebugCatalog::decode(
+        include_bytes!("../data/game-data/289/debug.json"),
+        ClientRevision::R289,
+        for_revision(ClientRevision::R289).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn debug_picker_exact_alias_precedes_substrings() {
+    let data = debug_catalog();
+    assert_eq!(data.search_names("npc", "man", 40)[0].alias, "man");
+    assert_eq!(data.search_names("inv", "inv", 40)[0].alias, "inv");
+}
+
+#[test]
+fn debug_catalog_commands_and_name_families_are_searchable() {
+    let data = debug_catalog();
+    assert!(data
+        .commands()
+        .iter()
+        .any(|command| command.name == "~maxme"));
+    assert_eq!(data.search_names("obj", "coins", 8)[0].alias, "coins");
+    assert_eq!(data.search_names("namedobj", "995", 8)[0].id, 995);
+    assert_eq!(
+        data.search_names("varbit", "tutorial", 8)[0].alias,
+        "tutorial"
+    );
+    assert!(data.search_names("npc", "", 8).is_empty());
+    assert!(data.search_names("future", "guard", 8).is_empty());
+    assert!(data.search_names("npc", "man", 0).is_empty());
+}
+
 fn scanned_fixed_food_heal(data: &SelectedGameData, name: &str) -> Option<i32> {
     let mut matching = data
         .consumption
@@ -172,6 +206,37 @@ fn missing_quest_identity_is_absent_not_an_empty_list() {
     let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
         .expect("schema 4 without the field still decodes");
     assert!(data.quest_identity().is_none());
+}
+
+#[test]
+fn generated_quest_starts_are_pinned_to_selected_content() {
+    let data = for_revision(ClientRevision::R289).expect("selected game data");
+    let starts = data.quest_starts().expect("generated quest start family");
+    assert_eq!(starts.schema, 1);
+    assert_eq!(starts.revision, 289);
+    assert_eq!(Some(starts.content_id.as_str()), data.content_id());
+    assert!(
+        !starts.rows.is_empty(),
+        "the pinned content has quest starts"
+    );
+    assert!(
+        starts
+            .rows
+            .iter()
+            .all(|row| !row.quest.is_empty()
+                && (row.target.kind == "npc" || row.target.kind == "loc"))
+    );
+}
+
+#[test]
+fn quest_starts_with_mismatched_content_are_rejected() {
+    let json = minimal_json(
+        r#", "quest_starts": {"schema": 1, "revision": 274, "content_id": "not-the-cache", "rows": [{"quest": "cook", "target": {"kind": "npc", "id": 100}, "op": 1}]}"#,
+    )
+    .replace(r#""cache_id": "x""#, r#""cache_id": "x", "content_id": "the-cache""#);
+    let error = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274)
+        .expect_err("quest starts must be pinned to the selected content");
+    assert!(error.contains("content identity mismatch"), "{error}");
 }
 
 #[test]
@@ -734,4 +799,42 @@ fn unsupported_trio_giver_coverage_does_not_decode() {
     let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
         .expect_err("a support class is not unknown-spawn coverage");
     assert!(error.contains("unknown"), "unexpected error: {error}");
+}
+
+#[test]
+fn gather_resources_decode_and_skill_lookup() {
+    let tail = r#", "gather_resources": [
+        {"skill": "mining", "method": "mining.copper", "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
+        {"skill": "woodcutting", "method": "woodcutting.jungle", "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
+        {"skill": "fishing", "method": "fishing.saltfish.op1", "key": "fishing.saltfish.op1", "resources": ["raw_shrimp", "raw_anchovies"], "label": "Raw shrimps / Raw anchovies", "level": 0, "selectable": true, "gap": null}
+    ]"#;
+    let data = SelectedGameData::decode(minimal_json(tail).as_bytes(), ClientRevision::R274)
+        .expect("gather slice decodes");
+    assert_eq!(data.gather_resources().len(), 3);
+    let legacy = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+        .expect("a core without the slice still decodes");
+    assert!(legacy.gather_resources().is_empty());
+    let mining: Vec<_> = data.gather_resources_for("Mining").collect();
+    assert_eq!(mining.len(), 1);
+    assert_eq!(mining[0].key, "copper");
+    assert_eq!(
+        data.gather_option("mining", " COPPER ")
+            .map(|row| row.method.as_str()),
+        Some("mining.copper")
+    );
+    assert_eq!(
+        data.gather_option("fishing", "fishing.saltfish.op1")
+            .map(|row| row.label.as_str()),
+        Some("Raw shrimps / Raw anchovies")
+    );
+    assert!(data.gather_option("mining", "coal").is_none());
+    let jungle = data
+        .gather_option("woodcutting", "jungle")
+        .expect("a refused row stays published");
+    assert!(!jungle.selectable);
+    assert_eq!(jungle.gap.as_deref(), Some("no-resource-target"));
+    assert_eq!(
+        jungle.level, 0,
+        "an omitted level defaults, it is never invented"
+    );
 }

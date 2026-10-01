@@ -8,12 +8,13 @@ use std::time::{Duration, Instant, SystemTime};
 use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
-    edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
-    live_script_tick, live_smoke_tick, live_stress_tick, loading_text, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, progress_channel, request_clean_stop_capture,
-    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
-    LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
+    edit_parameters_enabled, finish_panel_run, game_window_flags, hold_script_terminal_shot,
+    live_exit_code, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
+    loading_text, logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
+    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
+    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
@@ -27,6 +28,248 @@ use client::io::Packet;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+#[test]
+#[ignore]
+fn panel_exit_status_child() {
+    match std::env::var("PANEL_EXIT_CHILD").as_deref() {
+        Ok("fail") => {
+            let (mut session, live, first_failure) = failed_live_script();
+            let mut live = LiveHarness::Script(live);
+            assert_eq!(live_exit_code(&live, Some(&first_failure)), Some(1));
+
+            let repeated_failure = live.tick(&mut session, &[], &ShotStatus::Missing, None, 0);
+            assert!(repeated_failure.is_none());
+            assert_eq!(live_exit_code(&live, repeated_failure.as_deref()), Some(1));
+            let result = finish_panel_run(Ok(()), live.failure().map(str::to_owned));
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+        Ok("pass") => {
+            let null = LiveHarness::Null(LiveNull {
+                started: Instant::now(),
+                saw_scene2: true,
+                passed: true,
+            });
+            let stress = LiveHarness::Stress(LiveStress {
+                started: Instant::now(),
+                last_announced: 50,
+                passed: true,
+                name: "stress50",
+                host: "127.0.0.1".into(),
+                port: 0,
+            });
+            assert_eq!(live_exit_code(&null, None), Some(0));
+            assert_eq!(live_exit_code(&stress, None), Some(0));
+            let live = LiveHarness::Script(LiveScript {
+                name: "script_exit_pass".into(),
+                passed: true,
+                failed: None,
+                last_step: None,
+                drain_started: None,
+                soak: false,
+                soak_until: None,
+                announced_pass: true,
+                native_failure_capture_requested: false,
+                clean_stop_capture_requested: false,
+                core_deadline: None,
+                soak_capture: SoakCapture::NotNeeded,
+            });
+            std::process::exit(live_exit_code(&live, None).expect("PASS exits immediately"));
+        }
+        other => panic!("unknown child mode {other:?}"),
+    }
+}
+
+#[test]
+fn latched_live_failure_exits_the_process_nonzero() {
+    let output = live_exit_child("fail");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "FAIL child stdout:\n{}\nFAIL child stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("FAIL: live script_live_failure"),
+        "the child drove the real live-harness failure path"
+    );
+}
+
+#[test]
+fn live_pass_exits_the_process_successfully() {
+    let output = live_exit_child("pass");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "PASS child stdout:\n{}\nPASS child stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn normal_interactive_window_close_remains_successful() {
+    assert!(finish_panel_run(Ok(()), None).is_ok());
+}
+
+fn live_exit_child(mode: &str) -> std::process::Output {
+    std::process::Command::new(std::env::current_exe().expect("current test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "app::tests::panel_exit_status_child",
+        ])
+        .env("PANEL_EXIT_CHILD", mode)
+        .output()
+        .expect("run live exit child")
+}
+
+fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
+    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
+
+    let fail_scenario = Scenario {
+        name: "live_failure_exit",
+        seed: Seed {
+            profiles: vec![("alice", "password")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "unmet proof after scripted action",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::Stat { id: 16, min: 999 },
+                budget_ticks: 1,
+            },
+        }],
+        proof: Proof::Stat { id: 16, min: 999 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::new(fail_scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = script_client();
+    runner.tick(&mut client);
+    assert!(matches!(runner.status(), scenario::RunnerStatus::Failed(_)));
+
+    let mut session = crate::session::Session::new();
+    *session.scenario.lock().unwrap() = Some(runner);
+    let mut live = LiveScript {
+        name: "script_live_failure".into(),
+        passed: false,
+        failed: None,
+        last_step: None,
+        drain_started: None,
+        soak: false,
+        soak_until: None,
+        announced_pass: false,
+        native_failure_capture_requested: false,
+        clean_stop_capture_requested: false,
+        core_deadline: None,
+        soak_capture: SoakCapture::NotNeeded,
+    };
+    let message = live_script_tick(&mut live, &mut session, &ShotStatus::Missing, None)
+        .expect("a failed scenario must FAIL the live harness");
+    (session, live, message)
+}
+
+#[test]
+fn empty_walk_queue_and_modal_values_are_not_status_rows() {
+    for value in ["", "—", "-1"] {
+        assert!(
+            !status_value_visible("walk", value),
+            "walk placeholder {value:?} is hidden"
+        );
+        assert!(
+            !status_value_visible("queue", value),
+            "queue placeholder {value:?} is hidden"
+        );
+        assert!(
+            !status_value_visible("modals", value),
+            "modal placeholder {value:?} is hidden"
+        );
+    }
+    assert!(status_value_visible("walk", "2659 3292 0"));
+    assert!(status_value_visible("queue", "1 of 2"));
+    assert!(status_value_visible("modals", "0"));
+    assert!(status_value_visible("state", "idle"));
+}
+
+#[test]
+fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut logged_out = frontend_core::SlotDetail::default();
+    logged_out.row.phase = frontend_core::Phase::LoggedOut;
+    logged_out.state = "logged out".into();
+    logged_out.modal = 7;
+    let hidden = draw_status_detail(&logged_out, "—", "lowmem");
+    assert!(
+        !hidden.contains("walk"),
+        "empty walk row is visible: {hidden}"
+    );
+    assert!(
+        !hidden.contains("queue"),
+        "empty queue row is visible: {hidden}"
+    );
+    assert!(
+        !hidden.contains("modals"),
+        "logged-out modal row is visible: {hidden}"
+    );
+    assert!(hidden.contains("state") && hidden.contains("logged out"));
+
+    let mut ready = frontend_core::SlotDetail::default();
+    ready.row.phase = frontend_core::Phase::Ready;
+    ready.state = "ingame scene 2".into();
+    ready.modal = 0;
+    let shown = draw_status_detail(&ready, "2659 3292 0", "lowmem");
+    assert!(shown.contains("walk") && shown.contains("2659 3292 0"));
+    assert!(shown.contains("modals") && shown.contains("0"));
+}
+
+/// On a 1024×768 desktop the app's client area is about 1008×580 and the
+/// docked Profiles window runs past its right edge. The last row's Edit and
+/// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in
+/// the part of their window that shows: no list or window scrolling, and a
+/// click there lands.
+#[test]
+fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let display = [1008.0, 580.0];
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-narrow-controls",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+        display,
+        [790.0, 0.0],
+        [PANEL_WIDTH, 580.0],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    for (at, label) in [
+        (At::List, "Edit##edit-alice"),
+        (At::List, "✕##alice"),
+        (At::List, "Edit##edit-bob"),
+        (At::List, "✕##bob"),
+        (At::Form, "Save"),
+        (At::Form, "Cancel"),
+        (At::Window, "Close"),
+    ] {
+        let (item, visible) = ui.item_rect(at, label);
+        for (name, area) in [("display", [[0.0, 0.0], display]), ("window", visible)] {
+            assert!(
+                item[0][0] >= area[0][0]
+                    && item[0][1] >= area[0][1]
+                    && item[1][0] <= area[1][0]
+                    && item[1][1] <= area[1][1],
+                "{label} at {item:?} is not wholly shown in the {name}'s {area:?}"
+            );
+        }
+    }
+    let (bob, _) = ui.item_rect(At::List, "Edit##edit-bob");
+    let opened = ui.click_at(rect_center(bob));
+    assert!(opened.has("Editing bob"), "{}", opened.text);
+}
 
 #[test]
 fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
@@ -3319,6 +3562,102 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
         value.clone_into(&mut self.0.borrow_mut());
     }
 }
+fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {
+    let mut ctx = dear_imgui_rs::Context::create();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("status")
+            .build(|| super::status_detail_rows(ui, detail, walk, mem));
+        ui.log_finish();
+    }
+    ctx.render();
+    drawn.0.take()
+}
+
+#[test]
+fn memory_notice_gets_its_own_readable_popup_row() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("memory-popup-layout");
+    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    vault
+        .upsert(vault::Profile {
+            username: "alice".into(),
+            password: "pw".into(),
+            uid: 1,
+            settings: vault::ProfileSettings::default(),
+        })
+        .unwrap();
+    let play = host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let mut session = crate::session::Session::new();
+    session.core.set_spawn_workers(false);
+    session.core.start(vault, play);
+    assert!(session.load("alice"));
+    session.select("alice");
+    session
+        .core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(host_play::SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..host_play::SlotStatus::default()
+        });
+    session.core.poll();
+    assert!(session.set_focused_lowmem(false));
+
+    let mut ctx = dear_imgui_rs::Context::create();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for frame in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("memory-layout")
+                .size([330.0, 350.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    if frame == 0 {
+                        ui.open_popup(super::MEM_POPUP);
+                    }
+                    super::mem_popup(ui, &mut session);
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("server tabs + sound follow"),
+        "notice must wrap by words on its own row, not one letter per line: {text:?}"
+    );
+}
 
 /// What one frame of the Profiles window showed.
 struct Shown {
@@ -3362,11 +3701,17 @@ enum At {
     SwitchPrompt,
 }
 
-/// Queue ImGui's own activation of the Profiles item `label`, whose id lives
-/// `at` (`form` is the edit form's id scope): it is pressed on the next
-/// frame exactly as a click presses it, and never while it is disabled.
-/// Call with the frame's context bound.
-fn activate_profiles_item(at: At, form: usize, label: &str) {
+/// The Profiles item `label`, whose id lives `at` (`form` is the edit
+/// form's id scope): the window that lays it out, and its id. Call with the
+/// frame's context bound.
+fn profiles_item(
+    at: At,
+    form: usize,
+    label: &str,
+) -> (
+    *mut dear_imgui_rs::sys::ImGuiWindow,
+    dear_imgui_rs::sys::ImGuiID,
+) {
     use dear_imgui_rs::sys;
     use std::ffi::CString;
 
@@ -3374,38 +3719,90 @@ fn activate_profiles_item(at: At, form: usize, label: &str) {
     // NUL-terminated copy that outlives its call, and a window is read only
     // after the lookup found it.
     unsafe {
-        let window_id = |name: &str| {
+        let window = |name: &str| {
             let name = CString::new(name).unwrap();
             let window = sys::igFindWindowByName(name.as_ptr());
             assert!(!window.is_null(), "{name:?} was drawn");
-            (*window).ID
+            window
         };
         let id = |label: &str, seed: sys::ImGuiID| {
             let label = CString::new(label).unwrap();
             sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), seed)
         };
-        let profiles = window_id("Profiles");
-        let seed = match at {
-            At::Window => profiles,
-            At::Form => sys::igGetIDWithSeed_Int(form as i32, profiles),
-            At::List => window_id(&format!(
-                "Profiles/##profiles-list_{:08X}",
-                id("##profiles-list", profiles)
-            )),
-            At::SwitchPrompt => window_id(&format!(
-                "##Popup_{:08x}",
-                id(super::PROFILE_EDIT_SWITCH_POPUP, profiles)
-            )),
+        let profiles = window("Profiles");
+        let profiles_id = (*profiles).ID;
+        let (window, seed) = match at {
+            At::Window => (profiles, profiles_id),
+            At::Form => (profiles, sys::igGetIDWithSeed_Int(form as i32, profiles_id)),
+            At::List => {
+                let list = window(&format!(
+                    "Profiles/##profiles-list_{:08X}",
+                    id("##profiles-list", profiles_id)
+                ));
+                (list, (*list).ID)
+            }
+            At::SwitchPrompt => {
+                let prompt = window(&format!(
+                    "##Popup_{:08x}",
+                    id(super::PROFILE_EDIT_SWITCH_POPUP, profiles_id)
+                ));
+                (prompt, (*prompt).ID)
+            }
         };
-        sys::igActivateItemByID(id(label, seed));
+        (window, id(label, seed))
     }
 }
 
-/// Pin the Profiles window to the default layout's docked tab geometry (the
-/// 330 px panel, as tall as the default window) at the origin, so what
-/// draws is what the operator sees there without scrolling. Call with the
-/// frame's context bound.
-fn pin_profiles_geometry() {
+/// Queue ImGui's own activation of the Profiles item `label`, whose id lives
+/// `at` (`form` is the edit form's id scope): it is pressed on the next
+/// frame exactly as a click presses it, and never while it is disabled.
+/// Call with the frame's context bound.
+fn activate_profiles_item(at: At, form: usize, label: &str) {
+    let (_, id) = profiles_item(at, form, label);
+    // SAFETY: the caller binds the frame's context.
+    unsafe { dear_imgui_rs::sys::igActivateItemByID(id) };
+}
+
+/// Give the Profiles item `label` ImGui's keyboard focus, so laying it out
+/// this frame records where it went. Returns the window to read that back
+/// from with [`focused_item_rect`]. Call with the frame's context bound.
+fn focus_profiles_item(at: At, form: usize, label: &str) -> *mut dear_imgui_rs::sys::ImGuiWindow {
+    let (window, id) = profiles_item(at, form, label);
+    // SAFETY: the caller binds the frame's context and `window` is the live
+    // window the lookup found.
+    unsafe { dear_imgui_rs::sys::igSetFocusID(id, window) };
+    window
+}
+
+/// The focused item's laid-out rectangle and the visible part of `window`
+/// holding it, both as `[min, max]` on screen. Call with the frame's
+/// context bound, after the window drew.
+fn focused_item_rect(
+    window: *mut dear_imgui_rs::sys::ImGuiWindow,
+) -> ([[f32; 2]; 2], [[f32; 2]; 2]) {
+    use dear_imgui_rs::sys;
+
+    let corners = |r: sys::ImRect_c| [[r.Min.x, r.Min.y], [r.Max.x, r.Max.y]];
+    // SAFETY: the caller binds the frame's context; `window` came from
+    // `focus_profiles_item` this frame and ImGui keeps windows alive.
+    unsafe {
+        (
+            corners(sys::igWindowRectRelToAbs(window, (*window).NavRectRel[0])),
+            corners((*window).InnerClipRect),
+        )
+    }
+}
+
+fn rect_center(rect: [[f32; 2]; 2]) -> [f32; 2] {
+    [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ]
+}
+
+/// Pin the Profiles window to a chosen dock geometry. Call with the frame's
+/// context bound.
+fn pin_profiles_geometry_at(pos: [f32; 2], size: [f32; 2]) {
     use dear_imgui_rs::sys;
 
     let always = sys::ImGuiCond_Always;
@@ -3414,23 +3811,27 @@ fn pin_profiles_geometry() {
     unsafe {
         sys::igSetWindowPos_Str(
             c"Profiles".as_ptr(),
-            sys::ImVec2_c { x: 0.0, y: 0.0 },
+            sys::ImVec2_c {
+                x: pos[0],
+                y: pos[1],
+            },
             always,
         );
         sys::igSetWindowSize_Str(
             c"Profiles".as_ptr(),
             sys::ImVec2_c {
-                x: PANEL_WIDTH,
-                y: BASE_WINDOW_H,
+                x: size[0],
+                y: size[1],
             },
             always,
         );
     }
 }
 
-/// The Discard / Keep editing prompt's laid-out width. Call with the
-/// frame's context bound, after the Profiles window drew.
-fn switch_prompt_width() -> f32 {
+/// The laid-out `(pos, size)` of the Profiles popup `popup` (the unsaved-
+/// edits or the delete prompt). Call with the frame's context bound, after
+/// the Profiles window drew.
+fn profiles_popup_rect(popup: &str) -> ([f32; 2], [f32; 2]) {
     use dear_imgui_rs::sys;
     use std::ffi::CString;
 
@@ -3440,13 +3841,20 @@ fn switch_prompt_width() -> f32 {
     unsafe {
         let profiles = sys::igFindWindowByName(c"Profiles".as_ptr());
         assert!(!profiles.is_null(), "Profiles was drawn");
-        let label = CString::new(super::PROFILE_EDIT_SWITCH_POPUP).unwrap();
+        let label = CString::new(popup).unwrap();
         let id = sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), (*profiles).ID);
         let name = CString::new(format!("##Popup_{id:08x}")).unwrap();
-        let popup = sys::igFindWindowByName(name.as_ptr());
-        assert!(!popup.is_null(), "the prompt was drawn");
-        (*popup).Size.x
+        let window = sys::igFindWindowByName(name.as_ptr());
+        assert!(!window.is_null(), "{popup:?} was drawn");
+        (
+            [(*window).Pos.x, (*window).Pos.y],
+            [(*window).Size.x, (*window).Size.y],
+        )
     }
+}
+
+fn switch_prompt_width() -> f32 {
+    profiles_popup_rect(super::PROFILE_EDIT_SWITCH_POPUP).1[0]
 }
 
 /// The Profiles window over a real vault, driven through real ImGui frames
@@ -3459,11 +3867,30 @@ struct ProfilesUi {
     drawn: DrawnText,
     session: crate::session::Session,
     dir: TestDir,
+    display_size: [f32; 2],
+    window_pos: [f32; 2],
+    window_size: [f32; 2],
 }
 
 impl ProfilesUi {
     /// Profiles open over a fresh vault of `(username, password, uid)`.
     fn new(label: &str, profiles: &[(&str, &str, i32)]) -> Self {
+        Self::with_geometry(
+            label,
+            profiles,
+            [900.0, 700.0],
+            [0.0, 0.0],
+            [PANEL_WIDTH, BASE_WINDOW_H],
+        )
+    }
+
+    fn with_geometry(
+        label: &str,
+        profiles: &[(&str, &str, i32)],
+        display_size: [f32; 2],
+        window_pos: [f32; 2],
+        window_size: [f32; 2],
+    ) -> Self {
         let dir = TestDir::new(label);
         let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
         for &(username, password, uid) in profiles {
@@ -3487,6 +3914,9 @@ impl ProfilesUi {
             drawn,
             session,
             dir,
+            display_size,
+            window_pos,
+            window_size,
         };
         ui.frame();
         ui
@@ -3507,13 +3937,15 @@ impl ProfilesUi {
     fn draw(&mut self, click: Option<(At, &str)>) -> Shown {
         self.session.pump_status();
         self.ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
         let form = self.session.chooser_form;
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
         {
             let ui = self.ctx.frame();
-            ui.with_bound_context(pin_profiles_geometry);
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             if let Some((at, label)) = click {
                 ui.with_bound_context(|| activate_profiles_item(at, form, label));
             }
@@ -3538,12 +3970,14 @@ impl ProfilesUi {
     fn switch_prompt_width(&mut self) -> (f32, f32) {
         self.session.pump_status();
         self.ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
                 .renderer_has_textures(),
         );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
         let width = {
             let ui = self.ctx.frame();
-            ui.with_bound_context(pin_profiles_geometry);
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
             super::chooser_window(ui, &mut self.session, None);
             let prompt = &self.session.pending_edit_switch.as_ref().unwrap().prompt;
             (
@@ -3554,6 +3988,65 @@ impl ProfilesUi {
         };
         self.ctx.render();
         width
+    }
+
+    /// One frame; returns the Profiles popup `popup`'s laid-out
+    /// `(pos, size)`.
+    fn popup_rect(&mut self, popup: &str) -> ([f32; 2], [f32; 2]) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let rect = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(|| profiles_popup_rect(popup))
+        };
+        self.ctx.render();
+        rect
+    }
+
+    /// One frame; returns where the Profiles item `label` (its id lives
+    /// `at`) was laid out on screen and the visible part of the window
+    /// holding it, both as `[min, max]`.
+    fn item_rect(&mut self, at: At, label: &str) -> ([[f32; 2]; 2], [[f32; 2]; 2]) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let form = self.session.chooser_form;
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        let rects = {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            let window = ui.with_bound_context(|| focus_profiles_item(at, form, label));
+            super::chooser_window(ui, &mut self.session, None);
+            ui.with_bound_context(|| focused_item_rect(window))
+        };
+        self.ctx.render();
+        rects
+    }
+
+    /// A left click with the pointer at `pos`, as the mouse makes it; the
+    /// last frame shows the result.
+    fn click_at(&mut self, pos: [f32; 2]) -> Shown {
+        self.ctx.io_mut().add_mouse_pos_event(pos);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        self.frame();
+        self.frame()
     }
 
     /// Type `c` into the edit form, as the keyboard would: Tab to one of
@@ -3703,8 +4196,10 @@ fn saved_shows_only_once_the_write_is_durable() {
     assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
 }
 
-/// Opening another profile's form before a save completes: the save still
-/// lands, but its `Saved` never shows on the other profile's form.
+/// Opening another profile's form while a save is still being written asks
+/// first: the save can still fail, and the draft is all that is left of it.
+/// Discard opens the other form; the save lands, but its `Saved` never
+/// shows there.
 #[test]
 fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -3717,7 +4212,13 @@ fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    let switched = ui.click(At::List, "Edit##edit-bob");
+    let asked = ui.click(At::List, "Edit##edit-bob");
+    assert!(
+        asked.has("Editing alice") && asked.has("[ Discard ]") && asked.has("Saving alice"),
+        "an unsettled save asks before the form is left: {}",
+        asked.text
+    );
+    let switched = ui.click(At::SwitchPrompt, "Discard");
     assert!(switched.has("Editing bob"), "{}", switched.text);
 
     drop(held);
@@ -3737,8 +4238,10 @@ fn a_save_completing_after_a_switch_shows_nothing_on_the_new_form() {
     );
 }
 
-/// Closing Profiles before a save completes and opening the same profile
-/// again: the new form never shows the earlier save's `Saved`.
+/// Closing Profiles while a save is still being written asks first, from
+/// Close and from the window's ✕ alike; Keep editing leaves the form and its
+/// draft alone. Discard closes; opening the same profile again never shows
+/// the earlier save's `Saved`.
 #[test]
 fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -3748,8 +4251,25 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     let gate = ui.session.core.write_gate();
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
-    let closed = ui.click(At::Window, "Close");
-    assert!(closed.text.trim().is_empty(), "Close shut Profiles");
+
+    let x = ui.click(At::Window, "#CLOSE");
+    assert!(
+        x.has("Editing alice") && x.has("[ Discard ]") && x.has("close Profiles"),
+        "the ✕ asks while the save is unsettled: {}",
+        x.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
+
+    let asked = ui.click(At::Window, "Close");
+    assert!(
+        asked.has("Editing alice") && asked.has("[ Discard ]"),
+        "Close asks too: {}",
+        asked.text
+    );
+    let closed = ui.click(At::SwitchPrompt, "Discard");
+    assert!(closed.text.trim().is_empty(), "Discard shut Profiles");
 
     // The panel's Profiles button, then Edit on the same profile.
     ui.session.wall.chooser_open = true;
@@ -3769,12 +4289,29 @@ fn a_save_completing_after_close_shows_nothing_on_a_reopened_form() {
     assert_eq!(ui.disk(), [row("alice", 42, "newpass")]);
 }
 
-/// A save whose write fails after it was accepted reports on the main
-/// panel's banner, as in 0.1.9, and never in a form: here the form of the
-/// profile opened meanwhile.
+/// With no save unsettled, Close and the ✕ close Profiles at once, as
+/// before: the protection lasts only until the write settles.
+#[test]
+fn close_needs_no_prompt_once_the_save_settled() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-close-settled", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+
+    let closed = ui.click(At::Window, "#CLOSE");
+    assert!(closed.text.trim().is_empty(), "the ✕ shut Profiles");
+}
+
+/// A save whose write fails after it was accepted shows in the form it came
+/// from, as well as on the banner: the form keeps its draft and its target,
+/// and Save retries.
 #[test]
 #[cfg(unix)]
-fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
+fn a_late_write_failure_shows_in_the_form_it_came_from() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ui = ProfilesUi::new(
         "profiles-late-failure",
@@ -3786,6 +4323,68 @@ fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
     let held = gate.lock().unwrap();
     ui.click(At::Form, "Save");
     ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Keep editing");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert!(shown.in_colour(super::ERROR) > 0, "in the error colour");
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert!(
+        ui.banner().contains("credentials:"),
+        "and the banner reports it too"
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was saved"
+    );
+
+    // The form kept its draft and its target, so Save retries the write.
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+    assert!(
+        !saved.has("credentials:"),
+        "the earlier failure is gone: {}",
+        saved.text
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "newpass"), row("bob", 43, "bpass")],
+        "the retry landed"
+    );
+}
+
+/// A failure that arrives after the operator discarded the form it came from
+/// shows in no form: the banner reports it, and the form showing now stays
+/// clean.
+#[test]
+#[cfg(unix)]
+fn a_late_failure_after_discarding_the_form_reaches_only_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-late-discarded",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Discard");
 
     ui.writable(false);
     drop(held);
@@ -3807,6 +4406,357 @@ fn a_late_write_failure_reports_on_the_banner_not_in_a_form() {
         ui.disk(),
         [row("alice", 42, "apass"), row("bob", 43, "bpass")],
         "nothing was saved"
+    );
+}
+
+/// A failure after Profiles was closed and the same profile reopened shows
+/// only on the banner, not in the new form of the same target.
+#[test]
+#[cfg(unix)]
+fn a_late_failure_after_close_and_reopen_reaches_only_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-late-reopened", &[("alice", "apass", 42)]);
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::Window, "Close");
+    ui.click(At::SwitchPrompt, "Discard");
+    ui.session.wall.chooser_open = true;
+    ui.frame();
+    ui.click(At::List, "Edit##edit-alice");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(
+        !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
+        "the earlier form's failure never shows on the reopened one: {}",
+        shown.text
+    );
+    assert!(ui.banner().contains("credentials:"));
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+}
+
+/// Deleting the profile whose save is still queued asks first: the commit
+/// can still fail, which puts the profile back and would leave the typed
+/// draft nowhere. Keep editing deletes nothing; when the save then fails the
+/// form shows the failure on its draft, and Save retries.
+#[test]
+#[cfg(unix)]
+fn deleting_the_target_while_its_save_is_pending_keeps_the_draft_on_failure() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-delete-pending",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+
+    // The delete confirm's body.
+    assert!(!ui.session.delete_profile("alice"), "the delete waits");
+    let asked = ui.frame();
+    assert!(
+        asked.has("Editing alice")
+            && asked.has("[ Discard ]")
+            && asked.has("[ Keep editing ]")
+            && asked.has("delete alice"),
+        "an unsettled save asks before its profile is deleted: {}",
+        asked.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice"), "{}", kept.text);
+    assert!(!kept.has("[ Discard ]"), "the prompt closed: {}", kept.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "keeping drops nothing");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is still there");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "nothing was deleted or saved"
+    );
+
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved alice."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "newpass"), row("bob", 43, "bpass")],
+        "the retry landed"
+    );
+}
+
+/// Discard on that prompt is the operator's choice to lose the draft: the
+/// form and the profile go, and when the commit then fails the profile is
+/// back as it is on disk with only the banner reporting it.
+#[test]
+#[cfg(unix)]
+fn discarding_a_pending_save_to_delete_its_profile_reports_only_on_the_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-delete-discard",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    assert!(!ui.session.delete_profile("alice"));
+    ui.frame();
+    let deleted = ui.click(At::SwitchPrompt, "Discard");
+    assert!(!deleted.has("Editing"), "the form went: {}", deleted.text);
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(
+        !shown.has("credentials:") && !shown.has(frontend_core::NOTHING_SAVED),
+        "{}",
+        shown.text
+    );
+    assert!(ui.banner().contains("chooser:"), "the delete's failure");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "neither the save nor the delete landed"
+    );
+    assert!(
+        ui.session.core.vault().unwrap().get("alice").is_some(),
+        "alice is back in the list"
+    );
+}
+
+/// Turning MultiBox off closes Profiles and its form, so while the form's
+/// save is queued it asks first and MultiBox stays on; Keep editing leaves
+/// the draft, and a later failure shows on it.
+#[test]
+#[cfg(unix)]
+fn multibox_off_while_a_save_is_pending_asks_and_keeps_the_draft_on_failure() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-multibox-pending", &[("alice", "apass", 42)]);
+    ui.session.set_multibox(true);
+    ui.session.wall.chooser_open = true;
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+
+    assert!(!ui.session.set_multibox(false), "the toggle waits");
+    assert!(ui.session.multibox, "MultiBox is still on");
+    let asked = ui.frame();
+    assert!(
+        asked.has("Editing alice")
+            && asked.has("[ Discard ]")
+            && asked.has("[ Keep editing ]")
+            && asked.has("turn MultiBox off"),
+        "{}",
+        asked.text
+    );
+    let kept = ui.click(At::SwitchPrompt, "Keep editing");
+    assert!(kept.has("Editing alice") && ui.session.multibox);
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert!(shown.has("credentials:"), "the reason: {}", shown.text);
+    assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+    assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
+
+    // Nothing is pending any more: the toggle applies at once.
+    assert!(ui.session.set_multibox(false));
+    assert!(!ui.session.multibox);
+    assert!(ui.session.chooser_edit.is_none());
+}
+
+/// Discard on the MultiBox prompt turns it off, form and all.
+#[test]
+fn discarding_a_pending_save_turns_multibox_off() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new("profiles-multibox-discard", &[("alice", "apass", 42)]);
+    ui.session.set_multibox(true);
+    ui.session.wall.chooser_open = true;
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "newpass".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    assert!(!ui.session.set_multibox(false));
+    ui.frame();
+
+    ui.click(At::SwitchPrompt, "Discard");
+    assert!(!ui.session.multibox);
+    assert!(ui.session.chooser_edit.is_none());
+    drop(held);
+}
+
+/// A Discard / Keep editing prompt that is already open when the save it
+/// waited on settles ends with it: it must not say the save "may fail" over
+/// the result, which shows on the form instead (a failure with its reason,
+/// a success as `Saved`).
+#[test]
+#[cfg(unix)]
+fn an_open_prompt_ends_when_its_save_settles() {
+    for fails in [true, false] {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ui = ProfilesUi::new(
+            &format!("profiles-prompt-settles-{fails}"),
+            &[("alice", "apass", 42)],
+        );
+        ui.click(At::List, "Edit##edit-alice");
+        ui.session.cred_pass = "newpass".into();
+        let gate = ui.session.core.write_gate();
+        let held = gate.lock().unwrap();
+        ui.click(At::Form, "Save");
+        let asked = ui.click(At::Window, "#CLOSE");
+        assert!(
+            asked.has("[ Discard ]") && asked.has("may fail"),
+            "{}",
+            asked.text
+        );
+
+        ui.writable(!fails);
+        drop(held);
+        ui.finish_writes();
+        let shown = ui.frame();
+        ui.writable(true);
+        assert!(
+            !shown.has("may fail") && !shown.has("[ Discard ]") && !shown.has("[ Keep editing ]"),
+            "the prompt is gone once the save settled (fails={fails}): {}",
+            shown.text
+        );
+        assert!(shown.has("Editing alice"), "{}", shown.text);
+        if fails {
+            assert!(shown.has("credentials:"), "{}", shown.text);
+            assert_eq!(ui.session.cred_pass, "newpass", "the draft is kept");
+        } else {
+            assert_eq!(shown.above_save(1), ["Saved alice."], "{}", shown.text);
+        }
+        // The ✕ now closes as usual when nothing is pending.
+        if !fails {
+            let closed = ui.click(At::Window, "#CLOSE");
+            assert!(closed.text.trim().is_empty(), "{}", closed.text);
+        }
+    }
+}
+
+/// A second Save while the first is still being written is refused, not
+/// queued: when the first then fails, the form shows the failure and the
+/// second attempt never wrote anything.
+#[test]
+#[cfg(unix)]
+fn a_refused_second_save_is_not_queued_behind_a_failing_one() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-second-refused",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_user = "carol".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.session.cred_user = "dave".into();
+    assert!(
+        !ui.session.save_credentials(),
+        "the second attempt is refused while the first is unsettled"
+    );
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let failed = ui.frame();
+    ui.writable(true);
+    assert!(failed.has("Editing alice"), "{}", failed.text);
+    assert_eq!(
+        failed.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        failed.text
+    );
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")],
+        "neither attempt wrote anything"
+    );
+
+    // The form still holds the second draft, so Save now writes that one.
+    ui.click(At::Form, "Save");
+    ui.finish_writes();
+    let saved = ui.frame();
+    assert_eq!(saved.above_save(1), ["Saved dave."], "{}", saved.text);
+    assert_eq!(
+        ui.disk(),
+        [row("bob", 43, "bpass"), row("dave", 42, "apass")]
+    );
+}
+
+/// A save a later save of the same profile superseded in the writer's queue
+/// (the operator discarded its form and saved from the next one): the
+/// commit fails, and the form showing, the later save's, shows the failure.
+#[test]
+#[cfg(unix)]
+fn a_failure_of_a_superseding_save_shows_in_the_form_that_superseded() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(
+        "profiles-superseded",
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+    );
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "first".into();
+    let gate = ui.session.core.write_gate();
+    let held = gate.lock().unwrap();
+    ui.click(At::Form, "Save");
+    ui.click(At::List, "Edit##edit-bob");
+    ui.click(At::SwitchPrompt, "Discard");
+    // Alice again, from a new form that loads the staged row.
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "second".into();
+    ui.click(At::Form, "Save");
+
+    ui.writable(false);
+    drop(held);
+    ui.finish_writes();
+    let shown = ui.frame();
+    ui.writable(true);
+    assert!(shown.has("Editing alice"), "{}", shown.text);
+    assert_eq!(
+        shown.above_save(1),
+        [frontend_core::NOTHING_SAVED],
+        "{}",
+        shown.text
+    );
+    assert_eq!(ui.session.cred_pass, "second", "the draft is kept");
+    assert_eq!(
+        ui.disk(),
+        [row("alice", 42, "apass"), row("bob", 43, "bpass")]
     );
 }
 
@@ -3939,6 +4889,83 @@ fn opening_another_profile_over_unsaved_edits_asks_first() {
     let discarded = ui.click(At::SwitchPrompt, "Discard");
     assert!(discarded.has("Editing bob"), "{}", discarded.text);
     assert_eq!(ui.session.cred_pass, "bpass", "bob's own row loads");
+}
+
+/// A Profiles prompt opened from a control at the display's right edge:
+/// ImGui places it inside the display, and it keeps that place and width
+/// however long it stays open, so both its buttons stay on screen.
+fn assert_prompt_holds_on_screen(ui: &mut ProfilesUi, popup: &str) {
+    let display = ui.display_size;
+    let rects: Vec<_> = (0..60).map(|_| ui.popup_rect(popup)).collect();
+    let (pos, size) = rects[2];
+    for (frame, &rect) in rects.iter().enumerate().skip(2) {
+        assert_eq!(
+            rect,
+            (pos, size),
+            "{popup:?} at frame {frame} is {rect:?}, was {:?}",
+            (pos, size)
+        );
+    }
+    assert!(
+        pos[0] >= 0.0
+            && pos[1] >= 0.0
+            && pos[0] + size[0] <= display[0]
+            && pos[1] + size[1] <= display[1],
+        "{popup:?} at {pos:?} {size:?} leaves the {display:?} display"
+    );
+    assert!(
+        size[0] <= 2.0 * super::DIALOG_W,
+        "{popup:?} stays a dialog, not the window's width: {size:?}"
+    );
+}
+
+/// Profiles docked flush against the right edge of a 1024×768 display.
+fn far_right_profiles(label: &str) -> ProfilesUi {
+    ProfilesUi::with_geometry(
+        label,
+        &[("alice", "apass", 42), ("bob", "bpass", 43)],
+        [1024.0, 768.0],
+        [1024.0 - PANEL_WIDTH, 0.0],
+        [PANEL_WIDTH, 768.0],
+    )
+}
+
+/// The unsaved-edits prompt keeps one width however long it stays open.
+/// Its buttons are sized for the gap between them, and any change to the
+/// popup's position or width inside its own frame feeds back into that
+/// size: a mismatched gap made it 2 px wider every frame, and moving it
+/// left inside the popup made it about 5 px wider every frame, until it
+/// covered the window.
+#[test]
+fn the_leave_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = far_right_profiles("profiles-prompt-width");
+    ui.click(At::List, "Edit##edit-alice");
+    ui.session.cred_pass = "typed".into();
+    let (edit, _) = ui.item_rect(At::List, "Edit##edit-bob");
+    let asked = ui.click_at(rect_center(edit));
+    assert!(
+        asked.has("[ Discard ]") && asked.has("[ Keep editing ]"),
+        "{}",
+        asked.text
+    );
+    assert_prompt_holds_on_screen(&mut ui, super::PROFILE_EDIT_SWITCH_POPUP);
+}
+
+/// The delete prompt, opened from a row's ✕ at the display's right edge,
+/// holds its width and stays on screen the same way.
+#[test]
+fn the_delete_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = far_right_profiles("profiles-delete-prompt-width");
+    let (delete, _) = ui.item_rect(At::List, "✕##bob");
+    let asked = ui.click_at(rect_center(delete));
+    assert!(
+        asked.has("Remove bob") && asked.has("[ Cancel ]"),
+        "{}",
+        asked.text
+    );
+    assert_prompt_holds_on_screen(&mut ui, super::PROFILE_DELETE_POPUP);
 }
 
 #[test]

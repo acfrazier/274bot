@@ -50,28 +50,67 @@ pub fn mint_vault_passphrase() -> String {
     passphrase
 }
 
-/// Mint `n` per-run usernames for a live boot (`live<token>_<i>`). The
-/// engine auto-registers unknown names, so a minted name logs into a
-/// fresh save instead of the shared `test` account. The engine enforces
-/// the classic 12-character username limit. A randomly seeded counter
-/// keeps consecutive runs distinct; its low base-36 digits fit the token
-/// budget without truncating away the changing part of the counter.
-/// Player saves accumulate under the engine's `player/` dir — wipe it to
-/// reset.
+/// Environment override for the minted-name prefix (default `live`), so
+/// concurrent harness owners can tell their accounts apart in engine logs.
+pub(crate) const LIVE_NAME_PREFIX_ENV: &str = "BOT_LIVE_NAME_PREFIX";
+
+const DEFAULT_LIVE_NAME_PREFIX: &str = "live";
+
+/// Validate a minted-name prefix: 1–4 lowercase ASCII letters. Capping it
+/// at the default's length keeps the random token at least as long as
+/// the default, so uniqueness never drops below the `live` form.
+pub(crate) fn parse_live_name_prefix(raw: Option<&str>) -> Result<&str, String> {
+    let Some(prefix) = raw else {
+        return Ok(DEFAULT_LIVE_NAME_PREFIX);
+    };
+    if (1..=DEFAULT_LIVE_NAME_PREFIX.len()).contains(&prefix.len())
+        && prefix.bytes().all(|b| b.is_ascii_lowercase())
+    {
+        Ok(prefix)
+    } else {
+        Err(format!(
+            "{LIVE_NAME_PREFIX_ENV} must be 1-4 lowercase ASCII letters, got {prefix:?}"
+        ))
+    }
+}
+
+/// Mint `n` per-run usernames for a live boot (`<prefix><token>_<i>`, prefix
+/// `live` unless `BOT_LIVE_NAME_PREFIX` is set). The engine auto-registers
+/// unknown names, so a minted name logs into a fresh save instead of the
+/// shared `test` account. The engine enforces the classic 12-character
+/// username limit. A randomly seeded counter keeps consecutive runs
+/// distinct; its low base-36 digits fill the remaining budget without
+/// truncating away the changing part of the counter. Player saves
+/// accumulate under the engine's `player/` dir — wipe it to reset.
+///
+/// Panics if the override is set but invalid: it's a harness setting, and
+/// silently minting `live` names would defeat it.
 pub fn mint_live_names(n: usize) -> Vec<String> {
+    static PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let raw = std::env::var(LIVE_NAME_PREFIX_ENV).ok();
+        parse_live_name_prefix(raw.as_deref())
+            .unwrap_or_else(|e| panic!("{e}"))
+            .to_owned()
+    });
+    mint_live_names_with(&PREFIX, n)
+}
+
+pub(crate) fn mint_live_names_with(prefix: &str, n: usize) -> Vec<String> {
     static NEXT: std::sync::OnceLock<std::sync::atomic::AtomicU64> = std::sync::OnceLock::new();
     let mut nonce = NEXT
         .get_or_init(|| std::sync::atomic::AtomicU64::new(OsRng.next_u64()))
         .fetch_add(1, Ordering::Relaxed);
     let slot_digits = n.saturating_sub(1).max(1).to_string().len();
-    let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);
+    let max_token = 12usize
+        .saturating_sub(prefix.len() + 1 + slot_digits)
+        .max(1);
     let mut token = vec![b'0'; max_token];
     for digit in token.iter_mut().rev() {
         *digit = b"0123456789abcdefghijklmnopqrstuvwxyz"[(nonce % 36) as usize];
         nonce /= 36;
     }
     let token = String::from_utf8(token).expect("base-36 token is ASCII");
-    (0..n).map(|i| format!("live{token}_{i}")).collect()
+    (0..n).map(|i| format!("{prefix}{token}_{i}")).collect()
 }
 
 /// Profile login password for a freshly minted account.
@@ -240,7 +279,7 @@ impl SharedClientTemplate {
         let mut client = host::prepare_client_with_profile(
             Arc::clone(self.profile.client()),
             uid,
-            true,
+            self.profile.map_members(),
             lowmem,
             Arc::clone(&self.cache),
             Arc::clone(&self.ifaces),

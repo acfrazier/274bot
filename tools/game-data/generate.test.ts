@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
-import { extractGatheringFamily, GATHERING_SCHEMA, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
+import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
@@ -851,6 +853,7 @@ function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, stri
 ~send_quest_progress_colour(questlist:regicide, %regicide_quest, ^regicide_complete);
 `,
         'scripts/general/configs/quest.constant': `^cook_complete = 2
+^cookquest_not_started = 0
 ^cookquest_complete = 7
 ^cook_questpoints = 1
 ^runemysteries_complete = 6
@@ -892,6 +895,17 @@ text=Waterfall Quest
 314=death_equiproom
 147=zanaris
 101=qp
+`,
+        'pack/npc.pack': `100=cook
+`,
+        'pack/loc.pack': `200=cook_start
+`,
+        'scripts/areas/area_test/scripts/start.rs2': `[opnpc1,cook]
+if (%cookquest = ^cookquest_not_started) {
+    @cook_start;
+}
+[label,cook_start]
+%cookquest = 1;
 `,
         'scripts/general/configs/quest.enum': `[quest_names_enum]
 val=1,Cook's Assistant
@@ -983,6 +997,15 @@ assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverag
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
+const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289, 'fixture-content');
+assert.equal(questStarts.schema, 1);
+assert.equal(questStarts.revision, 289);
+assert.equal(questStarts.content_id, 'fixture-content');
+assert.deepEqual(questStarts.rows, [{
+    quest: 'cook',
+    target: { kind: 'npc', id: 100 },
+    op: 1,
+}]);
 assert.doesNotThrow(() => extractQuestIdentityFacts(questRoot, 274));
 
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/scripts/quests.rs2']; }), 274), /quests\.rs2/);
@@ -1049,6 +1072,29 @@ assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
 assert.deepEqual(pinQuest289.coverage, []);
 assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(pinQuest289.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm' || row.id === 'barcrawl' || row.id === 'hauntedmine'), true);
+const pinContent289 = revisions.find((spec) => spec.revision === 289)!.content;
+const pinQuestStarts = extractQuestStartFacts(pinContent289, pinQuest289.rows, 289, 'fixture-content');
+const hasQuestStart = (quest: string, kind: 'npc' | 'loc', id: number, op = 1) =>
+    pinQuestStarts.rows.some((row) => row.quest === quest && row.target.kind === kind && row.target.id === id && row.op === op);
+for (const [quest, kind, id, op] of [
+    ['arthur', 'npc', 239, 1],
+    ['arthur', 'npc', 240, 1],
+    ['haunted', 'npc', 286, 1],
+    ['arena', 'loc', 76, 1],
+    ['tree', 'loc', 2181, 2],
+] as const) {
+    assert.equal(hasQuestStart(quest, kind, id, op), false, `false quest start ${quest} ${kind} ${id} op${op}`);
+}
+for (const [quest, kind, id] of [
+    ['cook', 'npc', 278],
+    ['sheep', 'npc', 758],
+    ['imp', 'npc', 706],
+    ['runemysteries', 'npc', 741],
+    ['demon', 'npc', 882],
+    ['doric', 'npc', 284],
+] as const) {
+    assert.equal(hasQuestStart(quest, kind, id), true, `real quest start ${quest} ${kind} ${id}`);
+}
 
 
 // ---- trails ------------------------------------------------------------------
@@ -2164,6 +2210,46 @@ for (const { revision, root } of gatheringPins) {
     else assert.deepEqual(intercepted, [], '274 content has no yield intercepts, so none are invented');
     assert.equal(intercepted.includes('mining.iron') || intercepted.includes('fishing.memberfish.op1'), false, `${revision} iron and big-net yields are not intercepted`);
     assert.equal(facts.zones.some((zone) => zone.effect === 'product-substituted' && zone.methods.includes('mining.gold') && !zone.methods.includes('mining.iron')), true);
+    // gather_resources slice: pinned per-skill option rows; admission from the
+    // family's own cells, never a hand table. Labels need obj display names,
+    // so keys/gaps/selectability pin here and label joins pin synthetically below.
+    const resourceRows = gatherResources(facts, new Map());
+    const rowByKey = new Map(resourceRows.map((row) => [`${row.skill}:${row.key}`, row]));
+    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
+        const keys = resourceRows.filter((row) => row.skill === skill).map((row) => row.key);
+        assert.equal(new Set(keys).size, keys.length, `${revision} ${skill} option keys are unique`);
+    }
+    assert.deepEqual(
+        resourceRows.map((row) => row.method),
+        facts.methods.flatMap((method) => (method.skill === 'fishing' ? [method.id] : method.resources.map(() => method.id))),
+        `${revision} resource rows follow the family in content order`,
+    );
+    const resourceRow = (skill: string, key: string): GatherResourceWire => {
+        const found = rowByKey.get(`${skill}:${key}`);
+        assert.ok(found, `${revision} ${skill}:${key} is published`);
+        return found as GatherResourceWire;
+    };
+    assert.equal(resourceRow('woodcutting', 'oak').selectable, true);
+    assert.equal(resourceRow('woodcutting', 'oak').gap, null);
+    assert.equal(resourceRow('woodcutting', 'oak').level, 15);
+    assert.equal(resourceRow('woodcutting', 'oak').method, 'woodcutting.oak');
+    assert.equal(resourceRow('woodcutting', 'normal').selectable, true, `${revision} the G1 woodcutting default is admitted`);
+    assert.deepEqual([resourceRow('mining', 'copper').selectable, resourceRow('mining', 'tin').selectable], [true, true], `${revision} the G1 mining defaults admit on their Known ore rocks; the tutorial-gate rock is excluded per target`);
+    assert.equal(resourceRow('mining', 'copper').gap, null);
+    assert.equal(resourceRow('mining', 'tin').gap, null);
+    assert.equal(resourceRows.every((row) => row.gap !== 'no-known-target'), true, `${revision} the defensive fallback never fires on real pins`);
+    assert.equal(resourceRow('mining', 'rune stones').selectable, true, `${revision} the EssMiner preset is admitted`);
+    assert.equal(resourceRow('mining', 'iron').selectable, true);
+    assert.equal(resourceRow('woodcutting', 'jungle').selectable, false);
+    assert.equal(resourceRow('woodcutting', 'jungle').gap, 'no-resource-target');
+    assert.equal(resourceRow('fishing', 'fishing.saltfish.op1').selectable, true);
+    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').selectable, false);
+    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
+    assert.equal(
+        resourceRow('fishing', 'fishing.memberfish.op1').gap,
+        revision === 289 ? 'monkey-form-forbidden' : null,
+        `${revision} the 289 monkey-form gate refuses big-net; 274 has no such gate`,
+    );
 }
 
 // Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
@@ -2201,6 +2287,71 @@ assert.equal(family289Rows(baseline, 'mining.copper'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
+
+const sourceNpcPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/npc.pack'), 'utf8'));
+const sourceObjPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/obj.pack'), 'utf8'));
+const treeRows = parseDbRows('scripts/skill_woodcutting/configs/trees.dbrow', fs.readFileSync(path.join(realGathering, 'scripts/skill_woodcutting/configs/trees.dbrow'), 'utf8'))
+    .filter((row) => row.table === 'woodcutting_trees');
+const treeAliases = new Set(treeRows.flatMap((row) => (row.data.get('tree') ?? []).map((data) => data.values[0])));
+const treeConfigFiles = listContentFiles(realGathering, 'scripts/skill_woodcutting/configs/trees', '.loc');
+const treeSections = treeConfigFiles.flatMap((file) => parseSections(file, fs.readFileSync(path.join(realGathering, file), 'utf8')));
+const treeEntSections = treeSections.filter((section) => treeAliases.has(section.name) && section.params.has('ent') && section.params.get('ent')?.[0] !== 'null');
+const treeEntSection = treeEntSections[0];
+assert.ok(treeEntSection, 'a selected tree loc publishes its content ent param');
+const treeEntAlias = treeEntSection.params.get('ent')![0];
+const treeEntId = sourceNpcPack.get(treeEntAlias);
+assert.ok(treeEntId !== undefined, 'tree ent aliases join through npc.pack');
+assert.ok(baseline.payload.hazard_npcs.includes(treeEntId), 'tree ent ids are in the family hazard row');
+const baselineHazardIds = new Set(baseline.payload.hazard_npcs);
+const replacementNpc = [...sourceNpcPack].find(([, id]) => !baselineHazardIds.has(id));
+assert.ok(replacementNpc, 'the source pack has an NPC type not already classified as a hazard');
+const changedTreeEnt = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const lines = fs.readFileSync(path.join(rootDir, treeEntSection.span.file), 'utf8').split(/\r?\n/);
+    const at = lines.findIndex((line, index) => index >= treeEntSection.span.first - 1 && index < treeEntSection.span.last && line.startsWith('param=ent,'));
+    assert.ok(at >= 0, 'the selected tree section still has its ent param');
+    lines[at] = `param=ent,${replacementNpc[0]}`;
+    fs.writeFileSync(path.join(rootDir, treeEntSection.span.file), lines.join('\n'));
+}));
+assert.ok(changedTreeEnt.payload.hazard_npcs.includes(replacementNpc[1]), 'changing a tree ent param changes the published NPC ids');
+
+const treeEntAliases = new Set(treeEntSections.map((section) => section.params.get('ent')![0]));
+const fishingNpcSections = parseSections('scripts/skill_fishing/configs/fishing.npc', fs.readFileSync(path.join(realGathering, 'scripts/skill_fishing/configs/fishing.npc'), 'utf8'));
+const whirlpoolLinks = new Set(fishingNpcSections.flatMap((section) => section.params.get('whirlpool') ?? []));
+const whirlpoolConfig = listContentFiles(realGathering, 'scripts', '.npc')
+    .flatMap((file) => parseSections(file, fs.readFileSync(path.join(realGathering, file), 'utf8')))
+    .find((section) => whirlpoolLinks.has(section.name) && section.params.get('is_whirlpool')?.[0] === '^true' && !treeEntAliases.has(section.name));
+assert.ok(whirlpoolConfig, 'a fishing spot links to an NPC carrying is_whirlpool');
+const whirlpoolId = sourceNpcPack.get(whirlpoolConfig.name);
+assert.ok(whirlpoolId !== undefined && baseline.payload.hazard_npcs.includes(whirlpoolId), 'the linked whirlpool NPC is published');
+const noWhirlpool = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const lines = fs.readFileSync(path.join(rootDir, whirlpoolConfig.span.file), 'utf8').split(/\r?\n/);
+    const at = lines.findIndex((line, index) => index >= whirlpoolConfig.span.first - 1 && index < whirlpoolConfig.span.last && line === 'param=is_whirlpool,^true');
+    assert.ok(at >= 0, 'the linked NPC still carries its whirlpool flag');
+    lines[at] = 'param=is_whirlpool,^false';
+    fs.writeFileSync(path.join(rootDir, whirlpoolConfig.span.file), lines.join('\n'));
+}));
+assert.equal(noWhirlpool.payload.hazard_npcs.includes(whirlpoolId), false, 'a fishing NPC without is_whirlpool is not a hazard');
+
+const baselineGemIds = baseline.payload.incidental_gem_ids;
+assert.ok(baselineGemIds.length > 0, 'the mining gem table has named item outputs');
+assert.deepEqual(baselineGemIds, [...new Set(baselineGemIds)].sort((a, b) => a - b), 'gem ids are sorted and unique');
+const gemScript = fs.readFileSync(path.join(realGathering, mineScript), 'utf8');
+const gemProcAt = gemScript.indexOf('[proc,mining_gem_table]');
+assert.ok(gemProcAt >= 0, 'the mining gem proc is present');
+const gemProc = gemScript.slice(gemProcAt);
+const firstGemOutput = /\breturn\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*;/.exec(gemProc);
+assert.ok(firstGemOutput, 'the mining gem proc returns a named item');
+const replacementItem = [...sourceObjPack].find(([, id]) => !baselineGemIds.includes(id));
+assert.ok(replacementItem, 'the source pack has an object id not already in the gem table');
+const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const file = path.join(rootDir, mineScript);
+    const source = fs.readFileSync(file, 'utf8');
+    const start = source.indexOf('[proc,mining_gem_table]');
+    const changedProc = source.slice(start).replace(firstGemOutput[0], firstGemOutput[0].replace(firstGemOutput[1], replacementItem[0]));
+    assert.notEqual(changedProc, source.slice(start), 'the gem table return mutation applies');
+    fs.writeFileSync(file, source.slice(0, start) + changedProc);
+}));
+assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
 
 // A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
 const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
@@ -2276,4 +2427,167 @@ assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSy
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), '==== LOC ====\n0 10 10: 2092 10 0 extra tokens\n'))), /tokens/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
 
+
+/* ------------------------------------------------------------------ *
+ * debug family isolation (M2): the base asset carries no debug catalog.
+ * Fails before the split (base embeds debug_commands/debug_names and its
+ * provenance merges debug-only inputs); passes on the split artifacts.
+ * ------------------------------------------------------------------ */
+for (const revision of [274, 289]) {
+    const baseFile = path.join(repoRoot, `crates/api/data/game-data/${revision}.json`);
+    const base = JSON.parse(fs.readFileSync(baseFile, 'utf8'));
+    assert.equal('debug_commands' in base, false, `${revision}: base must not embed debug commands`);
+    assert.equal('debug_names' in base, false, `${revision}: base must not embed debug names`);
+    assert.deepEqual(base.provenance.inputs.map((input: { path: string }) => input.path), ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'], `${revision}: base engine inputs stay the original three`);
+    assert.equal(base.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), false, `${revision}: debug-only packs stay out of base provenance`);
+    const debugFile = path.join(repoRoot, `crates/api/data/game-data/${revision}/debug.json`);
+    const debug = JSON.parse(fs.readFileSync(debugFile, 'utf8'));
+    assert.equal(debug.schema_version, 1, `${revision}: debug artifact schema`);
+    assert.equal(debug.revision, revision, `${revision}: debug artifact revision`);
+    assert.deepEqual(debug.provenance.inputs.map((input: { path: string }) => input.path).sort(), ['data/pack/server/npc.dat', 'src/engine/entity/PlayerStat.ts', 'src/network/game/client/handler/ClientCheatHandler.ts'].sort(), `${revision}: debug engine provenance`);
+    assert.equal(debug.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), true, `${revision}: debug provenance covers debug-only packs`);
+    assert.equal('obj' in debug.debug_names, false, `${revision}: object picker reuses base items, no obj duplication`);
+    assert.equal('namedobj' in debug.debug_names, false, `${revision}: no namedobj duplication`);
+    assert.ok(debug.debug_commands.length > 0, `${revision}: debug commands present`);
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/manifest.json'), 'utf8'));
+    const row = manifest.revisions.find((entry: { revision: number }) => entry.revision === revision);
+    assert.deepEqual(row.families.debug, { path: `${revision}/debug.json`, schema: 1, ...sha256(debugFile) }, `${revision}: manifest debug descriptor matches the artifact`);
+}
+
+/* ------------------------------------------------------------------ *
+ * debug provenance isolation (M2 behavior regression): mutating a
+ * debug-only input moves the debug provenance while the base
+ * provenance bytes stay identical.
+ * ------------------------------------------------------------------ */
+import { BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, DEBUG_STAT_RELATIVE, baseContentFileList, baseProvenanceInputs, buildDebugArtifact, debugArtifactBytes, debugProvenanceInputs } from './generate.ts';
+import { engineHandlerRelative } from './extractors/debug.ts';
+
+const isoEngine = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-engine-'));
+const isoContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-content-'));
+for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]) {
+    const file = path.join(isoEngine, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `stub ${relative}\n`);
+}
+for (const relative of baseContentFileList()) {
+    const file = path.join(isoContent, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `stub ${relative}\n`);
+}
+// A debugproc source the extractor would report: never a base content input.
+const DEBUG_ONLY_CONTENT = 'scripts/_test/scripts/cheats/cheat_extra.rs2';
+assert.equal(baseContentFileList().includes(DEBUG_ONLY_CONTENT), false, 'the fixture debugproc source is debug-only');
+const debugOnlyFile = path.join(isoContent, DEBUG_ONLY_CONTENT);
+fs.mkdirSync(path.dirname(debugOnlyFile), { recursive: true });
+fs.writeFileSync(debugOnlyFile, '[debugproc,extra]\n');
+const debugOnlyEngine = DEBUG_ENGINE_INPUT_PATHS.filter((relative) => !BASE_ENGINE_INPUT_PATHS.includes(relative));
+assert.ok(debugOnlyEngine.includes(engineHandlerRelative()), 'the cheat handler is a debug-only engine input');
+assert.ok(debugOnlyEngine.includes(DEBUG_STAT_RELATIVE), 'PlayerStat is a debug-only engine input');
+const baseBefore = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
+const debugBefore = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
+// Mutate debug-only inputs: the handler and one debugproc source.
+fs.appendFileSync(path.join(isoEngine, engineHandlerRelative()), '// drift\n');
+fs.appendFileSync(debugOnlyFile, '// drift\n');
+const baseAfter = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
+const debugAfter = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
+assert.equal(baseAfter, baseBefore, 'a debug-only change must leave base provenance bytes unchanged');
+assert.notEqual(debugAfter, debugBefore, 'a debug-only change must move debug provenance');
+
+// The debug artifact shape: schema 1, no base item name duplication, strict bytes.
+const debugProvFixture = { engine_commit: 'engine', content_commit: 'content', inputs: [], content_inputs: [], cache_identity: { cache_id: 'cache', nav_sha256: 'nav', flags_sha256: 'flags' } };
+const debugBuilt = buildDebugArtifact(289, debugProvFixture, { commands: [{ name: '~extra' }], names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+assert.equal(debugBuilt.schema_version, DEBUG_SCHEMA_VERSION);
+assert.equal(debugBuilt.revision, 289);
+assert.deepEqual(JSON.parse(debugArtifactBytes(debugBuilt)), { schema_version: 1, revision: 289, provenance: debugProvFixture, debug_commands: [{ name: '~extra' }], debug_names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+assert.throws(() => buildDebugArtifact(289, debugProvFixture, { commands: [], names: { obj: [{ id: 1, alias: 'coin', name: 'Coins' }] } }), /must not duplicate base item names/);
+const tamperedSchema = JSON.parse(debugArtifactBytes(debugBuilt));
+tamperedSchema.schema_version = 2;
+assert.throws(() => debugArtifactBytes(tamperedSchema), /invalid debug artifact schema/);
+// ---- gather_resources labels and admission (synthetic methods; no content) ----
+
+const synRespawn = {
+    state: 'known' as const,
+    value: {
+        raw: 10,
+        scale: { state: 'known' as const, value: { rule: 'scale_by_playercount', min_ticks: 5, max_ticks: 10, sources: [] as string[] } },
+        source: 'mine.dbrow:1-2',
+    },
+};
+const synTarget = (id: number, respawn: TargetWire['respawn'] = synRespawn): TargetWire => ({ kind: 'loc', id, op: 1, class: 'resource', respawn });
+
+function synMethod(
+    id: string,
+    skill: MethodWire['skill'],
+    resources: string[],
+    products: MethodWire['products'],
+    requirements: MethodWire['requirements'],
+    extras?: Partial<Pick<MethodWire, 'targets' | 'tools' | 'consumes' | 'spots'>>,
+): MethodWire {
+    const knownEmpty = { state: 'known' as const, value: [] };
+    return {
+        id,
+        skill,
+        resources,
+        op: { slot: 1, label: 'Mine' },
+        targets: { state: 'known' as const, value: [synTarget(2092)] },
+        products,
+        tools: knownEmpty,
+        consumes: knownEmpty,
+        requirements,
+        spots: { state: 'known' as const, value: null },
+        sources: [],
+        ...extras,
+    };
+}
+
+const synPartialGap = (code: string) => ({ state: 'partial' as const, value: [], gaps: [{ code, sources: [] as string[] }] });
+const synUnknownGap = (code: string) => ({ state: 'unknown' as const, gap: { code, sources: [] as string[] } });
+const synKnownIds = (ids: { item: number; level: number }[]) => ({ state: 'known' as const, value: ids });
+const synFacts = (methods: MethodWire[]): GatheringFacts => ({ entities: [], methods, loose: [], zones: [], movements: [], placements: [] });
+
+const synOak = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 1521, level: 15 }]), synKnownIds([]));
+assert.equal(gatherMethodGap(synOak), null, 'a fully known method is admitted');
+assert.equal(isKnownGatherTarget(synTarget(2090)), true, 'a row with a respawn fact is a Known target');
+assert.equal(isKnownGatherTarget(synTarget(3042, synUnknownGap('custom-deplete'))), false, 'a tutorial-gate row without respawn is excluded per target');
+const synCopper = synMethod('mining.copper', 'mining', ['copper'], synPartialGap('incidental-gem-roll'), synKnownIds([]), {
+    targets: {
+        state: 'partial' as const,
+        value: [synTarget(2090), synTarget(2091), synTarget(3042, synUnknownGap('custom-deplete'))],
+        gaps: [{ code: 'custom-handler-target', sources: [] as string[] }],
+    },
+});
+assert.equal(gatherMethodGap(synCopper), null, 'excluded tutorial rows never block: Known ore rows admit the method');
+const synTakenOver = synMethod('mining.iron', 'mining', ['iron'], synKnownIds([{ item: 440, level: 15 }]), synKnownIds([]), {
+    targets: {
+        state: 'partial' as const,
+        value: [synTarget(1, synUnknownGap('custom-deplete'))],
+        gaps: [{ code: 'custom-handler-target', sources: [] as string[] }],
+    },
+});
+assert.equal(gatherMethodGap(synTakenOver), 'custom-handler-target', 'zero Known targets refuses with the cell gap code');
+const synJungle = synMethod('woodcutting.jungle', 'woodcutting', ['jungle'], synUnknownGap('no-resource-target'), synUnknownGap('no-resource-target'), {
+    targets: synUnknownGap('no-resource-target'),
+    tools: synUnknownGap('no-resource-target'),
+    consumes: synUnknownGap('no-resource-target'),
+    spots: synUnknownGap('no-resource-target'),
+});
+assert.equal(gatherMethodGap(synJungle), 'no-resource-target', 'an unknown cell refuses with its gap code');
+const synKarambwan = synMethod('fishing.category_633.op1', 'fishing', ['tbwt_raw_karambwan'], synPartialGap('inventory-effect'), synPartialGap('varp-gate'));
+assert.equal(gatherMethodGap(synKarambwan), 'varp-gate', 'requirements block before products under the design cell order');
+const synBigNet = synMethod('fishing.memberfish.op1', 'fishing', ['raw_mackerel'], synKnownIds([{ item: 353, level: 16 }]), synPartialGap('monkey-form-forbidden'));
+assert.equal(gatherMethodGap(synBigNet), 'monkey-form-forbidden');
+
+const synNames = new Map([[1521, 'Oak logs'], [335, 'Raw trout'], [331, 'Raw salmon']]);
+assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
+    { skill: 'woodcutting', method: 'woodcutting.oak', key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, gap: null },
+]);
+assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
+    { skill: 'woodcutting', method: 'woodcutting.jungle', key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, gap: 'no-resource-target' },
+], 'a refused method keeps its row with a humanized fallback label');
+const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
+assert.deepEqual(gatherResources(synFacts([synFresh]), synNames), [
+    { skill: 'fishing', method: 'fishing.freshfish.op1', key: 'fishing.freshfish.op1', resources: ['raw_trout', 'raw_salmon'], label: 'Raw trout / Raw salmon', level: 20, selectable: true, gap: null },
+], 'fishing keys on the method id and labels join every product');
+const synUnnamed = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 99999, level: 15 }]), synKnownIds([]));
+assert.equal(gatherResources(synFacts([synUnnamed]), new Map())[0].label, 'Oak', 'an unjoined product id falls back instead of inventing a name');
 console.log('generate fixture passed');

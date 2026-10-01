@@ -30,9 +30,10 @@ use crate::play_login::{
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
-    mark_login_started, publish_session_boundary_status, publish_slot_disconnected,
-    publish_startup_phase, publish_startup_progress, publish_worker_terminal, record_login_error,
-    set_startup_phase, SlotStatus, StartupPhase, WorkerTerminal,
+    mark_login_started, publish_login_lowmem, publish_session_boundary_status,
+    publish_slot_disconnected, publish_startup_phase, publish_startup_progress,
+    publish_worker_terminal, record_login_error, set_startup_phase, SlotStatus, StartupPhase,
+    WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
@@ -950,6 +951,14 @@ fn spawn_slot_thread(
                     // Read at each handshake, not captured at spawn: a
                     // password saved since then applies to this login.
                     let password = arm.login_password();
+                    // Read at each handshake, not captured at spawn: an
+                    // operator memory toggle since then applies to this
+                    // login (a parked slot's hooks never run, so the live
+                    // client may not have converged yet). Idempotent.
+                    if let Some(lowmem) = arm.lowmem_handshake() {
+                        client.set_lowmem(lowmem);
+                    }
+                    let handshake_lowmem = client.config.lowmem;
                     let login = login_and_acknowledge_permit(&mut permit, || {
                         client.login(&username, &password, reconnect)
                     });
@@ -960,6 +969,11 @@ fn spawn_slot_thread(
                             if let Some(round) = world_round.as_mut() { round.reset(); }
                             key_refreshed = false;
                             on_login_success(&arm, login_command);
+                            publish_login_lowmem(
+                                &slot_statuses,
+                                &username,
+                                handshake_lowmem,
+                            );
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             host_log!(Category::Login, Level::Info, "handshake ok");
                         }
@@ -1090,6 +1104,7 @@ fn spawn_slot_thread(
                         let mut nav_snapshot = GameSnapshot::new();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
+                        let mut debug_replies = super::debug_replies::DebugReplies::default();
                         // This frame's random status is published before
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
@@ -1136,6 +1151,7 @@ fn spawn_slot_thread(
                                 nav_snapshot.ingame(),
                             );
                             if session_boundary {
+                                debug_replies = super::debug_replies::DebugReplies::default();
                                 session_epoch = session_epoch.wrapping_add(1);
                                 if c.ingame {
                                     reset_slot_session_boundary(
@@ -1162,6 +1178,7 @@ fn spawn_slot_thread(
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
                             api::hostlog::set_tick(nav_snapshot.tick());
+                            debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
                             // isolate and can publish a Stop receipt. The next
                             // frame attaches that bounded value here before
@@ -1235,6 +1252,13 @@ fn spawn_slot_thread(
                             let hold = status.hold || !ready || session_boundary || welcome_step.hold;
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
+                            // The shared memory-mode command lands here for
+                            // every front end (the TUI has no audio gate):
+                            // a toggle flips the live client within a frame.
+                            // Idempotent; `None` until the first toggle.
+                            if let Some(lowmem) = arm_latch_obs.lowmem_handshake() {
+                                c.set_lowmem(lowmem);
+                            }
                             slot_frame(c, name, hold);
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
@@ -1320,7 +1344,10 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            script_observe_cached_with_channels(
+                            let crate::script_runtime::ScriptObservation {
+                                wrote: _wrote,
+                                journal_paint_hidden,
+                            } = script_observe_cached_with_channels(
                                 c,
                                 name,
                                 up,
@@ -1346,7 +1373,9 @@ fn spawn_slot_thread(
                                 Some(&observe_channels),
                                 broker_world,
                                 Some(run_policy),
+                                Some(&mut debug_replies),
                             );
+                            c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
                             // slot's own Client, so Continue/Answer/Walk

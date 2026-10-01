@@ -3,6 +3,8 @@
 //! Copy and Save log…. The section fills the side panel's leftover height
 //! when it is the last section, and is a resizable box otherwise.
 
+use std::path::PathBuf;
+
 use dear_imgui_rs::{ChildFlags, Ui};
 use frontend_core::log::{
     default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
@@ -36,6 +38,8 @@ pub struct LogPane {
     save: Option<SaveTicket>,
     /// Last Copy/Save/session-file outcome shown under the controls.
     status: Option<(bool, String)>,
+    /// Cached status text for the active per-session log file.
+    session_log_status: Option<String>,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -48,12 +52,23 @@ impl Default for LogPane {
             save_path: String::new(),
             save: None,
             status: None,
+            session_log_status: None,
             clipboard: None,
         }
     }
 }
 
 impl LogPane {
+    /// Cache the session-file label when the preference is applied, rather
+    /// than resolving and formatting the path in every frame.
+    pub fn set_session_log_path(&mut self, path: Option<PathBuf>) {
+        self.session_log_status = path.map(|path| format!("writing {}", path.display()));
+    }
+
+    pub fn session_log_status(&self) -> Option<&str> {
+        self.session_log_status.as_deref()
+    }
+
     /// Point the view at the focused bot (Bot scope) and pull new lines.
     /// Steady state: one atomic load, no allocation.
     pub fn refresh(&mut self, focused: Option<&str>) {
@@ -116,8 +131,11 @@ pub fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
 }
 
 /// The log section body. `last` is whether it is the last visible panel
-/// section (then it fills the leftover height).
+/// section (then it fills the leftover height). The same body is reused by
+/// the detached window so filters, follow state and retained lines survive
+/// moving the log.
 pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
+    log_mode_row(ui, session);
     let focused = session.core.selected();
     let pane = &mut session.log_pane;
     pane.refresh(focused);
@@ -158,6 +176,17 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
                 ui.set_scroll_here_y(1.0);
             }
         });
+}
+
+/// Move the shared log between the panel and its floating window.
+fn log_mode_row(ui: &Ui, session: &mut Session) {
+    let detached = session.ui.log_detached;
+    if ui.button(if detached { "Attach log" } else { "Detach log" }) {
+        session.ui.log_detached = !detached;
+        crate::ui_state::save(&session.ui);
+    }
+    ui.same_line();
+    ui.text_disabled(if detached { "floating" } else { "in panel" });
 }
 
 fn log_row(ui: &Ui, entry: &LogEntry, all: bool) {
@@ -300,14 +329,22 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
         session.ui.session_log_file = on;
         crate::ui_state::save(&session.ui);
         let path = apply_session_log(on);
-        session.log_pane.status = path.map(|p| (true, format!("writing {}", p.display())));
+        session.log_pane.set_session_log_path(path);
     }
     ui.set_item_tooltip("write this session's log to ~/.274bot/logs/ (rotated, off by default)");
+    if on {
+        if let Some(status) = session.log_pane.session_log_status() {
+            ui.text_wrapped(status);
+        }
+    }
 }
 
 /// Start the session file at launch when the saved preference is on.
-pub fn apply_session_log_pref(session: &Session) {
-    if session.ui.session_log_file {
-        apply_session_log(true);
-    }
+pub fn apply_session_log_pref(session: &mut Session) {
+    let path = session
+        .ui
+        .session_log_file
+        .then(|| apply_session_log(true))
+        .flatten();
+    session.log_pane.set_session_log_path(path);
 }

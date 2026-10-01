@@ -1,13 +1,14 @@
 //! Native chat-dialogue driver extracted from the isolate `dialog` family.
-//! Constants and sequencing match `crates/script/src/dialog.rs`.
+//! Page sequencing matches the isolate driver; completion waits on game ticks.
 
 use super::reach;
+use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
 use std::sync::Arc;
 use std::task::Poll;
 
-pub const DIALOG_GAP_MS: u64 = 1_500;
+pub const DIALOG_GAP_TICKS: u64 = 4;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 pub const DIALOGUE_APPROACH_MS: u64 = 20_000;
 pub const DRIVE_STEPS: u32 = 120;
@@ -49,7 +50,7 @@ pub struct Dialogue {
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
-    type Output = bool;
+    type Output = DialogueOutcome;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let mut dialogue = Self {
@@ -72,6 +73,11 @@ impl NativeMachine for Dialogue {
         let Some(obs) = observe(cx) else {
             return Poll::Pending;
         };
+        // NPC melee closes interfaces even when it deals zero damage. A
+        // witnessed combat close is not the quiet end of a conversation.
+        if let Some(outcome) = DialogueOutcome::combat_interruption(obs.open, obs.in_combat) {
+            return Poll::Ready(Ok(outcome));
+        }
         match self.phase {
             Phase::Approach => {
                 if let Some(target) = nearest_talk(cx, self.args.id) {
@@ -92,7 +98,7 @@ impl NativeMachine for Dialogue {
                 {
                     cx.cancel_request(self.walk_request_id);
                     self.walk_request_id = 0;
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -102,7 +108,7 @@ impl NativeMachine for Dialogue {
                     return self.drive(cx, &obs);
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -113,7 +119,7 @@ impl NativeMachine for Dialogue {
                     return Poll::Pending;
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -124,7 +130,7 @@ impl NativeMachine for Dialogue {
                     return Poll::Pending;
                 }
                 if now >= self.deadline_ms {
-                    return Poll::Ready(Ok(false));
+                    return Poll::Ready(Ok(DialogueOutcome::Failed));
                 }
                 Poll::Pending
             }
@@ -140,8 +146,12 @@ impl NativeMachine for Dialogue {
                 if obs.ready {
                     self.phase = Phase::Drive;
                     self.drive(cx, &obs)
-                } else if now >= self.deadline_ms {
-                    Poll::Ready(Ok(!obs.open))
+                } else if obs.tick >= self.due_tick {
+                    Poll::Ready(Ok(if obs.open {
+                        DialogueOutcome::Failed
+                    } else {
+                        DialogueOutcome::Completed
+                    }))
                 } else {
                     Poll::Pending
                 }
@@ -185,13 +195,17 @@ impl Dialogue {
         &mut self,
         cx: &mut ActionContext<'_>,
         obs: &ChatObs,
-    ) -> Poll<Result<bool, ActionError>> {
+    ) -> Poll<Result<DialogueOutcome, ActionError>> {
         if self.steps >= DRIVE_STEPS {
-            return Poll::Ready(Ok(!obs.open));
+            return Poll::Ready(Ok(if obs.open {
+                DialogueOutcome::Failed
+            } else {
+                DialogueOutcome::Completed
+            }));
         }
         if !obs.ready {
             self.phase = Phase::WaitGap;
-            self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOG_GAP_MS;
+            self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
             return Poll::Pending;
         }
         if obs.r#continue {
@@ -233,6 +247,7 @@ struct ChatObs<'a> {
     modal: i32,
     tick: u64,
     options: &'a [api::snapshot::ChatOptionView],
+    in_combat: bool,
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
@@ -247,6 +262,10 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
         modal,
         tick: cx.evidence().tick,
         options: chat.value.options,
+        in_combat: cx
+            .snapshot()
+            .in_combat()
+            .is_some_and(|combat| combat.value.in_combat),
     })
 }
 
@@ -300,6 +319,6 @@ pub fn poll_dialogue(
     actions: &mut NativeActions,
     handle: &ActionHandle<Dialogue>,
     cx: &mut ActionContext<'_>,
-) -> Poll<Result<bool, ActionError>> {
+) -> Poll<Result<DialogueOutcome, ActionError>> {
     actions.poll(handle, cx)
 }

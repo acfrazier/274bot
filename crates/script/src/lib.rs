@@ -24,6 +24,8 @@ mod events;
 pub mod food_policy;
 /// Native gather-tool selection over the posted `api::gather_tools` rows.
 pub mod gather_tools;
+/// Native woodcutting and mining gatherer card.
+pub mod gatherer;
 pub mod host_js;
 pub mod identity;
 #[cfg(feature = "load")]
@@ -133,11 +135,14 @@ mod boat_fare;
 pub mod cake_stall;
 pub mod clue;
 #[cfg(feature = "load")]
+pub mod compat_dts;
+#[cfg(feature = "load")]
 mod cook_locations;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
 mod dialog;
+pub mod dialogue_outcome;
 #[cfg(feature = "load")]
 mod drive_partner_trade;
 #[cfg(feature = "load")]

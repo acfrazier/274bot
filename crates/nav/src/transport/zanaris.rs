@@ -16,8 +16,8 @@ pub(super) const ZANARIS_DOOR_TICKS: i32 = 4;
 /// outside, teleports through to Zanaris
 /// (`~player_teleport_normal(0_50_149_20_56)` = (3220,9592)) when the
 /// player wears the Dramen staff (`inv_total(worn, dramen_staff) > 0` →
-/// `worn_req`) and is a member (`map_members = ^true` — the members flag
-/// the bot host already tracks in WorldState, so nothing extra is stored).
+/// `worn_req`) and is on a members world (`map_members = ^true` →
+/// `members_req`).
 /// The Lost City quest varp (`%zanaris`) gates the content, carried as the
 /// quest name. One edge per placement (a single m50_49 placement at the
 /// Lumbridge swamp shed): `at` the door loc tile, `to` the Zanaris
@@ -83,6 +83,8 @@ pub(super) fn zanaris_door_edges(
         bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
         return;
     };
+    // The staff branch runs only on a members world (`map_members = ^true`).
+    let members_req = normalized_body(&body).contains("map_members=^true");
     let edge_start = graph.edges.len();
     for loc in placements {
         if loc.level != 0 || loc.shape != 0 {
@@ -106,7 +108,7 @@ pub(super) fn zanaris_door_edges(
             quest_req: vec!["Lost City".to_string()],
             varp_req: vec![],
             worn_req: vec![staff_id],
-            members_req: false,
+            members_req,
             wildy_cap: None,
             quest_gates: None,
         });

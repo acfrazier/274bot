@@ -82,6 +82,100 @@ timeouts. An operator logout, Stop, or slot removal ends the session instead:
 the in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
 scripts end their live step at either boundary.
 
+### Quester journal reads
+
+Native Quester dialogue completion requires four observed game ticks with
+chat closed, rather than an elapsed host-millisecond gap. Combat interruption
+is keyed directly to the client's `in_combat` flag, not to a newly observed hit
+or a combat baseline. The flag stays set for about 8 s after any hitsplat
+(`client.rs:9211` sets it to `loop_cycle + 400`; `decode.rs:1288` reads it).
+Thus a talk step that starts or ends within that window after unrelated combat
+parks as **Blocked**, even if the dialogue itself was not hit. This is
+fail-closed and requires an explicit operator retry. Poison hits count too:
+poison closes interfaces before applying its damage hitsplat, which sets the
+same flag. A closed chat while the flag is set produces an explicit
+combat-interruption outcome, including during dialogue opening or page
+acknowledgement. Quester does not count that interruption as successful work,
+settle the step, or request an advancement journal read. It does not fight or
+automatically retry the conversation. A journal transaction
+that loses ownership or becomes transiently busy is retried only after both
+main and chat modals have been observed closed for three game ticks. Unknown
+modal observations or reopened modals restart this quiet interval.
+
+A logical progress read allows at most three journal transactions, each with
+at most one quest-row click; adopting an already-open matching page also
+consumes a transaction but does not click. Exhaustion parks and reports
+`journal read retry limit reached` alongside the transient failure reason.
+Successful reads and explicit Retry reset this budget. A chat modal at read
+start waits within the existing bounded read window; if it remains occupied,
+the parked status names the chat root and text. Modal ownership, quiet leases
+and Stop/Pause revocation still govern all captures and closes.
+
+### Gatherer power gathering
+
+Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
+equipped tool, at the Start area, a Custom location or an Auto-selected area.
+Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
+empty, and retains confirmed partial-batch progress across interruptions.
+Unsettled drops are retried even after their dispatch receipts age out.
+
+Incidental uncut gems are power-dropped along with mining products. Tools,
+fishing bait and other non-products are kept. If protected items fill the pack
+and no selected product can be dropped, the card stops with `inventory-blocked`
+rather than gathering against a full inventory. Clear space and use **Retry**.
+
+Fishing requires the selected method's tool and bait before gathering; missing
+bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
+identity. Depleted resources are not clicked: a live lower-tier resource can
+be selected while the higher tier respawns. Wait deadlines use the observed
+group's respawn bound, capped at eight minutes since gameplay progress, and do
+not slide on unchanged observations or Pause/Resume. Auto widening shares that
+gameplay cap across depleted groups rather than restarting it at each group.
+A recreated card starts with a fresh wait baseline rather than immediately
+treating the wait as expired.
+
+Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
+anchor, and temporarily skips exhausted groups until their respawn bound.
+Four unexpired skipped groups produce `widen-limit`; exhausted search produces
+`resource-unavailable`. Retry resets the search only for these search failures;
+other retryable failures keep the current area and temporarily skipped groups.
+Gas, ents and whirlpools are identified by generated IDs and trigger reselection
+or a walk away, not another gathering click on the hazard. Pause/Resume preserves
+an unfinished escape walk. A temporary hold defers actions and resumes on release
+without requiring Retry.
+
+Level-up chat pages are continued individually. An observed change of chat
+root completes only the previous page; the new page requires its own Continue.
+An unchanged page still fails after eight ticks rather than waiting indefinitely.
+
+Changes marked restart-required (including skill, resources and location)
+remain pending until the slot restarts; they never switch the active run in
+place. Death stops the card; automatic recovery, banking and supply trips are
+not part of this stage. Closest mode and shop provisioning are not offered.
+
+### Quiet quest-journal painting
+
+Host-owned quest-journal reads (the native Quester and the Rust journal machine
+used by Load cards) have a quiet-paint lease. It arms before the quest-row click
+and ends after the server's closed modal/text pair is observed. One client
+skip-paint flag hides the main modal while retaining the pre-read side panel
+and tab chrome; packets, input actions, widgets and server state are unchanged.
+The existing last-framebuffer freeze during `scene_state == 1` is unchanged.
+Stop, cancellation, error, disconnect/work-generation reset, or a ten-second
+wall-clock safety fuse restores ordinary painting even without an eligible
+script tick. Pause and hold do not freeze that wall-clock fuse. The inactive
+path does no capture, widget scan, backup copy, extra clock read or bridge lock.
+
+The Windows `host-play` live journal fixture's `journal-paint-proof` feature
+records every completed CPU/GPU paint with producer-attached root/flag metadata.
+Its restoration and close acknowledgments require paints newer than the
+corresponding request. The fixture resolves the close control from the live
+component bounds and lets a real paint build its hover menu before clicking.
+If an ordinary read close was already accepted at Stop, the unowned control
+reopen crosses the server's deferred-close tick before sending its button.
+These capture and input steps are fixture-only; native journal policy is
+unchanged.
+
 ### File Load and catalog cards
 
 - **Load** registers a picker card tagged **File** from an absolute/relative

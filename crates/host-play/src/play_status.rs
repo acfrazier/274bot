@@ -29,6 +29,9 @@ pub struct SlotStatus {
     /// current local-player observation.
     pub ingame: bool,
     pub scene_state: i32,
+    /// Detail mode sent by the last successful login handshake. `None`
+    /// before this worker lifetime has authenticated.
+    pub login_lowmem: Option<bool>,
     /// Last login error (code + message); cleared after a successful login.
     pub error: Option<String>,
     /// Terminal outcome of this worker lifetime. Login errors leave this
@@ -112,6 +115,7 @@ impl Clone for SlotStatus {
             connected: self.connected,
             ingame: self.ingame,
             scene_state: self.scene_state,
+            login_lowmem: self.login_lowmem,
             error: self.error.clone(),
             worker_terminal: self.worker_terminal,
             runenergy: self.runenergy,
@@ -155,6 +159,7 @@ impl Clone for SlotStatus {
         self.connected.clone_from(&source.connected);
         self.ingame.clone_from(&source.ingame);
         self.scene_state.clone_from(&source.scene_state);
+        self.login_lowmem = source.login_lowmem;
         self.error.clone_from(&source.error);
         self.worker_terminal.clone_from(&source.worker_terminal);
         self.runenergy.clone_from(&source.runenergy);
@@ -315,6 +320,7 @@ impl Default for SlotStatus {
             connected: false,
             ingame: false,
             scene_state: 0,
+            login_lowmem: None,
             error: None,
             worker_terminal: None,
             runenergy: 0,
@@ -410,6 +416,19 @@ pub(super) fn clear_startup_progress(statuses: &Arc<Mutex<Vec<SlotStatus>>>, nam
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_progress_percent = None;
         s.startup_progress_message.clear();
+    }
+}
+
+/// Publish the detail mode that the server accepted with a successful login.
+/// Failed attempts and operator intent never change this baseline.
+pub(super) fn publish_login_lowmem(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    lowmem: bool,
+) {
+    let mut all = lock_statuses(statuses);
+    if let Some(status) = all.iter_mut().find(|status| status.username == name) {
+        status.login_lowmem = Some(lowmem);
     }
 }
 

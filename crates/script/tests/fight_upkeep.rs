@@ -47,6 +47,7 @@ fn bury() -> InteractReq {
     InteractReq::Held {
         name: "Bones".into(),
         action: "Bury".into(),
+        slot: None,
     }
 }
 

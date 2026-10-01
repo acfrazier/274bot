@@ -26,6 +26,7 @@ use nav::map::spatial::{
 };
 use nav::map::MapError;
 use nav::tile::Tile;
+use nav::transport::WildernessZone;
 use nav::world::NavWorld;
 
 use host_play::map_cache::ReadyImages;
@@ -153,6 +154,8 @@ pub struct WalkMapRenderer {
     pub show_collision: bool,
     pub show_nsew: bool,
     pub show_flood: bool,
+    /// Content-defined special-area tint (currently wilderness zones).
+    pub show_special_areas: bool,
     nav_identity: Digest,
     world_geom: Option<(i32, i32, u32, u32)>,
     pub search: String,
@@ -229,6 +232,7 @@ impl WalkMapRenderer {
             show_collision: false,
             show_nsew: false,
             show_flood: false,
+            show_special_areas: false,
             nav_identity: Digest([0; 32]),
             world_geom: None,
             search: String::new(),
@@ -521,6 +525,9 @@ impl WalkMapRenderer {
         if !self.has_terrain() || !self.show_basemap {
             draw_mapsquare_grid(&draw, origin, size, view);
         }
+        if layers.special_areas {
+            draw_special_areas(&draw, origin, size, view, world, colors);
+        }
         if let Some(over) = &self.overlay_gpu {
             draw.add_image(
                 over.tex_id,
@@ -591,7 +598,7 @@ impl WalkMapRenderer {
         self.pump_decode();
         self.sync_terrain(view, gpu);
         *overlay_zoom_in = false;
-        if layers.any() {
+        if layers.raster_any() {
             match overlay::overlay_fit(view) {
                 OverlayFit::Ready { w, h } => {
                     self.sync_overlay(view, w, h, world, layers, colors, path, floods, reach, gpu);
@@ -1327,6 +1334,50 @@ fn rgba8(c: [u8; 4]) -> [f32; 4] {
     ]
 }
 
+fn draw_special_areas(
+    draw: &dear_imgui_rs::DrawListMut<'_>,
+    origin: [f32; 2],
+    size: [f32; 2],
+    view: View,
+    world: &NavWorld,
+    colors: OverlayColors,
+) {
+    let plane = i32::from(view.plane);
+    for zone in &world.graph.wilderness.zones {
+        if !(zone.level1..=zone.level2).contains(&plane) {
+            continue;
+        }
+        let Some((min, max)) = special_area_rect(view, origin, size, *zone) else {
+            continue;
+        };
+        draw.add_rect(min, max, rgba8(colors.special_areas))
+            .filled(true)
+            .build();
+    }
+}
+
+/// Screen-space bounds for one inclusive content zone. The right and top
+/// edges use the exclusive world bounds `(x2 + 1, z2 + 1)` so the tint ends
+/// on the same tile edges as routing.
+pub(crate) fn special_area_rect(
+    view: View,
+    origin: [f32; 2],
+    size: [f32; 2],
+    zone: WildernessZone,
+) -> Option<([f32; 2], [f32; 2])> {
+    let x0 = f64::from(zone.x1).max(view.west);
+    let x1 = (f64::from(zone.x2) + 1.0).min(view.east);
+    let z0 = f64::from(zone.z1).max(view.south);
+    let z1 = (f64::from(zone.z2) + 1.0).min(view.north);
+    if x0 >= x1 || z0 >= z1 {
+        return None;
+    }
+    Some((
+        canvas_point(view, origin, size, x0, z1),
+        canvas_point(view, origin, size, x1, z0),
+    ))
+}
+
 fn draw_mapsquare_grid(
     draw: &dear_imgui_rs::DrawListMut<'_>,
     origin: [f32; 2],
@@ -1573,6 +1624,7 @@ pub fn overlay_colors(nav: &NavSettings) -> OverlayColors {
         flood_b: [200, 40, 240, 160],
         unreached: [200, 40, 240, 160],
         nsew: [220, 220, 220, 220],
+        special_areas: [0, 180, 160, 52],
     }
 }
 

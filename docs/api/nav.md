@@ -31,6 +31,22 @@ siblings. Pass the three paths if yours lives elsewhere. Output goes to
 `$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is derived from the
 maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
+Each edge's `members_req` comes from the content handler that edge's op runs,
+resolved as the engine does: type `[<op>,<name>]`, then category
+`[<op>,_<category>]`, then global `[<op>,_]`. The edge needs a members world
+when that handler's leading path (its first statement, followed through
+unconditional leading `@label` jumps) is the F2P refusal
+`if (map_members = ^false …) { …; return; }`. Members spells come from
+`magic_spells.dbrow` `data=members,true`. The bake fails if a free edge's
+handler, or any label, choice or queue it may continue into, reads
+`map_members`, unless that exact read is a listed non-gate branch. It also
+fails if a members-only edge's leading path does not refuse F2P, unless its
+handler carries a listed members arm (the glider, Zanaris and spirit-tree
+gates).
+Only bundled packs are rebaked automatically: an external v11 pack
+(`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the membership gates it was
+baked with, so rebake one made by an earlier 274bot.
+
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
 the derived `TransportGraph`. Magic `b"274V"`, version byte **11** (v11 binds
@@ -64,6 +80,14 @@ owned cache/snapshot shared by all bots using that profile. Transfer CRCs and
 packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
 identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
 application callers use `prepare_template()` or `bind_runtime()`.
+
+Headerless Jagex archives are decoded without copying their compressed payload
+just to restore a header. The normal decoder uses the engine's 100k block size,
+avoiding a 900k libbz2 workspace for each stream. Any block-data error (which
+libbz2 also uses for CRC and table corruption) retries once with the larger
+hint, so larger headerless blocks remain supported; truncated or corrupt
+streams still fail, at most after two attempts. This does not change decoded
+content identities.
 
 New nav manifests, build stamps and compiled bundle rows carry `content_id` and
 `source_sha256`. Source provenance hashes the conservative content-tree closure
@@ -142,6 +166,12 @@ revision/cache-identity check, reads + decodes the staged pack once
 (`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
 checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
 keep the external path (including its one-time reach flood) and a differing cache identity falls back to it.
+Runtime pack decoding uses a bounded 64 KiB input buffer and fills the final
+collision storage directly. Bound reach and canlight sidecars decode into their
+final shared `Arc<[u64]>` bitplanes in fixed-size chunks, without full-file staging
+buffers or intermediate decoded-vector copies. External pack SHA-256 is computed
+over the exact stream, including accepted trailing bytes, before publishing the
+world; the nav formats and collision/transport semantics are unchanged.
 
 Real-artifact check (needs a default application build in this target profile
 plus the canonical cache):
@@ -275,8 +305,10 @@ cap). `find` is CPU-heavy; run it off-pump (a short-lived worker) and arm
 the result.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
-gliders, webs, EssenceSession, Shantay, and teles. NPC-backed hops use
-the live NPC tile (search radius 8). Glider landings settle Chebyshev 1.
+gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
+NPC-backed hops use the live NPC tile (search radius 8). A paid Al Kharid
+toll Door hop returns `Blocked` when the packed `item_req` is short at the
+gate. Glider landings settle Chebyshev 1.
 Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.

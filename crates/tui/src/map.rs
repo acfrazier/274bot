@@ -3,11 +3,16 @@
 //! catalogue POIs; paints the walkable dot field, remaining-walk polyline,
 //! here marker, POI glyphs and selection crosshair. Keyboard: arrows/hjkl
 //! pan, `+`/`-` zoom, `/` search, Enter selects/arms through the shared map
-//! model, and Esc clears or closes the map.
+//! model, and Esc clears or closes the map. The optional wilderness layer is
+//! toggled from the command palette.
+
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
@@ -26,6 +31,33 @@ pub const ZOOMS: [usize; 4] = [8, 4, 2, 1];
 /// courtyard, same default as the headed picker.
 pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
+const NAV_PREF_KEY: &str = "nav";
+const SPECIAL_AREA_PREF_KEY: &str = "show_special_areas";
+
+/// Read the shared panel/TUI nav preference from an explicitly configured
+/// store. `MapView::new` deliberately does not touch the operator's home so
+/// unit tests cannot observe or mutate real preferences.
+fn persisted_wilderness(path: &Path) -> bool {
+    host_play::panel_ui_value_at(path, NAV_PREF_KEY)
+        .and_then(|value| value.get(SPECIAL_AREA_PREF_KEY).and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
+fn persist_wilderness(path: &Path, enabled: bool) -> io::Result<()> {
+    let mut nav = host_play::panel_ui_value_at(path, NAV_PREF_KEY)
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = nav.as_object_mut() {
+        object.insert(
+            SPECIAL_AREA_PREF_KEY.into(),
+            serde_json::Value::Bool(enabled),
+        );
+    }
+    host_play::persist_panel_ui_value_at(path, NAV_PREF_KEY, nav)
+}
+
+const WILDERNESS_BG: Color = Color::Rgb(72, 16, 72);
+
 /// Glyphs for the semantic terminal map. Collision dots are deliberately
 /// simple: terminal cells are navigation diagnostics, not terrain artwork.
 const WALKABLE_GLYPH: &str = ".";
@@ -42,6 +74,8 @@ pub struct MapLayers {
     pub dots: bool,
     pub collision: bool,
     pub reach: bool,
+    /// Content-defined wilderness zones from the selected nav graph.
+    pub wilderness: bool,
 }
 
 impl Default for MapLayers {
@@ -50,6 +84,7 @@ impl Default for MapLayers {
             dots: true,
             collision: false,
             reach: false,
+            wilderness: false,
         }
     }
 }
@@ -90,10 +125,12 @@ pub struct MapView {
     /// The operator's selected tile (`+` crosshair); `None` once Esc
     /// clears it.
     pub selection: Option<Tile>,
+    preference_path: Option<PathBuf>,
 }
 
 impl MapView {
     /// A fresh view: centred on the player, finest zoom, no selection.
+    /// Preference I/O is configured explicitly by the binary.
     pub fn new() -> Self {
         Self {
             pan: (0, 0),
@@ -101,7 +138,25 @@ impl MapView {
             plane: 0,
             layers: MapLayers::default(),
             selection: None,
+            preference_path: None,
         }
+    }
+
+    /// Attach the shared preference store and restore the wilderness toggle.
+    pub fn restore_persisted_wilderness(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        self.layers.wilderness = persisted_wilderness(&path);
+        self.preference_path = Some(path);
+    }
+}
+
+impl MapView {
+    pub(crate) fn toggle_wilderness(&mut self) -> io::Result<()> {
+        self.layers.wilderness = !self.layers.wilderness;
+        if let Some(path) = self.preference_path.as_deref() {
+            persist_wilderness(path, self.layers.wilderness)?;
+        }
+        Ok(())
     }
 }
 
@@ -195,8 +250,8 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
     }
 
     /// Handle one key event. Pan keys are scoped to Map focus (h/l are not
-    /// global loadout shortcuts), Enter selects the centre or confirms a
-    /// walk, Esc clears the selection, and +/- changes terminal zoom.
+    /// global loadout shortcuts), Enter selects the centre or confirms a walk,
+    /// Esc clears the selection, and +/- changes terminal zoom.
     pub fn on_key(&mut self, key: KeyEvent) -> MapAction {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => self.pan_by(-1, 0),
@@ -294,6 +349,25 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
                 };
                 if self.view.layers.dots || self.view.layers.collision {
                     put(buf, area, col, row, glyph);
+                }
+            }
+        }
+
+        // Paint area membership after the terrain field so one wilderness
+        // tile receives a background tint without replacing its diagnostic
+        // glyph. With step=1 this is exactly one tint per nav tile.
+        if self.view.layers.wilderness {
+            for z in z_lo..z_hi {
+                for x in x_lo..x_hi {
+                    if self.world.graph.wilderness.contains(WorldTile {
+                        x,
+                        z,
+                        level: c.level,
+                    }) {
+                        if let Some((col, row)) = cell_of(x, z, (c.x, c.z), step, area) {
+                            tint(buf, area, col, row);
+                        }
+                    }
                 }
             }
         }
@@ -425,6 +499,17 @@ fn put(buf: &mut Buffer, area: Rect, col: usize, row: usize, glyph: &str) {
         buf[(area.x + col as u16, area.y + row as u16)].set_symbol(glyph);
     }
 }
+/// Tint one wilderness cell without changing its diagnostic glyph.
+fn tint(buf: &mut Buffer, area: Rect, col: usize, row: usize) {
+    if col < area.width as usize && row < area.height as usize {
+        let point = (area.x + col as u16, area.y + row as u16);
+        let style = buf[point]
+            .style()
+            .bg(WILDERNESS_BG)
+            .add_modifier(Modifier::DIM | Modifier::REVERSED);
+        buf[point].set_style(style);
+    }
+}
 
 fn poi_glyph(kind: PoiKind) -> &'static str {
     match kind {
@@ -438,12 +523,13 @@ fn poi_glyph(kind: PoiKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
-
     use nav::grid::StepGrid;
     use nav::router::find;
     use nav::tile::Tile;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Modifier;
+    use ratatui::Terminal;
 
     use super::{Map, MapAction, MapView, ZOOMS};
 
@@ -459,15 +545,17 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    /// Render `map` into a `w × h` TestBackend and return the buffer text.
-    fn render(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> String {
+    fn render_buffer(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
         terminal
             .draw(|frame| frame.render_widget(map, frame.area()))
             .unwrap();
-        terminal
-            .backend()
-            .buffer()
+        terminal.backend().buffer().clone()
+    }
+
+    /// Render `map` into a `w × h` TestBackend and return the buffer text.
+    fn render(map: Map<'_, impl FnMut(Tile)>, w: u16, h: u16) -> String {
+        render_buffer(map, w, h)
             .content()
             .iter()
             .map(|cell| cell.symbol())
@@ -491,6 +579,83 @@ mod tests {
         assert_eq!(&buf_text[5 * 9 + 5..5 * 9 + 6], ".");
         // Blocked (off-grid) cells stay blank.
         assert_eq!(&buf_text[0..1], " ");
+    }
+
+    #[test]
+    fn wilderness_overlay_uses_selected_zone_tiles() {
+        let mut world = nav::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            5,
+            5,
+        ));
+        world.collision.origin = wtile(2944, 3519, 0);
+        world.graph.wilderness = nav::transport::WildernessRules {
+            zones: vec![nav::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 2948,
+                z2: 3521,
+                level1: 0,
+                level2: 0,
+                origin_z: 3520,
+            }],
+            divisor: 1,
+            offset: 1,
+        };
+        let mut view = MapView::new();
+        view.layers.wilderness = true;
+        let buffer = render_buffer(
+            Map::new(&world, &mut view, |_| {}).here(wtile(2946, 3519, 0)),
+            9,
+            9,
+        );
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        // Centre is z=3519; the selected zone rows z=3520 and z=3521
+        // straddle the real surface wilderness edge at z=3520.
+        assert_eq!(&text[2 * 9 + 4..2 * 9 + 5], ".");
+        assert_eq!(&text[3 * 9 + 4..3 * 9 + 5], ".");
+        assert_eq!(&text[4 * 9 + 4..4 * 9 + 5], "@");
+        let wilderness = |row: usize| buffer[(4, row as u16)].style();
+        for row in [2, 3] {
+            let style = wilderness(row);
+            assert_eq!(
+                style.bg,
+                Some(super::WILDERNESS_BG),
+                "z={} should carry the wilderness background",
+                3519 + (4 - row) as i32
+            );
+            assert!(
+                style
+                    .add_modifier
+                    .contains(Modifier::DIM | Modifier::REVERSED),
+                "z={} should carry the non-colour wilderness marker",
+                3519 + (4 - row) as i32
+            );
+        }
+        for row in [1, 4] {
+            let style = wilderness(row);
+            assert_ne!(
+                style.bg,
+                Some(super::WILDERNESS_BG),
+                "z={} must not carry the wilderness background",
+                3519 + (4 - row) as i32
+            );
+            assert!(
+                !style
+                    .add_modifier
+                    .contains(Modifier::DIM | Modifier::REVERSED),
+                "z={} must not carry the wilderness marker",
+                3519 + (4 - row) as i32
+            );
+        }
+        // The south side and the next north row stay outside the zone; an
+        // area marker must not turn every visible cell into a wilderness glyph.
+        assert_eq!(&text[4 * 9 + 3..4 * 9 + 4], ".");
+        assert_eq!(&text[9 + 4..9 + 5], ".");
     }
 
     #[test]

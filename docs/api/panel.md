@@ -40,18 +40,52 @@ terminal) and unlocks **before** the window opens, for launchers and
 harnesses that cannot type; see [vault.md](vault.md#passphrase-sourcing).
 `BOT_VAULT_PASS` and `--vault-pass` were removed. There is **no mainland checkbox** in the
 panel: `BOT_MAINLAND=1` or host-play `--mainland` still queues
-`mainland_hop` after scene 2. On a **loopback** engine the **Debug**
-section is shown: **TutSkip** (`setvar tutorial 1000`, hidden once the
-profile is known skipped; unknown profiles `getvar tutorial` first),
-**Lumbridge** (`~home`), **maxme** (19× `setstat`
-99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
-Public world hosts hide that heading. The Profiles editor offers `auto` or
-each listed rs2b2t world; the selected world is
-used on the next slot start. Live slot rows display the current world.
+`mainland_hop` after scene 2. On a **Local loopback** engine the **Debug**
+section retains **TutSkip**, **Lumbridge**, **maxme**, and **Teles**, and links
+to the **Debug** tab. The tab groups commands from the selected content
+catalog by `~help` category, with search, typed arguments, content-derived
+name pickers, favourites and recent commands. Item pickers share Loadouts'
+item search, with exact aliases/names ranked before prefixes and substrings.
+Commands target the focused running profile or the same marked selection used
+by Fleet commands. Marked sends check each bot separately and report queued
+targets and skipped targets with their refusal reasons. Destructive commands
+require confirmation naming the targets. Public and Remote profiles cannot
+send cheats; production-only commands are hidden.
+The separate Debug catalog is loaded only while a Local session opens the tab
+and released when it closes. Its source verification is independent: drift in
+debug-only inputs disables Debug without withholding other generated facts.
+Headless builds do not embed the catalog unless explicitly built with the
+`debug-catalog` feature. Host logs record operator commands and each nearby
+chat/modal reply candidate once, listing the pending commands (temporal
+correlation, not server acknowledgement). Host-internal tutorial probes do
+not create Debug reply-log entries. The Profiles editor
+offers `auto` or each listed rs2b2t world; the selected world is used on the
+next slot start. Live slot rows display the current world.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per
 profile; **script** and **parameters** default closed.
+
+## Log and panel layout
+
+The structured **Log** section is in the panel by default. **Detach log**
+moves the same retained view (filters, follow flag and ring history) to an
+in-app floating window; **Attach log** returns it without clearing anything.
+The detached list fills the available height of that window. ImGui
+multi-viewports remain disabled, so the window stays inside the application.
+
+General config's **session log file** checkbox shows the full rotated path as
+`writing <path>` on wrapped lines below while it is enabled. The file is under
+`~/.274bot/logs/`.
+
+Status omits walk and queue rows when their value is empty, `—`, or `-1`, and
+omits the modal row unless the selected bot is in game; meaningful values
+remain visible. The active server revision appears once when a session is
+bound, while the revision selector is only shown before binding. When the
+docked Profiles window runs past the right edge of the app window (for
+example on a 1024×768 desktop), its rows, Save/Cancel and Close are laid out
+within the part that is on screen, so every profile's Edit and ✕ and the
+form's buttons stay reachable without scrolling.
 
 ## Wiring
 
@@ -115,10 +149,14 @@ checkboxes on a focused profile:
 - **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
   Every drawing slot at 50 fps, focused included. Ephemeral.
 - **lowmem / highmem** — default **lowmem**. Click the current mem
-  button (under none/GPU/CPU) for a sticky picker like Teles. Highmem
-  is `Profile.settings.lowmem = false`; switching mem (like GPU↔CPU)
-  drops + reattaches the head on the live `Client` — never a logout
-  or restart.
+  button (under none/GPU/CPU) for a sticky picker like Teles. Highmem is
+  `Profile.settings.lowmem = false`. The live client follows the switch
+  immediately without an automatic logout; server-side tabs, music and
+  sound follow at the next login. While those modes differ the panel shows
+  both and offers **Relog now**, which logs out and back in through the
+  ordinary login queue. A running or queued script Start is disclosed
+  before relogging, and the queued label clears when login succeeds, fails
+  terminally, or the operator takes over with Log in / Log out.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
   (left=1, right=2), and keys go to `InputEv::Key` on that slot only.

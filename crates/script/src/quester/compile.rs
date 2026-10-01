@@ -18,6 +18,8 @@ use std::{
 };
 
 pub struct CompileContext<'a> {
+    pub path: &'a FactKey,
+    pub progress: &'a CompiledProgress,
     pub selected: &'a SelectedGameData,
     pub quests: &'a QuestCatalog,
     pub gathering: Option<&'a GatherCatalog>,
@@ -312,6 +314,8 @@ fn compile_uncached(
     let loadouts =
         super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
     let mut recipe_ctx = CompileContext {
+        path: &document.id,
+        progress: &compiled_progress,
         selected,
         quests,
         gathering: None,
@@ -988,6 +992,50 @@ mod tests {
             .as_ref(),
             "unbound-progress-stage"
         );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress.as_mut().unwrap().rules.push(
+                    super::super::path::ProgressRuleDocument {
+                        stage: FactKey::new("cook:1"),
+                        all: vec![],
+                        any: vec![],
+                        not: vec!["blocked".into()],
+                        varp: None,
+                    },
+                )
+            })
+            .code
+            .as_ref(),
+            "invalid-progress-rule"
+        );
+        assert_eq!(
+            compile_err(|document| {
+                document.roles[0].progress.as_mut().unwrap().flags.push(
+                    super::super::path::ProgressFlagDocument {
+                        flag: FactKey::new("empty-flag"),
+                        all: vec![],
+                        any: vec![],
+                        count: None,
+                    },
+                )
+            })
+            .code
+            .as_ref(),
+            "invalid-progress-flag"
+        );
+    }
+    #[test]
+    fn progress_predicate_errors_keep_path_context() {
+        let error = compile_err(|document| {
+            document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
+                kind: "stage_in".into(),
+                version: 1,
+                args: serde_json::json!({"quest":"cook","any":["cook:99"]}),
+            };
+        });
+        assert_eq!(error.code.as_ref(), "unresolved-progress-stage");
+        assert_eq!(error.path, FactKey::new("cook"));
+        assert!(error.step.is_some());
     }
 
     #[test]

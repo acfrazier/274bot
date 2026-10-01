@@ -2287,3 +2287,43 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
         "preparing wrote the vault before Apply"
     );
 }
+
+#[test]
+fn memory_relog_warns_before_cancelling_a_queued_start() {
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut s, dir) = session_with_play(&names);
+    let path = write_bot(&dir, "queued-relog.ts", BOT_TS);
+    let card = s.scripts.js.load(&path).unwrap();
+    for name in names {
+        s.persist_successful_assignment(name, card.assignment());
+    }
+    s.script_start_all();
+    let queued = names
+        .iter()
+        .find(|name| s.scripts.start_queue_place(name).is_some())
+        .expect("Start all leaves work queued")
+        .to_string();
+    s.set_focus_for_test(&queued);
+
+    assert!(s.focused_memory_relog_warning());
+    assert!(
+        !s.request_focused_memory_relog(),
+        "the first click only arms the warning"
+    );
+    assert!(s.mem_relog_armed());
+    assert!(
+        s.scripts.start_queue_place(&queued).is_some(),
+        "arming the warning keeps the queued Start"
+    );
+    assert!(
+        !s.core.play().unwrap().arm(&queued).unwrap().wants_logout(),
+        "arming the warning does not start the relog"
+    );
+
+    assert!(
+        s.request_focused_memory_relog(),
+        "the second click starts the relog"
+    );
+    assert!(s.scripts.start_queue_place(&queued).is_none());
+    assert!(s.core.play().unwrap().arm(&queued).unwrap().wants_logout());
+}

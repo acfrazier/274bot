@@ -71,9 +71,9 @@ pub(super) fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) {
 }
 
 /// Read the bank stand table written by [`write_bank_stands`].
-pub(super) fn read_bank_stands(r: &mut Cursor<&[u8]>) -> Result<Vec<BankStand>, PackError> {
+pub(super) fn read_bank_stands<R: PackRead>(r: &mut R) -> Result<Vec<BankStand>, PackError> {
     let n = read_u32(r)? as usize;
-    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    let remaining = r.remaining();
     let mut out = Vec::with_capacity(n.min(remaining / MIN_BANK_BYTES));
     for _ in 0..n {
         let name = read_name(r)?;
@@ -116,10 +116,13 @@ pub(super) fn write_name(out: &mut Vec<u8>, s: &str) {
 }
 
 /// Read a length-prefixed UTF-8 string (see [`write_name`]).
-pub(super) fn read_name(r: &mut Cursor<&[u8]>) -> Result<String, PackError> {
+pub(super) fn read_name<R: PackRead>(r: &mut R) -> Result<String, PackError> {
     let len = read_u32(r)? as usize;
+    if len > r.remaining() {
+        return Err(PackError::Truncated);
+    }
     let mut buf = vec![0u8; len];
-    r.read_exact(&mut buf).map_err(|_| PackError::Truncated)?;
+    r.read_bytes_exact(&mut buf)?;
     String::from_utf8(buf).map_err(|_| PackError::BadLength("bank stand name is not UTF-8".into()))
 }
 

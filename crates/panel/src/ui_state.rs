@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use crate::nav_settings::NavSettings;
 
+use frontend_core::log::{Level, Source};
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
@@ -61,6 +63,9 @@ pub struct PanelUiState {
     /// with the TUI. Absent (0.1.8.1) or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
+    /// Keep the shared log in a separate in-app window.
+    #[serde(default)]
+    pub log_detached: bool,
     /// Write a per-session log file under `~/.274bot/logs/` (shared with the
     /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
     #[serde(default)]
@@ -69,6 +74,10 @@ pub struct PanelUiState {
     /// (see `fleet_columns`).
     #[serde(default)]
     pub fleet_columns: HashMap<String, bool>,
+    /// Debug command recents and favorites. Argument buffers stay ephemeral
+    /// because the selected content pin may change command shapes.
+    #[serde(default)]
+    pub debug_panel: crate::debug_panel::DebugPanelPrefs,
 }
 
 /// Panel subsection ids in General config (parameters shares
@@ -130,8 +139,10 @@ impl Default for PanelUiState {
             background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
+            log_detached: false,
             session_log_file: false,
             fleet_columns: HashMap::new(),
+            debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
         }
     }
 }
@@ -178,14 +189,77 @@ pub fn save(state: &PanelUiState) {
 
 pub fn load_at(p: &Path) -> PanelUiState {
     match std::fs::read(p) {
-        Ok(data) => serde_json::from_slice(&data).unwrap_or_default(),
+        Ok(data) => match serde_json::from_slice::<PanelUiState>(&data) {
+            Ok(mut state) => {
+                state.debug_panel.normalize();
+                state
+            }
+            Err(_) => PanelUiState::default(),
+        },
         Err(_) => PanelUiState::default(),
     }
 }
 
+fn prefs_log(level: Level, message: String) {
+    eprintln!("panel: {message}");
+    frontend_core::log::global().process_line(Source::Host, level, &message);
+}
+
+fn replacement_path(p: &Path) -> PathBuf {
+    let mut name = p.as_os_str().to_os_string();
+    name.push(".new");
+    PathBuf::from(name)
+}
+
 pub fn save_at(p: &Path, state: &PanelUiState) {
-    if let Ok(data) = serde_json::to_vec_pretty(state) {
-        let _ = vault::write_private_file(p, &data);
+    let data = match serde_json::to_vec_pretty(state) {
+        Ok(data) => data,
+        Err(error) => {
+            prefs_log(
+                Level::Error,
+                format!("refused to save panel preferences {}: {error}", p.display()),
+            );
+            return;
+        }
+    };
+    match std::fs::read(p) {
+        Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => {
+            let sibling = replacement_path(p);
+            match vault::write_private_file(&sibling, &data) {
+                Ok(()) => prefs_log(
+                    Level::Warn,
+                    format!(
+                        "preserved invalid panel preferences {}; wrote current preferences to {}",
+                        p.display(),
+                        sibling.display()
+                    ),
+                ),
+                Err(error) => prefs_log(
+                    Level::Error,
+                    format!(
+                        "preserved invalid panel preferences {} but refused replacement {}: {error}",
+                        p.display(),
+                        sibling.display()
+                    ),
+                ),
+            }
+            return;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            prefs_log(
+                Level::Error,
+                format!("refused to save panel preferences {}: {error}", p.display()),
+            );
+            return;
+        }
+        Err(_) => {}
+    }
+    if let Err(error) = vault::write_private_file(p, &data) {
+        prefs_log(
+            Level::Error,
+            format!("refused to save panel preferences {}: {error}", p.display()),
+        );
     }
 }
 
@@ -305,11 +379,15 @@ mod tests {
         state
             .collapsed
             .insert("bob".into(), HashMap::from([("nav".into(), true)]));
+        state.debug_panel.recents = vec!["~give".into()];
+        state.debug_panel.favorites = vec!["~reset".into()];
         save_at(&p, &state);
 
         let loaded = load_at(&p);
         assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
         assert!(loaded.collapsed["bob"]["nav"]);
+        assert_eq!(loaded.debug_panel.recents, vec!["~give"]);
+        assert_eq!(loaded.debug_panel.favorites, vec!["~reset"]);
     }
 
     #[test]
@@ -319,6 +397,22 @@ mod tests {
         let loaded = load_at(&p);
         assert!(loaded.last_focus.is_none());
         assert!(loaded.collapsed.is_empty());
+    }
+
+    #[test]
+    fn save_preserves_corrupt_prefs_and_writes_actual_state_to_new_sibling() {
+        let dir = TestDir::new("ui-corrupt");
+        let p = dir.join("panel-ui.json");
+        let corrupt = b"{ not valid json";
+        std::fs::write(&p, corrupt).unwrap();
+        let state = PanelUiState {
+            last_focus: Some("alice".into()),
+            ..Default::default()
+        };
+        save_at(&p, &state);
+        assert_eq!(std::fs::read(&p).unwrap(), corrupt);
+        let repaired = super::replacement_path(&p);
+        assert_eq!(load_at(&repaired).last_focus.as_deref(), Some("alice"));
     }
 
     #[test]
@@ -480,6 +574,24 @@ mod tests {
         let bytes = serde_json::to_vec(&on).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value[frontend_core::log_file::SESSION_LOG_KEY], true);
+    }
+
+    #[test]
+    fn detached_log_defaults_in_panel_and_roundtrips() {
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(
+            !old.log_detached,
+            "old preferences keep the log in the panel"
+        );
+
+        let state = PanelUiState {
+            log_detached: true,
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
+        assert!(back.log_detached);
     }
 
     #[test]

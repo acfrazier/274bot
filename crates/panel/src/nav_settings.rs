@@ -32,6 +32,8 @@ pub struct NavSettings {
     pub color_client: String,
     pub color_client_run_alt: String,
     pub component_flood: bool,
+    /// Persisted WalkTo map tint for content-defined special areas.
+    pub show_special_areas: bool,
     /// Ease orbit yaw toward the remaining path (rs2b0t `navCameraFollow`).
     pub camera_follow: bool,
 }
@@ -58,11 +60,11 @@ impl Default for NavSettings {
             color_client: "#00D4FF".into(),
             color_client_run_alt: "#FFFF00".into(),
             component_flood: false,
+            show_special_areas: false,
             camera_follow: false,
         }
     }
 }
-
 /// Live harness overlay: when `live_force_layers`, force the paint-layer
 /// toggles on for this session without writing prefs. Teleports and
 /// colours still come from `saved`. Prefer a full [`NavSettings`] overlay
@@ -178,6 +180,7 @@ mod tests {
         assert_eq!(d.color_client, "#00D4FF");
         assert_eq!(d.color_client_run_alt, "#FFFF00");
         assert!(!d.collision_fill && !d.client_trail && !d.component_flood);
+        assert!(!d.show_special_areas);
     }
 
     #[test]
@@ -206,6 +209,7 @@ mod tests {
     fn allow_bank_fetch_round_trips_through_serde() {
         let s = NavSettings {
             allow_bank_fetch: true,
+            show_special_areas: true,
             ..Default::default()
         };
         let bytes = serde_json::to_vec(&s).unwrap();

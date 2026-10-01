@@ -66,6 +66,39 @@ impl ActionContext<'_> {
         Ok(request_id.get())
     }
 
+    /// Queue a slot-exact drop without superseding another disposal request.
+    /// Dispatch receipts release authority; inventory observation proves loss.
+    pub fn emit_disposal(&mut self, request: InteractReq) -> Result<u64, ActionError> {
+        let owner = self.owner()?;
+        if !matches!(&request, InteractReq::Held { action, slot: Some(_), .. } if action == "Drop")
+        {
+            static REASON: LazyLock<Arc<str>> =
+                LazyLock::new(|| Arc::from("disposal requires a slot-exact Drop"));
+            return Err(ActionError::Unavailable(Arc::clone(&REASON)));
+        }
+        if !owner.disposal_available() {
+            return Err(ActionError::BudgetExhausted);
+        }
+        if !self.budget.event(true) {
+            return Err(ActionError::BudgetExhausted);
+        }
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        let request_id = ledger.next_id()?;
+        if !owner.acquire_disposal(request_id) {
+            return Err(ActionError::BudgetExhausted);
+        }
+        if ledger.outbox.capacity() < 5 {
+            // A batch has five rows, not Vec's geometric eight-row capacity.
+            ledger.outbox.reserve_exact(5 - ledger.outbox.len());
+        }
+        ledger.outbox.push(HostAction {
+            owner,
+            request_id,
+            effect: HostEffect::Interaction(request),
+        });
+        Ok(request_id.get())
+    }
+
     pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
@@ -103,9 +136,11 @@ impl ActionContext<'_> {
         if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
             return None;
         }
-        ledger.interaction.as_ref().filter(|receipt| {
-            receipt.request_id == request_id && receipt.evidence.run == self.run()
-        })
+        ledger
+            .interaction
+            .iter()
+            .chain(ledger.disposal_receipts.iter().flatten())
+            .find(|receipt| receipt.request_id == request_id && receipt.evidence.run == self.run())
     }
 
     pub fn cancel_request(&mut self, request_id: u64) {
@@ -123,6 +158,14 @@ impl ActionContext<'_> {
             if ledger.interaction_request == Some(request_id) {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
+            }
+            for receipt in &mut ledger.disposal_receipts {
+                if receipt
+                    .as_ref()
+                    .is_some_and(|receipt| receipt.request_id == request_id.get())
+                {
+                    *receipt = None;
+                }
             }
             owner.cancel_walk(request_id);
             if let Some((request, lease, _)) = ledger.quiet_since {
@@ -479,6 +522,210 @@ mod tests {
             eligible: true,
         };
         f(&mut cx)
+    }
+
+    fn drop_request(slot: i32) -> InteractReq {
+        InteractReq::Held {
+            name: "Logs".into(),
+            action: "Drop".into(),
+            slot: Some(slot),
+        }
+    }
+
+    #[test]
+    fn disposal_batch_keeps_five_authorities_and_correlates_receipts() {
+        eprintln!(
+            "G1 native memory: Owner={} Ledger={} HostAction={} InteractionReceipt={}",
+            std::mem::size_of::<Owner>(),
+            std::mem::size_of::<ledger::Ledger>(),
+            std::mem::size_of::<HostAction>(),
+            std::mem::size_of::<InteractionReceipt>(),
+        );
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = Owner::new(cx.run(), cx.ledger.as_mut().unwrap().next_id().unwrap());
+            cx.ledger.as_mut().unwrap().owner = Some(Arc::clone(&owner));
+            cx.action_id = owner.id.get();
+            let requests: Vec<_> = (0..5)
+                .map(|slot| cx.emit_disposal(drop_request(slot)).unwrap())
+                .collect();
+            assert_eq!(
+                cx.emit_disposal(drop_request(5)),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
+            eprintln!(
+                "G1 disposal outbox retained bytes={}",
+                cx.ledger.as_ref().unwrap().outbox.capacity() * std::mem::size_of::<HostAction>(),
+            );
+            assert!(cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(HostAction::live));
+            assert!(requests.windows(2).all(|pair| pair[0] != pair[1]));
+            cx.budget.observe(2);
+            assert_eq!(
+                cx.emit_disposal(drop_request(5)),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
+            cx.cancel_request(requests[2]);
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 4);
+            let actions = std::mem::take(&mut cx.ledger.as_mut().unwrap().outbox);
+            for action in actions.into_iter().rev() {
+                let receipt = InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: cx.evidence(),
+                    accepted: action.request_id.get() != requests[1],
+                };
+                cx.ledger
+                    .as_mut()
+                    .unwrap()
+                    .complete_interaction(&action.authority(), receipt);
+                assert!(!action.live(), "dispatch must release the disposal slot");
+                assert_eq!(cx.interaction_receipt(receipt.request_id), Some(&receipt));
+            }
+            assert!(cx.interaction_receipt(requests[2]).is_none());
+            for request in requests.iter().filter(|&&request| request != requests[2]) {
+                assert!(cx.interaction_receipt(*request).is_some());
+            }
+            cx.budget.observe(3);
+            for slot in 0..5 {
+                cx.emit_disposal(drop_request(slot)).unwrap();
+            }
+            cx.ledger.as_mut().unwrap().revoke();
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+            assert!(!owner.live());
+        });
+    }
+    #[test]
+    fn full_disposal_authority_refusal_preserves_budget_and_ids() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = Owner::new(cx.run(), cx.ledger.as_mut().unwrap().next_id().unwrap());
+            cx.ledger.as_mut().unwrap().owner = Some(Arc::clone(&owner));
+            cx.action_id = owner.id.get();
+
+            let requests: Vec<_> = (0..4)
+                .map(|slot| cx.emit_disposal(drop_request(slot)).unwrap())
+                .collect();
+            let reserved = cx.ledger.as_mut().unwrap().next_id().unwrap();
+            assert!(owner.acquire_disposal(reserved));
+
+            assert_eq!(
+                cx.emit_disposal(drop_request(4)),
+                Err(ActionError::BudgetExhausted),
+                "a full authority set must not consume its remaining event allowance"
+            );
+            owner.cancel_interaction(reserved);
+
+            let fifth = cx
+                .emit_disposal(drop_request(4))
+                .expect("releasing an authority leaves the allowance available");
+            assert_eq!(
+                fifth,
+                reserved.get() + 1,
+                "a refused full-set reservation must not consume an ID"
+            );
+
+            cx.cancel_request(requests[0]);
+            assert_eq!(
+                cx.emit_disposal(drop_request(5)),
+                Err(ActionError::BudgetExhausted),
+                "an exhausted event allowance must not reserve a disposal authority"
+            );
+
+            cx.budget.observe(2);
+            let next = cx
+                .emit_disposal(drop_request(5))
+                .expect("the released authority remains available on the next tick");
+            assert_eq!(next, fifth + 1);
+        });
+    }
+
+    #[test]
+    fn modal_close_shares_disposal_allowance_and_repoll_does_not_refill_it() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = Owner::new(cx.run(), cx.ledger.as_mut().unwrap().next_id().unwrap());
+            cx.ledger.as_mut().unwrap().owner = Some(owner.clone());
+            cx.action_id = owner.id.get();
+            assert!(matches!(
+                cx.emit_disposal(InteractReq::CloseModal),
+                Err(ActionError::Unavailable(_))
+            ));
+            cx.emit(InteractReq::CloseModal).unwrap();
+            for slot in 0..4 {
+                cx.emit_disposal(drop_request(slot)).unwrap();
+            }
+            cx.budget.observe(1);
+            assert_eq!(
+                cx.emit_disposal(drop_request(4)),
+                Err(ActionError::BudgetExhausted)
+            );
+            let actions = std::mem::take(&mut cx.ledger.as_mut().unwrap().outbox);
+            assert!(actions.iter().all(HostAction::live));
+            assert_eq!(actions.len(), 5);
+            for action in &actions {
+                let receipt = InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: cx.evidence(),
+                    accepted: true,
+                };
+                cx.ledger
+                    .as_mut()
+                    .unwrap()
+                    .complete_interaction(&action.authority(), receipt);
+            }
+            cx.budget.observe(2);
+            cx.emit_disposal(drop_request(4)).unwrap();
+            let pending = cx.ledger.as_ref().unwrap().outbox[0].authority();
+            owner.revoke();
+            assert!(
+                !pending.live(),
+                "revocation before drain must fence the batch"
+            );
+        });
+    }
+
+    #[test]
+    fn cancelling_native_disposal_handle_revokes_every_queued_drop_before_drain() {
+        struct Batch;
+        impl NativeMachine for Batch {
+            type Args = ();
+            type Output = ();
+            fn begin(_: (), cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                for slot in 0..5 {
+                    cx.emit_disposal(drop_request(slot))?;
+                }
+                Ok(Self)
+            }
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+            fn cancel(&mut self) {}
+        }
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let handle = actions.begin::<Batch>((), cx).unwrap();
+            let queued = &cx.ledger.as_ref().unwrap().outbox;
+            assert_eq!(queued.len(), 5);
+            assert!(queued.iter().all(HostAction::live));
+            actions.cancel(handle);
+            assert!(cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| !action.live()));
+            cx.ledger.as_mut().unwrap().revoke();
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+        });
     }
 
     #[test]
