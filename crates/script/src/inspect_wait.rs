@@ -143,6 +143,7 @@ struct RouteSpec {
     allow_wilderness: bool,
     allow_bank_fetch: bool,
     avoid: Vec<InspectAvoidWire>,
+    cross: Vec<String>,
 }
 
 impl RouteSpec {
@@ -154,6 +155,11 @@ impl RouteSpec {
             .get("avoid")
             .or_else(|| opts.get("avoid"))
             .or_else(|| opts.get("avoidZones"));
+        let cross = input
+            .get("cross")
+            .or_else(|| opts.get("cross"))
+            .or_else(|| opts.get("crossZones"))
+            .or_else(|| opts.get("cross_zones"));
         Self {
             from: tile_xyz(from),
             to: tile_xyz(to),
@@ -175,6 +181,7 @@ impl RouteSpec {
                     .or_else(|| opts.get("allow_bank_fetch")),
             ),
             avoid: avoid_spec(avoid),
+            cross: cross_spec(cross),
         }
     }
 
@@ -190,6 +197,7 @@ impl RouteSpec {
             allow_wilderness,
             allow_bank_fetch,
             avoid,
+            cross,
             ..
         } = req
         else {
@@ -202,6 +210,7 @@ impl RouteSpec {
             allow_wilderness: *allow_wilderness,
             allow_bank_fetch: *allow_bank_fetch,
             avoid: avoid.clone(),
+            cross: cross.clone(),
         })
     }
 }
@@ -726,17 +735,27 @@ fn avoid_spec(value: Option<&Value>) -> Vec<InspectAvoidWire> {
         .unwrap_or_default()
 }
 
+fn cross_spec(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
+}
+
 fn route_args_invalid(req: &InteractReq) -> bool {
     let InteractReq::InspectRoute {
         level,
         from_level,
         avoid,
+        cross,
         ..
     } = req
     else {
         return false;
     };
-    !(0..=3).contains(from_level) || !(0..=3).contains(level) || avoid_refusal(avoid).is_some()
+    !(0..=3).contains(from_level)
+        || !(0..=3).contains(level)
+        || avoid_refusal(avoid).is_some()
+        || cross.len() > 8
 }
 
 /// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the
@@ -1329,6 +1348,7 @@ mod tests {
             allow_wilderness: true,
             allow_bank_fetch: false,
             avoid: Vec::new(),
+            cross: Vec::new(),
             request_id,
         }
     }
@@ -1372,10 +1392,11 @@ mod tests {
             "from": { "x": 1, "z": 2, "level": 0 },
             "to": { "x": 3, "z": 4, "level": 0 },
             "allow_wilderness": true,
+            "cross": ["test-barrier"],
         }))
         .as_u64()
         .unwrap();
-        let mut mismatch = vec![route(token, (9, 9, 0), (3, 4, 0))];
+        let mut mismatch = vec![route(token, (1, 2, 0), (3, 4, 0))];
         filter_public_inspect_wire(&mut mismatch);
         assert!(mismatch.is_empty());
         assert!(settled(token));
@@ -1400,6 +1421,7 @@ mod tests {
             allow_wilderness: false,
             allow_bank_fetch: false,
             avoid: Vec::new(),
+            cross: Vec::new(),
             request_id: 0,
         }];
         filter_public_inspect_wire(&mut bad);

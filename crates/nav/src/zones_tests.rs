@@ -83,6 +83,27 @@ fn level_rules_and_always_zones_share_the_expected_activation_predicate() {
 }
 
 #[test]
+fn spawn_resolution_requires_the_exact_canonical_identity() {
+    let table = table();
+    assert_eq!(table.resolve("ranger@7,5,0"), Some(ZoneKey::Zone(1)));
+    for name in [
+        "ranger",
+        "ranger@+7,5,0",
+        "ranger@07,5,0",
+        "ranger@7,5,-0",
+        "ranger@7,5,00",
+        "ranger@7,5,0,1",
+        "ranger@7,5",
+        "ranger@7,5,1",
+        "ranger@2147483648,5,0",
+        "other@7,5,0",
+        "bog@10,10,0",
+    ] {
+        assert_eq!(table.resolve(name), None, "{name}");
+    }
+}
+
+#[test]
 fn named_group_and_endpoint_exemptions_mask_whole_zone_identities() {
     let table = table();
     assert_eq!(table.resolve("ranger-pack"), Some(ZoneKey::Group(0)));

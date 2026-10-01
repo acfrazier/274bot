@@ -3,6 +3,10 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+#[cfg(feature = "load")]
+pub mod api_gather;
+#[cfg(feature = "load")]
+mod api_session;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;
@@ -41,6 +45,10 @@ pub mod loadouts_store;
 mod module_imports;
 /// Typed compiled cards, preparation, execution and output.
 pub mod native;
+pub mod native_bank;
+pub mod native_equipment;
+pub mod native_production;
+pub mod native_shop;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -185,7 +193,6 @@ mod partner_trade;
 mod periodic_bank;
 #[cfg(feature = "load")]
 mod prayer;
-#[cfg(feature = "load")]
 mod production;
 pub mod quest_journal;
 #[cfg(feature = "load")]

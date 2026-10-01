@@ -24,6 +24,8 @@ pub const NO_GROUP: u16 = u16::MAX;
 pub const NO_SHAPE: u16 = u16::MAX;
 /// A single WalkTo may exempt at most this many named identities.
 pub const MAX_ZONE_KEYS: usize = 8;
+/// Frozen compat `avoidZones` catalog names, shared by script and host validation.
+pub const AVOID_CATALOG_IDS: &[&str] = &["white-wolf-mountain", "draynor-jail-guards"];
 const BUCKET_SIDE: i32 = 8;
 const MAX_GRID_SIDE: u32 = 16_384;
 
@@ -467,15 +469,34 @@ impl ZoneTable {
         if let Some(index) = self.groups.iter().position(|group| group.id.as_ref() == id) {
             return u16::try_from(index).ok().map(ZoneKey::Group);
         }
+        let spawn = id.rsplit_once('@').and_then(|(kind, coordinates)| {
+            let parse = |value: &str| {
+                let digits = value.strip_prefix('-').unwrap_or(value);
+                if digits.is_empty()
+                    || (digits.starts_with('0') && (digits.len() != 1 || value.starts_with('-')))
+                    || !digits.bytes().all(|digit| digit.is_ascii_digit())
+                {
+                    return None;
+                }
+                value.parse::<i32>().ok()
+            };
+            let mut parts = coordinates.split(',');
+            let x = parse(parts.next()?)?;
+            let z = parse(parts.next()?)?;
+            let level = parse(parts.next()?)?;
+            parts.next().is_none().then_some((kind, x, z, level))
+        });
         self.zones.iter().enumerate().find_map(|(index, zone)| {
             let kind = self.kinds.get(usize::from(zone.kind))?;
             let matches = if kind.npc_id < 0 {
                 kind.id.as_ref() == id
             } else {
-                format!(
-                    "{}@{},{},{}",
-                    kind.id, zone.spawn_x, zone.spawn_z, zone.level
-                ) == id
+                spawn.is_some_and(|(id, x, z, level)| {
+                    kind.id.as_ref() == id
+                        && zone.spawn_x == x
+                        && zone.spawn_z == z
+                        && i32::from(zone.level) == level
+                })
             };
             matches
                 .then(|| u16::try_from(index).ok())

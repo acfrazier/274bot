@@ -3,6 +3,7 @@
 pub mod dialogue;
 pub mod progress_predicates;
 pub mod reach;
+pub mod s2;
 
 use super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
@@ -52,6 +53,36 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             kind: "wait",
             version: 1,
             compile: compile_wait,
+        },
+        super::compile::StepHandler {
+            kind: "bank",
+            version: 1,
+            compile: s2::compile_bank,
+        },
+        super::compile::StepHandler {
+            kind: "buy",
+            version: 1,
+            compile: s2::compile_buy,
+        },
+        super::compile::StepHandler {
+            kind: "make",
+            version: 1,
+            compile: s2::compile_make,
+        },
+        super::compile::StepHandler {
+            kind: "equip",
+            version: 1,
+            compile: s2::compile_equip,
+        },
+        super::compile::StepHandler {
+            kind: "unequip",
+            version: 1,
+            compile: s2::compile_unequip,
+        },
+        super::compile::StepHandler {
+            kind: "loadout",
+            version: 1,
+            compile: s2::compile_loadout,
         },
     ]
 }
@@ -157,6 +188,21 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "flag",
             version: 1,
             compile: progress_predicates::compile_flag,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_known",
+            version: 1,
+            compile: s2::compile_bank_known,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_has",
+            version: 1,
+            compile: s2::compile_bank_has,
+        },
+        super::compile::PredicateHandler {
+            kind: "loadout_ready",
+            version: 1,
+            compile: s2::compile_loadout_ready,
         },
     ]
 }
@@ -623,7 +669,7 @@ impl PredicatePlan for ModalOpen {
 struct CountArg {
     obj: String,
     #[serde(default)]
-    qty: Option<i32>,
+    qty: Option<s2::QuantityDocument>,
 }
 
 fn compile_item_count_at_least(
@@ -634,15 +680,18 @@ fn compile_item_count_at_least(
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(CountAtLeast {
         id: resolve_obj(cx, &arg.obj)?,
-        qty: arg.qty.unwrap_or(1),
+        qty: s2::compile_quantity(arg.qty.unwrap_or(s2::QuantityDocument::Fixed(1)), cx)?,
     }))
 }
 struct CountAtLeast {
     id: i32,
-    qty: i32,
+    qty: s2::QuantityPlan,
 }
 impl PredicatePlan for CountAtLeast {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let Some(qty) = self.qty.evaluate(cx) else {
+            return Truth::Unknown;
+        };
         match cx.cx.snapshot().inventory() {
             None => Truth::Unknown,
             Some(inv) => {
@@ -652,7 +701,7 @@ impl PredicatePlan for CountAtLeast {
                     .filter(|item| item.def.id == self.id)
                     .map(|item| item.count)
                     .sum();
-                truth(n >= self.qty)
+                truth(n >= qty)
             }
         }
     }
@@ -903,9 +952,8 @@ fn compile_walk(
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if !arg.cross.is_empty() {
-        return Err(CompileError::code(
-            "invalid-args: walk: cross needs protected walk (combat slice)",
-        ));
+        return Err(CompileError::code("invalid-args")
+            .with_detail("walk: cross needs protected walk (combat slice)"));
     }
     validate_tile(arg.tile, &arg.source)?;
     Ok(Arc::new(WalkPlan {
@@ -1398,6 +1446,13 @@ struct UseOnTarget {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UseOnUntil {
+    obj: String,
+    qty: s2::QuantityDocument,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseOnArgs {
     item: String,
     target: UseOnTarget,
@@ -1409,6 +1464,10 @@ struct UseOnArgs {
     product: Option<String>,
     #[serde(default)]
     settle_ms: Option<u64>,
+    #[serde(default)]
+    until: Option<UseOnUntil>,
+    #[serde(default)]
+    no_product: Option<PredicateDocument>,
 }
 
 fn compile_use_on(
@@ -1469,6 +1528,23 @@ fn compile_use_on(
         .as_deref()
         .map(|name| resolve_obj(cx, name))
         .transpose()?;
+    let until = arg
+        .until
+        .map(|until| {
+            if matches!(&until.qty, s2::QuantityDocument::Fixed(qty) if *qty < 1) {
+                return Err(CompileError::code("invalid-args"));
+            }
+            Ok((
+                resolve_obj(cx, &until.obj)?,
+                s2::compile_quantity(until.qty, cx)?,
+            ))
+        })
+        .transpose()?;
+    let no_product = arg
+        .no_product
+        .as_ref()
+        .map(|predicate| compile_predicate(predicate, cx))
+        .transpose()?;
     Ok(Arc::new(UseOnPlan {
         item: Arc::from(item_name),
         item_id,
@@ -1476,6 +1552,8 @@ fn compile_use_on(
         target_id,
         target_name: Some(target_name),
         product,
+        until,
+        no_product,
         tile,
         radius: arg.radius.max(1),
         settle_ms: arg.settle_ms,
@@ -1487,6 +1565,8 @@ struct UseOnPlan {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, s2::QuantityPlan)>,
+    no_product: Option<Arc<dyn PredicatePlan>>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1494,12 +1574,23 @@ struct UseOnPlan {
     settle_ms: Option<u64>,
 }
 impl StepPlan for UseOnPlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let until = self
+            .until
+            .as_ref()
+            .map(|(id, qty)| {
+                qty.evaluate_step(cx).map(|qty| (*id, qty)).ok_or_else(|| {
+                    ActionError::Unavailable(Arc::from("use_on quantity unavailable"))
+                })
+            })
+            .transpose()?;
         Ok(Box::new(UseOnRun {
             item: Arc::clone(&self.item),
             item_id: self.item_id,
             target_id: self.target_id,
             product: self.product,
+            until,
+            no_product: self.no_product.clone(),
             kind: Arc::clone(&self.kind),
             target_name: self.target_name.clone(),
             tile: self.tile,
@@ -1508,7 +1599,9 @@ impl StepPlan for UseOnPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             interaction: None,
+            round_before: None,
             accepted: false,
+            chat_since: 0,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -1521,6 +1614,8 @@ struct UseOnRun {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, i32)>,
+    no_product: Option<Arc<dyn PredicatePlan>>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1530,6 +1625,8 @@ struct UseOnRun {
     walk: Option<ActionHandle<Walk>>,
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
+    round_before: Option<i32>,
+    chat_since: i32,
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -1544,6 +1641,23 @@ impl StepRun for UseOnRun {
             }
         }
         if self.interaction.is_none() {
+            if let Some((id, qty)) = self.until {
+                if cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
+                    inventory
+                        .value
+                        .iter()
+                        .filter(|item| item.def.id == id)
+                        .map(|item| item.count)
+                        .sum::<i32>()
+                        >= qty
+                }) {
+                    return Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }));
+                }
+            }
             if let Some(tile) = self.tile {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
@@ -1560,6 +1674,15 @@ impl StepRun for UseOnRun {
             let Some(inventory) = snapshot.inventory() else {
                 return Poll::Pending;
             };
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            self.round_before = observed_id.map(|id| {
+                inventory
+                    .value
+                    .iter()
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum()
+            });
             let Some(source) = inventory
                 .value
                 .iter()
@@ -1595,7 +1718,16 @@ impl StepRun for UseOnRun {
                     else {
                         return Poll::Pending;
                     };
-                    (npc.tile, Some(npc.index as i32), None)
+                    let tile = npc.tile;
+                    let index = npc.index as i32;
+                    if npc.distance > 1 {
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(tile, 1, cx.required_after),
+                            &mut cx.tick.cx,
+                        )?);
+                        return Poll::Pending;
+                    }
+                    (tile, Some(index), None)
                 }
                 _ => {
                     let Some(target) = inventory
@@ -1640,16 +1772,65 @@ impl StepRun for UseOnRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(())) => self.accepted = true,
+                Poll::Ready(Ok(chat_since)) => {
+                    self.accepted = true;
+                    self.chat_since = chat_since;
+                }
             }
         }
-        if self.product.is_some_and(|id| {
-            !cx.tick.cx.snapshot().inventory().is_some_and(|inv| {
+        let pred = PredicateContext {
+            cx: &cx.tick.cx,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: self.chat_since,
+            outcome: None,
+            bank: cx.bank,
+        };
+        if self
+            .no_product
+            .as_ref()
+            .is_some_and(|predicate| predicate.evaluate(&pred) == Truth::True)
+        {
+            // Authored negative feedback completes a no-product round within
+            // the same bounded until loop, rather than failing the whole step.
+            if self.until.is_some() {
+                self.interaction = None;
+                self.accepted = false;
+                self.round_before = None;
+                return Poll::Pending;
+            }
+            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
+        }
+        let held = |id| {
+            cx.tick.cx.snapshot().inventory().map(|inv| {
                 inv.value
                     .iter()
-                    .any(|row| row.def.id == id && row.count > 0)
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum::<i32>()
             })
-        }) {
+        };
+        if let Some(before) = self.round_before {
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            if observed_id
+                .and_then(held)
+                .is_none_or(|count| count <= before)
+            {
+                return Poll::Pending;
+            }
+        }
+        if let Some((id, qty)) = self.until {
+            if !held(id).is_some_and(|count| count >= qty) {
+                self.interaction = None;
+                self.accepted = false;
+                self.round_before = None;
+                return Poll::Pending;
+            }
+        } else if self
+            .product
+            .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
+        {
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
@@ -1669,7 +1850,7 @@ struct UseOnAction {
 }
 impl crate::native::NativeMachine for UseOnAction {
     type Args = InteractReq;
-    type Output = ();
+    type Output = i32;
     fn begin(
         request: Self::Args,
         cx: &mut crate::native::ActionContext<'_>,
@@ -1678,9 +1859,12 @@ impl crate::native::NativeMachine for UseOnAction {
             request: cx.emit(request)?,
         })
     }
-    fn poll(&mut self, cx: &mut crate::native::ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+    fn poll(
+        &mut self,
+        cx: &mut crate::native::ActionContext<'_>,
+    ) -> Poll<Result<i32, ActionError>> {
         match cx.interaction_receipt(self.request) {
-            Some(receipt) if receipt.accepted => Poll::Ready(Ok(())),
+            Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.chat_since)),
             Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
                 "use_on dispatch rejected",
             )))),
@@ -1770,6 +1954,7 @@ impl StepRun for AcquireRun {
                     required_after: cx.required_after,
                     chat_since: self.chat_since,
                     outcome: None,
+                    bank: cx.bank,
                 });
                 if truth != Truth::True {
                     if cx.tick.cx.active_now() >= self.settle_deadline {
@@ -1791,6 +1976,7 @@ impl StepRun for AcquireRun {
                         required_after: cx.required_after,
                         chat_since: reach::last_chat_seq(&cx.tick.cx),
                         outcome: None,
+                        bank: cx.bank,
                     });
                     if skip == Truth::Unknown {
                         let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
@@ -1906,6 +2092,7 @@ impl StepRun for WaitRun {
             required_after: cx.required_after,
             chat_since: self.chat_since,
             outcome: None,
+            bank: cx.bank,
         };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;

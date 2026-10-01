@@ -235,6 +235,128 @@ fn make_button_publishes_the_posted_component_key() {
     assert!(!button.contains("com_id"), "{button}");
 }
 
+/// Gather-only consumer compile gate (pinned TypeScript 5.8.3): a temporary
+/// consumer exercises every slice-A member positively and pins one
+/// `@ts-expect-error` invalid-settings case. The full sample/quest consumer
+/// belongs to slice C, where its dependencies exist.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_gather_consumer_uses_every_slice_a_member() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!("host-js-gather-consumer-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear gather consumer dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create gather consumer dir");
+    std::fs::write(dir.join("gather.d.ts"), render_host_js_dts())
+        .expect("write gather declarations");
+    std::fs::write(dir.join("consumer.ts"), GATHER_CONSUMER).expect("write gather consumer");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(dir.join("consumer.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc gather consumer failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove gather consumer dir");
+    assert!(
+        output.status.success(),
+        "gather consumer failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// Temporary slice-A consumer fixture: uses `api.gather.run/stop`,
+/// `api.snapshot.gather`, and every session/status/outcome type, plus one
+/// rejected invalid-settings row.
+const GATHER_CONSUMER: &str = r#"
+import type {
+  GatherCounts,
+  GatherEnd,
+  GatherFailure,
+  GatherOutcome,
+  GatherSession,
+  GatherSettings,
+  GatherStatus,
+  NativeApi,
+} from "./gather";
+
+declare const api: NativeApi;
+
+async function drive(): Promise<GatherOutcome> {
+  const full: GatherSettings = {
+    skill: 'Mining',
+    woodcuttingResources: ['normal'],
+    miningResources: ['copper', 'tin'],
+    fishingMethod: 'fishing.saltfish.op1',
+    targetPreference: 'Nearest',
+    location: 'Custom',
+    customTile: { x: 1, z: 2, level: 0 },
+    radius: 12,
+    disposition: 'Power',
+    allowTeleports: false,
+    allowWilderness: false,
+    deathPolicy: 'Stop',
+    maxDeaths: 2,
+  };
+  const outcome = await api.gather.run(full);
+  const defaults = await api.gather.run();
+  void defaults;
+  const stopped = api.gather.stop();
+  if (!stopped.ok) {
+    throw new Error(stopped.error);
+  }
+  const session: GatherSession | null = api.snapshot.gather;
+  const status: GatherStatus | null = session?.status ?? null;
+  if (status !== null) {
+    const text: string[] = [
+      status.skill, status.method, status.phase, status.area, status.target,
+      status.tool, status.bank, status.excluded_targets, status.last_event,
+    ];
+    const numbers: number[] = [
+      status.bait, status.food, status.coins, status.yielded, status.dropped,
+      status.deposited, status.trips, status.xp, status.xp_per_hour,
+      status.last_progress, status.deaths, status.absent, status.zone_gated,
+    ];
+    void text;
+    void numbers;
+  }
+  return outcome;
+}
+
+function narrow(outcome: GatherOutcome): string {
+  if (outcome.kind === 'done') {
+    const end: GatherEnd = outcome.value;
+    if (end.end === 'blocked') {
+      const failure: GatherFailure = end.failure;
+      const counts: GatherCounts = end.counts;
+      return `${failure.code}:${counts.yielded}`;
+    }
+    return end.end;
+  }
+  return outcome.reason;
+}
+
+void drive;
+void narrow;
+
+// @ts-expect-error radius is a number, not a string
+const invalid: GatherSettings = { radius: 'wide' };
+void invalid;
+"#;
+
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]

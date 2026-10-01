@@ -916,6 +916,7 @@ impl ProfileSelection {
         })
     }
 }
+
 fn nav_zone_counts(world: &NavWorld) -> (u32, u32) {
     world.graph.zones.as_ref().map_or((0, 0), |table| {
         (

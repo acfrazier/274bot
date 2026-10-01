@@ -1234,8 +1234,8 @@ pub fn find_blocking_zones(
     blocking_on_route(graph, &filter, &route)
 }
 
-/// First/many-goal refusal witness, attributed against the shared pass's
-/// start-only exemptions. It never unions unchosen endpoints.
+/// First/many-goal refusal witness, attributed against the chosen destination's
+/// endpoint exemptions. It never unions unchosen endpoints.
 #[allow(clippy::too_many_arguments)]
 pub fn find_first_blocking_zones(
     collision: &WorldCollision,
@@ -1246,7 +1246,9 @@ pub fn find_first_blocking_zones(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Option<Vec<ZoneKey>> {
-    let filter = zone_filter(graph, state, &[from], &opts.zones)?;
+    if opts.zones.is_all() || graph.zones.is_none() {
+        return None;
+    }
     let relaxed = FindOptions {
         zones: ZoneExempt::all(),
         ..opts
@@ -1254,6 +1256,7 @@ pub fn find_first_blocking_zones(
     let route = find_first_with_avoid(collision, graph, from, targets, relaxed, state, avoid)
         .into_route()
         .ok()?;
+    let filter = zone_filter(graph, state, &[from, route.dest], &opts.zones)?;
     blocking_on_route(graph, &filter, &route)
 }
 
