@@ -25,7 +25,7 @@ pub enum PlacementClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AvoidedTile {
     pub tile: WorldTile,
-    pub until: u64,
+    pub until: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +162,7 @@ fn classify_fishing_placement(
     }
     if avoided
         .iter()
-        .any(|entry| entry.until > now && region_contains(bounds, entry.tile))
+        .any(|entry| u64::from(entry.until) > now && region_contains(bounds, entry.tile))
     {
         return PlacementClass::Avoided;
     }
@@ -604,7 +604,7 @@ fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> boo
 fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
     avoided
         .iter()
-        .any(|entry| entry.until > now && entry.tile == tile)
+        .any(|entry| u64::from(entry.until) > now && entry.tile == tile)
 }
 
 fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MAX_AVOID]) -> u64 {
@@ -618,7 +618,7 @@ fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MA
                     entry.tile == spot.origin
                 }
         })
-        .map(|entry| entry.until)
+        .map(|entry| u64::from(entry.until))
         .max()
         .unwrap_or(0)
 }

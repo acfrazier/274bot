@@ -950,12 +950,28 @@ export interface GatherSettings {
   customTile?: WorldTile;
   /** 2..64, default 12 */
   radius?: number;
-  /** default "Power" */
-  disposition?: 'Power';
-  /** default false */
-  allowTeleports?: boolean;
-  /** default false */
-  allowWilderness?: boolean;
+  /** default "Bank" */
+  disposition?: 'Power' | 'Bank';
+  /** default "Nearest", only when its card show-if holds */
+  bank?: 'Nearest';
+  /** default false, only when its card show-if holds */
+  useMageBank?: boolean;
+  /** default false, only when its card show-if holds */
+  useZanarisBank?: boolean;
+  /** 1..10000, default 100, only when its card show-if holds */
+  baitTarget?: number;
+  /** default "" */
+  food?: string;
+  /** 0..28, default 0 */
+  foodTarget?: number;
+  /** 0..99, default 0 */
+  eatBelow?: number;
+  /** 0..2000000000, default 0 */
+  coinTarget?: number;
+  /** default "Off" */
+  reserveTeleport?: 'Off';
+  /** 0..1000, default 0 */
+  reserveCasts?: number;
   /** default "Stop" */
   deathPolicy?: 'Stop';
   /** 0..255, default 2 */

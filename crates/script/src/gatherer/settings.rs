@@ -2,6 +2,7 @@ use crate::native::{ConfigError, SettingsBag, StartError};
 use crate::SettingDef;
 use api::game_data::SelectedGameData;
 use api::gather_methods::{first_gap, GatherCatalog, GatherMethod, GatherSkill, GatherTarget};
+use api::named_banks::{BankPreferences, BANK_CATALOG};
 use api::selected::{Knowledge, RequirementKind};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -88,6 +89,26 @@ pub struct GathererSettings {
     pub radius: u16,
     #[serde(default = "default_disposition")]
     pub disposition: String,
+    #[serde(default = "default_bank")]
+    pub bank: String,
+    #[serde(default)]
+    pub use_mage_bank: bool,
+    #[serde(default)]
+    pub use_zanaris_bank: bool,
+    #[serde(default = "default_bait_target")]
+    pub bait_target: i32,
+    #[serde(default)]
+    pub food: String,
+    #[serde(default)]
+    pub food_target: i32,
+    #[serde(default)]
+    pub eat_below: i32,
+    #[serde(default)]
+    pub coin_target: i32,
+    #[serde(default = "default_reserve_teleport")]
+    pub reserve_teleport: String,
+    #[serde(default)]
+    pub reserve_casts: i32,
     #[serde(default)]
     pub allow_teleports: bool,
     #[serde(default)]
@@ -120,7 +141,16 @@ fn default_radius() -> u16 {
     12
 }
 fn default_disposition() -> String {
-    "Power".into()
+    "Bank".into()
+}
+fn default_bank() -> String {
+    "Nearest".into()
+}
+fn default_bait_target() -> i32 {
+    100
+}
+fn default_reserve_teleport() -> String {
+    "Off".into()
 }
 fn default_death_policy() -> String {
     "Stop".into()
@@ -141,6 +171,16 @@ impl Default for GathererSettings {
             custom_tile: None,
             radius: default_radius(),
             disposition: default_disposition(),
+            bank: default_bank(),
+            use_mage_bank: false,
+            use_zanaris_bank: false,
+            bait_target: default_bait_target(),
+            food: String::new(),
+            food_target: 0,
+            eat_below: 0,
+            coin_target: 0,
+            reserve_teleport: default_reserve_teleport(),
+            reserve_casts: 0,
             allow_teleports: false,
             allow_wilderness: false,
             death_policy: default_death_policy(),
@@ -158,7 +198,7 @@ impl GathererSettings {
         .and_then(|settings| settings.validate())
     }
 
-    pub fn validate(self) -> Result<Self, ConfigError> {
+    pub fn validate(mut self) -> Result<Self, ConfigError> {
         let skill = Skill::parse(&self.skill).ok_or_else(|| {
             ConfigError::new(
                 "skill",
@@ -194,11 +234,88 @@ impl GathererSettings {
                 "Custom location needs a tile",
             ));
         }
-        if !self.disposition.eq_ignore_ascii_case("power") {
+        if self.disposition.eq_ignore_ascii_case("power") {
+            self.disposition = "Power".into();
+        } else if self.disposition.eq_ignore_ascii_case("bank") {
+            self.disposition = "Bank".into();
+        } else {
             return Err(ConfigError::new(
                 "disposition",
-                "staged-option",
-                "Bank disposition is introduced in G3",
+                "invalid-option",
+                "disposition must be Power or Bank",
+            ));
+        }
+        if self.bank.eq_ignore_ascii_case("nearest") {
+            self.bank = "Nearest".into();
+        } else if let Some(bank) = BANK_CATALOG
+            .iter()
+            .find(|bank| bank.name.eq_ignore_ascii_case(self.bank.trim()))
+        {
+            self.bank = bank.name.to_string();
+        } else {
+            return Err(ConfigError::new(
+                "bank",
+                "invalid-option",
+                "bank must be Nearest or a named bank from the catalog",
+            ));
+        }
+        if !(1..=10_000).contains(&self.bait_target) {
+            return Err(ConfigError::new(
+                "baitTarget",
+                "invalid-range",
+                "baitTarget must be between 1 and 10000",
+            ));
+        }
+        if !(0..=28).contains(&self.food_target) {
+            return Err(ConfigError::new(
+                "foodTarget",
+                "invalid-range",
+                "foodTarget must be between 0 and 28",
+            ));
+        }
+        if !(0..=99).contains(&self.eat_below) {
+            return Err(ConfigError::new(
+                "eatBelow",
+                "invalid-range",
+                "eatBelow must be between 0 and 99",
+            ));
+        }
+        if !(0..=2_000_000_000).contains(&self.coin_target) {
+            return Err(ConfigError::new(
+                "coinTarget",
+                "invalid-range",
+                "coinTarget must be between 0 and 2000000000",
+            ));
+        }
+        if !(0..=1_000).contains(&self.reserve_casts) {
+            return Err(ConfigError::new(
+                "reserveCasts",
+                "invalid-range",
+                "reserveCasts must be between 0 and 1000",
+            ));
+        }
+        if self.food_target > 0 && self.food.trim().is_empty() {
+            return Err(ConfigError::new(
+                "food",
+                "required",
+                "foodTarget requires a food item name",
+            ));
+        }
+        if self.reserve_casts > 0 && self.reserve_teleport.eq_ignore_ascii_case("off") {
+            return Err(ConfigError::new(
+                "reserveTeleport",
+                "required",
+                "reserveCasts requires a selected teleport spell",
+            ));
+        }
+        if self.reserve_casts == 0
+            && !self.reserve_teleport.trim().is_empty()
+            && !self.reserve_teleport.eq_ignore_ascii_case("off")
+        {
+            return Err(ConfigError::new(
+                "reserveCasts",
+                "required",
+                "an enabled reserve teleport requires at least one cast",
             ));
         }
         if !self.death_policy.eq_ignore_ascii_case("stop") {
@@ -257,9 +374,25 @@ impl GathererSettings {
             || self.radius != other.radius
             || self.disposition != other.disposition
             || self.allow_teleports != other.allow_teleports
+            || self.bank != other.bank
+            || self.use_mage_bank != other.use_mage_bank
+            || self.use_zanaris_bank != other.use_zanaris_bank
+            || self.bait_target != other.bait_target
+            || self.food != other.food
+            || self.food_target != other.food_target
+            || self.eat_below != other.eat_below
+            || self.coin_target != other.coin_target
+            || self.reserve_teleport != other.reserve_teleport
+            || self.reserve_casts != other.reserve_casts
             || self.allow_wilderness != other.allow_wilderness
     }
 
+    pub fn bank_preferences(&self) -> BankPreferences {
+        BankPreferences {
+            use_mage_bank: self.use_mage_bank,
+            use_zanaris_bank: self.use_zanaris_bank,
+        }
+    }
     pub fn resources_field(&self) -> &'static str {
         match self.skill_kind() {
             Skill::Woodcutting => "woodcuttingResources",
@@ -508,16 +641,55 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             None,
         ),
         number_setting("radius", "12", "2", "64"),
-        setting(
+        setting_with(
             "disposition",
             "string",
-            Some("Power"),
-            &["Power"],
+            Some("Bank"),
+            &["Power", "Bank"],
             None,
             None,
         ),
-        boolean_setting("allowTeleports", false),
-        boolean_setting("allowWilderness", false),
+        setting_with(
+            "bank",
+            "string",
+            Some("Nearest"),
+            &["Nearest"],
+            Some("{ key: 'disposition', anyOf: ['Bank'] }"),
+            Some("named-banks"),
+        ),
+        boolean_setting_show_if(
+            "useMageBank",
+            false,
+            "{ key: 'disposition', anyOf: ['Bank'] }",
+        ),
+        boolean_setting_show_if(
+            "useZanarisBank",
+            false,
+            "{ key: 'disposition', anyOf: ['Bank'] }",
+        ),
+        number_setting_show_if(
+            "baitTarget",
+            "100",
+            "1",
+            "10000",
+            "{ key: 'skill', anyOf: ['Fishing'] }",
+        ),
+        setting_group(
+            setting("food", "string", Some(""), &[], None, None),
+            "Safety",
+        ),
+        setting_group(number_setting("foodTarget", "0", "0", "28"), "Safety"),
+        setting_group(number_setting("eatBelow", "0", "0", "99"), "Safety"),
+        number_setting("coinTarget", "0", "0", "2000000000"),
+        setting(
+            "reserveTeleport",
+            "string",
+            Some("Off"),
+            &["Off"],
+            None,
+            Some("gatherer-teleports"),
+        ),
+        number_setting("reserveCasts", "0", "0", "1000"),
         setting("deathPolicy", "string", Some("Stop"), &["Stop"], None, None),
         number_setting("maxDeaths", "2", "0", "255"),
     ]
@@ -579,6 +751,28 @@ fn boolean_setting(id: &str, default: bool) -> SettingDef {
         None,
     )
 }
+fn setting_group(mut def: SettingDef, group: &str) -> SettingDef {
+    def.group = Some(group.into());
+    def
+}
+
+fn number_setting_show_if(
+    id: &str,
+    default: &str,
+    min: &str,
+    max: &str,
+    show_if: &str,
+) -> SettingDef {
+    let mut def = number_setting(id, default, min, max);
+    def.show_if = Some(show_if.into());
+    def
+}
+
+fn boolean_setting_show_if(id: &str, default: bool, show_if: &str) -> SettingDef {
+    let mut def = boolean_setting(id, default);
+    def.show_if = Some(show_if.into());
+    def
+}
 
 #[cfg(test)]
 mod tests {
@@ -586,18 +780,76 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn settings_reject_staged_modes_and_accept_coerced_defaults() {
+    fn settings_accept_g3_defaults_and_reject_unsupported_modes() {
+        let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert_eq!(defaults.disposition, "Bank");
+        assert_eq!(defaults.bank, "Nearest");
+        assert_eq!(defaults.bank_preferences(), BankPreferences::default());
+        assert_eq!(defaults.death_policy, "Stop");
+
         let mut bag = SettingsBag::new();
         bag.insert("skill".into(), json!("Mining"));
         bag.insert("miningResources".into(), json!(["copper"]));
         let parsed = GathererSettings::from_bag(&bag).unwrap();
         assert_eq!(parsed.skill_kind(), Skill::Mining);
         assert_eq!(parsed.mining_resources, ["copper"]);
+        assert_eq!(parsed.disposition, "Bank");
+
+        bag.insert("disposition".into(), json!("Power"));
+        bag.insert("bank".into(), json!("Varrock East"));
+        let parsed = GathererSettings::from_bag(&bag).unwrap();
+        assert_eq!(parsed.disposition, "Power");
+        assert_eq!(parsed.bank, "Varrock East");
 
         bag.insert("location".into(), json!("Closest"));
         assert_eq!(
             GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
             "invalid-option"
+        );
+    }
+
+    #[test]
+    fn supply_settings_validate_bounds_and_required_pairs() {
+        for (field, value) in [
+            ("baitTarget", json!(0)),
+            ("foodTarget", json!(29)),
+            ("eatBelow", json!(100)),
+            ("coinTarget", json!(-1)),
+            ("reserveCasts", json!(1001)),
+        ] {
+            let mut bag = SettingsBag::new();
+            bag.insert(field.into(), value);
+            assert_eq!(
+                GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
+                "invalid-range",
+                "{field}"
+            );
+        }
+
+        let mut bag = SettingsBag::new();
+        bag.insert("foodTarget".into(), json!(1));
+        assert_eq!(
+            GathererSettings::from_bag(&bag).unwrap_err().field.as_ref(),
+            "food"
+        );
+        bag.insert("food".into(), json!("Trout"));
+        bag.insert("reserveCasts".into(), json!(1));
+        assert_eq!(
+            GathererSettings::from_bag(&bag).unwrap_err().field.as_ref(),
+            "reserveTeleport"
+        );
+        bag.insert("reserveTeleport".into(), json!("Trollheim"));
+        bag.insert("reserveCasts".into(), json!(0));
+        assert_eq!(
+            GathererSettings::from_bag(&bag).unwrap_err().field.as_ref(),
+            "reserveCasts"
+        );
+
+        bag.insert("bank".into(), json!("Closest"));
+        bag.insert("reserveCasts".into(), json!(0));
+        assert_eq!(
+            GathererSettings::from_bag(&bag).unwrap_err().field.as_ref(),
+            "bank"
         );
     }
 

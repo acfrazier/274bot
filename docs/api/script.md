@@ -127,7 +127,7 @@ start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
 
-### Gatherer power gathering
+### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
 equipped tool, at the Start area, a Custom location or an Auto-selected area.
@@ -164,10 +164,38 @@ Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
 An unchanged page still fails after eight ticks rather than waiting indefinitely.
 
-Changes marked restart-required (including skill, resources and location)
-remain pending until the slot restarts; they never switch the active run in
-place. Death stops the card; automatic recovery, banking and supply trips are
-not part of this stage. Closest mode and shop provisioning are not offered.
+The compiled Gatherer card schema is version 3. `disposition` defaults to
+`Bank`; `Power` drops selected gathering products, while `Bank` returns to the
+selected bank and deposits them. Bank mode also makes a trip when no inventory
+slot is free; Power mode can still take a supply-only trip. `bank` defaults to
+`Nearest` and also offers named banks present in the selected cache;
+`useMageBank` and `useZanarisBank` add those special banks to the preference.
+The unsupported `Closest` mode is not offered.
+
+`baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
+that consumes bait uses it: zero held bait makes a trip due, and the next bank
+trip tops it up to the target. `food` is an optional selected-cache item name;
+`foodTarget` defaults to 0 (range 0–28); with a configured food name, a nonzero
+target makes a trip due only when no food is held. `eatBelow` defaults to 0
+(meaning half the observed maximum HP, rounded up; a nonzero setting is an
+explicit 1–99 HP threshold). At a boundary the card eats configured food only
+when it is held and current HP is at or below that threshold. Food is protected
+from deposits and product disposal.
+
+`coinTarget` defaults to 0 (range 0–2,000,000,000). Coins top up to that
+target during another bank trip but a coin deficit never starts a trip.
+`reserveTeleport` defaults to `Off`; its options are the selected cache's
+available teleport spells. An enabled spell requires `reserveCasts` of at
+least 1 (maximum 1,000). A reserve refill becomes due only when the held runes
+cannot pay for one cast; once due, the whole selected rune-cost batch is
+planned to the configured cast count. Stocking those runes does not enable
+teleport walking: `allowTeleports` remains a separate opt-in. Unread bank
+contents are pending, not empty; missing stock is reported only after a loaded
+bank observation. `deathPolicy` remains `Stop` only; automatic death recovery
+is not part of this stage. Shop provisioning is not offered.
+Skill, resource and location changes remain pending until the slot restarts.
+Bank and supply settings apply at a pending boundary, never midway through a
+bank batch.
 
 ### Quiet quest-journal painting
 

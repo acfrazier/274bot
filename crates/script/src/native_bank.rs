@@ -420,7 +420,7 @@ impl NativeMachine for BankMachine {
                                 .or(access.name.as_deref());
                             let Some(loc) = locs.value.iter().find(|loc| {
                                 loc.tile == access.stand_tile
-                                    && wanted_name.map_or(true, |wanted| {
+                                    && wanted_name.is_none_or(|wanted| {
                                         loc.name.as_deref().is_some_and(|actual| {
                                             actual.eq_ignore_ascii_case(wanted)
                                         })
