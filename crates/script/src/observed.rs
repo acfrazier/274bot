@@ -390,6 +390,7 @@ pub struct MakeButton {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MakeProduct {
+    pub object_id: i32,
     pub name: String,
     pub buttons: Vec<MakeButton>,
 }
@@ -1084,6 +1085,7 @@ impl Scene {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .map(|product| MakeProduct {
+                        object_id: product.object_id(),
                         name: product.name().unwrap_or_default().to_string(),
                         buttons: product
                             .buttons()

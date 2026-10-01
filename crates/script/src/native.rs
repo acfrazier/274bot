@@ -385,6 +385,9 @@ pub struct InteractionReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub accepted: bool,
+    /// Newest chat sequence in the host's pre-send snapshot, not in the
+    /// later snapshot where the script consumes this receipt.
+    pub chat_since: i32,
 }
 
 impl<'a> ActionContext<'a> {
