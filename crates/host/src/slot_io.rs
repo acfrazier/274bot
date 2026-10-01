@@ -304,10 +304,42 @@ pub fn map_image_to_applet(
 
 /// Who owns `GameShell` click/held bits. User and Script never share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MouseOwner {
+pub enum MouseOwner {
     None,
     User,
     Script { generation: u64, seq: u64 },
+}
+
+/// A winning human left-click's movement intent, not proof of a sent packet.
+/// Classified against the displayed client state before mainloop changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ManualMoveIntent {
+    Viewport,
+    WorldMenu,
+    Minimap,
+}
+
+impl ManualMoveIntent {
+    fn classify(client: &client::client::Client, owner: MouseOwner) -> Option<Self> {
+        if owner != MouseOwner::User || !client.ingame || client.shell.mouse_click_button != 1 {
+            return None;
+        }
+        let (x, y) = (client.shell.mouse_click_x, client.shell.mouse_click_y);
+        // mouse_loop can dismiss a menu and minimap_loop can still walk
+        // from the same click. Main modals do not disable the minimap.
+        if client.minimap_state == 0 && client::client::Client::minimap_hit(x, y).is_some() {
+            return Some(Self::Minimap);
+        }
+        if client.main_modal_id != -1 {
+            return None;
+        }
+        if client.is_menu_open {
+            return (client.menu_area == 0 && client.menu_option_at(x, y).is_some())
+                .then_some(Self::WorldMenu);
+        }
+        client::client::Client::world_viewport_hit(x, y).then_some(Self::Viewport)
+    }
 }
 
 struct ScriptMouseEv {
@@ -332,6 +364,8 @@ struct MouseState {
     held: MouseOwner,
     pending: MouseOwner,
     overflow: bool,
+    // Fits the existing alignment padding; no gesture queue or per-slot growth.
+    manual_move_intent: Option<ManualMoveIntent>,
 }
 
 impl MouseState {
@@ -343,6 +377,7 @@ impl MouseState {
             held: MouseOwner::None,
             pending: MouseOwner::None,
             overflow: false,
+            manual_move_intent: None,
         }
     }
 }
@@ -565,14 +600,33 @@ impl SlotInput {
     }
 
     /// User drain, script consume, latch. Holds the authority mutex across
-    /// apply + latch, then returns so the caller can run mainloop.
-    pub fn consume_native_frame(&self, shell: &mut GameShell) {
+    /// apply + latch and returns the winning click owner, not the held owner.
+    pub fn consume_native_frame(&self, shell: &mut GameShell) -> MouseOwner {
         let permit = self.authority.lock();
         self.drain_user(shell);
         self.consume_script_mouse(shell, &permit);
         shell.latch_click();
         let mut mouse = self.mouse.lock().unwrap();
+        let owner = mouse.pending;
         mouse.pending = MouseOwner::None;
+        mouse.manual_move_intent = None;
+        owner
+    }
+
+    pub(crate) fn classify_manual_move_intent(
+        &self,
+        client: &client::client::Client,
+        owner: MouseOwner,
+    ) {
+        if let Some(intent) = ManualMoveIntent::classify(client, owner) {
+            self.mouse.lock().unwrap().manual_move_intent = Some(intent);
+        }
+    }
+
+    /// Take the pre-mainloop click fact once, before frontend and script follow.
+    /// A subsequent native frame replaces an untaken fact rather than replaying it.
+    pub fn take_manual_move_intent(&self) -> Option<ManualMoveIntent> {
+        self.mouse.lock().unwrap().manual_move_intent.take()
     }
 
     fn consume_script_mouse(&self, shell: &mut GameShell, permit: &NativeInputPermit) {
@@ -774,7 +828,10 @@ impl SlotPark {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, SlotInput};
+    use super::{
+        map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, ManualMoveIntent,
+        MouseOwner, SlotInput,
+    };
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
     use std::time::{Duration, Instant};
@@ -1143,6 +1200,184 @@ mod tests {
         let inp = SlotInput::new();
         inp.authority().publish_live();
         inp
+    }
+
+    fn intent_client() -> client::client::Client {
+        let mut client = client::client::Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client
+    }
+
+    #[test]
+    fn manual_intent_requires_winning_user_click_not_matching_coordinates_or_hold() {
+        let input = live_input();
+        input.set_enabled(true);
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        let mut client = intent_client();
+        input.enqueue_script_mouse(true, 20.0, 20.0, 0);
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert!(matches!(owner, MouseOwner::Script { .. }));
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(input.take_manual_move_intent(), None);
+
+        // Same coordinates, competing script down, and a released user
+        // button still produce one winning User click.
+        input.enqueue_script_mouse(true, 20.0, 20.0, 0);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 20,
+        })
+        .unwrap();
+        tx.send(InputEv::Up).unwrap();
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert_eq!(owner, MouseOwner::User);
+        assert_eq!(client.shell.mouse_button, 0);
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(
+            input.take_manual_move_intent(),
+            Some(ManualMoveIntent::Viewport)
+        );
+        assert_eq!(input.take_manual_move_intent(), None);
+
+        // Held buttons and old click coordinates never replay a fact.
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 20,
+        })
+        .unwrap();
+        let owner = input.consume_native_frame(&mut client.shell);
+        input.classify_manual_move_intent(&client, owner);
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert_eq!(owner, MouseOwner::None);
+        assert_eq!(client.shell.mouse_button, 1);
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(input.take_manual_move_intent(), None);
+    }
+
+    #[test]
+    fn manual_intent_uses_latched_winner_and_excludes_discarded_input() {
+        let input = live_input();
+        input.set_enabled(true);
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        let mut client = intent_client();
+        for (button, x, y) in [(1, 20, 20), (2, 30, 30)] {
+            tx.send(InputEv::Down { button, x, y }).unwrap();
+        }
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert_eq!(
+            (client.shell.mouse_click_button, client.shell.mouse_click_x),
+            (2, 30)
+        );
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(input.take_manual_move_intent(), None);
+
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 20,
+        })
+        .unwrap();
+        tx.send(InputEv::Up).unwrap();
+        input.discard_user(&mut client.shell);
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert_eq!(owner, MouseOwner::None);
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(input.take_manual_move_intent(), None);
+
+        input.set_enabled(false);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 20,
+        })
+        .unwrap();
+        let owner = input.consume_native_frame(&mut client.shell);
+        assert_eq!(owner, MouseOwner::None);
+        input.classify_manual_move_intent(&client, owner);
+        assert_eq!(input.take_manual_move_intent(), None);
+    }
+
+    #[test]
+    fn manual_intent_modal_menu_and_minimap_policy() {
+        let mut client = intent_client();
+        client.shell.mouse_click_button = 1;
+        for (x, y, expected) in [
+            (5, 5, Some(ManualMoveIntent::Viewport)),
+            (515, 337, Some(ManualMoveIntent::Viewport)),
+            (4, 5, None),
+            (516, 5, None),
+            (5, 4, None),
+            (5, 338, None),
+            (560, 220, None),
+            (30, 400, None),
+            (550, 180, None),
+            (575, 8, Some(ManualMoveIntent::Minimap)),
+            (720, 158, Some(ManualMoveIntent::Minimap)),
+            (574, 83, None),
+            (721, 83, None),
+            (648, 7, None),
+            (648, 159, None),
+        ] {
+            client.shell.mouse_click_x = x;
+            client.shell.mouse_click_y = y;
+            assert_eq!(
+                ManualMoveIntent::classify(&client, MouseOwner::User),
+                expected,
+                "({x},{y})"
+            );
+        }
+        client.shell.mouse_click_x = 30;
+        client.shell.mouse_click_y = 51;
+        client.main_modal_id = 100;
+        assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+        client.main_modal_id = -1;
+        client.is_menu_open = true;
+        client.menu_area = 0;
+        client.menu_x = 20;
+        client.menu_y = 20;
+        client.menu_width = 100;
+        client.menu_num_entries = 1;
+        // A real row (including Cancel/Examine) qualifies; an off-row
+        // world click is only menu dismissal, not raw viewport intent.
+        assert_eq!(
+            ManualMoveIntent::classify(&client, MouseOwner::User),
+            Some(ManualMoveIntent::WorldMenu)
+        );
+        client.shell.mouse_click_y = 20;
+        assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+        for (area, x, y) in [(1, 583, 252), (2, 47, 404)] {
+            client.menu_area = area;
+            client.shell.mouse_click_x = x;
+            client.shell.mouse_click_y = y;
+            assert!(client.menu_option_at(x, y).is_some());
+            assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+        }
+        client.menu_area = 0;
+        client.main_modal_id = 100;
+        client.shell.mouse_click_x = 648;
+        client.shell.mouse_click_y = 83;
+        assert_eq!(
+            ManualMoveIntent::classify(&client, MouseOwner::User),
+            Some(ManualMoveIntent::Minimap)
+        );
+        client.minimap_state = 1;
+        assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+        client.minimap_state = 0;
+        client.shell.mouse_click_button = 2;
+        assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+        client.shell.mouse_click_button = 1;
+        client.ingame = false;
+        assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
     }
 
     #[test]
