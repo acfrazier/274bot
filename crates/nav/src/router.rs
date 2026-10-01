@@ -306,7 +306,7 @@ pub const BANK_TARGET_BUDGET: usize = 500_001;
 /// Only a goal set unreachable from a large region whose own backward region
 /// is also large spends all of it: on the 289 bake, stands fed through
 /// ladders by the unstamped upper planes. Measured reachable in-scene stands
-/// need at most ~347,000 settles (a 598-tick Wilderness detour; ~279,000
+/// need at most ~347,000 settles (a 599-tick Wilderness detour; ~279,000
 /// with every teleport usable), and 2^19 settles hold about 90 MB of search
 /// tables.
 pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
