@@ -189,7 +189,6 @@ mod partner_trade;
 mod periodic_bank;
 #[cfg(feature = "load")]
 mod prayer;
-#[cfg(feature = "load")]
 mod production;
 pub mod quest_journal;
 #[cfg(feature = "load")]
