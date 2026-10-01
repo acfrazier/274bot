@@ -425,7 +425,7 @@ struct ReachCache {
 enum ReachBinding {
     Unbound,
     Bound {
-        bits: Option<Arc<[u64]>>,
+        source: Option<Arc<host_play::profile::DeferredReach>>,
         origin: WorldTile,
         width: usize,
         height: usize,
@@ -435,26 +435,26 @@ enum ReachBinding {
 static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 
-/// Bind verified paint-reach words from either navigation origin. A failed
+/// Bind a lazy verified paint-reach source from either navigation origin. A failed
 /// sidecar stays unavailable rather than being replaced by a runtime flood.
 /// Only a legacy unbound 3D paint may still one-time bake; the map never bakes.
 pub(crate) fn set_reach_binding(
-    bits: Option<Arc<[u64]>>,
+    source: Option<Arc<host_play::profile::DeferredReach>>,
     origin: WorldTile,
     width: usize,
     height: usize,
-    trusted_bundled: bool,
+    verified_identity: bool,
 ) {
     let _nav = lock_nav_statics();
-    *lock_data(&REACH_BINDING) = match (trusted_bundled, bits) {
-        (_, Some(bits)) => ReachBinding::Bound {
-            bits: Some(bits),
+    *lock_data(&REACH_BINDING) = match (verified_identity, source) {
+        (_, Some(source)) => ReachBinding::Bound {
+            source: Some(source),
             origin,
             width,
             height,
         },
         (true, None) => ReachBinding::Bound {
-            bits: None,
+            source: None,
             origin,
             width,
             height,
@@ -466,16 +466,19 @@ pub(crate) fn set_reach_binding(
 
 fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
-    let binding = lock_data(&REACH_BINDING);
-    match &*binding {
-        ReachBinding::Bound {
-            bits,
-            origin,
-            width,
-            height,
-        } if *origin == c.origin && *width == c.width && *height == c.height => bits.clone(),
-        _ => None,
-    }
+    let source = {
+        let binding = lock_data(&REACH_BINDING);
+        match &*binding {
+            ReachBinding::Bound {
+                source,
+                origin,
+                width,
+                height,
+            } if *origin == c.origin && *width == c.width && *height == c.height => source.clone(),
+            _ => None,
+        }
+    };
+    source.and_then(|source| source.get())
 }
 
 fn reach_binding_is_bound() -> bool {

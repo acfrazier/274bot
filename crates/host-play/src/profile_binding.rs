@@ -900,11 +900,13 @@ impl ProfileSelection {
 /// Paint-only data: verify at preparation without retaining words, then decode
 /// once when a panel or TUI paint consumer requests it. Routing never requests it.
 #[derive(Debug)]
-pub(super) struct DeferredReach {
+pub struct DeferredReach {
     path: PathBuf,
     content_sha256: String,
     header: nav::pack::ReachSidecarHeader,
     bits: std::sync::OnceLock<Result<Arc<[u64]>, String>>,
+    reads: std::sync::atomic::AtomicU32,
+    hashes: std::sync::atomic::AtomicU32,
 }
 
 impl DeferredReach {
@@ -942,12 +944,18 @@ impl DeferredReach {
             content_sha256: content_sha256.to_owned(),
             header,
             bits: std::sync::OnceLock::new(),
+            reads: std::sync::atomic::AtomicU32::new(0),
+            hashes: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
     fn load(&self) -> Result<Arc<[u64]>, String> {
         let observer = ProfileProgressObserver::default();
         let (mut reader, length) = hashed_sidecar_reader(&self.path, &observer)?;
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.hashes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let side = nav::pack::read_reach_sidecar(&mut reader, length)
             .map_err(|e| format!("navigation {}: {e}", self.path.display()))?;
         if side.origin != self.header.origin
@@ -967,7 +975,8 @@ impl DeferredReach {
         Ok(side.bits)
     }
 
-    pub(super) fn get(&self) -> Option<Arc<[u64]>> {
+    /// Decode and verify once on paint demand, caching success or failure.
+    pub fn get(&self) -> Option<Arc<[u64]>> {
         self.bits
             .get_or_init(|| {
                 self.load()
@@ -976,6 +985,13 @@ impl DeferredReach {
             .as_ref()
             .ok()
             .cloned()
+    }
+
+    pub(super) fn load_counts(&self) -> (u32, u32) {
+        (
+            self.reads.load(std::sync::atomic::Ordering::Relaxed),
+            self.hashes.load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 }
 
