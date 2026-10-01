@@ -40,6 +40,7 @@ use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
+use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
 
 /// One leg of a route: a walk run or one transport crossing. Consecutive
 /// walk tiles collapse into a single `Walk` leg; each transport edge is
@@ -111,6 +112,8 @@ pub struct FindOptions {
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
     pub essence: Option<EssenceSession>,
+    /// Whole-walk danger-zone opt-outs; chosen endpoints are also exempt.
+    pub zones: ZoneExempt,
 }
 
 /// Axis-aligned avoidance rectangle for inspect-local routing. Bounds are
@@ -293,6 +296,7 @@ pub fn find_with_avoid_bounded(
         state,
         opts.essence.as_ref(),
         avoid,
+        opts.zones,
     )
 }
 
@@ -338,6 +342,20 @@ pub struct SearchCapacities {
     pub heap: usize,
     pub reverse: usize,
     pub reverse_queue: usize,
+    /// Allocated u64 mask words (zero for all-exempt and legacy worlds).
+    pub zone_mask_words: usize,
+}
+
+impl SearchCapacities {
+    fn include(&mut self, other: Self) {
+        self.distances = self.distances.max(other.distances);
+        self.predecessors = self.predecessors.max(other.predecessors);
+        self.settled = self.settled.max(other.settled);
+        self.heap = self.heap.max(other.heap);
+        self.reverse = self.reverse.max(other.reverse);
+        self.reverse_queue = self.reverse_queue.max(other.reverse_queue);
+        self.zone_mask_words = self.zone_mask_words.max(other.zone_mask_words);
+    }
 }
 
 /// How the backward proof beside a goal search ended.
@@ -389,6 +407,7 @@ pub struct FirstRouteSearch {
     settled: usize,
     capacities: SearchCapacities,
     proof: ReverseProof,
+    completion_partitions: usize,
 }
 
 impl FirstRouteSearch {
@@ -424,6 +443,10 @@ impl FirstRouteSearch {
     /// The preferred goals' backward proof.
     pub fn proof(&self) -> ReverseProof {
         self.proof
+    }
+    /// Additional searches grouped by the chosen endpoint's zone set.
+    pub fn completion_partitions(&self) -> usize {
+        self.completion_partitions
     }
 }
 
@@ -520,13 +543,46 @@ pub fn find_first_with_fallback_avoid(
     )
 }
 
-/// The proof-carrying goal search behind [`find_first_with_fallback`]
-/// (strict gates) and the single-target diagnoses ([`Relax`]). The
-/// backward closures honor the same gates as the
-/// forward search, so a strict proof never hides a relaxed route. Each goal
-/// set's `budget` holds until its own proof shows it reachable, then
-/// `reachable_budget` applies ([`FirstGoals`]).
-#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+fn zone_filter<'a>(
+    graph: &'a TransportGraph,
+    state: &WorldState,
+    endpoints: &[WorldTile],
+    exemptions: &ZoneExempt,
+) -> Option<ZoneFilter<'a>> {
+    if exemptions.is_all() {
+        return None;
+    }
+    graph
+        .zones
+        .as_ref()
+        .map(|table| ZoneFilter::new(table, state.combat_level, endpoints, exemptions))
+}
+
+/// A cap miss at the goal is insufficient: only globally inactive zones
+/// can be omitted from the chosen endpoint's geometric exemption set.
+fn goal_zone_key(
+    table: &ZoneTable,
+    filter: &ZoneFilter<'_>,
+    state: &WorldState,
+    goal: WorldTile,
+) -> Vec<u16> {
+    let mut key: Vec<_> = table
+        .at(goal)
+        .filter(|&index| {
+            let zone = &table.zones()[usize::from(index)];
+            !filter.masked(index)
+                && !(zone.class == ZoneClass::LevelRule
+                    && !zone.wild
+                    && state
+                        .combat_level
+                        .is_some_and(|combat| combat > i32::from(zone.cap)))
+        })
+        .collect();
+    key.sort_unstable();
+    key
+}
+
+#[allow(clippy::too_many_arguments)]
 fn first_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -540,6 +596,225 @@ fn first_search(
     budget: usize,
     reachable_budget: usize,
 ) -> FirstRouteSearch {
+    // The all-exempt/legacy bypass precedes classification and allocation.
+    let Some(filter) = zone_filter(graph, state, &[from], &opts.zones) else {
+        return first_search_core(
+            collision,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            state,
+            relax,
+            avoid,
+            budget,
+            reachable_budget,
+            None,
+        );
+    };
+    if targets.is_empty() || targets.contains(&from) {
+        return first_search_core(
+            collision,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            state,
+            relax,
+            avoid,
+            budget,
+            reachable_budget,
+            Some(&filter),
+        );
+    }
+    let table = graph.zones.as_ref().expect("a filter has a table");
+    let mut partitions =
+        std::collections::BTreeMap::<Vec<u16>, (Vec<WorldTile>, Vec<WorldTile>)>::new();
+    let mut shared_targets = Vec::new();
+    let mut shared_fallback = Vec::new();
+    for (index, (&goal, preferred)) in targets
+        .iter()
+        .map(|t| (t, true))
+        .chain(fallback.iter().map(|t| (t, false)))
+        .enumerate()
+    {
+        let key = goal_zone_key(table, &filter, state, goal);
+        if key.is_empty() {
+            if !partitions.is_empty() {
+                if preferred {
+                    shared_targets.push(goal);
+                } else {
+                    shared_fallback.push(goal);
+                }
+            }
+        } else {
+            if partitions.is_empty() {
+                // Before the first keyed goal, every preceding goal was
+                // unkeyed. Delay these allocations until a partition exists.
+                shared_targets.extend_from_slice(&targets[..index.min(targets.len())]);
+                if index >= targets.len() {
+                    shared_fallback.extend_from_slice(&fallback[..index - targets.len()]);
+                }
+            }
+            let partition = partitions.entry(key).or_default();
+            if preferred {
+                partition.0.push(goal);
+            } else {
+                partition.1.push(goal);
+            }
+        }
+    }
+    if partitions.is_empty() {
+        return first_search_core(
+            collision,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            state,
+            relax,
+            avoid,
+            budget,
+            reachable_budget,
+            Some(&filter),
+        );
+    }
+    let run = |preferred: &[WorldTile], fallbacks: &[WorldTile], zones: &ZoneFilter<'_>| {
+        if preferred.is_empty() {
+            let pass = first_search_core(
+                collision,
+                graph,
+                from,
+                fallbacks,
+                &[],
+                opts,
+                state,
+                relax,
+                avoid,
+                budget,
+                reachable_budget,
+                Some(zones),
+            );
+            FirstRouteSearch {
+                route: Err(RouteError::NoPath),
+                fallback: (!fallback.is_empty()).then_some(match pass.route {
+                    Ok(route) => FallbackRoute::Routed(route),
+                    Err(error) => FallbackRoute::Failed(error),
+                }),
+                settled: pass.settled,
+                capacities: pass.capacities,
+                proof: pass.proof,
+                completion_partitions: 0,
+            }
+        } else {
+            first_search_core(
+                collision,
+                graph,
+                from,
+                preferred,
+                fallbacks,
+                opts,
+                state,
+                relax,
+                avoid,
+                budget,
+                reachable_budget,
+                Some(zones),
+            )
+        }
+    };
+    let mut merged = run(&shared_targets, &shared_fallback, &filter);
+    merged.completion_partitions = partitions.len();
+    for (_, (preferred, fallbacks)) in partitions {
+        let endpoint = preferred
+            .first()
+            .or_else(|| fallbacks.first())
+            .expect("a completion partition is nonempty");
+        let completion =
+            ZoneFilter::new(table, state.combat_level, &[from, *endpoint], &opts.zones);
+        let mut result = run(&preferred, &fallbacks, &completion);
+        // The shared mask remains live while this completion runs.
+        result.capacities.zone_mask_words += filter.mask_words();
+        merged.settled += result.settled;
+        merged.capacities.include(result.capacities);
+        choose_route(&mut merged.route, result.route);
+        if let Some(answer) = result.fallback {
+            merge_fallback(&mut merged.fallback, answer);
+        }
+    }
+    if merged.route.is_ok() {
+        merged.fallback = None;
+    }
+    merged
+}
+
+fn route_order(route: &Route) -> (i32, i32, i32) {
+    (route.dest.x, route.dest.z, route.dest.level)
+}
+
+fn choose_route(current: &mut Result<Route, RouteError>, candidate: Result<Route, RouteError>) {
+    match candidate {
+        Ok(route) => {
+            if current.as_ref().map_or(true, |old| {
+                route.ticks < old.ticks
+                    || (route.ticks == old.ticks && route_order(&route) > route_order(old))
+            }) {
+                *current = Ok(route);
+            }
+        }
+        Err(RouteError::BudgetExhausted) if current.is_err() => {
+            *current = Err(RouteError::BudgetExhausted);
+        }
+        Err(_) => {}
+    }
+}
+
+fn merge_fallback(current: &mut Option<FallbackRoute>, candidate: FallbackRoute) {
+    match candidate {
+        FallbackRoute::Routed(route) => {
+            if !matches!(current, Some(FallbackRoute::Routed(old))
+                if old.ticks < route.ticks || (old.ticks == route.ticks && route_order(old) >= route_order(&route)))
+            {
+                *current = Some(FallbackRoute::Routed(route));
+            }
+        }
+        FallbackRoute::Undecided if !matches!(current, Some(FallbackRoute::Routed(_))) => {
+            *current = Some(FallbackRoute::Undecided)
+        }
+        FallbackRoute::Failed(error)
+            if current.is_none()
+                || matches!(current, Some(FallbackRoute::Failed(RouteError::NoPath))) =>
+        {
+            *current = Some(FallbackRoute::Failed(error))
+        }
+        _ => {}
+    }
+}
+
+/// The proof-carrying goal search behind [`find_first_with_fallback`]
+/// (strict gates) and the single-target diagnoses ([`Relax`]). The
+/// backward closures honor the same gates as the
+/// forward search, so a strict proof never hides a relaxed route. Each goal
+/// set's `budget` holds until its own proof shows it reachable, then
+/// `reachable_budget` applies ([`FirstGoals`]).
+#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+fn first_search_core(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    relax: Relax,
+    avoid: &[AvoidRect],
+    budget: usize,
+    reachable_budget: usize,
+    zones: Option<&ZoneFilter<'_>>,
+) -> FirstRouteSearch {
     if targets.is_empty() {
         return FirstRouteSearch {
             route: Err(RouteError::NoPath),
@@ -547,6 +822,7 @@ fn first_search(
             settled: 0,
             capacities: SearchCapacities::default(),
             proof: ReverseProof::NotRun,
+            completion_partitions: 0,
         };
     }
     if targets.contains(&from) {
@@ -560,6 +836,7 @@ fn first_search(
             settled: 0,
             capacities: SearchCapacities::default(),
             proof: ReverseProof::NotRun,
+            completion_partitions: 0,
         };
     }
 
@@ -593,6 +870,7 @@ fn first_search(
         opts.essence.as_ref(),
         relax,
         avoid,
+        zones,
         &mut goals,
         None,
     );
@@ -629,6 +907,7 @@ fn first_search(
         settled: search.settled,
         capacities: search.capacities,
         proof: search.proof,
+        completion_partitions: 0,
     }
 }
 
@@ -644,6 +923,7 @@ pub struct RoutesToTargets<'a> {
     settled: usize,
     complete: bool,
     capacities: SearchCapacities,
+    completions: Vec<(Vec<usize>, HashMap<WorldTile, Back>)>,
 }
 
 impl RoutesToTargets<'_> {
@@ -666,13 +946,22 @@ impl RoutesToTargets<'_> {
         self.capacities
     }
 
+    pub fn completion_partitions(&self) -> usize {
+        self.completions.len()
+    }
+
     /// Reconstruct only the chosen target, without cloning paths for the rest.
     pub fn route(&self, target_index: usize) -> Result<Route, TargetError> {
         let cost = self.results[target_index]?;
         let dest = self.targets[target_index];
+        let tree = self
+            .completions
+            .iter()
+            .find(|(indices, _)| indices.contains(&target_index))
+            .map_or(&self.came_from, |(_, tree)| tree);
         let (legs, ticks) = reconstruct(
             dest,
-            &self.came_from,
+            tree,
             self.graph,
             CostModel::running(),
             self.essence.as_ref(),
@@ -735,6 +1024,126 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     budget: usize,
     deadline: Option<Instant>,
 ) -> RoutesToTargets<'a> {
+    let Some(filter) = zone_filter(graph, state, &[from], &opts.zones) else {
+        return many_search(
+            collision, graph, from, targets, opts, state, avoid, budget, deadline, None,
+        );
+    };
+    let table = graph.zones.as_ref().expect("a filter has a table");
+    let mut partitions = std::collections::BTreeMap::<Vec<u16>, Vec<usize>>::new();
+    let mut shared_indices = Vec::new();
+    for (index, &target) in targets.iter().enumerate() {
+        let key = goal_zone_key(table, &filter, state, target);
+        if key.is_empty() {
+            if !partitions.is_empty() {
+                shared_indices.push(index);
+            }
+        } else {
+            if partitions.is_empty() {
+                shared_indices.extend(0..index);
+            }
+            partitions.entry(key).or_default().push(index);
+        }
+    }
+    if partitions.is_empty() {
+        return many_search(
+            collision,
+            graph,
+            from,
+            targets,
+            opts,
+            state,
+            avoid,
+            budget,
+            deadline,
+            Some(&filter),
+        );
+    }
+    let shared_targets: Vec<_> = shared_indices.iter().map(|&index| targets[index]).collect();
+    let shared = many_search(
+        collision,
+        graph,
+        from,
+        &shared_targets,
+        opts,
+        state,
+        avoid,
+        budget,
+        deadline,
+        Some(&filter),
+    );
+    let mut results = vec![Err(TargetError::NotSettled); targets.len()];
+    for (&index, &result) in shared_indices.iter().zip(&shared.results) {
+        results[index] = result;
+    }
+    let mut settled = shared.settled;
+    let mut complete = shared.complete;
+    let mut capacities = shared.capacities;
+    let shared_tree = if shared.results.iter().any(Result::is_ok) {
+        shared.came_from
+    } else {
+        HashMap::new()
+    };
+    let mut retained_capacity = shared_tree.capacity();
+    let mut completions = Vec::with_capacity(partitions.len());
+    for (_, indices) in partitions {
+        let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
+        let completion = ZoneFilter::new(table, state.combat_level, &[from, goals[0]], &opts.zones);
+        let pass = many_search(
+            collision,
+            graph,
+            from,
+            &goals,
+            opts,
+            state,
+            avoid,
+            budget,
+            deadline,
+            Some(&completion),
+        );
+        for (&index, &result) in indices.iter().zip(&pass.results) {
+            results[index] = result;
+        }
+        settled += pass.settled;
+        complete &= pass.complete;
+        let mut peak = pass.capacities;
+        peak.predecessors += retained_capacity;
+        peak.zone_mask_words += filter.mask_words();
+        capacities.include(peak);
+        let tree = if pass.results.iter().any(Result::is_ok) {
+            retained_capacity += pass.came_from.capacity();
+            pass.came_from
+        } else {
+            HashMap::new()
+        };
+        completions.push((indices, tree));
+    }
+    RoutesToTargets {
+        targets,
+        results,
+        came_from: shared_tree,
+        graph,
+        essence: opts.essence,
+        settled,
+        complete,
+        capacities,
+        completions,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn many_search<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    deadline: Option<Instant>,
+    zones: Option<&ZoneFilter<'_>>,
+) -> RoutesToTargets<'a> {
     let mut unique = HashMap::with_capacity(targets.len());
     let mut input_indices = Vec::with_capacity(targets.len());
     let mut costs = Vec::new();
@@ -773,6 +1182,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             opts.essence.as_ref(),
             Relax::Strict,
             avoid,
+            zones,
             &mut goals,
             deadline,
         )
@@ -799,7 +1209,79 @@ pub fn find_many_with_avoid_bounded_until<'a>(
         settled: search.settled,
         capacities: search.capacities,
         complete: search.stop != SearchStop::Deadline,
+        completions: Vec::new(),
     }
+}
+
+/// Diagnose a refused route with the shortest all-exempt witness. These are
+/// active zones on that witness, not a proved minimal cut.
+#[allow(clippy::too_many_arguments)]
+pub fn find_blocking_zones(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Vec<ZoneKey>> {
+    let filter = zone_filter(graph, state, &[from, to], &opts.zones)?;
+    let relaxed = FindOptions {
+        zones: ZoneExempt::all(),
+        ..opts
+    };
+    let route = find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
+    blocking_on_route(graph, &filter, &route)
+}
+
+/// First/many-goal refusal witness, attributed against the chosen destination's
+/// endpoint exemptions. It never unions unchosen endpoints.
+#[allow(clippy::too_many_arguments)]
+pub fn find_first_blocking_zones(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Vec<ZoneKey>> {
+    if opts.zones.is_all() || graph.zones.is_none() {
+        return None;
+    }
+    let relaxed = FindOptions {
+        zones: ZoneExempt::all(),
+        ..opts
+    };
+    let route = find_first_with_avoid(collision, graph, from, targets, relaxed, state, avoid)
+        .into_route()
+        .ok()?;
+    let filter = zone_filter(graph, state, &[from, route.dest], &opts.zones)?;
+    blocking_on_route(graph, &filter, &route)
+}
+
+fn blocking_on_route(
+    graph: &TransportGraph,
+    filter: &ZoneFilter<'_>,
+    route: &Route,
+) -> Option<Vec<ZoneKey>> {
+    let table = graph.zones.as_ref()?;
+    let mut keys = Vec::new();
+    let mut visit = |tile| {
+        for index in filter.blocking_at(&graph.wilderness, tile) {
+            let key = table.key(index);
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    };
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles } => tiles.iter().copied().for_each(&mut visit),
+            Leg::Transport { edge } => visit(edge.to),
+        }
+    }
+    (!keys.is_empty()).then_some(keys)
 }
 
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
@@ -1047,6 +1529,7 @@ pub fn find_with_model(
         &WorldState::empty(),
         None,
         &[],
+        ZoneExempt::NONE,
     )
 }
 
@@ -1099,6 +1582,7 @@ pub fn find_allow_teleports_with_model(
         state,
         None,
         &[],
+        ZoneExempt::NONE,
     )
 }
 
@@ -1128,6 +1612,7 @@ fn find_bounded(
         &WorldState::empty(),
         None,
         &[],
+        ZoneExempt::NONE,
     )
 }
 
@@ -1441,6 +1926,7 @@ impl SearchOutcome {
         stop: SearchStop,
         record_capacities: bool,
         reverse: ReverseReport,
+        zone_mask_words: usize,
     ) -> Self {
         let capacities = if record_capacities {
             SearchCapacities {
@@ -1450,6 +1936,7 @@ impl SearchOutcome {
                 heap: heap.capacity(),
                 reverse: reverse.seen,
                 reverse_queue: reverse.queue,
+                zone_mask_words,
             }
         } else {
             SearchCapacities::default()
@@ -1769,6 +2256,7 @@ fn find_bounded_impl(
     state: &WorldState,
     essence: Option<&EssenceSession>,
     avoid: &[AvoidRect],
+    exemptions: ZoneExempt,
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -1778,6 +2266,7 @@ fn find_bounded_impl(
         });
     }
 
+    let zones = zone_filter(graph, state, &[from, to], &exemptions);
     let mut goals = Goals::Single { to, cost: None };
     let search = search_kernel(
         collision,
@@ -1791,6 +2280,7 @@ fn find_bounded_impl(
         essence,
         Relax::Strict,
         avoid,
+        zones.as_ref(),
         &mut goals,
         None,
     );
@@ -1832,6 +2322,7 @@ fn search_kernel(
     essence: Option<&EssenceSession>,
     relax: Relax,
     avoid: &[AvoidRect],
+    zones: Option<&ZoneFilter<'_>>,
     goals: &mut Goals<'_>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
@@ -1876,6 +2367,7 @@ fn search_kernel(
                 SearchStop::Deadline,
                 record_capacities,
                 goals.finish_proofs(),
+                zones.map_or(0, ZoneFilter::mask_words),
             );
         }
         heap_pops += 1;
@@ -1913,6 +2405,7 @@ fn search_kernel(
                 },
                 record_capacities,
                 goals.finish_proofs(),
+                zones.map_or(0, ZoneFilter::mask_words),
             );
         }
 
@@ -1926,6 +2419,9 @@ fn search_kernel(
                     level: cur.level,
                 };
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(nb, avoid) {
+                    continue;
+                }
+                if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, nb)) {
                     continue;
                 }
                 if !wildy_step_ok(graph, cur, nb, allow_wilderness) {
@@ -1965,6 +2461,9 @@ fn search_kernel(
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                             continue;
                         }
+                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, edge.to)) {
+                            continue;
+                        }
                         if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
                             continue;
                         }
@@ -2000,6 +2499,11 @@ fn search_kernel(
                     {
                         continue;
                     }
+                    if zones
+                        .is_some_and(|filter| filter.blocks(&graph.wilderness, session.return_tile))
+                    {
+                        continue;
+                    }
                     if !wildy_step_ok(graph, cur, session.return_tile, allow_wilderness) {
                         continue;
                     }
@@ -2029,6 +2533,9 @@ fn search_kernel(
             for &ti in &allowed_teleports {
                 let edge = &graph.teleports[ti];
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
+                    continue;
+                }
+                if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, edge.to)) {
                     continue;
                 }
                 if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
@@ -2070,6 +2577,7 @@ fn search_kernel(
         stop,
         record_capacities,
         goals.finish_proofs(),
+        zones.map_or(0, ZoneFilter::mask_words),
     )
 }
 

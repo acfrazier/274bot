@@ -43,23 +43,30 @@ handler, or any label, choice or queue it may continue into, reads
 fails if a members-only edge's leading path does not refuse F2P, unless its
 handler carries a listed members arm (the glider, Zanaris and spirit-tree
 gates).
-Only bundled packs are rebaked automatically: an external v11 pack
+Only bundled packs are rebaked automatically: an external v12 pack
 (`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the membership gates it was
 baked with, so rebake one made by an earlier 274bot.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **11** (v11 binds
-the selected quest family — its `quest_facts_sha256` and
-`quest_extractor_schema` — right after the version byte and carries typed
-per-edge quest-stage gates; it keeps the content-derived bank-stand table after
-the edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
-the wilderness-level formula after the banks; raw `u32` flags are not on
-the pack wire, the optional `274F` sidecar holds them for collision paint;
-the paint-reach bitset is a separate `274R` sidecar bound to the pack
-identity). `decode` accepts version 11 only — v10 and older are `BadVersion`
-and must be rebaked. The `274N` grid
-decoder (`decode_grid`) stays for old boolean-walk files.
+the derived `TransportGraph`. Magic `b"274V"`, version byte **12** (v12
+retains v11's selected quest-family binding — its `quest_facts_sha256` and
+`quest_extractor_schema` — and typed per-edge quest-stage gates; it keeps the
+content-derived bank-stand table after the edges, per-edge `members_req`, a
+per-edge wilderness teleport cap, and wilderness-level formula after the
+banks, then appends the content-derived zone table). Zone data includes stable
+kind identities/labels, NPC and hazard rows, curated groups, carves, and
+shaped masks. A shape row stores a zone index u16, north extent u8, and
+row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v12 pack
+installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
+and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
+spatial index. Raw `u32` flags are not on the pack wire. The optional
+`274F` sidecar holds them for collision paint; the paint-reach bitset is a
+separate `274R` sidecar bound to the pack identity.
+`decode` accepts version 12 only — v11 and older are `BadVersion` and must be
+rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
+files.
 
 ### Build-time selection, reuse and overrides
 
@@ -90,14 +97,16 @@ streams still fail, at most after two attempts. This does not change decoded
 content identities.
 
 New nav manifests, build stamps and compiled bundle rows carry `content_id` and
-`source_sha256`. Source provenance hashes the conservative content-tree closure
-and actual baker config; the build stamp also binds generator source bytes.
-Legacy resources are not relabeled: rebuild the application with the complete
-matching snapshot, or use `nav-pack --revision 274|289 --content CONTENT_DIR
---cache CACHE_DIR --cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT
---out NAV_PACK`. The root contains the 16-hex version-keyed snapshot directory.
-Omitting `--snapshot-root` creates an offline-only legacy pack; runtime binding
-rejects it. Missing required decoded records fail rather than claiming Ready.
+`source_sha256`. Nav manifest JSON also binds the decoded table's `zone_count`
+(all zone rows) and `zone_npc_count` (NPC rows, excluding curated hazards).
+Source provenance hashes the conservative content-tree closure and actual baker
+config; the build stamp also binds generator source bytes. Legacy resources are
+not relabeled: rebuild the application with the complete matching snapshot, or
+use `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
+--cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`.
+The root contains the 16-hex version-keyed snapshot directory. Omitting
+`--snapshot-root` creates an offline-only legacy pack; runtime binding rejects
+it. Missing required decoded records fail rather than claiming Ready.
 
 Local runtime nav verifies the selected content/config against the bake source
 hash. Supported public profiles trust only compiled build/packager identities;
@@ -251,11 +260,12 @@ the approach side of the loc's row or column can count as crossed before the
 door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
-The corrected straight-door geometry uses generator version `nav-bake-2`.
-It changes no wire fields: the pack format stays `274V11`. The generator
-and producer-source digests invalidate staged bundles and trigger a normal
-rebake, with refreshed pack/reach/canlight/navpois bindings. Explicit custom
-packs baked with the previous generator need to be rebaked too.
+The corrected straight-door geometry uses generator version `nav-bake-2`;
+it adds no door-specific wire fields. The v12 pack separately appends the
+zone table described above. Generator and producer-source digests invalidate
+staged bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
+navpois bindings. Explicit custom packs baked with the previous generator need
+to be rebaked too.
 
 ### Quest-stage gates (`nav::quest_gates`)
 

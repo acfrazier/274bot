@@ -147,7 +147,6 @@ fn validate_progress_quest(cx: &CompileContext<'_>, quest: &str) -> Result<(), C
     }
     Ok(())
 }
-
 fn matching_progress<'a>(
     cx: &'a PredicateContext<'_, '_>,
     quest: &FactKey,

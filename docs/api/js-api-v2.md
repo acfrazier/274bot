@@ -333,8 +333,13 @@ journal read only when the colour is in-progress and the released Path
 has journal rules. Like the rest of `NativeApi`, these are host verbs;
 frozen rs2b0t signatures are irrelevant to them.
 
-The release index is Cook only: one row, `cook` with `journal: false`
-and `stages` `["cook:0", "cook:1", "cook:2"]`.
+The shared Quester release index contains Cook's Assistant (`cook`), Sheep
+Shearer (`sheep`), Rune Mysteries (`runemysteries`), and Romeo & Juliet
+(`romeojuliet`). Each row's `stages` comes from that Path's colour mapping and
+journal rules. Cook has `journal: false` and stages `cook:0`, `cook:1`, `cook:2`;
+the other three have `journal: true`. Romeo & Juliet includes the six journal
+stages `romeojuliet:10` through `romeojuliet:60`, plus its not-started and
+complete stages (`romeojuliet:0` and `romeojuliet:100`).
 
 | Method | OK | Errors |
 | --- | --- | --- |

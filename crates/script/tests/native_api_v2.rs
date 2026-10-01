@@ -718,6 +718,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::Walk {
                 x: 1,
@@ -728,6 +729,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::Walk {
                 x: 1,
@@ -738,6 +740,7 @@ export function tick(api) {
                 allow_bank_fetch: true,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3,
@@ -749,6 +752,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 99,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNearestBank,
         ]
@@ -870,6 +874,7 @@ export function tick(api) {
             allow_bank_fetch,
             avoid,
             request_id,
+            ..
         } => {
             assert_eq!((*from_x, *from_z, *from_level), (2763, 3233, 0));
             assert_eq!((*x, *z, *level), (2803, 3208, 0));
@@ -1073,6 +1078,7 @@ fn v2_hold_run_sets_status_and_emits_the_world_walk() {
                 allow_bank_fetch: true,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )),
         "{drained:?}"

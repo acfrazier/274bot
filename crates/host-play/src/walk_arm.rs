@@ -248,6 +248,7 @@ pub fn step_walk_arm_follow<D: Driver>(
                         level: here.2,
                     }),
                     "BankFetch",
+                    world.is_some_and(|world| world.graph.zones.is_none()),
                 );
             }
             return true;
@@ -282,7 +283,14 @@ pub fn step_walk_arm_follow<D: Driver>(
     } else {
         arm.traveller.terminal_leg_index()
     };
-    crate::walk_map::emit_walk_terminal(slot, destination, &outcome, leg, route);
+    crate::walk_map::emit_walk_terminal(
+        slot,
+        destination,
+        &outcome,
+        leg,
+        route,
+        world.is_some_and(|world| world.graph.zones.is_none()),
+    );
     if walking_stand {
         arm.bank_fetch = None;
     }

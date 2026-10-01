@@ -146,13 +146,17 @@ impl BankPickRequest {
         self.order.first().copied()
     }
 
-    fn route_key(&self, index: usize) -> (WorldTile, i32, bool, bool, bool) {
+    fn route_key(
+        &self,
+        index: usize,
+    ) -> (WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt) {
         (
             self.facts.banks()[index].tile,
             0,
             self.opts.allow_teleports,
             self.opts.allow_wilderness,
             self.opts.allow_bank_fetch,
+            self.opts.zones,
         )
     }
 

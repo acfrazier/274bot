@@ -945,7 +945,15 @@ export async function tick(api) {
     let paths = slot_probe(&play, &account, "globalThis.__paths");
     let terminal = slot_probe(&play, &account, "globalThis.__progress");
     assert_eq!(paths["ok"], true);
-    assert_eq!(paths["value"]["rows"][0]["id"], "cook");
+    assert_eq!(
+        paths["value"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["cook", "sheep", "runemysteries", "romeojuliet"]
+    );
     assert_eq!(terminal["kind"], "done");
     assert_eq!(terminal["value"]["end"], "done");
     assert_eq!(terminal["value"]["row"]["stage"]["state"], "known");
@@ -958,7 +966,7 @@ export async function tick(api) {
         "seed": "setvar cookquest 2",
         "paths": paths,
         "terminal": terminal,
-        "synthetic_journal": "unit seat seam: release index has only colour-only Cook; no live test override of release gate",
+        "journal_rule_witness": "design slice D owns the released Romeo & Juliet stage-30/stage-40 live quiet-lease witness",
     });
     let path = evidence_dir.join("api-progress-live-receipt.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).unwrap();

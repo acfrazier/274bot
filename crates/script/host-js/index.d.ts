@@ -1027,7 +1027,7 @@ export type GatherOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
 
-/** One released quest path of the release index. The release index is Cook only. */
+/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */
 export interface QuestPathRow {
   id: string;
   display: string;

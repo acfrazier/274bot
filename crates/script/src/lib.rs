@@ -47,6 +47,10 @@ pub mod loadouts_store;
 mod module_imports;
 /// Typed compiled cards, preparation, execution and output.
 pub mod native;
+pub mod native_bank;
+pub mod native_equipment;
+pub mod native_production;
+pub mod native_shop;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -191,7 +195,6 @@ mod partner_trade;
 mod periodic_bank;
 #[cfg(feature = "load")]
 mod prayer;
-#[cfg(feature = "load")]
 mod production;
 pub mod quest_journal;
 #[cfg(feature = "load")]

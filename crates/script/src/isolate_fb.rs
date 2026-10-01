@@ -3316,6 +3316,19 @@ fn avoid_rect_off<'b>(
     table.add_level(level.unwrap_or(-1));
     table.finish()
 }
+fn avoid_catalog_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    catalog_id: &str,
+) -> WIPOffset<AvoidRect<'b>> {
+    let catalog_id = b.create_string(catalog_id);
+    let mut table = AvoidRectBuilder::new(b);
+    table.add_catalog_id(catalog_id);
+    table.finish()
+}
+
+fn avoid_invalid_off<'b>(b: &mut FlatBufferBuilder<'b>) -> WIPOffset<AvoidRect<'b>> {
+    avoid_catalog_off(b, "")
+}
 
 fn inspect_hop_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
@@ -3754,12 +3767,16 @@ fn decoded_avoid(row: &Interact<'_>) -> Vec<crate::shim::InspectAvoidWire> {
     };
     rects
         .iter()
-        .map(|rect| crate::shim::InspectAvoidWire::Rect {
-            min_x: rect.min_x(),
-            max_x: rect.max_x(),
-            min_z: rect.min_z(),
-            max_z: rect.max_z(),
-            level: (rect.level() >= 0).then(|| rect.level()),
+        .map(|rect| match rect.catalog_id() {
+            Some("") => crate::shim::InspectAvoidWire::Unsupported,
+            Some(id) => crate::shim::InspectAvoidWire::Catalog(id.to_string()),
+            None => crate::shim::InspectAvoidWire::Rect {
+                min_x: rect.min_x(),
+                max_x: rect.max_x(),
+                min_z: rect.min_z(),
+                max_z: rect.max_z(),
+                level: (rect.level() >= 0).then(|| rect.level()),
+            },
         })
         .collect()
 }
@@ -3847,6 +3864,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
                 x: row.x(),
@@ -3858,6 +3879,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
@@ -3918,6 +3943,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -4403,13 +4432,22 @@ fn interact_off<'b>(
                         max_z,
                         level,
                     } => avoid_rect_off(b, *min_x, *max_x, *min_z, *max_z, *level),
-                    // Inverted sentinel so host validation is invalid-args, not drop.
-                    crate::shim::InspectAvoidWire::Unsupported => {
-                        avoid_rect_off(b, 1, 0, 0, 0, None)
-                    }
+                    crate::shim::InspectAvoidWire::Catalog(id) => avoid_catalog_off(b, id),
+                    crate::shim::InspectAvoidWire::Unsupported => avoid_invalid_off(b),
                 })
                 .collect();
             Some(b.create_vector(&offs))
+        }
+        _ => None,
+    };
+    let cross_off = match req {
+        InteractReq::Walk { cross, .. }
+        | InteractReq::WalkNear { cross, .. }
+        | InteractReq::InspectRoute { cross, .. }
+            if !cross.is_empty() =>
+        {
+            let names: Vec<_> = cross.iter().map(|name| b.create_string(name)).collect();
+            Some(b.create_vector(&names))
         }
         _ => None,
     };
@@ -4873,6 +4911,9 @@ fn interact_off<'b>(
     // Inspect routes and world walks carry their avoid rectangles.
     if let Some(off) = avoid_off {
         table.add_avoid(off);
+    }
+    if let Some(off) = cross_off {
+        table.add_cross(off);
     }
     table.finish()
 }
@@ -5779,6 +5820,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 9,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 2656,
@@ -5790,6 +5832,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkTo {
                 x: 3,
@@ -5824,6 +5867,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: true,
                 request_id: 11,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3222,
@@ -5835,6 +5879,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: true,
                 request_id: 12,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
         ];
         let bytes = encode_interact_batch(&reqs);
@@ -5883,6 +5928,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 7,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             }]
         );
     }
