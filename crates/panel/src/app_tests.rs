@@ -1184,6 +1184,35 @@ fn apply_ui_scale_scales_padding_for_retina() {
 }
 
 #[test]
+fn amber_palette_preserves_scaled_scrollbars_across_monitor_changes() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let base_style = ctx.style().clone();
+    for (scale, size, rounding) in [(2.0, 12.0, 6.0), (1.5, 9.0, 4.0), (1.0, 6.0, 3.0)] {
+        *ctx.style_mut() = base_style.clone();
+        apply_ui_scale(ctx.style_mut(), scale);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let _ui = ctx.frame();
+        crate::theme::apply_amber_current(&crate::theme::ChromeColors::default());
+        ctx.render();
+        assert_eq!(
+            ctx.style().scrollbar_size(),
+            size,
+            "scrollbar width at {scale}×"
+        );
+        assert_eq!(
+            ctx.style().scrollbar_rounding(),
+            rounding,
+            "scrollbar rounding at {scale}×",
+        );
+    }
+}
+
+#[test]
 fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
     assert_eq!(native_applet(), [765.0, 503.0]);
     assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);

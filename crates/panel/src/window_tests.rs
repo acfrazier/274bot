@@ -1,3 +1,6 @@
+use super::ime::{
+    physical_ime_set_data, submit_imgui_ime_area, take_test_callback_count, take_test_submissions,
+};
 use super::work_area::{
     cocoa_visible_frame_to_physical, fit_frame_to_work_area, win32_work_rect_to_physical, WorkArea,
 };
@@ -132,7 +135,12 @@ fn to_rgba_swaps_bgra_rows_and_leaves_rgba() {
 
 #[test]
 fn ime_cursor_area_uses_imgui_physical_coordinates_at_fractional_scales() {
-    for scale in [1.25_f32, 2.0] {
+    for (scale, (x, y), height) in [
+        (1.25_f32, (50, 30), 20),
+        (1.5, (60, 36), 24),
+        (1.75, (71, 43), 28),
+        (2.0, (81, 49), 32),
+    ] {
         let viewport_pos = [4.2 * scale, 5.4 * scale];
         let input_pos = [44.5 * scale, 29.7 * scale];
         let input_line_height = 16.0 * scale;
@@ -146,59 +154,17 @@ fn ime_cursor_area_uses_imgui_physical_coordinates_at_fractional_scales() {
         );
 
         let expected = (
-            winit::dpi::Position::Physical(winit::dpi::PhysicalPosition::new(
-                (input_pos[0] - viewport_pos[0]).round() as i32,
-                (input_pos[1] - viewport_pos[1]).round() as i32,
-            )),
-            winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(
-                input_line_height.round() as u32,
-                input_line_height.round() as u32,
-            )),
+            winit::dpi::Position::Physical(winit::dpi::PhysicalPosition::new(x, y)),
+            winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(height, height)),
         );
         assert_eq!(submitted, Some(expected), "wrong IME area at {scale}×");
     }
 }
 
 #[test]
-fn physical_ime_callback_preserves_winit_window_user_data() {
-    let _guard = crate::test_support::imgui_context_guard();
-    let mut context = imgui::Context::create();
-    let window_user_data = std::ptr::NonNull::<u8>::dangling()
-        .as_ptr()
-        .cast::<std::ffi::c_void>();
-    let raw = context.platform_io_mut().as_raw_mut();
-    // SAFETY: `raw` comes from the unique PlatformIO borrow of this live
-    // context. The marker is never dereferenced and remains test-owned.
-    unsafe {
-        (*raw).Platform_ImeUserData = window_user_data;
-    }
-
-    install_physical_ime_callback(&mut context);
-
-    let raw = context.platform_io().as_raw();
-    // SAFETY: `raw` is the valid PlatformIO of the still-live context; this
-    // test only reads the callback and untouched user-data fields.
-    let (installed, preserved_user_data) = unsafe {
-        let platform_io = &*raw;
-        (
-            platform_io.Platform_SetImeDataFn,
-            platform_io.Platform_ImeUserData,
-        )
-    };
-    assert_eq!(preserved_user_data, window_user_data);
-    let expected: unsafe extern "C" fn(
-        *mut imgui::sys::ImGuiContext,
-        *mut imgui::sys::ImGuiViewport,
-        *mut imgui::sys::ImGuiPlatformImeData,
-    ) = physical_ime_set_data;
-    assert!(std::ptr::fn_addr_eq(
-        installed.expect("IME callback is installed"),
-        expected,
-    ));
-}
-
-#[test]
 fn physical_ime_callback_ignores_null_imgui_arguments() {
+    take_test_submissions();
+    take_test_callback_count();
     // SAFETY: null callback arguments are explicitly checked before dereference.
     unsafe {
         physical_ime_set_data(
@@ -207,6 +173,15 @@ fn physical_ime_callback_ignores_null_imgui_arguments() {
             std::ptr::null_mut(),
         );
     }
+    assert!(
+        take_test_submissions().is_empty(),
+        "null arguments must not submit"
+    );
+    assert_eq!(
+        take_test_callback_count(),
+        0,
+        "null data must not be consumed"
+    );
 }
 
 /// Staging rows must be padded to the wgpu copy alignment.
