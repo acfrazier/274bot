@@ -61,7 +61,7 @@ struct LoadedNav {
     availability: NavAvailability,
     identity: Option<NavManifest>,
     world: Option<Arc<NavWorld>>,
-    reach: Option<Arc<[u64]>>,
+    reach: Option<Arc<DeferredReach>>,
     canlight: Option<Arc<[u64]>>,
     counters: NavLoadCounters,
 }
@@ -855,39 +855,38 @@ impl ProfileSelection {
             }
         };
         let world = world_result?;
-        let reach = if origin.is_bundled() {
-            if identity.reach_sha256.is_none() {
-                return Err("bundled navigation reach identity is missing".into());
-            }
-            Some(load_bundled_reach(
-                pack_path,
-                &world,
-                &identity.nav_sha256,
-                &mut counters,
-            )?)
-        } else {
-            None
-        };
-        let canlight = if origin.is_bundled() {
-            let Some(policy_hex) = origin
-                .bundled_identity()
-                .and_then(|row| row.canlight_identity.as_deref())
-            else {
-                return Err("bundled navigation canlight identity is missing".into());
-            };
-            if identity.canlight_sha256.is_none() {
-                return Err("bundled navigation canlight identity is missing".into());
-            }
-            Some(load_bundled_canlight(
-                pack_path,
-                &world,
-                &identity.nav_sha256,
-                policy_hex,
-                &mut counters,
-            )?)
-        } else {
-            None
-        };
+        if origin.is_bundled() && identity.reach_sha256.is_none() {
+            return Err("bundled navigation reach identity is missing".into());
+        }
+        let reach = identity
+            .reach_sha256
+            .as_deref()
+            .map(|hash| {
+                DeferredReach::prepare(pack_path, &world, &identity.nav_sha256, hash).map(Arc::new)
+            })
+            .transpose()?;
+        if reach.is_some() {
+            counters.reach_reads = 1;
+            counters.reach_hashes = 1;
+        }
+        if origin.is_bundled() && identity.canlight_sha256.is_none() {
+            return Err("bundled navigation canlight identity is missing".into());
+        }
+        let policy = origin
+            .bundled_identity()
+            .and_then(|row| row.canlight_identity.as_deref());
+        if origin.is_bundled() && policy.is_none() {
+            return Err("bundled navigation canlight identity is missing".into());
+        }
+        let canlight = identity
+            .canlight_sha256
+            .as_deref()
+            .map(|hash| load_canlight(pack_path, &world, &identity.nav_sha256, policy, hash))
+            .transpose()?;
+        if canlight.is_some() {
+            counters.canlight_reads = 1;
+            counters.canlight_hashes = 1;
+        }
         Ok(LoadedNav {
             availability: NavAvailability::Bound,
             identity: Some(identity),
@@ -898,99 +897,161 @@ impl ProfileSelection {
         })
     }
 }
-fn load_bundled_reach(
-    pack_path: &Path,
-    world: &NavWorld,
-    nav_sha256: &str,
-    counters: &mut NavLoadCounters,
-) -> Result<Arc<[u64]>, String> {
-    let reach_path = pack_path.with_extension("navreach");
-    if !reach_path.exists() {
-        return Err(format!(
-            "bundled navigation {} is missing",
-            reach_path.display()
-        ));
-    }
-    let (file, length) = open_nav_file(&reach_path)
-        .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    counters.reach_reads = 1;
-    let side = nav::pack::read_reach_sidecar(&mut reader, length)
-        .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
-    if sha256_hex(&side.binding) != nav_sha256 {
-        return Err(format!(
-            "bundled navigation {} binding does not match pack identity",
-            reach_path.display()
-        ));
-    }
-    let c = &world.collision;
-    let words = c.walk.len().div_ceil(64);
-    if side.origin != c.origin
-        || side.width != c.width
-        || side.height != c.height
-        || side.word_count != words
-        || side.bits.len() != words
-    {
-        return Err(format!(
-            "bundled navigation {} geometry does not match pack",
-            reach_path.display()
-        ));
-    }
-    Ok(side.bits)
+/// Paint-only data: verify at preparation without retaining words, then decode
+/// once when a panel or TUI paint consumer requests it. Routing never requests it.
+#[derive(Debug)]
+pub(super) struct DeferredReach {
+    path: PathBuf,
+    content_sha256: String,
+    header: nav::pack::ReachSidecarHeader,
+    bits: std::sync::OnceLock<Result<Arc<[u64]>, String>>,
 }
 
-fn load_bundled_canlight(
+impl DeferredReach {
+    fn prepare(
+        pack_path: &Path,
+        world: &NavWorld,
+        nav_sha256: &str,
+        content_sha256: &str,
+    ) -> Result<Self, String> {
+        let path = pack_path.with_extension("navreach");
+        let observer = ProfileProgressObserver::default();
+        let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
+        let header = nav::pack::read_reach_sidecar_header(&mut reader, length)
+            .map_err(|e| format!("navigation {}: {e}", path.display()))?;
+        if sha256_hex(&header.binding) != nav_sha256 {
+            return Err(format!(
+                "navigation {} binding does not match pack identity",
+                path.display()
+            ));
+        }
+        let c = &world.collision;
+        if header.origin != c.origin
+            || header.width != c.width
+            || header.height != c.height
+            || header.word_count != c.walk.len().div_ceil(64)
+        {
+            return Err(format!(
+                "navigation {} geometry does not match pack",
+                path.display()
+            ));
+        }
+        verify_sidecar_hash(reader, &path, content_sha256)?;
+        Ok(Self {
+            path,
+            content_sha256: content_sha256.to_owned(),
+            header,
+            bits: std::sync::OnceLock::new(),
+        })
+    }
+
+    fn load(&self) -> Result<Arc<[u64]>, String> {
+        let observer = ProfileProgressObserver::default();
+        let (mut reader, length) = hashed_sidecar_reader(&self.path, &observer)?;
+        let side = nav::pack::read_reach_sidecar(&mut reader, length)
+            .map_err(|e| format!("navigation {}: {e}", self.path.display()))?;
+        if side.origin != self.header.origin
+            || side.width != self.header.width
+            || side.height != self.header.height
+            || side.word_count != self.header.word_count
+            || side.binding != self.header.binding
+        {
+            return Err(format!(
+                "navigation {} header changed after preparation",
+                self.path.display()
+            ));
+        }
+        // Hash the bytes just decoded, not a separate reopen. A changed file
+        // cannot publish new bits under the prepared identity.
+        verify_sidecar_hash(reader, &self.path, &self.content_sha256)?;
+        Ok(side.bits)
+    }
+
+    pub(super) fn get(&self) -> Option<Arc<[u64]>> {
+        self.bits
+            .get_or_init(|| {
+                self.load()
+                    .inspect_err(|error| eprintln!("host-play: {error}"))
+            })
+            .as_ref()
+            .ok()
+            .cloned()
+    }
+}
+
+fn hashed_sidecar_reader<'a>(
+    path: &Path,
+    observer: &'a ProfileProgressObserver,
+) -> Result<(BufReader<NavReader<'a>>, usize), String> {
+    let (file, length) =
+        open_nav_file(path).map_err(|e| format!("navigation {}: {e}", path.display()))?;
+    Ok((
+        BufReader::with_capacity(
+            64 * 1024,
+            NavReader {
+                file,
+                digest: Some(Sha256::new()),
+                completed: 0,
+                total: length as u64,
+                observer,
+            },
+        ),
+        length,
+    ))
+}
+
+fn verify_sidecar_hash(
+    reader: BufReader<NavReader<'_>>,
+    path: &Path,
+    expected: &str,
+) -> Result<(), String> {
+    let actual =
+        finish_nav_hash(reader).map_err(|e| format!("navigation {}: {e}", path.display()))?;
+    if actual != expected {
+        return Err(format!(
+            "navigation {} content hash does not match identity",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn load_canlight(
     pack_path: &Path,
     world: &NavWorld,
     nav_sha256: &str,
-    canlight_identity: &str,
-    counters: &mut NavLoadCounters,
+    policy: Option<&str>,
+    content_sha256: &str,
 ) -> Result<Arc<[u64]>, String> {
-    let canlight_path = pack_path.with_extension("navcanlight");
-    if !canlight_path.exists() {
-        return Err(format!(
-            "bundled navigation {} is missing",
-            canlight_path.display()
-        ));
-    }
-    let (file, length) = open_nav_file(&canlight_path)
-        .map_err(|e| format!("bundled navigation {}: {e}", canlight_path.display()))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    counters.canlight_reads = 1;
-    let side = nav::pack::read_canlight_sidecar(&mut reader, length).map_err(|e| match e {
-        nav::pack::PackError::BadMagic => {
-            format!("bundled navigation {}: bad magic", canlight_path.display())
+    let path = pack_path.with_extension("navcanlight");
+    let observer = ProfileProgressObserver::default();
+    let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
+    let side = nav::pack::read_canlight_sidecar(&mut reader, length)
+        .map_err(|e| format!("navigation {}: {e}", path.display()))?;
+    if let Some(policy) = policy {
+        let expected = canlight::expected_header_binding(nav_sha256, policy)
+            .map_err(|e| format!("navigation {} binding {e}", path.display()))?;
+        if side.binding != expected {
+            return Err(format!(
+                "navigation {} binding does not match pack and policy identity",
+                path.display()
+            ));
         }
-        nav::pack::PackError::BadVersion(v) => format!(
-            "bundled navigation {}: unsupported version {v}",
-            canlight_path.display()
-        ),
-        nav::pack::PackError::Truncated => {
-            format!("bundled navigation {}: truncated", canlight_path.display())
-        }
-        other => format!("bundled navigation {}: {other}", canlight_path.display()),
-    })?;
-    let expected = canlight::expected_header_binding(nav_sha256, canlight_identity)
-        .map_err(|e| format!("bundled navigation {} binding {e}", canlight_path.display()))?;
-    if side.binding != expected {
-        return Err(format!(
-            "bundled navigation {} binding does not match pack and policy identity",
-            canlight_path.display()
-        ));
     }
     let c = &world.collision;
-    let words = c.walk.len().div_ceil(64);
     if side.origin != c.origin
         || side.width != c.width
         || side.height != c.height
-        || side.word_count != words
-        || side.bits.len() != words
+        || side.word_count != c.walk.len().div_ceil(64)
     {
         return Err(format!(
-            "bundled navigation {} geometry does not match pack",
-            canlight_path.display()
+            "navigation {} geometry does not match pack",
+            path.display()
         ));
     }
+    // External manifests bind the entire sidecar (including its policy header)
+    // to the pack/cache; bundled rows additionally pin the policy separately.
+    verify_sidecar_hash(reader, &path, content_sha256)?;
     Ok(side.bits)
 }
 
@@ -1036,6 +1097,63 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn paint_sidecar_is_lazy_shared_and_rejects_changed_payload() {
+        let dir = scratch_dir("lazy-paint");
+        let pack = dir.join("world.navpack");
+        let world = nav::world::NavWorld::from_grid(&nav::grid::StepGrid::fixture_open_3x3());
+        let binding = [0xabu8; 32];
+        let c = &world.collision;
+        let bits = vec![0x1234u64; c.walk.len().div_ceil(64)];
+        let bytes = nav::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
+        let path = pack.with_extension("navreach");
+        std::fs::write(&path, &bytes).unwrap();
+        let prepared = super::DeferredReach::prepare(
+            &pack,
+            &world,
+            &nav::pack::sha256_hex(&binding),
+            &nav::manifest::hash_bytes(&bytes),
+        )
+        .unwrap();
+        assert!(
+            prepared.bits.get().is_none(),
+            "binding must retain no paint payload"
+        );
+        let panel = prepared.get().unwrap();
+        let tui = prepared.get().unwrap();
+        assert_eq!(&*panel, &bits);
+        assert!(
+            std::sync::Arc::ptr_eq(&panel, &tui),
+            "frontends share the first decode"
+        );
+
+        let changed = super::DeferredReach::prepare(
+            &pack,
+            &world,
+            &nav::pack::sha256_hex(&binding),
+            &nav::manifest::hash_bytes(&bytes),
+        )
+        .unwrap();
+        let mut edited = bytes.clone();
+        *edited.last_mut().unwrap() ^= 1;
+        std::fs::write(&path, &edited).unwrap();
+        assert!(
+            changed.get().is_none(),
+            "same-size payload replacement must fail closed"
+        );
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(
+            changed.get().is_none(),
+            "a failed first load remains failed"
+        );
+        assert_eq!(
+            &*prepared.get().unwrap(),
+            &bits,
+            "published words remain immutable"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Pin `path` by its own current length and SHA-256, the same

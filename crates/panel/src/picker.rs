@@ -424,8 +424,8 @@ struct ReachCache {
 
 enum ReachBinding {
     Unbound,
-    Bundled {
-        bits: Arc<[u64]>,
+    Bound {
+        bits: Option<Arc<[u64]>>,
         origin: WorldTile,
         width: usize,
         height: usize,
@@ -435,9 +435,9 @@ enum ReachBinding {
 static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 
-/// Bind the process paint-reach bitset. Bundled provenance supplies the
-/// decoded sidecar. The map never bakes; 3D paint may still one-time bake
-/// when unbound.
+/// Bind verified paint-reach words from either navigation origin. A failed
+/// sidecar stays unavailable rather than being replaced by a runtime flood.
+/// Only a legacy unbound 3D paint may still one-time bake; the map never bakes.
 pub(crate) fn set_reach_binding(
     bits: Option<Arc<[u64]>>,
     origin: WorldTile,
@@ -447,8 +447,14 @@ pub(crate) fn set_reach_binding(
 ) {
     let _nav = lock_nav_statics();
     *lock_data(&REACH_BINDING) = match (trusted_bundled, bits) {
-        (true, Some(bits)) => ReachBinding::Bundled {
-            bits,
+        (_, Some(bits)) => ReachBinding::Bound {
+            bits: Some(bits),
+            origin,
+            width,
+            height,
+        },
+        (true, None) => ReachBinding::Bound {
+            bits: None,
             origin,
             width,
             height,
@@ -462,20 +468,18 @@ fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
     let binding = lock_data(&REACH_BINDING);
     match &*binding {
-        ReachBinding::Bundled {
+        ReachBinding::Bound {
             bits,
             origin,
             width,
             height,
-        } if *origin == c.origin && *width == c.width && *height == c.height => {
-            Some(Arc::clone(bits))
-        }
+        } if *origin == c.origin && *width == c.width && *height == c.height => bits.clone(),
         _ => None,
     }
 }
 
-fn reach_binding_is_bundled() -> bool {
-    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bundled { .. })
+fn reach_binding_is_bound() -> bool {
+    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bound { .. })
 }
 
 /// Bound `.navreach` bits matching `world`, or `None` (the map then shows
@@ -485,15 +489,15 @@ pub(crate) fn map_reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     bound_reach(world)
 }
 
-/// 3D paint-reach: bound sidecar, else one cached `bake_reach` on the
-/// external path. A bundled sidecar for a different world is not replaced
-/// by a runtime flood. The map must not call this.
+/// 3D paint-reach: verified sidecar, else one cached legacy `bake_reach`.
+/// A sidecar for a different world or a failed sidecar is never replaced by a
+/// runtime flood. The map must not call this.
 pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     let _nav = lock_nav_statics();
     if let Some(bits) = bound_reach(world) {
         return Some(bits);
     }
-    if reach_binding_is_bundled() {
+    if reach_binding_is_bound() {
         return None;
     }
     let c = &world.collision;
