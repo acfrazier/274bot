@@ -264,6 +264,60 @@ keys: they are `unknown-resource`, as is an absent key.
 
 Example: `crates/script/examples/gather_placements_v2.ts`.
 
+## Gather sessions
+
+`api.gather.run(settings?)` drives the native Gatherer card the operator
+starts from Browse — Woodcutting, Mining or Fishing — from a Load script.
+One session per slot. `api.snapshot.gather` is the live session
+(`{ token, phase, status }`, `null` when none); `phase` is `preparing` while
+the host prepares the card off-pump and `running` once installed, and
+`status` is `null` until the card publishes its first status (preparation
+and the install tick). `await`ing `run` settles exactly once, at the
+session terminal (`value.end`); `api.gather.stop()` ends the live session
+so its `run` resolves `stopped`.
+
+`GatherSettings` is rendered row by row from the card's own settings schema
+(`crates/script/src/gatherer/settings.rs`): every key is optional and takes
+the card default (`skill` `"Woodcutting"`, `woodcuttingResources`
+`["normal"]`, `miningResources` `["copper","tin"]`, `fishingMethod`
+`"fishing.saltfish.op1"`, `targetPreference` `"Best tier"`, `location`
+`"Start"`, `customTile` only when `location` is `"Custom"`, `radius` 2..64
+default 12, `disposition` `"Power"`, `allowTeleports`/`allowWilderness`
+`false`, `deathPolicy` `"Stop"`, `maxDeaths` 0..255 default 2). `GatherStatus`
+is keyed exactly as the card publishes it (`gatherer::status::KEYS`, 22 keys:
+`skill`, `method`, `phase`, `area`, `target`, `tool`, `bank`,
+`excluded_targets`, `last_event` as strings; `bait`, `food`, `coins`,
+`yielded`, `dropped`, `deposited`, `trips`, `xp`, `xp_per_hour`,
+`last_progress`, `deaths`, `absent`, `zone_gated` as numbers).
+`xp_per_hour` is -1 below five minutes elapsed.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `await api.gather.run(settings?)` | one `GatherOutcome` settlement | sync `invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`; host `refused`, `failed`, or a machine abort |
+| `api.gather.stop()` | `HelperResult<null>` | `no-session` (idempotent while live) |
+
+A non-object `settings` is `invalid-args`. A malformed object (unknown key,
+wrong type, non-integer number) is `invalid-settings`; a semantic failure is
+the card's own keyed error `invalid-setting:<field>:<code>` (for example
+`invalid-setting:skill:unsupported-skill`, `invalid-setting:radius:invalid-radius`,
+`invalid-setting:customTile:required`, staged `disposition`/`deathPolicy`
+refusals). Each error admits no session and emits no row. A second `run`
+while one is admitted is `busy` until the previous session's promise has
+settled. The terminal is the nested `value` of the unchanged `done` envelope:
+`stopped` (with last-published counts) clears the slot's retained
+anchor/counters like operator Stop; `blocked` (with the card's `failure` and
+counts) keeps them so the next `run` resumes; `refused` carries the host
+preparation/admission reason and never ran; `failed` carries the card panic
+reason with counts.
+
+While a session is live the host owns the slot's foreground: the script's
+game rows are dropped, not deferred (see [script.md](script.md) "Two
+runners"); control rows still pass. Declarations are generated from the Rust
+tables (`cargo test -p script --test host_js regen_host_js -- --ignored`)
+and pinned by the freshness gate plus a pinned TypeScript 5.8.3 gather-only
+consumer probe. Quest progress reads (`questPaths`, `questProgress`) are a
+later slice, not this surface.
+
 ## Quest query helpers
 
 Two sync `HelperResult` methods over the selected pin's quest-identity family.

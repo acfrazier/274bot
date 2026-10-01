@@ -32,6 +32,43 @@ pub struct StatusData {
     pub last_event: Arc<str>,
 }
 
+/// Value kind of one published status key. [`KEYS`] is the single key/type
+/// table: [`publish`] emits exactly these keys with these value kinds, and
+/// the `GatherStatus` JS declaration is rendered from it (never copied).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    Text,
+    Integer,
+}
+
+/// The Gatherer's published status keys in publish order (22 entries).
+/// [`publish`] emits exactly this table; the host JS `GatherStatus`
+/// declaration is rendered from it.
+pub const KEYS: &[(&str, FieldKind)] = &[
+    ("skill", FieldKind::Text),
+    ("method", FieldKind::Text),
+    ("phase", FieldKind::Text),
+    ("area", FieldKind::Text),
+    ("target", FieldKind::Text),
+    ("tool", FieldKind::Text),
+    ("bait", FieldKind::Integer),
+    ("food", FieldKind::Integer),
+    ("coins", FieldKind::Integer),
+    ("yielded", FieldKind::Integer),
+    ("dropped", FieldKind::Integer),
+    ("deposited", FieldKind::Integer),
+    ("trips", FieldKind::Integer),
+    ("xp", FieldKind::Integer),
+    ("xp_per_hour", FieldKind::Integer),
+    ("bank", FieldKind::Text),
+    ("last_progress", FieldKind::Integer),
+    ("deaths", FieldKind::Integer),
+    ("absent", FieldKind::Integer),
+    ("zone_gated", FieldKind::Integer),
+    ("excluded_targets", FieldKind::Text),
+    ("last_event", FieldKind::Text),
+];
+
 pub fn publish(
     output: &mut dyn NativeOutput,
     run: RunKey,
@@ -73,6 +110,23 @@ pub fn publish(
         ),
         text_arc("last_event", "Last event", Arc::clone(&data.last_event)),
     ]);
+    debug_assert_eq!(
+        fields.len(),
+        KEYS.len(),
+        "gatherer status KEYS drifted from publish",
+    );
+    for (field, (key, kind)) in fields.iter().zip(KEYS.iter()) {
+        debug_assert_eq!(field.key, *key, "gatherer status key drift");
+        debug_assert!(
+            matches!(
+                (&field.value, kind),
+                (StatusValue::Text(_), FieldKind::Text)
+                    | (StatusValue::Integer(_), FieldKind::Integer)
+            ),
+            "gatherer status kind drift for {key}",
+        );
+    }
+    let fields: Arc<[StatusField]> = fields;
     output.status(ScriptStatus {
         run,
         card: CompiledId("Gatherer"),
@@ -120,5 +174,96 @@ fn integer(key: &'static str, label: &'static str, value: i64) -> StatusField {
         key,
         label,
         value: StatusValue::Integer(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::NativeOutput;
+    use api::hostlog::Level;
+
+    struct Capture {
+        status: Option<ScriptStatus>,
+    }
+
+    impl NativeOutput for Capture {
+        fn status(&mut self, status: ScriptStatus) {
+            self.status = Some(status);
+        }
+
+        fn paint(&mut self, _frame: Arc<ScriptPaint>) {}
+
+        fn log(&mut self, _level: Level, _message: &str) {}
+
+        fn settings_applied(&mut self, _revision: u64) {}
+    }
+
+    /// `publish` emits exactly the shared [`KEYS`] table: same keys in the
+    /// same order with the same value kinds. The JS `GatherStatus`
+    /// declaration is rendered from that table, so drift here breaks the
+    /// freshness gate, not just a comment.
+    #[test]
+    fn publish_emits_exactly_the_shared_keys_table() {
+        let data = StatusData {
+            skill: "Woodcutting",
+            method: Arc::from("normal"),
+            phase: "gathering",
+            area: Arc::from("Start"),
+            target: Arc::from("Tree"),
+            tool: Arc::from("Bronze axe"),
+            bait: 0,
+            food: 0,
+            coins: 0,
+            yielded: 3,
+            dropped: 2,
+            deposited: 0,
+            trips: 0,
+            xp: 75,
+            xp_per_hour: None,
+            bank: Arc::from(""),
+            last_progress: 7,
+            deaths: 0,
+            absent: 0,
+            zone_gated: 0,
+            excluded_targets: Arc::from(""),
+            last_event: Arc::from("gathered"),
+        };
+        let mut out = Capture { status: None };
+        publish(
+            &mut out,
+            RunKey { slot: 1, run: 1, session: 1 },
+            1,
+            None,
+            NativePhase::Working,
+            None,
+            &data,
+        );
+        let status = out.status.expect("publish posts one status");
+        assert_eq!(status.fields.len(), KEYS.len(), "status KEYS length");
+        assert_eq!(status.fields.len(), 22, "gatherer publishes 22 keys");
+        for (field, (key, kind)) in status.fields.iter().zip(KEYS.iter()) {
+            assert_eq!(field.key, *key, "status key");
+            match kind {
+                FieldKind::Text => assert!(
+                    matches!(field.value, StatusValue::Text(_)),
+                    "key {key} is text",
+                ),
+                FieldKind::Integer => assert!(
+                    matches!(field.value, StatusValue::Integer(_)),
+                    "key {key} is integer",
+                ),
+            }
+        }
+        let xp_per_hour = status
+            .fields
+            .iter()
+            .find(|field| field.key == "xp_per_hour")
+            .expect("xp_per_hour key");
+        assert_eq!(
+            xp_per_hour.value,
+            StatusValue::Integer(-1),
+            "missing xp_per_hour publishes -1",
+        );
     }
 }
