@@ -155,14 +155,41 @@ fn live_channel_walk_focuses_every_slot() {
 }
 
 #[test]
-fn parse_n_defaults_to_fifty() {
-    // The live test reads env; this pins the allowed set used by parse_n's match.
-    assert_eq!(
-        match None::<&str> {
-            None => 50,
-            Some("2") => 2,
-            _ => 0,
-        },
-        50
-    );
+fn parse_n_reads_channel_then_rss_env() {
+    // parse_n reads process env: serialize against parallel mutation here
+    // and restore both keys afterwards.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap();
+    let saved_channel = std::env::var("CHANNEL_N").ok();
+    let saved_rss = std::env::var("RSS_N").ok();
+    struct Restore {
+        channel: Option<String>,
+        rss: Option<String>,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.channel {
+                Some(v) => std::env::set_var("CHANNEL_N", v),
+                None => std::env::remove_var("CHANNEL_N"),
+            }
+            match &self.rss {
+                Some(v) => std::env::set_var("RSS_N", v),
+                None => std::env::remove_var("RSS_N"),
+            }
+        }
+    }
+    let _restore = Restore {
+        channel: saved_channel,
+        rss: saved_rss,
+    };
+    std::env::remove_var("CHANNEL_N");
+    std::env::remove_var("RSS_N");
+    assert_eq!(parse_n(), 50);
+    std::env::set_var("CHANNEL_N", "4");
+    assert_eq!(parse_n(), 4);
+    std::env::set_var("CHANNEL_N", "2");
+    std::env::set_var("RSS_N", "50");
+    assert_eq!(parse_n(), 2, "CHANNEL_N wins over RSS_N");
+    std::env::remove_var("CHANNEL_N");
+    assert_eq!(parse_n(), 50, "RSS_N is the fallback");
 }

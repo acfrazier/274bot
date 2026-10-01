@@ -894,12 +894,15 @@ mod tests {
     fn store_packs_pixmap_rgb_and_is_765_by_503() {
         use client::client::present::pack_rgb;
         let buf = FrameBuf::new();
-        let mut pix = vec![0i32; 765 * 503];
+        let mut pix = vec![0i32; (client::client::APPLET_W * client::client::APPLET_H) as usize];
         pix[0] = 0x00aa_bbcc;
         pix[1] = 0x0011_2233;
         buf.store(applet_pixmap(pix));
         let out = buf.snapshot();
-        assert_eq!(out.len(), 765 * 503);
+        assert_eq!(
+            out.len(),
+            (client::client::APPLET_W * client::client::APPLET_H) as usize
+        );
         assert_eq!(out[0], pack_rgb(0x00aa_bbcc));
         assert_eq!(out[1], pack_rgb(0x0011_2233));
     }

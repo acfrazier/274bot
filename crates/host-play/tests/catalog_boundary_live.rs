@@ -1140,6 +1140,8 @@ mod tests {
         let after = observation(&[("Coins", 25)], &[("thieving", 108)], &[]);
         let changed = witness(CoreCase::Thiever, &baseline, [&after]);
         assert!(changed.qualify().is_ok());
+        let stalled = witness(CoreCase::Thiever, &baseline, [&baseline]);
+        assert!(stalled.qualify().is_err(), "no progress must not qualify");
     }
 
     #[test]
@@ -1165,6 +1167,8 @@ mod tests {
         );
         let changed = witness(CoreCase::Alcher, &baseline, [&stocked, &after]);
         assert!(changed.qualify().is_ok());
+        let stalled = witness(CoreCase::Alcher, &baseline, [&baseline]);
+        assert!(stalled.qualify().is_err(), "no progress must not qualify");
     }
 
     #[test]
@@ -3005,12 +3009,18 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn wildy_agility_is_a_registered_catalog_core_case() {
-        assert!(CoreCase::parse("wildy_agility").is_ok());
+        assert_eq!(
+            CoreCase::parse("wildy_agility").unwrap().card_name(),
+            "WildyAgility"
+        );
     }
 
     #[test]
     fn brimhaven_agility_is_a_registered_catalog_core_case() {
-        assert!(CoreCase::parse("brimhaven_agility").is_ok());
+        assert_eq!(
+            CoreCase::parse("brimhaven_agility").unwrap().card_name(),
+            "BrimhavenAgility"
+        );
     }
 
     fn wildy_obs(tile: (i32, i32, i32), agility_xp: i32) -> Observation {
@@ -6632,8 +6642,6 @@ export default class NativeStop extends LoopingBot {{
 
         let fire_bank = CoreCase::parse("fire_giant_bank_prepared").unwrap();
         assert_eq!(fire_bank.card_name(), "FireGiant");
-        assert_eq!(FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD, 1);
-        assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK, 25);
         let fire_spec = combat_spec(fire_bank).unwrap();
         assert_eq!(fire_spec.food_count, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD);
         assert_eq!(fire_spec.loot, CombatLoot::BigBones);

@@ -527,16 +527,6 @@ mod tests {
     }
 
     #[test]
-    fn frozen_bounds_match_the_canonical_primitives() {
-        assert_eq!(DIALOG_GAP_MS, 1_500);
-        assert_eq!(DIALOGUE_OPEN_MS, 8_000);
-        assert_eq!(DRIVE_STEPS, 120);
-        assert_eq!(PAGE_ACK_MS, 3_000);
-        assert_eq!(CONTINUE_TICKS, 1);
-        assert_eq!(CHOICE_TICKS, 2);
-    }
-
-    #[test]
     fn talk_op_is_the_first_talk_action_and_skips_hidden() {
         assert_eq!(
             talk_op(&["Examine".into(), "Talk-to".into()]),

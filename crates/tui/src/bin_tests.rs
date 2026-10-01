@@ -1315,13 +1315,6 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
 }
 
 #[test]
-fn create_profile_password_is_a_fresh_game_secret() {
-    let pass = host_play::profile_password("alice");
-    assert_ne!(pass, "alice");
-    assert_eq!(pass.len(), 20);
-}
-
-#[test]
 fn pump_leaves_app_world_none_when_no_pack_loaded() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");

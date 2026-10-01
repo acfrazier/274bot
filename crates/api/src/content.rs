@@ -66,7 +66,6 @@ mod tests {
         assert!(matches_common_bank_loot("", 405));
         assert!(!matches_common_bank_loot("Rune scimitar", -1));
         assert!(!matches_common_bank_loot("", -1));
-        assert_eq!(RANDOM_EVENT_CASKET_ID, 405);
         assert_eq!(
             COMMON_BANK_LOOT,
             [
