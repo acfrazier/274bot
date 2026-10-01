@@ -14,6 +14,47 @@ const FORCE_EAST: i32 = 0x2;
 const FORCE_SOUTH: i32 = 0x4;
 const FORCE_WEST: i32 = 0x8;
 
+/// A placed footprint's rotated dimensions and blocked approach sides.
+/// Shared by live loc readiness and packed transport admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocApproach {
+    pub width: u8,
+    pub length: u8,
+    pub blocked_sides: u8,
+}
+
+impl LocApproach {
+    /// Test one stand against the footprint, not merely its south-west anchor.
+    /// Callers check scene bounds and standability before admission.
+    pub fn can_operate(self, origin: WorldTile, from: WorldTile, flags: i32) -> bool {
+        if from.level != origin.level || self.width == 0 || self.length == 0 {
+            return false;
+        }
+        let max_x = origin.x + i32::from(self.width) - 1;
+        let max_z = origin.z + i32::from(self.length) - 1;
+        let in_x = (origin.x..=max_x).contains(&from.x);
+        let in_z = (origin.z..=max_z).contains(&from.z);
+        let mask = i32::from(self.blocked_sides);
+        (in_x && in_z)
+            || (from.x == origin.x - 1
+                && in_z
+                && flags & CollisionFlag::W_E == 0
+                && mask & FORCE_WEST == 0)
+            || (from.x == max_x + 1
+                && in_z
+                && flags & CollisionFlag::W_W == 0
+                && mask & FORCE_EAST == 0)
+            || (from.z == origin.z - 1
+                && in_x
+                && flags & CollisionFlag::W_N == 0
+                && mask & FORCE_SOUTH == 0)
+            || (from.z == max_z + 1
+                && in_x
+                && flags & CollisionFlag::W_S == 0
+                && mask & FORCE_NORTH == 0)
+    }
+}
+
 /// Rotate the 4-bit force-approach mask by the loc's angle (the m8aq
 /// `rotateForceApproach`).
 fn rotate_force_approach(force_approach: i32, angle: i32) -> i32 {
@@ -50,45 +91,27 @@ fn test_loc(
     force_approach: i32,
     scene: &SceneView,
 ) -> bool {
-    let max_x = dst_x + size_x - 1;
-    let max_z = dst_z + size_z - 1;
-
-    if src_x >= dst_x && src_x <= max_x && src_z >= dst_z && src_z <= max_z {
-        return true;
+    let (Ok(width), Ok(length)) = (u8::try_from(size_x), u8::try_from(size_z)) else {
+        return false;
+    };
+    LocApproach {
+        width,
+        length,
+        blocked_sides: force_approach as u8,
     }
-    if src_x == dst_x - 1
-        && src_z >= dst_z
-        && src_z <= max_z
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_E) == 0
-        && (force_approach & FORCE_WEST) == 0
-    {
-        return true;
-    }
-    if src_x == max_x + 1
-        && src_z >= dst_z
-        && src_z <= max_z
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_W) == 0
-        && (force_approach & FORCE_EAST) == 0
-    {
-        return true;
-    }
-    if src_z == dst_z - 1
-        && src_x >= dst_x
-        && src_x <= max_x
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_N) == 0
-        && (force_approach & FORCE_SOUTH) == 0
-    {
-        return true;
-    }
-    if src_z == max_z + 1
-        && src_x >= dst_x
-        && src_x <= max_x
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_S) == 0
-        && (force_approach & FORCE_NORTH) == 0
-    {
-        return true;
-    }
-    false
+    .can_operate(
+        WorldTile {
+            x: dst_x,
+            z: dst_z,
+            level: scene.level,
+        },
+        WorldTile {
+            x: src_x,
+            z: src_z,
+            level: scene.level,
+        },
+        collision_at(scene, src_x, src_z),
+    )
 }
 
 /// Whether `from` can operate `loc` in `scene`; `None` when the

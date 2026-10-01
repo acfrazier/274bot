@@ -43,28 +43,32 @@ handler, or any label, choice or queue it may continue into, reads
 fails if a members-only edge's leading path does not refuse F2P, unless its
 handler carries a listed members arm (the glider, Zanaris and spirit-tree
 gates).
-Only bundled packs are rebaked automatically: an external v12 pack
+Only bundled packs are rebaked automatically: an external v13 pack
 (`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the membership gates it was
 baked with, so rebake one made by an earlier 274bot.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **12** (v12
+the derived `TransportGraph`. Magic `b"274V"`, version byte **13** (v13
 retains v11's selected quest-family binding — its `quest_facts_sha256` and
 `quest_extractor_schema` — and typed per-edge quest-stage gates; it keeps the
 content-derived bank-stand table after the edges, per-edge `members_req`, a
 per-edge wilderness teleport cap, and wilderness-level formula after the
-banks, then appends the content-derived zone table). Zone data includes stable
+banks, and the content-derived zone table; v13 adds approach geometry after
+each edge's quest gates). Geometry is tag `0` for absent or tag `1` followed
+by `width:u8`, `length:u8`, and `blocked_sides:u8` (a rotated four-bit mask).
+Only footprint-backed Ladder/Stairs/AgilityShortcut/SpiritTree edges use it;
+Door, NPC and teleport admission is unchanged. Zone data includes stable
 kind identities/labels, NPC and hazard rows, curated groups, carves, and
 shaped masks. A shape row stores a zone index u16, north extent u8, and
 row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v12 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v13 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
-`decode` accepts version 12 only — v11 and older are `BadVersion` and must be
+`decode` accepts version 13 only — v12 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
@@ -225,8 +229,8 @@ standable check (`WALK_BLOCK_FLAGS | WALK_SCENERY | WR_GRND == 0`); the
 
 ## Transports (`nav::transport`)
 
-`TransportGraph { edges: Vec<TransportEdge>, from: HashMap<WorldTile, Vec<usize>> }`.
-`derive_transports(content_root)` parses the 2004 content: `doors/*.loc`
+`TransportGraph { edges, at: HashMap<WorldTile, Vec<usize>>, approaches, teleports, … }`.
+`derive_transports(content_root, loc_defs, collision)` parses the 2004 content: `doors/*.loc`
 (openable doors), `gates.loc` fence/gate hops, `ladders+stairs/` and
 `areas/` rs2 scripts (`p_telejump`/`p_teleport`/`~climb_ladder`,
 `movecoord` landings), `skill_magic/` teleports, `skill_agility/`
@@ -236,7 +240,7 @@ wizard **entry and EssenceSession return**, Elkoy maze escorts, Zanaris
 shed door with worn Dramen req, slashable webs (knife `oplocu` or worn
 slash blade), gnome gliders, and boat NPC + gangplank. A `TransportEdge`
 carries `kind` (Door/Ladder/Stairs/Boat/Teleport/AgilityShortcut/Glider/
-SpiritTree/Npc), `from`/`to`, `loc_id`, the 1-based menu `option`
+SpiritTree/Npc), `at`/`to`, `loc_id`, the 1-based menu `option`
 (`0` = use first `item_req` on the loc), `ticks`, and requirement
 vectors including `worn_req` (**any-of**). Spell teleports have no fixed
 origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
@@ -247,6 +251,16 @@ no zones (a legacy 274N grid) gates nothing. Packed spell and
 jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
+
+Footprint-backed loc transports use the same face/wall predicate as live
+`api::query::loc_approach` interactions. Their rotated rectangle and blocked
+approach sides are held in `TransportGraph::approaches`, aligned with ordinary
+edges. The transport index includes each standable, operable takeoff rather
+than only the loc anchor; forward routing, backward reach proofs, follower
+approach selection and approach settlement share that geometry. A 2×2 stair
+may legitimately be operable two tiles from its anchor, while a neighbouring
+tile separated by a wall is not. This does not make occupied goals standable:
+route to an operable adjacent stand for scenery such as the spinning wheel.
 
 Straight wall doors join the loc's own tile (`at`) and the adjacent tile
 along its placement angle. Opening removes the closed wall between those
@@ -261,7 +275,7 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v12 pack separately appends the
+it adds no door-specific wire fields. The v13 pack retains the v12
 zone table described above. Generator and producer-source digests invalidate
 staged bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
 navpois bindings. Explicit custom packs baked with the previous generator need
