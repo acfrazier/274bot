@@ -21,6 +21,24 @@ pub(super) fn cheb(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
+pub(super) fn loc_transport_ready(
+    snapshot: &GameSnapshot,
+    edge: &TransportEdge,
+    from: WorldTile,
+) -> Option<bool> {
+    if !matches!(
+        edge.kind,
+        TransportKind::Ladder
+            | TransportKind::Stairs
+            | TransportKind::AgilityShortcut
+            | TransportKind::SpiritTree
+    ) {
+        return None;
+    }
+    find_transport_loc(snapshot, edge)
+        .and_then(|loc| api::query::loc_approach::can_operate_from(loc, snapshot.scene(), from))
+}
+
 pub(super) fn tile_in_scene(scene: &api::snapshot::SceneView, t: WorldTile) -> bool {
     if scene.width <= 0 || scene.height <= 0 {
         return true;

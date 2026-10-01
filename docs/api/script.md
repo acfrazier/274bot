@@ -69,9 +69,15 @@ instance; `want_run` distinguishes operator Pause from offline.
 
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
-`api.snapshot.gather` reports its live session. While the seat is live the
+`api.snapshot.gather` reports its live session. `api.questPaths()` is a sync
+read of the release Path index for the four released quests, needing no seat;
+`api.questProgress({ quest })` runs one owned progress read in the same seat —
+tab colour first, then the quiet host journal read only when the colour is
+in-progress and the released Path has journal rules. While the seat is live the
 host owns the slot's foreground: only the script's game rows are drained and
-dropped at admission — never dispatched, never deferred. Control rows
+dropped at admission — never dispatched, never deferred. A `questProgress`
+read while a gather session is live — and a gather `run` while a read is
+live — is refused `busy`. Control rows
 (`gather.stop`, run-policy) still pass while paused. BroadcastChannel
 open/post/close, inspect-route requests and acknowledgements, and host-local
 camera yaw writes survive foreground admission, but stay queued while the Load

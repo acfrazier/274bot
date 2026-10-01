@@ -612,6 +612,12 @@ fn render_native_v2(out: &mut String) {
     out.push_str("    /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */\n");
     out.push_str("    stop(): HelperResult<null>;\n");
     out.push_str("  };\n");
+    out.push_str(
+        "  /** Sync read of the release Path index. Not a Promise and not a request op. */\n",
+    );
+    out.push_str("  questPaths(): HelperResult<{ rows: QuestPathRow[] }>;\n");
+    out.push_str("  /** One awaited owned progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */\n");
+    out.push_str("  questProgress(input: { quest: string }): Promise<QuestProgressOutcome>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
@@ -791,6 +797,53 @@ fn render_native_v2(out: &mut String) {
     render_gather_status(out);
     out.push('\n');
     render_gather_session(out);
+    out.push('\n');
+    render_quest_progress(out);
+}
+
+/// `QuestPathRow`, `Truth3`, `Known`, `QuestProgressRow`,
+/// `QuestProgressEnd` and `QuestProgressOutcome`: the release Path index
+/// and one owned progress read (design section 2, slice B).
+fn render_quest_progress(out: &mut String) {
+    out.push_str(
+        "/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */\n",
+    );
+    out.push_str("export interface QuestPathRow {\n");
+    out.push_str("  id: string;\n");
+    out.push_str("  display: string;\n");
+    out.push_str("  journal: boolean;\n");
+    out.push_str("  stages: string[];\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Three-valued truth used by progress rows and their flags. */\n");
+    out.push_str("export type Truth3 = 'true' | 'false' | 'unknown';\n\n");
+    out.push_str("/** A resolved value or the content gap behind an unknown one. */\n");
+    out.push_str("export type Known<T> =\n");
+    out.push_str("  | { state: 'known'; value: T }\n");
+    out.push_str("  | { state: 'unknown'; gap: string };\n\n");
+    out.push_str("/** One owned quest progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */\n");
+    out.push_str("export interface QuestProgressRow {\n");
+    out.push_str("  quest: string;\n");
+    out.push_str("  display: string;\n");
+    out.push_str("  colour: 'notStarted' | 'inProgress' | 'complete' | 'unknown';\n");
+    out.push_str("  stage: Known<string>;\n");
+    out.push_str("  complete: Truth3;\n");
+    out.push_str("  rule: Known<string>;\n");
+    out.push_str("  flags: Array<{ flag: string; truth: Truth3; count: number | null }>;\n");
+    out.push_str("  evidence: { run: number; session: number; tick: number; sequence: number };\n");
+    out.push_str("  journal_read: boolean;\n");
+    out.push_str("  binding: string;\n");
+    out.push_str("  role: string | null;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>` or `failed:<why>` and no row was produced. */\n");
+    out.push_str("export type QuestProgressEnd =\n");
+    out.push_str("  | { end: 'done'; token: number; row: QuestProgressRow }\n");
+    out.push_str("  | { end: 'refused'; token: number; reason: string };\n\n");
+    out.push_str("export type QuestProgressOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: QuestProgressEnd }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
 }
 
 /// `GatherSettings`, rendered row by row from the Gatherer card's own
@@ -870,7 +923,9 @@ fn render_gather_status(out: &mut String) {
 
 /// `GatherSession`, `GatherFailure`, `GatherCounts`, `GatherEnd` and
 /// `GatherOutcome`: the slot's live API session and how a session ended.
-/// Slice A renders gather only; quest progress reads belong to slice B.
+/// Quest progress reads (`QuestPathRow`, `Truth3`, `Known`,
+/// `QuestProgressRow`, `QuestProgressEnd`, `QuestProgressOutcome`) are
+/// rendered by `render_quest_progress` beside it.
 fn render_gather_session(out: &mut String) {
     out.push_str("/** The slot's live API session; `null` when none. Host-owned, read only. */\n");
     out.push_str("export interface GatherSession {\n");

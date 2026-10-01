@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 12, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 13, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -23,26 +23,28 @@
 //! same indexing — then the transport edge count u32le and per edge
 //! `(kind u8, at x/z/level, to x/z/level, loc_id, option, ticks, dir u8,
 //! open_loc_id)` i32le plus requirement vectors, membership and wilderness
-//! caps, and quest-stage gates. The any-tile teleport layer
+//! caps, and quest-stage gates. Version 13 appends one approach-geometry
+//! tag per edge after its quest gates (`0` absent, `1` + footprint width,
+//! length, and blocked-side mask). The any-tile teleport layer
 //! (`TransportGraph::teleports`) round-trips inside the same edge array as
 //! kind-4 edges; [`decode`] splits them back out and never indexes them into
 //! `at`. After the edges come the content-derived bank stand table, then the
 //! packed Wilderness rules. The v12 zone section follows Wilderness:
 //! a kind table (npc id i32, vislevel u16, AP/visibility flags u8, then id
 //! and label as length-prefixed UTF-8), zone rows (tag 0 for NPC spawn/radius
-//! and tag 1 for a hazard rectangle), curated groups (identity, label,
-//! rect, optional level, and zone indices), carves, and shaped-zone masks
+//! and tag 1 for a hazard rectangle), curated groups (identity, label, rect,
+//! optional level, and zone indices), carves, and shaped-zone masks
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v12 stream has `Some(ZoneTable)`, even when every row count
+//! Every decoded v13 stream has `Some(ZoneTable)`, even when every row count
 //! is zero; legacy grids and synthetic in-memory graphs use `None`.
 //! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v11 or older whole-world stream is
+//! return [`PackError::BadLength`]. A v12 or older whole-world stream is
 //! [`PackError::BadVersion`], never compat-loaded. The raw flags, paint-reach
 //! bitset, and canlight bitset remain sidecars: flags use magic `b"274F"`,
 //! reach `b"274R"`, and canlight `b"274L"`. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v12.
+//! old `.navpack` files; `nav-pack` now writes v13.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -51,6 +53,7 @@ use std::io::{self, BufRead, Cursor, Read};
 use std::num::NonZeroU16;
 use std::path::Path;
 
+use api::query::loc_approach::LocApproach;
 use api::selected::{FactKey, FactStrings, InclusiveRange, QuestGate, StageWindow};
 use api::snapshot::WorldTile;
 
@@ -98,14 +101,14 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// appends the bank stand table; v9 adds `members_req`; v10 adds wilderness
 /// teleport caps and the Wilderness-level formula. v11 binds the selected
 /// quest family and appends typed quest-stage gates. v12 appends the
-/// content-derived zone table after Wilderness. [`decode`] accepts version
-/// 12 only; 11 and older are rejected rather than compat-loaded.
-pub const VERSION: u8 = 12;
+/// content-derived zone table after Wilderness. v13 appends per-edge
+/// approach geometry after quest gates. [`decode`] accepts version 13 only.
+pub const VERSION: u8 = 13;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V12";
+pub const FORMAT_ID: &str = "274V13";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// Largest grid side a pack may decode (16384×16384 tiles ≈ 256 MB of walk
@@ -409,11 +412,11 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v12 pack byte format. The graph's `at` index is not
-/// stored; [`decode`] rebuilds it from the edges. Teleports (kind-4 edges)
-/// are written after the ordinary edges in the same array. The raw flags
-/// are not on the wire (see the flags sidecar); the zone bucket index is
-/// rebuilt from the validated zone table at decode.
+/// zone tables to the v13 pack byte format. The graph's `at` index is not
+/// stored; [`decode`] rebuilds it from the edges and collision. Teleports
+/// (kind-4 edges) are written after ordinary edges and always carry absent
+/// approach geometry. The raw flags are not on the wire (see the flags
+/// sidecar); the zone bucket index is rebuilt at decode.
 ///
 /// Panics when an edge's quest gates name a family other than
 /// [`TransportGraph::quest_family`]: one pack binds one quest family, and
@@ -439,7 +442,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
             + collision.walk.len()
             + collision.blocked.len() * 8
             + 4
-            + edge_count * 96
+            + edge_count * 99
             + 4
             + banks.len() * 48
             + zones::wire_size(graph.zones.as_ref()),
@@ -461,7 +464,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         out.extend_from_slice(&w.to_le_bytes());
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
-    for e in graph.edges.iter().chain(&graph.teleports) {
+    for (edge_index, e) in graph.edges.iter().chain(&graph.teleports).enumerate() {
         out.push(kind_to_u8(e.kind));
         for v in [
             e.at.x, e.at.z, e.at.level, e.to.x, e.to.z, e.to.level, e.loc_id, e.option, e.ticks,
@@ -488,6 +491,14 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
             );
         }
         write_quest_gates(&mut out, e.quest_gates.as_ref());
+        write_approach(
+            &mut out,
+            if edge_index < graph.edges.len() {
+                graph.approaches.get(edge_index).copied().flatten()
+            } else {
+                None
+            },
+        );
     }
     write_bank_stands(&mut out, banks);
     write_wilderness_rules(&mut out, &graph.wilderness);
@@ -496,10 +507,10 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 }
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
-/// The `at` index and zone bucket index are rebuilt from their packed tables.
-/// Version 12 is the only accepted wire; older streams are rejected rather
+/// The `at` and zone bucket indices are rebuilt from their packed tables.
+/// Version 13 is the only accepted wire; older streams are rejected rather
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
-/// a gate without one, or a malformed gate, is rejected.
+/// a gate without one, or malformed gate or approach geometry, is rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
     read_magic(&mut r, MAGIC)?;
@@ -549,12 +560,14 @@ fn decode_pack_body<R: PackRead>(
     let remaining = r.remaining();
     let mut graph = TransportGraph {
         edges: Vec::with_capacity(n_edges.min(remaining / 41)),
+        approaches: Vec::with_capacity(n_edges.min(remaining / 41)),
         quest_family,
         ..Default::default()
     };
     for _ in 0..n_edges {
+        let kind = kind_from_u8(read_u8(&mut r)?)?;
         let edge = TransportEdge {
-            kind: kind_from_u8(read_u8(&mut r)?)?,
+            kind,
             at: WorldTile {
                 x: read_i32(&mut r)?,
                 z: read_i32(&mut r)?,
@@ -606,14 +619,13 @@ fn decode_pack_body<R: PackRead>(
             },
             quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
         };
-        if edge.kind == TransportKind::Teleport {
+        let approach = read_approach(&mut r, kind)?;
+        if kind == TransportKind::Teleport {
             graph.teleports.push(edge);
         } else {
             graph.edges.push(edge);
+            graph.approaches.push(approach);
         }
-    }
-    for (i, e) in graph.edges.iter().enumerate() {
-        graph.at.entry(e.at).or_default().push(i);
     }
     let banks = read_bank_stands(&mut r)?;
     graph.wilderness = read_wilderness_rules(&mut r)?;
@@ -626,20 +638,18 @@ fn decode_pack_body<R: PackRead>(
         &mut keys,
     )?;
     graph.zones = zone_table;
-    Ok((
-        WorldCollision {
-            origin,
-            width,
-            height,
-            // The packed walk surface is the resident form; the raw flags
-            // live only in the sidecar (loaded on demand for debug paints).
-            walk,
-            blocked,
-            flags: None,
-        },
-        graph,
-        banks,
-    ))
+    let collision = WorldCollision {
+        origin,
+        width,
+        height,
+        // The packed walk surface is the resident form; the raw flags
+        // live only in the sidecar (loaded on demand for debug paints).
+        walk,
+        blocked,
+        flags: None,
+    };
+    graph.rebuild_index(&collision);
+    Ok((collision, graph, banks))
 }
 
 /// `TransportKind` as a wire byte.
@@ -861,6 +871,60 @@ fn read_quest_gates<R: PackRead>(
     QuestGates::new(*family, gates)
         .map(Some)
         .map_err(|error| PackError::BadLength(error.to_string()))
+}
+
+/// Write the v13 per-edge footprint-approach geometry.
+fn write_approach(out: &mut Vec<u8>, approach: Option<LocApproach>) {
+    match approach {
+        None => out.push(0),
+        Some(approach) => {
+            out.push(1);
+            out.extend_from_slice(&[approach.width, approach.length, approach.blocked_sides]);
+        }
+    }
+}
+
+/// Read and validate an edge's v13 footprint-approach geometry.
+fn read_approach<R: PackRead>(
+    r: &mut R,
+    kind: TransportKind,
+) -> Result<Option<LocApproach>, PackError> {
+    match read_u8(r)? {
+        0 => Ok(None),
+        1 => {
+            let approach = LocApproach {
+                width: read_u8(r)?,
+                length: read_u8(r)?,
+                blocked_sides: read_u8(r)?,
+            };
+            if approach.width == 0 || approach.length == 0 {
+                return Err(PackError::BadLength(
+                    "approach geometry dimensions must be positive".into(),
+                ));
+            }
+            if approach.blocked_sides & !0x0f != 0 {
+                return Err(PackError::BadLength(format!(
+                    "approach blocked-side mask {:#04x} exceeds 0x0f",
+                    approach.blocked_sides
+                )));
+            }
+            if !matches!(
+                kind,
+                TransportKind::Ladder
+                    | TransportKind::Stairs
+                    | TransportKind::AgilityShortcut
+                    | TransportKind::SpiritTree
+            ) {
+                return Err(PackError::BadLength(format!(
+                    "approach geometry is not valid for {kind:?}"
+                )));
+            }
+            Ok(Some(approach))
+        }
+        tag => Err(PackError::BadLength(format!(
+            "approach geometry tag {tag} is not 0 or 1"
+        ))),
+    }
 }
 
 /// A fact key as a length-prefixed UTF-8 string.

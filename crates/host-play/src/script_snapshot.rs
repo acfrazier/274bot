@@ -1514,6 +1514,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         ),
         api_gather: None,
         api_gather_outcome: None,
+        api_progress: None,
     };
     f(&input, native)
 }

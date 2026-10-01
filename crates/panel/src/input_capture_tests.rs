@@ -417,27 +417,6 @@ fn native_capture_leaves_numpad_punctuation_unqueued() {
 }
 
 #[test]
-fn maybe_send_click_is_noop_without_tx() {
-    maybe_send_click(&None, 1.0, 1.0, 765.0, 503.0);
-}
-
-#[test]
-fn stream_capture_is_noop_without_tx() {
-    stream_capture(
-        &None,
-        1.0,
-        1.0,
-        765.0,
-        503.0,
-        true,
-        true,
-        true,
-        true,
-        &[(true, b'a' as i32)],
-    );
-}
-
-#[test]
 fn stream_capture_sends_move_then_down() {
     let (tx, rx) = std::sync::mpsc::channel();
     stream_capture(

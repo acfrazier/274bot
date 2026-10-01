@@ -3841,7 +3841,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         true,
         vec![],
         |_| (None, None),
-        move |client, username, hold| {
+        move |client, username, frame| {
+            let hold = frame.hold;
             if frame_helper_account.as_deref() == Some(username) {
                 let progress = if frame_helper_needs_progress {
                     frame_state.lock().ok().map(|slot| slot.fixture_progress())

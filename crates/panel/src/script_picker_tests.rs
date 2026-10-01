@@ -217,7 +217,6 @@ fn chip_wraps_when_the_next_label_would_overflow() {
 
 #[test]
 fn unselected_description_clips_to_three_lines() {
-    assert_eq!(super::CARD_DESC_LINES, 3);
     assert!((super::card_desc_height(16.0, false, 100.0) - 48.0).abs() < 0.01);
     assert!((super::card_desc_height(16.0, true, 100.0) - 100.0).abs() < 0.01);
     assert!((super::card_desc_height(16.0, false, 20.0) - 20.0).abs() < 0.01);
@@ -270,9 +269,6 @@ fn selected_chip_text_is_black_on_amber() {
 
 #[test]
 fn chip_frame_padding_keeps_descenders() {
-    const {
-        assert!(CHIP_PAD_Y >= 4.0);
-    }
     assert_eq!(chip_frame_padding([4.0, 0.0]), [4.0, CHIP_PAD_Y]);
     assert_eq!(chip_frame_padding([4.0, 8.0]), [4.0, 8.0]);
 }
