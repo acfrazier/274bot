@@ -80,6 +80,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   bank step actually landed (stopping with a logged reason if it never does),
   and no longer mistakes items that are only in your bank for items you
   carry. The bank must be open when you start the walk.
+- Custom navigation packs (`--nav-pack`) now support Firemaking like bundled
+  navigation. A custom pack whose reach or Firemaking data doesn't match its
+  manifest is refused when the profile loads instead of being silently
+  ignored.
 
 ### Profiles and fleet
 
@@ -109,6 +113,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   rather than risk a wrong name.
 - The WalkTo map and the TUI map can shade the Wilderness, with a persisted
   on/off toggle and edges that follow the navigation content tile-for-tile.
+- The TUI map's reach layer (`r`) now works. The panel and TUI load reach data
+  only when the layer is first shown.
 
 ### Panel
 
@@ -130,6 +136,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   bot or the marked bots, confirm destructive commands, and see skipped bots
   in the tab and nearby server replies in the log. Hidden on public (rs2b2t)
   profiles.
+- Panel text now uses the 3270 typeface, and local account status markers show
+  as five crisp squares.
+- At fractional display scales (for example 125%, 150% or 175% on Windows) the
+  panel lays text and controls out on whole pixels, so text is sharper and
+  rows line up evenly.
+- Input-method (IME) candidate windows now follow the text caret at fractional
+  and Retina display scales, for typing in languages such as Chinese, Japanese
+  or Korean.
 
 ### TUI
 
@@ -146,6 +160,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - Navigation overlays (collision, path, trail) are much cheaper to leave
   switched on with the GPU renderer, and with the software renderer, where
   they are not drawn, turning them on no longer costs extra memory or CPU.
+- Bots use less memory: logged-in bots free their login-screen images (the
+  animated login screen still returns after logout), and the built-in game data
+  is stored compressed and unpacked once when the bot host starts, which adds
+  about 20 ms to launch.
 
 ### In progress
 
