@@ -505,7 +505,7 @@ impl GameSnapshot {
         self.bank_inventory_session = None;
     }
 
-    fn open_bank_inv_session(&mut self, com_id: i32) {
+    pub(super) fn open_bank_inv_session(&mut self, com_id: i32) {
         let main_opened_at = if self.bank_prev_inv_com == com_id {
             self.bank_prev_inv_generation
         } else {

@@ -385,6 +385,30 @@ impl GameSnapshot {
         self.inventory_size = size;
     }
 
+    /// Offline fixture observation of a bank modal and its two containers.
+    /// `None` means the bank table is unread, not loaded empty stock.
+    pub fn seed_bank_observation(
+        &mut self,
+        component_id: i32,
+        generation: u64,
+        rows: Option<Vec<ItemView>>,
+        side: Vec<ItemView>,
+    ) {
+        if self.bank_component_id != component_id {
+            self.bank_session_generation = self.bank_session_generation.wrapping_add(1);
+        }
+        self.bank_component_id = component_id;
+        self.bank_loaded = component_id >= 0 && rows.is_some();
+        self.bank_inventory_session = None;
+        if self.bank_loaded {
+            self.open_bank_inv_session(component_id);
+        }
+        self.bank_last_inv_com = component_id;
+        self.bank_last_inv_generation = generation;
+        self.bank = rows.unwrap_or_default();
+        self.bank_side = side;
+    }
+
     pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {
         self.equipment = rows;
         self.equipment_available = true;

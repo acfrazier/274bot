@@ -34,6 +34,7 @@ pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
     quests: Arc<QuestCatalog>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
@@ -72,11 +73,17 @@ pub struct Quester {
 }
 
 impl Quester {
-    pub fn new(run: RunKey, path: Arc<CompiledPath>, quests: Arc<QuestCatalog>) -> Self {
+    pub fn new(
+        run: RunKey,
+        path: Arc<CompiledPath>,
+        quests: Arc<QuestCatalog>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+    ) -> Self {
         Self {
             run,
             path,
             quests,
+            banks,
             stage: None,
             progress: None,
             journal: None,
@@ -727,6 +734,7 @@ impl Script for Quester {
                 progress: self.progress_slice(),
                 required_after,
                 bank: &self.bank,
+                banks: &self.banks,
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
@@ -757,6 +765,7 @@ impl Script for Quester {
                     .unwrap_or(&[]),
                 required_after,
                 bank: &self.bank,
+                banks: &self.banks,
             };
             self.step
                 .as_mut()
@@ -925,7 +934,12 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let mut script = Quester::new(run, path, quests);
+        let mut script = Quester::new(
+            run,
+            path,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
         let mut s = GameSnapshot::new();
         s.seed_ingame(2);
         s.seed_quest_statuses(
@@ -980,6 +994,7 @@ mod tests {
                 },
                 path,
                 quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             ),
             s,
         )
@@ -1018,6 +1033,7 @@ mod tests {
             },
             path,
             quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -1197,6 +1213,7 @@ mod tests {
                 },
                 path,
                 quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             );
             let mut s = GameSnapshot::new();
             s.seed_ingame(2);
