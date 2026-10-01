@@ -134,6 +134,7 @@ fn create(
     Ok(Box::new(Quester::new(
         run,
         path,
+        Arc::clone(&prepared.selected),
         Arc::clone(&prepared.quests),
     )))
 }

@@ -64,9 +64,9 @@ pub(crate) struct SweepClick {
 
 /// The completion counters for one observed prayer sweep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct PrayerSweepReport {
-    pub(crate) clicked: u32,
-    pub(crate) timed_out: u32,
+pub struct PrayerSweepReport {
+    pub clicked: u32,
+    pub timed_out: u32,
 }
 
 /// What the next sweep step can do without changing operation-owned state.
@@ -170,7 +170,7 @@ impl PrayerSweep {
 
 /// Native observed-varp clear operation, usable with `NativeActions::begin`
 /// and `poll`. The selected table is shared by Arc, not copied per tick.
-pub(crate) struct ClearPrayers {
+pub struct ClearPrayers {
     data: Arc<SelectedGameData>,
     sweep: PrayerSweep,
     last_observation: Option<EvidenceStamp>,

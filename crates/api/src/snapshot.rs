@@ -44,6 +44,14 @@ pub struct GameSnapshot {
     #[serde(skip)]
     thieving_stun_stamp: Option<i32>,
     players: Vec<PlayerView>,
+    /// Whether the player family has posted at least once in this session.
+    #[serde(skip)]
+    players_available: bool,
+    /// Projectiles are refreshed from the client list on each full snapshot
+    /// rebuild because the client has no projectile generation counter.
+    projectiles: Vec<ProjectileView>,
+    /// Hitmarks and their cycle are refreshed with the local actor every read.
+    hitmarks: Option<HitmarksView>,
     stats: Vec<StatView>,
     runenergy: i32,
     /// The scene origin (`map_build_base_x/z`); `None` before a world
@@ -171,6 +179,9 @@ pub struct GameSnapshot {
     shop: ShopView,
     widgets: Vec<WidgetView>,
     side_tabs: Vec<SideTabView>,
+    /// Side-tab readiness is separate from the (possibly empty) tab rows.
+    #[serde(skip)]
+    side_tabs_available: bool,
     chat_lines: Vec<ChatLineView>,
     chat_options: Vec<ChatOptionView>,
     chat_continue_component_id: i32,
@@ -257,6 +268,9 @@ impl Default for GameSnapshot {
             thieving_stun_tick: None,
             thieving_stun_stamp: None,
             players: Vec::new(),
+            players_available: false,
+            projectiles: Vec::new(),
+            hitmarks: None,
             stats: Vec::new(),
             runenergy: 0,
             base: None,
@@ -306,6 +320,7 @@ impl Default for GameSnapshot {
             shop: ShopView::default(),
             widgets: Vec::new(),
             side_tabs: Vec::new(),
+            side_tabs_available: false,
             chat_lines: Vec::new(),
             chat_options: Vec::new(),
             chat_continue_component_id: -1,
@@ -441,6 +456,32 @@ impl GameSnapshot {
 
     pub fn seed_local_player(&mut self, player: LocalPlayerView) {
         self.player = Some(player);
+        self.players_available = true;
+    }
+
+    /// Offline fixture seed for the raw local hitmark observation.
+    pub fn seed_hitmarks(&mut self, marks: HitmarksView) {
+        self.taking_damage = marks.marks.iter().any(|mark|
+            mark.kind == 1 && mark.value > 0 && mark.cycle > marks.loop_cycle);
+        self.hitmarks = Some(marks);
+    }
+
+    /// Offline fixture seed for the current projectile family.
+    pub fn seed_projectiles(&mut self, rows: Vec<ProjectileView>) {
+        self.projectiles = rows;
+    }
+
+    /// Offline fixture seed for an observed remote-player family.
+    pub fn seed_players(&mut self, rows: Vec<PlayerView>) {
+        self.players = rows;
+        self.players_available = true;
+    }
+
+    /// Offline fixture seed for posted side-tab rows and selection.
+    pub fn seed_side_tabs(&mut self, rows: Vec<SideTabView>, active: i32) {
+        self.side_tabs = rows;
+        self.active_side_tab = active;
+        self.side_tabs_available = true;
     }
 
     /// Drop every session-derived view while retaining the client-owned
@@ -668,6 +709,17 @@ impl GameSnapshot {
     /// order (the local player lives on `local_player()`).
     pub fn players(&self) -> &[PlayerView] {
         &self.players
+    }
+
+    /// Projectiles from the latest full snapshot rebuild.
+    pub fn projectiles(&self) -> &[ProjectileView] {
+        &self.projectiles
+    }
+
+    /// Raw local hitmarks from the latest full snapshot rebuild, if a local
+    /// player was available during that rebuild.
+    pub fn hitmarks(&self) -> Option<&HitmarksView> {
+        self.hitmarks.as_ref()
     }
 
     /// All 25 skill slots from the last stat rebuild.

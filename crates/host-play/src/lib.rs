@@ -431,6 +431,13 @@ mod memory_slots;
 mod memory_startup;
 
 #[cfg(test)]
+mod combat_proof;
+
+#[cfg(all(test, feature = "live-harness"))]
+#[path = "combat_live_proof_tests.rs"]
+mod combat_live_proof_tests;
+
+#[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
 

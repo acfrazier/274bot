@@ -13,16 +13,34 @@ pub(crate) enum Intent {
     Attack { restoration: bool },
     Walk { tile: WorldTile, escape: bool },
 }
+
+#[derive(Default)]
+pub(crate) struct TickPlan {
+    ops: [Option<Intent>; 5],
+}
+impl TickPlan {
+    pub(crate) fn single(intent: Intent) -> Self {
+        Self::from_option(Some(intent))
+    }
+    pub(crate) fn from_option(first: Option<Intent>) -> Self {
+        Self { ops: [first, None, None, None, None] }
+    }
+    pub(crate) fn take_first(&mut self) -> Option<Intent> {
+        self.ops[0].take()
+    }
+}
 /// Largest held heal that fits, otherwise the smallest eligible heal. A
 /// recovery candidate must actually cross the gate after the HP cap.
-pub(crate) fn food(frame: &Frame<'_>, tables: &CombatTables, gate: Option<i32>) -> Option<i32> {
+pub(crate) fn food(frame: &Frame<'_>, tables: &CombatTables, gate: Option<i32>, readiness: Option<(&super::schedule::Schedule, u16)>) -> Option<i32> {
     let hp = stat(frame, 3).0;
     let max = stat(frame, 3).1;
     let mut fitting: Option<(i32, i32)> = None;
     let mut smallest: Option<(i32, i32)> = None;
     for row in frame.inventory {
-        let Some(heal) = tables.food_heal(row.def.id) else { continue; };
-        if row.count <= 0 || gate.is_some_and(|gate| hp.saturating_add(heal).min(max) <= gate) { continue; }
+        let Some(food) = tables.food(row.def.id) else { continue; };
+        let heal = food.heal;
+        if row.count <= 0 || gate.is_some_and(|gate| hp.saturating_add(heal).min(max) <= gate)
+            || readiness.is_some_and(|(schedule, tick)| !schedule.food_ready(food, tick)) { continue; }
         if smallest.is_none_or(|(_, current)| heal < current) { smallest = Some((row.def.id, heal)); }
         if hp.saturating_add(heal) <= max && fitting.is_none_or(|(_, current)| heal > current) {
             fitting = Some((row.def.id, heal));

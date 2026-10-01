@@ -71,6 +71,7 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
                 session: 1,
             },
             path,
+            Arc::clone(&data),
             quests,
         ),
         snapshot,

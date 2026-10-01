@@ -25,6 +25,7 @@ impl Runtime {
 pub struct HostAction {
     pub(crate) owner: Arc<Owner>,
     pub request_id: NonZeroU64,
+    pub batch: u64,
     pub effect: HostEffect,
 }
 
@@ -100,8 +101,8 @@ pub(crate) struct Ledger {
     pub walk: Option<WalkReceipt>,
     pub interaction: Option<InteractionReceipt>,
     pub interaction_request: Option<NonZeroU64>,
-    pub disposal_receipts: [Option<InteractionReceipt>; 5],
-    next_disposal_receipt: usize,
+    pub batch_receipts: [Option<InteractionReceipt>; 5],
+    next_batch_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
 }
 
@@ -110,12 +111,12 @@ impl Default for Ledger {
         Self {
             owner: None,
             next_id: 1,
-            outbox: Vec::new(),
+            outbox: Vec::with_capacity(5),
             walk: None,
             interaction: None,
             interaction_request: None,
-            disposal_receipts: std::array::from_fn(|_| None),
-            next_disposal_receipt: 0,
+            batch_receipts: std::array::from_fn(|_| None),
+            next_batch_receipt: 0,
             quiet_since: None,
         }
     }
@@ -126,6 +127,24 @@ impl Ledger {
         let id = NonZeroU64::new(self.next_id).ok_or(ActionError::Cancelled)?;
         self.next_id = self.next_id.checked_add(1).unwrap_or(0);
         Ok(id)
+    }
+    /// Check that `count` consecutive nonzero ids can be consumed without
+    /// changing the cursor. Batches use this before reserving owner slots.
+    pub fn id_range(&self, count: usize) -> Result<NonZeroU64, ActionError> {
+        let first = NonZeroU64::new(self.next_id).ok_or(ActionError::Cancelled)?;
+        let last_offset = u64::try_from(count.checked_sub(1).ok_or(ActionError::Cancelled)?)
+            .map_err(|_| ActionError::Cancelled)?;
+        first
+            .get()
+            .checked_add(last_offset)
+            .ok_or(ActionError::Cancelled)?;
+        Ok(first)
+    }
+
+    /// Commit a previously checked consecutive id range.
+    pub fn commit_id_range(&mut self, first: NonZeroU64, count: usize) {
+        debug_assert_eq!(self.next_id, first.get());
+        self.next_id = first.get().checked_add(count as u64).unwrap_or(0);
     }
 
     pub fn quiet_read(&mut self, now: Instant) -> Option<QuietReadOwner> {
@@ -155,8 +174,8 @@ impl Ledger {
         self.walk = None;
         self.interaction = None;
         self.interaction_request = None;
-        self.disposal_receipts.fill(None);
-        self.next_disposal_receipt = 0;
+        self.batch_receipts.fill(None);
+        self.next_batch_receipt = 0;
         self.quiet_since = None;
     }
 
@@ -171,10 +190,10 @@ impl Ledger {
             return;
         }
         let owner = self.owner.as_ref().expect("owner checked");
-        if owner.disposal_live(authority.request_id()) {
-            self.disposal_receipts[self.next_disposal_receipt] = Some(receipt);
-            self.next_disposal_receipt =
-                (self.next_disposal_receipt + 1) % self.disposal_receipts.len();
+        if owner.batch_live(authority.request_id()) {
+            self.batch_receipts[self.next_batch_receipt] = Some(receipt);
+            self.next_batch_receipt =
+                (self.next_batch_receipt + 1) % self.batch_receipts.len();
             owner.cancel_interaction(authority.request_id());
         } else if self.interaction_request == Some(authority.request_id())
             && self.interaction.is_none()
@@ -196,7 +215,7 @@ impl Drop for Ledger {
 pub(crate) struct TickBudget {
     tick: Option<u64>,
     transitions: u8,
-    events: u8,
+    pub(super) events: u8,
 }
 
 impl TickBudget {
@@ -221,6 +240,13 @@ impl TickBudget {
             return false;
         }
         self.events += 1;
+        true
+    }
+    pub fn batch(&mut self) -> bool {
+        if self.events != 0 {
+            return false;
+        }
+        self.events = 5;
         true
     }
 }
@@ -327,6 +353,20 @@ mod tests {
             "late receipt revived cancelled work"
         );
     }
+    #[test]
+    fn id_ranges_check_the_last_id_without_consuming_the_cursor() {
+        let mut ledger = Ledger::default();
+        ledger.next_id = u64::MAX - 1;
+        let first = ledger.id_range(2).unwrap();
+        assert_eq!(first.get(), u64::MAX - 1);
+        assert_eq!(ledger.id_range(3), Err(ActionError::Cancelled));
+        assert_eq!(ledger.id_range(0), Err(ActionError::Cancelled));
+        assert_eq!(ledger.next_id, u64::MAX - 1);
+
+        ledger.commit_id_range(first, 2);
+        assert_eq!(ledger.next_id, 0, "the last nonzero id may be consumed");
+        assert_eq!(ledger.id_range(1), Err(ActionError::Cancelled));
+    }
 
     #[test]
     fn expired_guard_cannot_clear_a_replacement_for_the_same_request() {
@@ -383,6 +423,23 @@ mod tests {
         budget.observe(8);
         assert!(budget.event(false));
         assert!(budget.transition());
+    }
+    #[test]
+    fn batch_saturates_shared_events_until_the_next_observed_tick() {
+        let mut budget = TickBudget::default();
+        budget.observe(7);
+        assert!(budget.batch());
+        assert_eq!(budget.events, 5);
+        assert!(!budget.batch());
+        assert!(!budget.event(false));
+        assert!(!budget.event(true));
+
+        budget.observe(7);
+        assert_eq!(budget.events, 5, "same-tick re-observation cannot refill it");
+        assert!(!budget.batch());
+        budget.observe(8);
+        assert!(budget.batch(), "the next observed tick starts uncharged");
+        assert_eq!(budget.events, 5);
     }
 
     #[test]

@@ -1,21 +1,27 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::bank_memo::BankMemo;
-use super::compile::{CompiledPath, CompiledStep, PredicateContext, StepContext, StepRun};
+use super::compile::{
+    CompiledPath, CompiledStep, PredicateContext, StepContext, StepOutcome, StepRun,
+};
 use super::death::DeathLatch;
+use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::Provisioner;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
+use crate::combat::ClearPrayers;
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
 use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::CompiledId;
+use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
+use api::{DetectedRandom, RandomClaim};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::task::Poll;
@@ -33,6 +39,7 @@ const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
+    selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
@@ -45,6 +52,9 @@ pub struct Quester {
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
+    clear_prayers: Option<ActionHandle<ClearPrayers>>,
+    prayer_cleanup_pending: bool,
+    last_outcome: Option<StepOutcome>,
     advances: bool,
     in_prelude: bool,
     settling: bool,
@@ -70,12 +80,192 @@ pub struct Quester {
     death: DeathLatch,
     provisioner: Provisioner,
 }
+fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutcome>) {
+    let Some(receipt) = outcome
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+    else {
+        return;
+    };
+    let report = receipt.report;
+    fields.push(StatusField {
+        key: "combat_end",
+        label: "Combat end",
+        value: StatusValue::Text(Arc::from(format!("{:?}", report.end))),
+    });
+    fields.push(StatusField {
+        key: "combat_target_gone_restarts",
+        label: "Combat target-gone restarts",
+        value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
+    });
+    if let Some(mode) = report.melee_mode_fallback {
+        static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| [
+            Arc::from("accurate"), Arc::from("aggressive"), Arc::from("defensive"), Arc::from("controlled"),
+        ]);
+        fields.push(StatusField {
+            key: "combat_melee_mode_fallback",
+            label: "Combat melee-mode fallback",
+            value: StatusValue::Text(Arc::clone(&MODES[mode as usize])),
+        });
+    }
+    for (key, label, value) in [
+        (
+            "combat_evidence_run_slot",
+            "Combat evidence run slot",
+            report.evidence.run.slot,
+        ),
+        (
+            "combat_evidence_run",
+            "Combat evidence run",
+            report.evidence.run.run,
+        ),
+        (
+            "combat_evidence_session",
+            "Combat evidence session",
+            report.evidence.run.session,
+        ),
+        (
+            "combat_evidence_tick",
+            "Combat evidence tick",
+            report.evidence.tick,
+        ),
+        (
+            "combat_evidence_sequence",
+            "Combat evidence sequence",
+            report.evidence.sequence,
+        ),
+    ] {
+        fields.push(StatusField {
+            key,
+            label,
+            value: StatusValue::Integer(i64::try_from(value).unwrap_or(i64::MAX)),
+        });
+    }
+    fields.push(StatusField {
+        key: "combat_engaged",
+        label: "Combat actor engaged",
+        value: StatusValue::Truth(if report.engaged.is_some() {
+            Truth::True
+        } else {
+            Truth::False
+        }),
+    });
+    fields.push(StatusField {
+        key: "combat_engaged_npc_type",
+        label: "Combat NPC type",
+        value: StatusValue::Integer(i64::from(report.engaged_npc_type)),
+    });
+    if let Some(actor) = report.engaged {
+        fields.push(StatusField {
+            key: "combat_engaged_kind",
+            label: "Combat actor kind",
+            value: StatusValue::Text(Arc::from(format!("{:?}", actor.kind))),
+        });
+        fields.push(StatusField {
+            key: "combat_engaged_index",
+            label: "Combat actor index",
+            value: StatusValue::Integer(i64::from(actor.index)),
+        });
+    }
+    for (key, label, value) in [
+        ("combat_ticks", "Combat ticks", i64::from(report.ticks)),
+        ("combat_swings", "Combat swings", i64::from(report.swings)),
+        ("combat_casts", "Combat casts", i64::from(report.casts)),
+        (
+            "combat_damage_taken",
+            "Combat damage taken",
+            i64::from(report.damage_taken),
+        ),
+        ("combat_food", "Combat food", i64::from(report.food)),
+        (
+            "combat_prayer_doses",
+            "Combat prayer doses",
+            i64::from(report.prayer_doses),
+        ),
+        (
+            "combat_boost_doses",
+            "Combat boost doses",
+            i64::from(report.boost_doses),
+        ),
+        (
+            "combat_antifire_doses",
+            "Combat antifire doses",
+            i64::from(report.antifire_doses),
+        ),
+        (
+            "combat_hits_while_protected",
+            "Hits while protected",
+            i64::from(report.hits_while_protected),
+        ),
+        (
+            "combat_protect_switches",
+            "Protect switches",
+            i64::from(report.protect_switches),
+        ),
+        (
+            "combat_intruders",
+            "Combat intruders",
+            i64::from(report.intruders),
+        ),
+        (
+            "combat_ammo_pickups",
+            "Combat ammo pickups",
+            i64::from(report.ammo_pickups),
+        ),
+        (
+            "combat_restorations",
+            "Combat restorations",
+            i64::from(report.restorations),
+        ),
+        (
+            "combat_locked_ticks",
+            "Combat locked ticks",
+            i64::from(report.locked_ticks),
+        ),
+        (
+            "combat_multi_op_plans",
+            "Combat multi-operation plans",
+            i64::from(report.multi_op_plans),
+        ),
+        (
+            "combat_flick_resets",
+            "Combat flick resets",
+            i64::from(report.flick_resets),
+        ),
+        (
+            "combat_flick_misses",
+            "Combat flick misses",
+            i64::from(report.flick_misses),
+        ),
+    ] {
+        fields.push(StatusField {
+            key,
+            label,
+            value: StatusValue::Integer(value),
+        });
+    }
+    fields.push(StatusField {
+        key: "combat_flick_fallback",
+        label: "Combat flick fallback",
+        value: StatusValue::Truth(if report.flick_fallback {
+            Truth::True
+        } else {
+            Truth::False
+        }),
+    });
+}
 
 impl Quester {
-    pub fn new(run: RunKey, path: Arc<CompiledPath>, quests: Arc<QuestCatalog>) -> Self {
+    pub fn new(
+        run: RunKey,
+        path: Arc<CompiledPath>,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+    ) -> Self {
         Self {
             run,
             path,
+            selected,
             quests,
             stage: None,
             progress: None,
@@ -88,6 +278,9 @@ impl Quester {
             seq_index: 0,
             step_index: 0,
             step: None,
+            clear_prayers: None,
+            prayer_cleanup_pending: true,
+            last_outcome: None,
             advances: false,
             in_prelude: false,
             settling: false,
@@ -212,6 +405,7 @@ impl Quester {
                 }),
             },
         ];
+        append_combat_status(&mut fields, self.last_outcome.as_ref());
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "progress",
@@ -280,6 +474,9 @@ impl Quester {
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
         self.journal = None;
         self.advances = false;
         self.attempts = 0;
@@ -518,6 +715,7 @@ impl Quester {
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
+        self.prayer_cleanup_pending = true;
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -569,9 +767,9 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
-        if self.parked {
-            self.publish(tick.output);
-            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+        if self.prayer_cleanup_pending && self.step.is_some() {
+            self.cancel_step(tick);
+            self.dirty = true;
         }
         if self.death.observe(tick.cx.snapshot()) {
             self.cancel_step(tick);
@@ -579,6 +777,89 @@ impl Script for Quester {
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
+        }
+        if let Some(result) = self
+            .clear_prayers
+            .as_ref()
+            .map(|handle| tick.actions.poll(handle, &mut tick.cx))
+        {
+            match result {
+                Poll::Pending => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Poll::Ready(Ok(report)) => {
+                    self.clear_prayers = None;
+                    if report.timed_out != 0 {
+                        self.prayer_cleanup_pending = true;
+                        self.parked = true;
+                        self.record_failure(ActionError::Blocked(Arc::from(
+                            "prayer cleanup timed out",
+                        )));
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                    }
+                    self.prayer_cleanup_pending = false;
+                }
+                Poll::Ready(Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                )) => {
+                    self.clear_prayers = None;
+                    self.prayer_cleanup_pending = true;
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Poll::Ready(Err(error)) => {
+                    self.clear_prayers = None;
+                    self.parked = true;
+                    self.record_failure(error);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                }
+            }
+        }
+        if self.prayer_cleanup_pending && self.step.is_none() && !self.settling {
+            let Some(active) = tick.cx.snapshot().prayers_active() else {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            };
+            if active.value.iter().any(|on| *on) {
+                match tick
+                    .actions
+                    .begin::<ClearPrayers>(Arc::clone(&self.selected), &mut tick.cx)
+                {
+                    Ok(handle) => {
+                        self.clear_prayers = Some(handle);
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(
+                        ActionError::Busy
+                        | ActionError::Held
+                        | ActionError::Stale
+                        | ActionError::Cancelled
+                        | ActionError::BudgetExhausted,
+                    ) => {
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(error) => {
+                        self.parked = true;
+                        self.record_failure(error);
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                    }
+                }
+            }
+            self.prayer_cleanup_pending = false;
+        }
+        if self.parked {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if self.step.is_none() && !self.settling && !self.needs_read {
             let contradicted = quest_colour(&self.path, &self.quests, tick.cx.snapshot())
@@ -627,7 +908,7 @@ impl Script for Quester {
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
-                    outcome: None,
+                    outcome: self.last_outcome.as_ref(),
                     bank: &self.bank,
                 };
                 self.current_step()
@@ -672,7 +953,7 @@ impl Script for Quester {
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome: None,
+                    outcome: self.last_outcome.as_ref(),
                     bank: &self.bank,
                 };
                 match select(&self.path, self.seq_index, &pred) {
@@ -698,6 +979,9 @@ impl Script for Quester {
                 }
             };
             self.selection_since = None;
+            if selected.is_none() {
+                self.last_outcome = None;
+            }
             let Some((index, advances, prelude)) = selected else {
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
@@ -731,6 +1015,7 @@ impl Script for Quester {
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
                     self.step = Some(run);
+                    self.last_outcome = None;
                     self.dirty = true;
                     self.last_error = None;
                 }
@@ -782,6 +1067,9 @@ impl Script for Quester {
                 }) {
                     self.bank.update(receipt);
                 }
+                self.last_outcome = Some(outcome);
+                self.prayer_cleanup_pending = true;
+                self.dirty = true;
                 if self.advances {
                     self.needs_read = true;
                 }
@@ -795,6 +1083,8 @@ impl Script for Quester {
             }
             Poll::Ready(Err(error @ ActionError::Blocked(_))) => {
                 self.step = None;
+                self.last_outcome = None;
+                self.prayer_cleanup_pending = true;
                 self.parked = true;
                 self.record_failure(error);
                 self.update_wait();
@@ -803,6 +1093,8 @@ impl Script for Quester {
             }
             Poll::Ready(Err(error)) => {
                 self.step = None;
+                self.last_outcome = None;
+                self.prayer_cleanup_pending = true;
                 self.fail_streak = self.fail_streak.saturating_add(1);
                 self.record_failure(error);
                 if self.fail_streak >= 5 {
@@ -821,6 +1113,8 @@ impl Script for Quester {
             Interrupt::Resume | Interrupt::SessionReady => {
                 self.needs_read = true;
                 self.step = None;
+                self.prayer_cleanup_pending = true;
+                self.last_outcome = None;
                 self.settling = false;
                 self.journal = None;
                 self.progress = None;
@@ -834,6 +1128,8 @@ impl Script for Quester {
             }
             Interrupt::SessionEnded => {
                 self.step = None;
+                self.prayer_cleanup_pending = true;
+                self.last_outcome = None;
                 self.journal = None;
                 self.progress = None;
                 self.settling = false;
@@ -846,6 +1142,10 @@ impl Script for Quester {
             Interrupt::Pause | Interrupt::Hold(_) => {}
         }
     }
+    fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        self.prayer_cleanup_pending = true;
+        RandomClaim::Host
+    }
 
     fn on_stop(&mut self, _reason: StopReason) {
         self.step = None;
@@ -853,6 +1153,9 @@ impl Script for Quester {
         self.settling = false;
         self.dirty = true;
         self.waiting = None;
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = false;
+        self.last_outcome = None;
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
@@ -868,6 +1171,9 @@ impl Script for Quester {
         self.parked = false;
         self.needs_read = true;
         self.step = None;
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
         self.journal = None;
         self.progress = None;
         self.settling = false;
@@ -901,6 +1207,95 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
         assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
+    #[test]
+    fn combat_report_is_exposed_in_quester_status() {
+        use crate::combat::{CombatEnd, CombatReport};
+        use api::quest_progress::EvidenceStamp;
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        let (mut script, _) = fixture();
+        let report = CombatReport {
+            end: CombatEnd::TargetGone,
+            evidence: EvidenceStamp {
+                run: script.run,
+                tick: 23,
+                sequence: 4,
+            },
+            engaged: None,
+            engaged_npc_type: 477,
+            ticks: 9,
+            swings: 3,
+            casts: 0,
+            damage_taken: 2,
+            food: 1,
+            prayer_doses: 0,
+            boost_doses: 0,
+            antifire_doses: 0,
+            hits_while_protected: 0,
+            protect_switches: 0,
+            intruders: 0,
+            ammo_pickups: 0,
+            restorations: 0,
+            locked_ticks: 0,
+            multi_op_plans: 0,
+            melee_mode_fallback: None,
+            flick_resets: 0,
+            flick_misses: 0,
+            flick_fallback: false,
+        };
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report,
+                target_gone_restarts: 1,
+            })),
+        });
+        let mut output = Capture::default();
+        script.publish(&mut output);
+        let fields = &output.0.last().unwrap().fields;
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+        }));
+        for (key, expected) in [
+            ("combat_evidence_run_slot", 1),
+            ("combat_evidence_run", 1),
+            ("combat_evidence_session", 1),
+            ("combat_evidence_tick", 23),
+            ("combat_evidence_sequence", 4),
+        ] {
+            assert!(fields.iter().any(|field| {
+                field.key == key
+                    && matches!(&field.value, StatusValue::Integer(value) if *value == expected)
+            }));
+        }
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_engaged"
+                && matches!(&field.value, StatusValue::Truth(Truth::False))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_engaged_npc_type"
+                && matches!(&field.value, StatusValue::Integer(477))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_food" && matches!(&field.value, StatusValue::Integer(1))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_target_gone_restarts"
+                && matches!(&field.value, StatusValue::Integer(1))
+        }));
+    }
 
     #[test]
     fn message_settle_uses_step_begin_chat_not_tick_sequence() {
@@ -925,7 +1320,7 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let mut script = Quester::new(run, path, quests);
+        let mut script = Quester::new(run, path, Arc::clone(&data), quests);
         let mut s = GameSnapshot::new();
         s.seed_ingame(2);
         s.seed_quest_statuses(
@@ -979,6 +1374,7 @@ mod tests {
                     session: 1,
                 },
                 path,
+                Arc::clone(&data),
                 quests,
             ),
             s,
@@ -1017,6 +1413,7 @@ mod tests {
                 session: 1,
             },
             path,
+            Arc::clone(&data),
             quests,
         );
         let mut snapshot = GameSnapshot::new();
@@ -1196,6 +1593,7 @@ mod tests {
                     session: 1,
                 },
                 path,
+                Arc::clone(&data),
                 quests,
             );
             let mut s = GameSnapshot::new();

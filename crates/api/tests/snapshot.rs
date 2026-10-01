@@ -12,6 +12,7 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientObj, ClientPlayer, CollisionFlag};
 use client::datastruct::LinkList;
+use client::dash3d::client_proj::ClientProj;
 use client::io::{Packet, ServerProt};
 use std::sync::Arc;
 
@@ -203,6 +204,193 @@ fn player_rebuild_records_base_and_tile() {
     assert_eq!(snap.tile(), Some((3220, 3212, 0)));
 
     assert!(!snap.rebuild_family(&c, Family::Player));
+}
+
+/// Combat observations preserve same-id animation restarts, spot-animation
+/// onset cycles, and the appearance weapon threshold for every actor family.
+#[test]
+fn actor_onsets_and_player_weapon_rebuild_from_client_fields() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3400;
+    client.minusedlevel = 1;
+    client.loop_cycle = 70;
+
+    let mut local = ClientPlayer::at(20, 12);
+    local.name = Some("alice".into());
+    local.appearance[3] = 0x200 + 42;
+    local.entity.primary_anim = 30;
+    local.entity.primary_anim_frame = 7;
+    local.entity.spotanim_id = 91;
+    local.entity.spotanim_last_cycle = 65;
+    local.entity.damage_values = [10, 0, -3, 5];
+    local.entity.damage_types = [1, 2, 99, 3];
+    local.entity.damage_cycles = [140, 0, -1, 139];
+    client.local_player = Some(local);
+
+    let mut remote = ClientPlayer::default();
+    remote.name = Some("bob".into());
+    remote.appearance[3] = 0x200 + 83;
+    remote.entity.primary_anim = 30;
+    remote.entity.primary_anim_frame = 4;
+    remote.entity.spotanim_id = 92;
+    remote.entity.spotanim_last_cycle = 66;
+    client.players[8] = Some(Box::new(remote));
+    client.player_count = 1;
+    client.player_ids[0] = 8;
+    client.self_slot = 3;
+
+    let npc = client.npc[7].as_mut().unwrap();
+    npc.entity.primary_anim = 30;
+    npc.entity.primary_anim_frame = 8;
+    npc.entity.spotanim_id = 93;
+    npc.entity.spotanim_last_cycle = 64;
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    client.bump_gens(ServerProt::NPC_INFO);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+
+    let local = snapshot.local_player().expect("local player copied");
+    assert_eq!(local.player.weapon, Some(42));
+    assert_eq!(local.player.actor.animation, 30);
+    assert_eq!(local.player.actor.animation_frame, 7);
+    assert_eq!(local.player.actor.spot_animation_stamp, 65);
+    let remote = &snapshot.players()[0];
+    assert_eq!(remote.weapon, Some(83));
+    assert_eq!(remote.actor.animation, 30);
+    assert_eq!(remote.actor.animation_frame, 4);
+    assert_eq!(remote.actor.spot_animation_stamp, 66);
+    assert_eq!(snapshot.npcs()[0].animation, 30);
+    assert_eq!(snapshot.npcs()[0].animation_frame, 8);
+    assert_eq!(snapshot.npcs()[0].spot_animation_stamp, 64);
+
+    let hitmarks = snapshot.hitmarks().expect("local hitmarks copied");
+    assert_eq!(hitmarks.loop_cycle, 70);
+    assert_eq!(hitmarks.marks[0].value, 10);
+    assert_eq!(hitmarks.marks[0].kind, 1);
+    assert_eq!(hitmarks.marks[2].value, -3);
+    assert_eq!(hitmarks.marks[2].kind, 99);
+    assert_eq!(hitmarks.marks[2].cycle, -1);
+    assert_eq!(hitmarks.marks[3].cycle, 139);
+
+    let local = client.local_player.as_mut().unwrap();
+    local.entity.primary_anim_frame = 0;
+    local.entity.spotanim_last_cycle = 75;
+    local.appearance[3] = 0x200;
+    let remote = client.players[8].as_mut().unwrap();
+    remote.entity.primary_anim_frame = 0;
+    remote.entity.spotanim_last_cycle = 76;
+    remote.appearance[3] = 0x1ff;
+    client.npc[7].as_mut().unwrap().entity.primary_anim_frame = 0;
+    client.npc[7].as_mut().unwrap().entity.spotanim_last_cycle = 77;
+    client.loop_cycle = 71;
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    client.bump_gens(ServerProt::NPC_INFO);
+    snapshot.rebuild(&client);
+
+    assert_eq!(snapshot.local_player().unwrap().player.weapon, Some(0));
+    assert_eq!(snapshot.local_player().unwrap().player.actor.animation, 30);
+    assert_eq!(snapshot.local_player().unwrap().player.actor.animation_frame, 0);
+    assert_eq!(
+        snapshot
+            .local_player()
+            .unwrap()
+            .player
+            .actor
+            .spot_animation_stamp,
+        75
+    );
+    assert_eq!(snapshot.players()[0].weapon, None);
+    assert_eq!(snapshot.players()[0].actor.animation, 30);
+    assert_eq!(snapshot.players()[0].actor.animation_frame, 0);
+    assert_eq!(snapshot.players()[0].actor.spot_animation_stamp, 76);
+    assert_eq!(snapshot.npcs()[0].animation, 30);
+    assert_eq!(snapshot.npcs()[0].animation_frame, 0);
+    assert_eq!(snapshot.npcs()[0].spot_animation_stamp, 77);
+}
+
+/// Projectiles are refreshed from the no-generation client list on each
+/// snapshot rebuild, with world-tile sources and sign-decoded actor targets.
+#[test]
+fn projectiles_rebuild_fresh_and_decode_target_signs() {
+    let mut client = client_with_npc();
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3400;
+
+    let projectile = |target, t1| {
+        ClientProj::new(
+            77,
+            1,
+            12 * 128 + 64,
+            0,
+            34 * 128 + 64,
+            t1,
+            t1 + 10,
+            0,
+            0,
+            target,
+            0,
+        )
+    };
+    client.projectiles.push(projectile(8, 100));
+    client.projectiles.push(projectile(-5, 101));
+    client.projectiles.push(projectile(0, 102));
+
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let projectiles = snapshot.projectiles();
+    assert_eq!(projectiles.len(), 3);
+    assert_eq!(projectiles[0].spotanim, 77);
+    assert_eq!(projectiles[0].level, 1);
+    assert_eq!(
+        projectiles[0].src,
+        WorldTile {
+            x: 3212,
+            z: 3434,
+            level: 1,
+        }
+    );
+    assert_eq!(
+        projectiles[0].target,
+        Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        })
+    );
+    assert_eq!(projectiles[0].t1, 100);
+    assert_eq!(projectiles[0].t2, 110);
+    assert_eq!(
+        projectiles[1].target,
+        Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 4,
+        })
+    );
+    assert_eq!(projectiles[2].target, None);
+
+    // No ClientGens counter moves for projectile changes; the next full
+    // snapshot read still replaces the old rows.
+    client.projectiles.clear();
+    client.projectiles.push(projectile(-2, 210));
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.projectiles().len(), 1);
+    assert_eq!(
+        snapshot.projectiles()[0].target,
+        Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        })
+    );
+    assert_eq!(snapshot.projectiles()[0].t1, 210);
+
+    client.ingame = false;
+    snapshot.rebuild(&client);
+    assert!(snapshot.projectiles().is_empty());
 }
 
 /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The iface

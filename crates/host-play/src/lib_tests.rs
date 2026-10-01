@@ -16034,6 +16034,8 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
         held_ops: 0,
         npc_ops: 0,
         if_button_components: Vec::new(),
+        move_calls: 0,
+        menu_order: Vec::new(),
         sink: Sink,
     };
     let ctx = ScriptCtx {
@@ -19355,11 +19357,16 @@ struct NavRec {
     /// The component ids pressed via IF_BUTTON, in order (the follow's
     /// dialog-ride arm asserts *which* choice was answered).
     if_button_components: Vec<i32>,
+    /// Number of movement calls, including NPC approach and nav follow.
+    move_calls: usize,
+    /// Menu actions in dispatch order; the component is meaningful for buttons.
+    menu_order: Vec<(i32, i32)>,
     sink: Sink,
 }
 
 impl Driver for NavRec {
     fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, c: i32) {
+        self.menu_order.push((action, c));
         match action {
             MiniMenuAction::OP_HELD1
             | MiniMenuAction::OP_HELD2
@@ -19393,6 +19400,7 @@ impl Driver for NavRec {
         _ty: i32,
     ) -> bool {
         self.walked = Some((dx, dz));
+        self.move_calls += 1;
         true
     }
     fn local_route(&self) -> Option<(i32, i32)> {
@@ -22839,3 +22847,661 @@ mod read_journal_tests {
 }
 #[path = "script_journal_paint_tests.rs"]
 mod journal_paint;
+
+mod host_batch_tests {
+    use super::*;
+    use script::native::{
+        ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
+        ScriptFlow,
+    };
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+    use std::task::Poll;
+
+    use super::super::script_runtime::{install_dispatch_barrier, DispatchBarrier};
+
+    #[derive(Clone, Copy)]
+    enum AdmissionOrder {
+        BatchThenOrdinary,
+        OrdinaryThenBatch,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct BatchReport {
+        batch: Result<u64, ActionError>,
+        batch_receipts: Option<Vec<bool>>,
+        ordinary: Option<Result<u64, ActionError>>,
+        ordinary_receipt: Option<bool>,
+        followup: Option<Result<u64, ActionError>>,
+        followup_receipts: Option<Vec<bool>>,
+    }
+
+    struct BatchArgs {
+        rows: [Option<script::shim::InteractReq>; 5],
+        order: AdmissionOrder,
+        ordinary: Option<script::shim::InteractReq>,
+        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+    }
+
+    fn prefix_len(rows: &[Option<script::shim::InteractReq>; 5]) -> usize {
+        rows.iter().take_while(|row| row.is_some()).count()
+    }
+
+    fn rows(
+        requests: impl IntoIterator<Item = script::shim::InteractReq>,
+    ) -> [Option<script::shim::InteractReq>; 5] {
+        let mut rows: [Option<script::shim::InteractReq>; 5] =
+            std::array::from_fn(|_| None);
+        let mut requests = requests.into_iter();
+        for row in &mut rows {
+            *row = requests.next();
+        }
+        assert!(requests.next().is_none(), "test batch exceeds five rows");
+        rows
+    }
+
+    fn observed_receipts(
+        cx: &ActionContext<'_>,
+        first: u64,
+        len: usize,
+    ) -> Option<Vec<bool>> {
+        let mut receipts = Vec::with_capacity(len);
+        for offset in 0..len {
+            receipts.push(
+                cx.interaction_receipt(first + offset as u64)?
+                    .accepted,
+            );
+        }
+        Some(receipts)
+    }
+
+    struct BatchMachine {
+        batch: Result<u64, ActionError>,
+        batch_len: usize,
+        batch_receipts: Option<Vec<bool>>,
+        ordinary: Option<Result<u64, ActionError>>,
+        ordinary_receipt: Option<bool>,
+        followup_rows: Option<[Option<script::shim::InteractReq>; 5]>,
+        followup: Option<Result<u64, ActionError>>,
+        followup_id: Option<u64>,
+        followup_len: usize,
+        followup_receipts: Option<Vec<bool>>,
+    }
+
+    impl NativeMachine for BatchMachine {
+        type Args = BatchArgs;
+        type Output = BatchReport;
+
+        fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+            let batch_len = prefix_len(&args.rows);
+            let (batch, ordinary) = match args.order {
+                AdmissionOrder::BatchThenOrdinary => {
+                    let batch = cx.emit_batch(args.rows);
+                    let ordinary = args.ordinary.map(|request| cx.emit(request));
+                    (batch, ordinary)
+                }
+                AdmissionOrder::OrdinaryThenBatch => {
+                    let ordinary = args.ordinary.map(|request| cx.emit(request));
+                    let batch = cx.emit_batch(args.rows);
+                    (batch, ordinary)
+                }
+            };
+            Ok(Self {
+                batch,
+                batch_len,
+                batch_receipts: None,
+                ordinary,
+                ordinary_receipt: None,
+                followup_rows: args.followup,
+                followup: None,
+                followup_id: None,
+                followup_len: 0,
+                followup_receipts: None,
+            })
+        }
+
+        fn poll(
+            &mut self,
+            cx: &mut ActionContext<'_>,
+        ) -> Poll<Result<Self::Output, ActionError>> {
+            if self.batch_receipts.is_none() {
+                if let Ok(first) = &self.batch {
+                    let Some(receipts) = observed_receipts(cx, *first, self.batch_len) else {
+                        return Poll::Pending;
+                    };
+                    self.batch_receipts = Some(receipts);
+                }
+            }
+            if self.ordinary_receipt.is_none() {
+                if let Some(Ok(request_id)) = &self.ordinary {
+                    let Some(receipt) = cx.interaction_receipt(*request_id) else {
+                        return Poll::Pending;
+                    };
+                    self.ordinary_receipt = Some(receipt.accepted);
+                }
+            }
+            if let Some(rows) = self.followup_rows.take() {
+                self.followup_len = prefix_len(&rows);
+                let followup = cx.emit_batch(rows);
+                if let Ok(first) = &followup {
+                    self.followup_id = Some(*first);
+                }
+                self.followup = Some(followup);
+                if self.followup_id.is_some() {
+                    return Poll::Pending;
+                }
+            }
+            if self.followup_receipts.is_none() {
+                if let Some(first) = self.followup_id {
+                    let Some(receipts) = observed_receipts(cx, first, self.followup_len) else {
+                        return Poll::Pending;
+                    };
+                    self.followup_receipts = Some(receipts);
+                }
+            }
+            Poll::Ready(Ok(BatchReport {
+                batch: self.batch.clone(),
+                batch_receipts: self.batch_receipts.clone(),
+                ordinary: self.ordinary.clone(),
+                ordinary_receipt: self.ordinary_receipt,
+                followup: self.followup.clone(),
+                followup_receipts: self.followup_receipts.clone(),
+            }))
+        }
+
+        fn cancel(&mut self) {}
+    }
+
+    struct BatchScript {
+        args: Option<BatchArgs>,
+        direct: Option<script::shim::InteractReq>,
+        handle: Option<ActionHandle<BatchMachine>>,
+        report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
+    }
+
+    impl Script for BatchScript {
+        fn tick(
+            &mut self,
+            tick: &mut NativeTick<'_>,
+        ) -> Result<ScriptFlow, ScriptFailure> {
+            if let Some(request) = self.direct.take() {
+                tick.queue_test_interaction(request);
+            }
+            if let Some(handle) = &self.handle {
+                if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                    *self.report.lock().unwrap() = Some(result);
+                    self.handle = None;
+                }
+            } else if let Some(args) = self.args.take() {
+                match tick.actions.begin::<BatchMachine>(args, &mut tick.cx) {
+                    Ok(handle) => self.handle = Some(handle),
+                    Err(error) => *self.report.lock().unwrap() = Some(Err(error)),
+                }
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    struct BatchRig {
+        scripts: ScriptWall,
+        cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+        navs: Arc<Mutex<HashMap<String, NavBot>>>,
+        world: Option<Arc<NavWorld>>,
+        statuses: Arc<Mutex<Vec<SlotStatus>>>,
+        client: Client,
+        snapshot: GameSnapshot,
+        driver: NavRec,
+        report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
+    }
+
+    fn rig(
+        batch: [Option<script::shim::InteractReq>; 5],
+        order: AdmissionOrder,
+        ordinary: Option<script::shim::InteractReq>,
+        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+        direct: Option<script::shim::InteractReq>,
+        world: Option<Arc<NavWorld>>,
+    ) -> BatchRig {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+        let report = Arc::new(Mutex::new(None));
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_test_script(
+                Box::new(BatchScript {
+                    args: Some(BatchArgs {
+                        rows: batch,
+                        order,
+                        ordinary,
+                        followup,
+                    }),
+                    direct,
+                    handle: None,
+                    report: Arc::clone(&report),
+                }),
+                None,
+            )
+            .unwrap();
+
+        let mut client = nav_client();
+        client.main_modal_id = 3323;
+        client.set_iface(
+            3323,
+            IfType {
+                id: 3323,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![3420, 3421, 3422]),
+                ..Default::default()
+            },
+        );
+        for component in [3420, 3421, 3422] {
+            client.set_iface(
+                component as usize,
+                IfType {
+                    id: component,
+                    layer_id: 3323,
+                    r#type: ComponentType::TYPE_RECT,
+                    button_text: "Ok".into(),
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component as usize,
+                IfTypeMut {
+                    button_type: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        let npc_type = 500;
+        {
+            let cache = Arc::get_mut(&mut client.cache).expect("sole test cache owner");
+            while cache.npcs.len() <= npc_type {
+                cache.npcs.push(client::config::NpcType::default());
+            }
+            cache.npcs[npc_type] = client::config::NpcType {
+                id: npc_type as i32,
+                name: "Goblin".into(),
+                op: vec![Some("Attack".into())],
+                ..Default::default()
+            };
+        }
+        let mut npc = client::dash3d::ClientNpc::at(1, 0);
+        npc.r#type = Some(npc_type);
+        client.npc.push(Some(Box::new(npc)));
+        client.npc_ids[0] = 0;
+        client.npc_count = 1;
+        client.bump_gens(client::io::ServerProt::IF_OPENMAIN_SIDE);
+        let mut snapshot = GameSnapshot::new();
+        nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+
+        BatchRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            statuses,
+            client,
+            snapshot,
+            driver: NavRec::default(),
+            report,
+        }
+    }
+
+    impl BatchRig {
+        fn observe(
+            &mut self,
+            tick: u64,
+            tick_edge: bool,
+            hold: bool,
+        ) -> crate::script_runtime::ScriptObservation {
+            super::super::script_observe_cached_with_channels(
+                &mut self.driver,
+                "alice",
+                true,
+                tick_edge,
+                false,
+                tick,
+                Some((0, 0, 0)),
+                None,
+                None,
+                Some(&self.snapshot),
+                None,
+                None,
+                &self.scripts,
+                &self.cheats,
+                &self.navs,
+                &self.world,
+                hold,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                super::super::script_channels::BrokerWorld::Unavailable,
+                None,
+                None,
+            )
+        }
+
+        fn report(&self) -> Option<Result<BatchReport, ActionError>> {
+            self.report.lock().unwrap().clone()
+        }
+    }
+
+    fn arm_route(rig: &BatchRig) {
+        let world = rig.world.as_ref().expect("route fixture world");
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::clone(world)),
+            navs: Arc::clone(&rig.navs),
+            name: "alice".into(),
+            state: None,
+            bank: Vec::new(),
+        };
+        assert!(arm.route_with_radius(4, 0, 0, script::FindOptions::default(), 0));
+        assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
+    }
+
+    fn step_nav(rig: &mut BatchRig) {
+        step_nav_bot(
+            &mut rig.driver,
+            "alice",
+            Some((0, 0, 0)),
+            &rig.snapshot,
+            &rig.navs,
+            &rig.statuses,
+            rig.world.as_deref(),
+            false,
+            false,
+            no_reach,
+        );
+    }
+
+    #[test]
+    fn refused_batch_fails_stops_suffix_and_releases_reservations_without_blocking_direct_work() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::shim::InteractReq::Held {
+                    name: "missing food".into(),
+                    action: "Eat".into(),
+                    slot: Some(0),
+                },
+                script::shim::InteractReq::Npc {
+                    name: "Goblin".into(),
+                    action: "Attack".into(),
+                    index: Some(0),
+                },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            Some(rows([script::shim::InteractReq::IfButton {
+                component_id: 3422,
+            }])),
+            Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+            None,
+        );
+
+        let first = rig.observe(1, true, false);
+        assert!(first.exclusive, "a live nonzero batch owns this observation");
+        assert_eq!(
+            rig.driver.if_button_components,
+            vec![3420, 3421],
+            "the batch prefix dispatches, then unrelated direct interaction still runs"
+        );
+        assert_eq!(
+            rig.driver.npc_ops, 0,
+            "the terminal suffix is not dispatched after row two is refused"
+        );
+
+        let second = rig.observe(2, true, false);
+        assert!(second.exclusive, "the follow-up batch is independently exclusive");
+        assert_eq!(rig.driver.if_button_components, vec![3420, 3421, 3422]);
+        let third = rig.observe(3, true, false);
+        assert!(!third.exclusive, "receipt polling is not a batch dispatch");
+
+        let report = rig.report().unwrap().unwrap();
+        assert_eq!(report.batch_receipts, Some(vec![true, false, false]));
+        assert!(matches!(report.followup, Some(Ok(_))));
+        assert_eq!(report.followup_receipts, Some(vec![true]));
+    }
+
+    #[test]
+    fn ordinary_and_batch_admission_orders_keep_batch0_independent_and_gate_follow() {
+        for (order, batch_exclusive, dispatched_button) in [
+            (AdmissionOrder::BatchThenOrdinary, true, 3420),
+            (AdmissionOrder::OrdinaryThenBatch, false, 3421),
+        ] {
+            let world = Arc::new(open_world(40, 1));
+            let mut rig = rig(
+                rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+                order,
+                Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+                None,
+                None,
+                Some(world),
+            );
+            arm_route(&rig);
+            let observation = rig.observe(1, true, false);
+            assert_eq!(observation.exclusive, batch_exclusive);
+            assert_eq!(rig.driver.if_button_components, vec![dispatched_button]);
+
+            let key = (rig.client.gens.player, Some((0, 0, 0)));
+            let mut last = None;
+            let due = super::super::play_slots::nav_step_due(
+                &mut last,
+                key,
+                false,
+                observation.exclusive,
+                || queued(&rig.navs).is_some(),
+            );
+            assert_eq!(
+                due,
+                !batch_exclusive,
+                "only an admitted batch freezes the follow for this key"
+            );
+            if due {
+                step_nav(&mut rig);
+                assert_eq!(rig.driver.move_calls, 1);
+            } else {
+                assert_eq!(rig.driver.move_calls, 0);
+            }
+
+            let _ = rig.observe(2, true, false);
+            let report = rig.report().unwrap().unwrap();
+            if batch_exclusive {
+                assert!(matches!(report.batch, Ok(_)));
+                assert_eq!(report.batch_receipts, Some(vec![true]));
+                assert!(matches!(
+                    report.ordinary,
+                    Some(Err(ActionError::BudgetExhausted))
+                ));
+                assert_eq!(report.ordinary_receipt, None);
+            } else {
+                assert!(matches!(
+                    report.batch,
+                    Err(ActionError::BudgetExhausted)
+                ));
+                assert_eq!(report.batch_receipts, None);
+                assert!(matches!(report.ordinary, Some(Ok(_))));
+                assert_eq!(report.ordinary_receipt, Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn host_batch_preserves_builder_component_order() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3421 },
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let observation = rig.observe(1, true, false);
+        assert!(observation.exclusive);
+        assert_eq!(rig.driver.if_button_components, vec![3421, 3420]);
+        let _ = rig.observe(2, true, false);
+        assert_eq!(
+            rig.report().unwrap().unwrap().batch_receipts,
+            Some(vec![true, true])
+        );
+    }
+
+    #[test]
+    fn terminal_batch_freezes_only_its_player_observation_key() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::shim::InteractReq::Npc {
+                    name: "Goblin".into(),
+                    action: "Attack".into(),
+                    index: Some(0),
+                },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            Some(Arc::new(open_world(40, 1))),
+        );
+        arm_route(&rig);
+
+        let first = rig.observe(1, true, false);
+        assert!(first.exclusive);
+        assert_eq!(rig.driver.if_button_components, vec![3420]);
+        assert_eq!(rig.driver.npc_ops, 1);
+        assert_eq!(rig.driver.menu_order.len(), 2);
+        assert_eq!(
+            rig.driver.menu_order[0],
+            (MiniMenuAction::IF_BUTTON, 3420)
+        );
+        assert_eq!(rig.driver.menu_order[1].0, MiniMenuAction::OP_NPC1);
+
+        let key = (rig.client.gens.player, Some((0, 0, 0)));
+        let mut last = None;
+        let moves_after_terminal = rig.driver.move_calls;
+        let menu_after_terminal = rig.driver.menu_order.clone();
+        assert!(!super::super::play_slots::nav_step_due(
+            &mut last,
+            key,
+            false,
+            first.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        let repeated = rig.observe(1, false, false);
+        assert!(!repeated.exclusive);
+        assert!(!super::super::play_slots::nav_step_due(
+            &mut last,
+            key,
+            false,
+            repeated.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        assert_eq!(
+            rig.driver.move_calls, moves_after_terminal,
+            "same-key follow is inert; no movement is sent after the terminal"
+        );
+        assert_eq!(rig.driver.menu_order, menu_after_terminal);
+        assert!(queued(&rig.navs).is_some(), "the route stays armed");
+
+        nav_snapshot_at(&mut rig.client, &mut rig.snapshot, 0, 0);
+        let next_key = (rig.client.gens.player, Some((0, 0, 0)));
+        let next = rig.observe(2, true, false);
+        assert!(!next.exclusive);
+        assert!(super::super::play_slots::nav_step_due(
+            &mut last,
+            next_key,
+            false,
+            next.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        step_nav(&mut rig);
+        assert_eq!(rig.driver.move_calls, moves_after_terminal + 1);
+    }
+
+    #[test]
+    fn guardian_and_recovery_holds_dispatch_no_native_batch() {
+        let mut guardian = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let held = guardian.observe(1, true, true);
+        assert!(!held.exclusive);
+        assert!(guardian.driver.if_button_components.is_empty());
+
+        let mut recovering = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        force_watchdog_recovering(
+            &mut script_slot(&recovering.scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap(),
+            (0, 0, 0),
+        );
+        let held = recovering.observe(1, true, false);
+        assert!(!held.exclusive);
+        assert!(
+            recovering.driver.if_button_components.is_empty(),
+            "recovery hold closes the batch producer and host dispatch gates"
+        );
+    }
+
+    #[test]
+    fn changed_work_epoch_revokes_queued_batch_before_host_dispatch() {
+        let mut rig = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let slot = script_slot(&rig.scripts, "alice").unwrap();
+        let epoch = slot.lock().unwrap().work_epoch();
+        let barrier = DispatchBarrier::new();
+        install_dispatch_barrier(Arc::clone(&barrier));
+        barrier.arm_for_current_thread();
+
+        let scripts = Arc::clone(&rig.scripts);
+        let reset_barrier = Arc::clone(&barrier);
+        let resetter = std::thread::spawn(move || {
+            reset_barrier.wait_entered();
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .reset_session_work();
+            reset_barrier.release();
+        });
+
+        let observation = rig.observe(1, true, false);
+        resetter.join().unwrap();
+        assert!(!observation.exclusive);
+        assert!(rig.driver.if_button_components.is_empty());
+        assert_ne!(slot.lock().unwrap().work_epoch(), epoch);
+    }
+}

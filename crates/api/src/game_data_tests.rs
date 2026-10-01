@@ -149,6 +149,111 @@ fn minimal_json(tail: &str) -> String {
     )
 }
 
+#[test]
+fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
+    let food: ConsumptionFact = serde_json::from_str(
+        r#"{
+            "item":{"alias":"bread","id":1,"name":"Bread"},
+            "source_row":"food","source_file":"consume_normal.dbrow",
+            "effect":"consume_food","eat_delay_arg":2,"skill_delay_arg":3,
+            "message_delay":null,"stat_change":[],
+            "stat_heal":[{"stat":"hitpoints","base":4,"percent":0}],
+            "heal_energy":[],"qualification":"fixed_hp_heal",
+            "next_stage":"stale_bread","dose_family":null,"dose_count":null
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(food.eat_delay_arg, Some(2));
+    assert_eq!(food.skill_delay_arg, Some(3));
+    assert_eq!(food.message_delay, None);
+    assert_eq!(food.next_stage.as_deref(), Some("stale_bread"));
+    assert_eq!(food.stat_heal[0].base, 4);
+
+    let old_food: ConsumptionFact = serde_json::from_str(
+        r#"{
+            "item":{"alias":"old_bread","id":2,"name":"Old bread"},
+            "source_row":"food","source_file":"consume_normal.dbrow",
+            "qualification":"fixed_hp_heal"
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(old_food.eat_delay_arg, None);
+    assert_eq!(old_food.skill_delay_arg, None);
+    assert_eq!(old_food.message_delay, None);
+
+    let spell: SpellFact = serde_json::from_str(
+        r#"{
+            "name":"Fire Strike","ssb":0,"level":13,
+            "continue_by_autocast":true,"spellcom":"fire_strike",
+            "maxhit":8,"members":false,"wornrequired":"staff_of_fire","runes":[]
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(spell.spellcom, "fire_strike");
+    assert_eq!(spell.maxhit, 8);
+    assert!(!spell.members);
+    assert_eq!(spell.wornrequired.as_deref(), Some("staff_of_fire"));
+
+    let npc: NpcNameRow = serde_json::from_str(
+        r#"{
+            "id":17,"config":"test_npc","display":"Test NPC","ops":["Attack"],
+            "size":1,"wanderrange":0,"maxrange":1,"attackrange":1,"huntrange":1,
+            "vislevel":0,"hitpoints":44,"damagetype":null,"strength":24,"ranged":3,
+            "strengthbonus":8,"rangebonus":4,"undead":1,"ap_attack":true,
+            "attack_kind":"mixed","forced_max_hit":24,"dragonfire":"chromatic",
+            "attackrate":6,"bespoke":true
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(npc.strength, Some(24));
+    assert_eq!(npc.ranged, Some(3));
+    assert_eq!(npc.undead, Some(1));
+    assert_eq!(npc.forced_max_hit, Some(24));
+    assert_eq!(npc.dragonfire, Some(DragonfireKind::Chromatic));
+    assert_eq!(npc.attackrate, Some(6));
+
+    let sequence: StyleSequenceFact =
+        serde_json::from_str(r#"{"seq_id":1,"style":3}"#).unwrap();
+    let spotanim: StyleSpotanimFact =
+        serde_json::from_str(r#"{"spotanim_id":2,"style":8,"where":"attacker"}"#).unwrap();
+    let weapon: WeaponStyleFact = serde_json::from_str(
+        r#"{"obj_id":3,"style":1,"attackrate":5,"category":0,"tab":9}"#,
+    )
+    .unwrap();
+    let old_weapon: WeaponStyleFact =
+        serde_json::from_str(r#"{"obj_id":4,"style":1,"attackrate":4,"category":0}"#).unwrap();
+    let unknown_weapon: WeaponStyleFact = serde_json::from_str(
+        r#"{"obj_id":5,"style":1,"attackrate":4,"category":0,"tab":null}"#,
+    )
+    .unwrap();
+    let combat_tab: CombatTabFact =
+        serde_json::from_str(r#"{"tab":9,"root_id":903}"#).unwrap();
+    assert_eq!((sequence.seq_id, sequence.style), (1, 3));
+    assert_eq!((spotanim.spotanim_id, spotanim.style), (2, 8));
+    assert_eq!(spotanim.location, "attacker");
+    assert_eq!((weapon.obj_id, weapon.style, weapon.attackrate, weapon.category), (3, 1, 5, 0));
+    assert_eq!(weapon.tab, Some(9));
+    assert_eq!(old_weapon.tab, None);
+    assert_eq!(unknown_weapon.tab, None);
+    assert_eq!((combat_tab.tab, combat_tab.root_id), (9, 903));
+    let melee_mode: MeleeModeFact = serde_json::from_str(
+        r#"{"tab":1,"slot":2,"mode":1,"button":9012}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (melee_mode.tab, melee_mode.slot, melee_mode.mode, melee_mode.button),
+        (1, 2, 1, 9012),
+    );
+}
+
+#[test]
+fn legacy_selected_data_has_no_invented_melee_controls() {
+    let data =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(data.melee_modes().is_empty());
+    assert_eq!(data.melee_mode_varp(), None);
+}
+
 fn debug_catalog() -> crate::debug_commands::DebugCatalog {
     crate::debug_commands::DebugCatalog::decode(
         include_bytes!("../data/game-data/289/debug.json"),
