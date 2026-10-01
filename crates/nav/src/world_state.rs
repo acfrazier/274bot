@@ -162,6 +162,10 @@ impl WorldState {
     /// The requirements neither a bank trip nor a journal read can supply:
     /// membership, skill levels, completed quests and varp thresholds.
     /// Everything but `item_req`/`worn_req` and the quest-stage gates.
+    // Keep one gate implementation without a nested call in the hot edge
+    // predicate. W4's bank corpus still outlined an ordinary inline hint;
+    // forcing inlining removes the measured all-target search overhead.
+    #[inline(always)]
     pub(crate) fn fixed_reqs_allow(&self, e: &TransportEdge) -> bool {
         self.members_ok(e)
             && e.skill_req
