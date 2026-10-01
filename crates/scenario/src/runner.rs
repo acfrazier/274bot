@@ -165,6 +165,10 @@ pub struct ScenarioRunner {
     /// Relog: logout IF_BUTTON has gone out once this step. Do not re-press
     /// (that re-arms the 250-frame logout timer and never leaves the game).
     relog_logout_sent: bool,
+    /// Relog may finish only after logout was observed or session identity
+    /// changed; the old session can already satisfy the step's tab proof.
+    relog_session: Option<u64>,
+    relog_left_session: bool,
     engine_speed_ms: Option<u32>,
     engine_speed_sent: bool,
     evidence: Option<Evidence>,
@@ -267,6 +271,8 @@ impl ScenarioRunner {
             require_mainland_base,
             live_names: Vec::new(),
             relog_logout_sent: false,
+            relog_session: None,
+            relog_left_session: false,
             engine_speed_ms,
             engine_speed_sent: false,
             evidence: None,
@@ -656,6 +662,12 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
+            if matches!(self.current_step().kind, StepKind::Relog) {
+                self.relog_left_session |= !self.snapshot.ingame()
+                    || self
+                        .relog_session
+                        .is_some_and(|session| client.gens.session != session);
+            }
             let arm_holds = self.holds(arm);
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
@@ -669,6 +681,7 @@ impl ScenarioRunner {
                 && stall_combat_holds;
             let arm_holds = match &self.current_step().kind {
                 StepKind::Await { ready, .. } => ready(&self.snapshot),
+                StepKind::Relog => self.relog_left_session && self.snapshot.ingame() && arm_holds,
                 _ => arm_holds,
             };
             if native_episode_holds && arm_holds {
@@ -773,6 +786,8 @@ impl ScenarioRunner {
     fn begin_step(&mut self) {
         self.step_sent = false;
         self.relog_logout_sent = false;
+        self.relog_session = None;
+        self.relog_left_session = false;
         self.ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
@@ -1202,6 +1217,7 @@ impl ScenarioRunner {
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. } => Ok(()),
             StepKind::Relog => {
+                self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
                     if !logout(client, ifaces.as_slice()) {
