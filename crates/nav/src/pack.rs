@@ -92,8 +92,9 @@ use mapsquare::{parse_mapsquare_text, SQUARE};
 pub use sidecars::{
     decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
     encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar, read_canlight_sidecar,
-    read_flags_sidecar, read_reach_sidecar, sha256_from_hex, sha256_hex, CanlightSidecar,
-    CanlightSidecarLoad, FlagsSidecarLoad, ReachSidecar, ReachSidecarLoad, FLAGS_HEADER_LEN,
+    read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header, sha256_from_hex, sha256_hex,
+    CanlightSidecar, CanlightSidecarLoad, FlagsSidecarLoad, ReachSidecar, ReachSidecarHeader,
+    ReachSidecarLoad, FLAGS_HEADER_LEN,
 };
 #[cfg(test)]
 use sidecars::{MAGIC_FLAGS, VERSION_FLAGS};

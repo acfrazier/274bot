@@ -523,6 +523,36 @@ fn read_reach_and_canlight_sidecars_stream_into_arc() {
 }
 
 #[test]
+fn reach_header_leaves_words_unread_and_rejects_wrong_payload_length() {
+    let origin = WorldTile {
+        x: -7,
+        z: 9,
+        level: 2,
+    };
+    let bits = [0x0123u64, 0x4567];
+    let bytes = encode_reach_sidecar(origin, 3, 5, &bits, &[0xab; 32]);
+    let mut reader = ShortReadBuf::new(&bytes);
+    let header = super::read_reach_sidecar_header(&mut reader, bytes.len()).unwrap();
+    assert_eq!(
+        (
+            header.origin,
+            header.width,
+            header.height,
+            header.word_count
+        ),
+        (origin, 3, 5, 2)
+    );
+    assert_eq!(reader.position, bytes.len() - bits.len() * 8);
+    for length in [bytes.len() - 1, bytes.len() + 1] {
+        let mut reader = ShortReadBuf::new(&bytes);
+        assert!(matches!(
+            super::read_reach_sidecar_header(&mut reader, length),
+            Err(PackError::Truncated)
+        ));
+    }
+}
+
+#[test]
 fn read_sidecars_reject_malformed_lengths_and_partial_arc_initialization() {
     let origin = WorldTile {
         x: 0,

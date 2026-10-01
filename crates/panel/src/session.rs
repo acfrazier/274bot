@@ -1889,11 +1889,14 @@ impl Session {
         );
         if let Some(world) = profile.world() {
             crate::picker::set_reach_binding(
-                profile.reach(),
+                profile.reach_source(),
                 world.collision.origin,
                 world.collision.width,
                 world.collision.height,
-                profile.nav_origin().is_bundled(),
+                profile.nav_origin().is_bundled()
+                    || profile
+                        .nav_identity()
+                        .is_some_and(|identity| identity.reach_sha256.is_some()),
             );
         } else {
             crate::picker::set_reach_binding(

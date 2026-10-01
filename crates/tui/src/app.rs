@@ -367,6 +367,8 @@ pub struct TuiApp {
     pub locs_near: Vec<(i32, String)>,
     /// The shared nav world the map routes and paints over.
     pub world: Option<Arc<NavWorld>>,
+    /// Paint-only sidecar, requested only with the map reach layer enabled.
+    pub map_reach: Option<Arc<[u64]>>,
     /// Drawing state for the map widget (pan, plane and optional layers).
     pub map: MapView,
     /// Shared host selection/action model. The TUI owns only this one
@@ -507,6 +509,7 @@ impl TuiApp {
             stats_rows: Vec::new(),
             locs_near: Vec::new(),
             world: None,
+            map_reach: None,
             map: MapView::new(),
             map_model: MapModel::default(),
             map_active: false,
@@ -1650,6 +1653,7 @@ impl TuiApp {
             .unwrap_or(self.map_pois.len());
         if let Some(world) = self.world.clone() {
             let mut map = Map::new(&world, &mut self.map, |_| {})
+                .reach(self.map_reach.as_deref())
                 .selected_poi(self.map_poi_sel)
                 .observed(&observed);
             map = if let Some(catalogue) = catalogue.as_ref() {

@@ -224,6 +224,16 @@ pub struct ReachSidecarLoad {
     pub bits: Arc<[u64]>,
 }
 
+/// Validated bitset geometry and binding, without retaining payload words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachSidecarHeader {
+    pub origin: WorldTile,
+    pub width: usize,
+    pub height: usize,
+    pub word_count: usize,
+    pub binding: [u8; 32],
+}
+
 /// Static canlight uses the same streaming result layout as paint reach.
 pub type CanlightSidecarLoad = ReachSidecarLoad;
 
@@ -287,6 +297,28 @@ pub fn read_reach_sidecar(
     length: usize,
 ) -> Result<ReachSidecarLoad, PackError> {
     read_bitset_sidecar(reader, length, MAGIC_REACH, VERSION_REACH)
+}
+
+/// Read and validate paint-reach metadata and exact payload length, leaving
+/// the reader at the payload. Callers must consume/hash the remaining bytes
+/// before trusting the content identity.
+pub fn read_reach_sidecar_header(
+    reader: &mut impl BufRead,
+    length: usize,
+) -> Result<ReachSidecarHeader, PackError> {
+    let mut r = BoundedReader::new(reader, length);
+    let (origin, width, height, word_count, binding) =
+        read_bitset_header(&mut r, MAGIC_REACH, VERSION_REACH)?;
+    if r.remaining() != word_count.checked_mul(8).ok_or(PackError::Truncated)? {
+        return Err(PackError::Truncated);
+    }
+    Ok(ReachSidecarHeader {
+        origin,
+        width,
+        height,
+        word_count,
+        binding,
+    })
 }
 
 /// Decoded static canlight sidecar. Same geometry as [`ReachSidecar`]; the

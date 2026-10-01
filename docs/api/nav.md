@@ -161,17 +161,42 @@ pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
 identity, a missing navpois sidecar, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
 Build preparation additionally computes source and decoded digests to detect
 same-size replacement; runtime computes decoded identity once per prepared
-profile, not per bot. The bundled fast path keeps its cheap
-revision/cache-identity check, reads + decodes the staged pack once
-(`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
-checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
-keep the external path (including its one-time reach flood) and a differing cache identity falls back to it.
+profile, not per bot. The bundled pack fast path keeps its cheap
+revision/cache-identity check and reads + decodes the staged pack once
+(`NavLoadCounters`). Both bundled and external packs expose the same verified
+auxiliary sidecars when their identities are present in the selected manifest.
+Paint reach is checked at preparation (magic/version, geometry, pack binding,
+exact payload length and SHA-256), without retaining its world-scale words.
+The first paint request decodes it once into a shared `Arc<[u64]>`, rechecking
+the header and hashing the very bytes decoded before publishing them. The panel
+binds only the lazy handle at profile install and requests words when the map's
+reach layer or 3D collision/debug paint is enabled. The TUI requests words only
+with the map open and its reach layer enabled. Routing and first walks never use
+them. Closing either map releases its consumer lease; the profile caches the
+process-level decode, so reopening shares it instead of adding another buffer.
+`NavLoadCounters` includes both preparation and the lazy read/hash.
+A failed first decode stays unavailable, not a runtime flood or an all-reached mask.
+
+Canlight is decoded and SHA-256 verified during profile preparation, off the
+client tick threads, so Fire queries can immediately crop the shared plane.
+Bundled identities additionally check the pack+policy header binding; external
+manifests pin the whole sidecar, including that header, to the selected pack and
+cache. Legacy/minimal custom packs without sidecar identities keep reach or
+Fire explicitly unavailable (legacy 3D paint alone may cache a runtime flood).
+An advertised but missing, malformed or mismatched sidecar rejects preparation.
+Changing a reach file between preparation and first use cannot publish new
+words under the old identity. Already published words are owned and immutable,
+so later file edits cannot affect them. The trust boundary remains the selected
+local manifest/bundled identity, not authenticated publisher metadata.
+
 Runtime pack decoding uses a bounded 64 KiB input buffer and fills the final
-collision storage directly. Bound reach and canlight sidecars decode into their
-final shared `Arc<[u64]>` bitplanes in fixed-size chunks, without full-file staging
-buffers or intermediate decoded-vector copies. External pack SHA-256 is computed
-over the exact stream, including accepted trailing bytes, before publishing the
-world; the nav formats and collision/transport semantics are unchanged.
+collision storage directly. Sidecar decoders fill final shared `Arc<[u64]>`
+bitplanes in fixed-size chunks, without full-file staging or decoded-vector
+copies. External pack SHA-256 covers the exact stream, including accepted
+trailing bytes, before publishing the world; nav formats and routing semantics
+are unchanged. The TUI `r` layer now tints walkable-but-unreached cells using
+the same bound reach words as the panel and displays `reach unavailable` when
+no verified words are available.
 
 Real-artifact check (needs a default application build in this target profile
 plus the canonical cache):
