@@ -3,6 +3,167 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.9` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [Unreleased] — 0.2.0 Beta 1 (in development)
+
+### Upgrading from 0.1.9.1
+
+- **Server profiles.** `--profile NAME` now picks an entry from
+  `~/.274bot/servers.json`, created on first use with `local-274`,
+  `local-289` and `rs2b2t`. `--rs2b2t` selects the public one
+  (`public-289` still works as a name). `--prod` and `BOT_TARGET` were
+  removed and now error — use `--profile` (or `BOT_SERVER_PROFILE`, or
+  `--rs2b2t`) instead. A valid `~/.274bot/worlds.json` is imported once
+  into the `rs2b2t` roster; after that, edit `servers.json` (later changes
+  to `worlds.json` are ignored). `--user` creates missing accounts with a
+  fresh random game password.
+- **Vault passphrase.** `BOT_VAULT_PASS` and `--vault-pass` were removed
+  (anything on the command line or in the environment is visible to other
+  users). `host-play` and `tui-play` ask at a hidden terminal prompt (twice
+  for a new vault); pipe it with `--vault-pass-stdin`; the panel asks in
+  its unlock window. Unlocking uses the passphrase exactly as typed, and
+  vaults made by the 0.1.9.1 panel still open in the panel (at the
+  `host-play`/`tui-play` prompt, type the passphrase without surrounding
+  spaces). A new vault needs a passphrase that is not blank after trimming;
+  strength is your choice. A first run of `tui-play` with no `--user` now
+  stops with "vault has no profiles" instead of seeding a `test` profile;
+  pass `--user NAME` to create the first one.
+- **Navigation packs.** The pack format is now v11; packs you baked yourself
+  with an earlier version are refused and must be rebaked with `nav-pack`. A
+  v11 pack you baked with an earlier 0.2.0 build keeps its old members gates
+  until you rebake it.
+- **Graphics.** On Windows the panel tries Vulkan first and falls back to
+  Direct3D 12. On every platform the window now prefers the power-saving GPU.
+  `WGPU_BACKEND` and `WGPU_POWER_PREF` override this (see FIRST-START);
+  `WGPU_POWER_PREF=high` can make startup stall for minutes on some laptops.
+
+### Sessions
+
+- After you log out, the game view's login screen keeps animating instead of
+  freezing, and its Log In button (or Enter) logs that bot back in. While a
+  login is waiting (for example the "already logged in" wait) the screen
+  keeps animating and says what it is waiting for.
+- The memory mode (low/high) now takes effect in the live game view at once
+  from both the panel and the TUI (the TUI settings gain a memory row).
+  Server-side tabs and sound only change at the next login; while the two
+  differ the panel and TUI say so and offer **Relog now**, which logs out and
+  back in through the normal login queue (with a warning if a script is
+  running).
+- On local-engine profiles the panel's tutorial check no longer leaves a
+  "Click to continue" box over the chat: it is clicked away once per box, and
+  only while the box is showing, so chat options are never mis-clicked.
+- A genie-lamp random event whose skill menu does not open is now rubbed
+  again (up to three tries) instead of being given up on after one attempt,
+  which left the lamp unredeemed.
+
+### Navigation
+
+- Walks between Lumbridge and Al Kharid now pay the 10-coin toll at the border
+  gate instead of stopping there. Without 10 coins the walk stops and says
+  the coins are missing.
+- Boat, cart and glider walks retry a brief reach failure within the same
+  walk instead of aborting, and say plainly when a ride cannot be completed.
+  Ride dialogue is now answered by the text of the options rather than by
+  position, which fixes sailors whose menu gains a Crandor option during
+  Dragon Slayer and Captain Shanks' two-destination menu.
+- Map walks can start from enclosed spots such as the Ardougne market shops:
+  door crossings now land where the game puts you, so the pocket has an exit
+  (fixes the 0.1.9.1 known issue). Starting from a tile that cannot be walked
+  on (for example dense bush) now says the player's tile is not standable
+  instead of the misleading "no observed player".
+- On free-to-play or unrecognised worlds, map walks no longer plan through
+  more members-only crossings (the Duel Arena gates, the Shantay pass
+  doorway, the Entrana boat, the Falador wall shortcut, Zanaris and the
+  Camelot, Ardougne, Watchtower and Trollheim teleports); the walk is refused
+  with "This route requires a members' world".
+- Map-walk bank fetch (the "allow bank fetch" setting, off by default) now
+  also works at banks served by a teller instead of a booth, checks that each
+  bank step actually landed (stopping with a logged reason if it never does),
+  and no longer mistakes items that are only in your bank for items you
+  carry. The bank must be open when you start the walk.
+
+### Profiles and fleet
+
+- The panel gains a Fleet window (button beside WalkTo) for the bots you mark:
+  Start, Stop, Assign a script without starting, Assign & restart, Log in/out,
+  Walk N to… (one destination, each bot routed from where it stands) and
+  Apply the focused bot's settings to the marks. Columns show runtime, time
+  since last progress and levels gained. Every marked-rows command, in the
+  panel and the TUI, reports each bot once with a short reason (no path, not
+  logged in, running a script…), and marks are shared between the two.
+- Start all and Start on marked bots (panel and TUI) now start one bot per frame
+  instead of all at once; waiting bots show `queued k/n`, and one running
+  report counts each bot once as started, queued, skipped or failed.
+- If saving a profile fails after you press Save (for example a read-only disk)
+  the error now shows in the form you were editing, in the panel and the TUI,
+  with "nothing was saved" and your edits kept. While a save is still being
+  written the panel also asks before you leave the form (switching profile,
+  Cancel, Close, deleting that profile or turning MultiBox off) and brings
+  the Profiles tab forward so the prompt is visible.
+
+### WalkTo map
+
+- Map markers that said "Rare Trees" now show the nearby tree's own name (for
+  example Yew, Willow, Maple tree, Magic tree).
+- Quest-start markers show the quest's name where the game content identifies
+  the start (a bit over half of them on the 289 map); the others stay generic
+  rather than risk a wrong name.
+- The WalkTo map and the TUI map can shade the Wilderness, with a persisted
+  on/off toggle and edges that follow the navigation content tile-for-tile.
+
+### Panel
+
+- On macOS and Windows the panel window fits inside the usable screen area
+  (below the menu bar, clear of the Dock/taskbar) at launch and when MultiBox
+  widens it; you can still drag it anywhere afterwards.
+- Tidier panel: thinner scrollbars, a centred game view, and a Profiles window
+  that fits narrow screens without scrolling. Popups no longer balloon or
+  clip "Keep editing" when opened from a far-right Edit button. The Log
+  section can be detached into a floating in-app window (Detach log / Attach
+  log), the session-log setting shows the file being written, and Status
+  hides empty rows.
+- The panel no longer freezes ("Not Responding") at startup on Windows
+  laptops with two graphics chips (see Upgrading).
+- On Linux (X11) the panel exits cleanly instead of crashing when its window
+  is destroyed from outside.
+- A local-engine **Debug** tab replaces the old stub: searchable server
+  commands, name pickers, favourites and recent commands; send to the focused
+  bot or the marked bots, confirm destructive commands, and see skipped bots
+  in the tab and nearby server replies in the log. Hidden on public (rs2b2t)
+  profiles.
+
+### TUI
+
+- In the TUI browser, a card whose import cannot be resolved now shows the
+  failing import instead of only dimming. `tui-play --help` prints usage and
+  exits 0.
+
+### Audio
+
+- Fixed a brief audio stutter when the first background song starts.
+
+### Performance
+
+- Navigation overlays (collision, path, trail) are much cheaper to leave
+  switched on with the GPU renderer, and with the software renderer, where
+  they are not drawn, turning them on no longer costs extra memory or CPU.
+
+### In progress
+
+These features are usable now and still growing; this list changes as they land.
+
+- **Quester** (revision 289): runs Cook's Assistant end to end, reading
+  progress from the quest journal and picking up again after Stop/Start. If
+  an attack interrupts a conversation it stops with "dialogue interrupted by
+  combat" instead of carrying on. Planned for 0.2.0: every quest, with fights
+  handled by a shared combat machine (melee, ranged and magic).
+- **Gatherer**: woodcutting, mining and fishing from a start tile, a custom
+  area, or Auto, which searches outward for the nearest usable spots. Waits
+  for trees and rocks to respawn, steps away from mining gas, ents and
+  whirlpools, and power-drops including incidental uncut gems. Planned:
+  banking trips, death recovery and self-defence.
+- Planned: walks that route around dangerous monsters by default, with a
+  WalkTo option to go through anyway.
+
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
 ### Sessions
