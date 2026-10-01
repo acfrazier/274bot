@@ -12,7 +12,7 @@ use frontend_core::log::{
 use frontend_core::log_file::apply_session_log;
 
 use crate::session::Session;
-use crate::theme::{ERROR, TEXT, TEXT_DIM, WARN};
+use crate::theme::{scale_px, ERROR, TEXT, TEXT_DIM, WARN};
 
 /// Smallest log box height (px) when it fills the leftover panel height.
 const MIN_FILL_HEIGHT: f32 = 120.0;
@@ -148,9 +148,9 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
         ui.text_colored(TEXT_DIM, "older lines rolled off (ring bound)");
     }
     let height = if last {
-        ui.content_region_avail()[1].max(MIN_FILL_HEIGHT)
+        ui.content_region_avail()[1].max(scale_px(ui, MIN_FILL_HEIGHT))
     } else {
-        RESIZABLE_HEIGHT
+        scale_px(ui, RESIZABLE_HEIGHT)
     };
     let flags = if last {
         ChildFlags::BORDERS
@@ -213,7 +213,7 @@ fn log_row(ui: &Ui, entry: &LogEntry, all: bool) {
 }
 
 fn filter_row(ui: &Ui, pane: &mut LogPane) {
-    let third = ((ui.content_region_avail()[0] - 8.0) / 3.0).max(40.0);
+    let third = ((ui.content_region_avail()[0] - scale_px(ui, 8.0)) / 3.0).max(scale_px(ui, 40.0));
     ui.set_next_item_width(third);
     let min = pane.view.filter().min_level;
     if let Some(_open) = ui.begin_combo("##log-level", min.label()) {
@@ -274,7 +274,7 @@ fn filter_row(ui: &Ui, pane: &mut LogPane) {
         }
     }
     ui.set_item_tooltip("focused bot, process lines, or every bot");
-    ui.set_next_item_width(-70.0);
+    ui.set_next_item_width(-scale_px(ui, 70.0));
     if ui
         .input_text("##log-search", &mut pane.search)
         .hint("search")
@@ -288,7 +288,7 @@ fn filter_row(ui: &Ui, pane: &mut LogPane) {
 }
 
 fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
-    let half = ((ui.content_region_avail()[0] - 8.0) / 2.0).max(40.0);
+    let half = ((ui.content_region_avail()[0] - scale_px(ui, 8.0)) / 2.0).max(scale_px(ui, 40.0));
     if ui.button_with_size("Copy", [half, 0.0]) {
         pane.copy();
     }
@@ -307,7 +307,7 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
             "{} line(s) with the current filters",
             pane.view.len()
         ));
-        ui.set_next_item_width(420.0);
+        ui.set_next_item_width(scale_px(ui, 420.0));
         ui.input_text("##save-log-path", &mut pane.save_path)
             .build();
         if ui.button("Save") && !pane.save_path.trim().is_empty() {

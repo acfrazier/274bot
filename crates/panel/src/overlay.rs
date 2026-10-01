@@ -8,7 +8,7 @@
 use dear_imgui_rs::Ui;
 use frontend_core::QueuePlace;
 
-use crate::theme::ACCENT;
+use crate::theme::{scale_px, ACCENT};
 
 /// Fixed card title, matching rs2b0t.
 const QUEUE_CARD_TITLE: &str = "AUTO-LOGIN QUEUE";
@@ -49,10 +49,10 @@ fn queue_card_metrics(ui: &Ui, lines: &[String]) -> (f32, f32, f32, f32) {
         content_w = content_w.max(sz[0]);
         line_h = line_h.max(sz[1].max(font_sz));
     }
-    line_h += QUEUE_CARD_LINE_GAP;
+    line_h += scale_px(ui, QUEUE_CARD_LINE_GAP);
     let content_h = line_h * lines.len() as f32;
-    let box_w = content_w + QUEUE_CARD_PAD * 2.0;
-    let box_h = content_h + QUEUE_CARD_PAD * 2.0;
+    let box_w = content_w + scale_px(ui, QUEUE_CARD_PAD * 2.0);
+    let box_h = content_h + scale_px(ui, QUEUE_CARD_PAD * 2.0);
     (content_w, line_h, box_w, box_h)
 }
 
@@ -61,17 +61,24 @@ fn queue_card_metrics(ui: &Ui, lines: &[String]) -> (f32, f32, f32, f32) {
 /// font measurement so left and right padding stay equal.
 fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
     let (_content_w, line_h, box_w, box_h) = queue_card_metrics(ui, lines);
-    let box_min = [min[0] + QUEUE_CARD_OUTER, min[1] + QUEUE_CARD_OUTER];
-    let box_max = [box_min[0] + box_w, box_min[1] + box_h];
-    let text_origin = [box_min[0] + QUEUE_CARD_PAD, box_min[1] + QUEUE_CARD_PAD];
+    let outer = scale_px(ui, QUEUE_CARD_OUTER);
+    let pad = scale_px(ui, QUEUE_CARD_PAD);
+    let box_min = [(min[0] + outer).round(), (min[1] + outer).round()];
+    let box_max = [(box_min[0] + box_w).round(), (box_min[1] + box_h).round()];
+    let text_origin = [box_min[0] + pad, box_min[1] + pad];
     let dl = ui.get_window_draw_list();
     dl.add_rect(box_min, box_max, [0.0, 0.0, 0.0, 0.6])
         .filled(true)
         .build();
-    dl.add_rect(box_min, box_max, ACCENT).thickness(1.0).build();
+    dl.add_rect(box_min, box_max, ACCENT)
+        .thickness(scale_px(ui, 1.0))
+        .build();
     for (i, line) in lines.iter().enumerate() {
         dl.add_text(
-            [text_origin[0], text_origin[1] + i as f32 * line_h],
+            [
+                (text_origin[0]).round(),
+                (text_origin[1] + i as f32 * line_h).round(),
+            ],
             ACCENT,
             line,
         );
@@ -185,12 +192,13 @@ mod tests {
         let lines = queue_card_lines(place(1, 2));
         let (content_w, line_h, box_w, box_h) = queue_card_metrics(ui, &lines);
         assert!(content_w > 0.0, "title must measure wider than zero");
+        let pad = crate::theme::scale_px(ui, QUEUE_CARD_PAD * 2.0);
         assert!(
-            (box_w - (content_w + QUEUE_CARD_PAD * 2.0)).abs() < 0.01,
+            (box_w - (content_w + pad)).abs() < 0.01,
             "box width is content plus equal left/right pad"
         );
         assert!(
-            (box_h - (line_h * lines.len() as f32 + QUEUE_CARD_PAD * 2.0)).abs() < 0.01,
+            (box_h - (line_h * lines.len() as f32 + pad)).abs() < 0.01,
             "box height is lines plus equal top/bottom pad"
         );
         // Longest line is the title; char*7 estimate is not the source of width.
@@ -225,9 +233,10 @@ mod tests {
         let long = queue_card_lines(place(12, 49));
         let (w_short, _, box_short, _) = queue_card_metrics(ui, &short);
         let (w_long, _, box_long, _) = queue_card_metrics(ui, &long);
+        let pad = crate::theme::scale_px(ui, QUEUE_CARD_PAD * 2.0);
         // Title still dominates both; pads stay equal either way.
-        assert!((box_short - (w_short + QUEUE_CARD_PAD * 2.0)).abs() < 0.01);
-        assert!((box_long - (w_long + QUEUE_CARD_PAD * 2.0)).abs() < 0.01);
+        assert!((box_short - (w_short + pad)).abs() < 0.01);
+        assert!((box_long - (w_long + pad)).abs() < 0.01);
         assert!(
             box_long + 0.01 >= box_short,
             "wider k-of-n must not shrink the measured box"

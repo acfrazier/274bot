@@ -1,4 +1,4 @@
-use dear_imgui_rs::{Direction, Style, StyleColor};
+use dear_imgui_rs::{Direction, Style, StyleColor, Ui};
 
 /// Amber accent color (#FFB000) for the 274 panel.
 pub const ACCENT: [f32; 4] = [1.0, 176.0 / 255.0, 0.0, 1.0]; // #FFB000
@@ -28,13 +28,16 @@ pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 pub const GREEN: [f32; 4] = [76.0 / 255.0, 217.0 / 255.0, 100.0 / 255.0, 1.0];
 /// Dim build line under the title is [`crate::build_info::build_line`]
 /// (`alpha 4 ·` git stamp; hover is crate version + full commit).
-/// Right-hand chrome width, matching rs2b0t's 330px panel. Locked: the
-/// strip does not grow with the OS window, only taller.
+/// Right-hand chrome width in logical pixels at 100% scale, matching
+/// rs2b0t's 330px panel. Its physical width follows monitor DPI; resizing
+/// the OS window grows it vertically only.
 pub const PANEL_WIDTH: f32 = 330.0;
-/// Native 274 applet in logical pixels. Same numbers as
-/// [`crate::game_view::APPLET_W`] / `APPLET_H` (those are `u32` for
-/// textures). HiDpi (`winit` + imgui Default) maps these to the
-/// framebuffer; we do not ScaleAllSizes on top.
+/// Base font size in logical pixels; FontScaleDpi rasterizes it at the
+/// physical display scale. The Regular face measures about 6.94 px per
+/// cell at 14 px, matching ProggyClean's old 7 px grid at 13 px.
+pub const PANEL_FONT_SIZE: f32 = 14.0;
+/// Native 274 applet in the panel's base physical-pixel layout. Same
+/// numbers as [`crate::game_view::APPLET_W`] / `APPLET_H`.
 const STAGE_W: f32 = 765.0;
 const STAGE_H: f32 = 503.0;
 /// Stable ImGui window name for the right-hand chrome.
@@ -43,8 +46,7 @@ pub const PANEL_WINDOW: &str = "274bot";
 pub const RAIL_WINDOW: &str = "274bot-rail";
 
 /// Thin global scrollbar width (ImGui default 14 eats the 330px strip and
-/// the Browse/log lists). A base value: `apply_ui_scale`'s `ScaleAllSizes`
-/// multiplies it by the integer UI scale.
+/// Browse/log lists). ScaleAllSizes applies the active panel DPI.
 pub const THIN_SCROLLBAR_SIZE: f32 = 6.0;
 /// Scrollbar rounding: half the thin width, so the grab stays a pill.
 pub const THIN_SCROLLBAR_ROUNDING: f32 = 3.0;
@@ -57,10 +59,33 @@ pub const THIN_SCROLLBAR_ROUNDING: f32 = 3.0;
 /// at the default size) instead of centred.
 pub const DOCKHOST_PADDING: [f32; 2] = [0.0, 0.0];
 
-/// Integer UI scale for ImGui chrome. Never mutates 765×503. Do **not** also
-/// multiply the Game Image by this — HiDpi already maps logical pixels.
-pub fn integer_ui_scale(dpi: f32) -> f32 {
-    dpi.max(1.0).round().max(1.0)
+/// Sanitize the display scale without quantizing fractional DPI.
+pub fn panel_scale(dpi: f32) -> f32 {
+    if dpi.is_finite() && dpi > 0.0 {
+        dpi
+    } else {
+        1.0
+    }
+}
+
+/// Current physical layout scale from FontScaleDpi, preserving fractional
+/// monitor scales even when the active baked font size rounds to a whole px.
+pub fn ui_scale(ui: &Ui) -> f32 {
+    // Dear ImGui rounds baked font sizes to whole pixels (17.5 becomes 18).
+    // FontScaleDpi preserves the actual fractional monitor scale.
+    //
+    // SAFETY: The panel never pushes FontScaleDpi on the style stack. Read
+    // the current style value immediately and do not retain its reference.
+    unsafe { ui.style().font_scale_dpi() }
+}
+
+pub fn scale_px(ui: &Ui, logical_px: f32) -> f32 {
+    logical_px * ui_scale(ui)
+}
+
+pub fn scale_size(ui: &Ui, logical_size: [f32; 2]) -> [f32; 2] {
+    let scale = ui_scale(ui);
+    [logical_size[0] * scale, logical_size[1] * scale]
 }
 
 /// Native applet size. Non-grid Game blit is always this; host-window
@@ -86,9 +111,10 @@ pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
     [STAGE_W * scale, STAGE_H * scale]
 }
 
-/// Right-split ratio so the panel stays [`PANEL_WIDTH`] px at `width`.
-pub fn panel_split_ratio(width: f32) -> f32 {
-    (PANEL_WIDTH / width.max(1.0)).clamp(0.05, 0.85)
+/// Right-split ratio so the panel stays [`PANEL_WIDTH`] × `scale` physical
+/// pixels at `width`.
+pub fn panel_split_ratio(width: f32, scale: f32) -> f32 {
+    (PANEL_WIDTH * scale / width.max(1.0)).clamp(0.05, 0.85)
 }
 
 /// Title bar of the Game pane: focused vault username, else `"Game"`.
