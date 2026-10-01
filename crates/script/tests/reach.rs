@@ -703,9 +703,10 @@ fn entity_op_that_could_not_click_retries_after_one_tick() {
 
 const GRID: i32 = 16;
 
-/// A posted reach view over `0..16 x 0..16` on level 0, flooded from
-/// `here`: `exact` tiles are reachable exactly, `adj` with `adjacentOk`.
+/// A posted reach view over `0..16 x 0..16` on level 0. `walkable` is
+/// scene geometry; `reachable` and `reachable_adj` are the flood from `here`.
 struct Grid {
+    walkable: Vec<u32>,
     reachable: Vec<u32>,
     reachable_adj: Vec<u32>,
     exact_rank: Vec<u16>,
@@ -717,6 +718,7 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     let n = (GRID * GRID) as usize;
     let index = |(x, z): (i32, i32)| (x * GRID + z) as usize;
     let mut g = Grid {
+        walkable: vec![0; n.div_ceil(32)],
         reachable: vec![0; n.div_ceil(32)],
         reachable_adj: vec![0; n.div_ceil(32)],
         exact_rank: vec![u16::MAX; n],
@@ -725,6 +727,7 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     };
     for &tile in exact.iter().chain([&here]) {
         let i = index(tile);
+        g.walkable[i / 32] |= 1 << (i % 32);
         g.reachable[i / 32] |= 1 << (i % 32);
         g.exact_rank[i] = if tile == here { 0 } else { 1 };
     }
@@ -736,6 +739,13 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     g
 }
 
+fn allow_walkable(g: &mut Grid, tiles: &[(i32, i32)]) {
+    for &(x, z) in tiles {
+        let i = (x * GRID + z) as usize;
+        g.walkable[i / 32] |= 1 << (i % 32);
+    }
+}
+
 fn view(g: &Grid) -> ReachViewInput<'_> {
     ReachViewInput {
         available: true,
@@ -744,7 +754,7 @@ fn view(g: &Grid) -> ReachViewInput<'_> {
         level: 0,
         width: GRID,
         height: GRID,
-        walkable: &g.reachable,
+        walkable: &g.walkable,
         reachable: &g.reachable,
         reachable_adj: &g.reachable_adj,
         exact_rank: &g.exact_rank,
@@ -918,15 +928,45 @@ fn entity_op_walks_through_an_open_leaf_without_closing_it() {
 }
 
 #[test]
-fn wall_aware_door_approach_does_not_open_from_the_wrong_side() {
+fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
     let iso = spawn(NPC_DIALOG);
     let open = ["Open".to_string()];
     let talk = ["Talk-to".to_string()];
-    let blocked = grid((5, 5), &[], &[]);
-    let doors = [barrier("Door", &open, 1530, 6, 5, 1)];
+    let mut g = grid((5, 5), &[], &[]);
+    allow_walkable(&mut g, &[(6, 5)]);
+    let mut door = barrier("Door", &open, 1530, 6, 5, 1);
+    door.shape = 0;
+    door.angle = 0; // WALL_STRAIGHT / WEST.
+    let doors = [door];
     let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
     let mut snap = base(stand());
-    snap.reach = view(&blocked);
+    snap.reach = view(&g);
+    snap.locs = &doors;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![loc_op(6, 5, "Open", 1530)],
+        "the engine-reachable west stand opens directly instead of walking across the wall"
+    );
+    iso.join();
+}
+
+#[test]
+fn non_straight_wall_door_keeps_the_approach_walk() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let mut g = grid((5, 5), &[], &[]);
+    allow_walkable(&mut g, &[(6, 5)]);
+    let mut door = barrier("Door", &open, 1530, 6, 5, 1);
+    door.shape = 9;
+    door.angle = 0;
+    let doors = [door];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
     snap.locs = &doors;
     snap.npcs = &npcs;
     post(&iso, &snap);
@@ -941,15 +981,8 @@ fn wall_aware_door_approach_does_not_open_from_the_wrong_side() {
                 ..
             }]
         ),
-        "a nearby door still needs a wall-aware approach"
+        "non-straight wall geometry must not inherit the engine's straight-wall shortcut"
     );
-
-    let operable = grid((5, 5), &[], &[(6, 5)]);
-    snap.tick = 2;
-    snap.reach = view(&operable);
-    post(&iso, &snap);
-    tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Open", 1530)]);
     iso.join();
 }
 

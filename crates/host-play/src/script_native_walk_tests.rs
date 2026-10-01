@@ -148,7 +148,7 @@ impl Rig {
             &self.snapshot,
             &self.navs,
             &self.statuses,
-            self.world.as_deref(),
+            self.world.as_ref(),
             false,
             false,
             no_reach,

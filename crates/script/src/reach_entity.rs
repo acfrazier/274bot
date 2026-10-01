@@ -177,6 +177,21 @@ fn door_approachable(door: Tile) -> bool {
     })
 }
 
+fn door_wall_reachable(door: &SceneRow) -> bool {
+    let Some(here) = here() else {
+        return false;
+    };
+    crate::load::reach_query::with_view(|view| {
+        api::query::straight_wall_reachable(
+            here.world(),
+            loc_tile(door).world(),
+            door.shape,
+            door.angle,
+            |from, to| view.can_step(from, to),
+        )
+    })
+}
+
 /// Frozen `towardDest`.
 fn toward_dest(door: Tile, here: Tile, dest: Tile) -> bool {
     door.cheb(dest) <= here.cheb(dest) + TOWARD_SLACK
@@ -242,7 +257,9 @@ impl Clear {
                     let Some(shut) = shut_at(door) else {
                         return Some(true);
                     };
-                    if !crate::load::reach_query::arrived(door.world(), 1) {
+                    if !crate::load::reach_query::arrived(door.world(), 1)
+                        && !door_wall_reachable(&shut)
+                    {
                         return Some(false);
                     }
                     let Some(op) = op_starting(&shut, "open") else {
@@ -321,6 +338,12 @@ impl Clear {
                 Err(_) => Some(Some(false)),
             };
         };
+        if door_wall_reachable(&door) {
+            self.phase = ClearPhase::DoorOpen {
+                door: loc_tile(&door),
+            };
+            return None;
+        }
         let door = loc_tile(&door);
         match Resilient::new(
             door.world(),

@@ -443,3 +443,7 @@ mod bank_npc_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
+
+#[cfg(test)]
+#[path = "nav_door_toggle_live_settlement_tests.rs"]
+mod nav_door_toggle_live_settlement_tests;

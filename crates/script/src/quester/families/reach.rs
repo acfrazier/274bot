@@ -14,6 +14,19 @@ pub const PROBE_RADIUS: i32 = 10;
 pub const DOOR_WAIT_MS: u64 = 5_000;
 pub const CANT_REACH: &str = "i can't reach that";
 
+fn door_wall_reachable(
+    here: WorldTile,
+    door: &api::snapshot::LocView,
+    reach: Option<&api::query::ReachQueryView>,
+) -> bool {
+    let (Ok(shape), Ok(angle)) = (u8::try_from(door.shape), u8::try_from(door.angle)) else {
+        return false;
+    };
+    api::query::straight_wall_reachable(here, door.tile, shape, angle, |from, to| {
+        reach.is_some_and(|view| view.can_step(from, to))
+    })
+}
+
 #[derive(Clone)]
 pub struct ReachArgs {
     pub kind: ReachKind,
@@ -274,6 +287,13 @@ impl Reach {
         if api::query::door_is_open(door.actions.iter().flatten().map(String::as_str)) {
             return self.walk_to_target(cx);
         }
+        let snapshot = cx.snapshot();
+        if let Some(here) = snapshot.here() {
+            let reach = snapshot.reach().map(|observed| observed.value);
+            if door_wall_reachable(here.value, door, reach) {
+                return self.open_door(door.id, door.tile, cx);
+            }
+        }
         self.walk_to(door.tile, Some((door.id, door.tile)), cx)
     }
 
@@ -300,11 +320,11 @@ impl Reach {
         let here = snapshot
             .here()
             .ok_or_else(|| ActionError::Failed(Arc::from("no player tile")))?;
+        let reach = snapshot.reach().map(|observed| observed.value);
         let unavailable = api::query::ReachQueryView::unavailable();
-        let reach = snapshot.reach();
-        if !api::query::is_arrived(here.value, tile, 1, || {
-            reach.map_or(&unavailable, |observed| observed.value)
-        }) {
+        if !api::query::is_arrived(here.value, tile, 1, || reach.unwrap_or(&unavailable))
+            && !door_wall_reachable(here.value, door, reach)
+        {
             return Err(ActionError::Failed(Arc::from(
                 "door approach not reachable",
             )));

@@ -249,6 +249,35 @@ impl ScriptWalkArm {
         )
     }
 
+    /// Re-find an estimated endpoint against newly observed live geometry
+    /// without replacing the owning script action. The caller removes the old
+    /// follow first and only calls this when no worker/bank session is active.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn refresh_route_in_snapshot(
+        &self,
+        snapshot: &GameSnapshot,
+        to: WorldTile,
+        radius: i32,
+        opts: FindOptions,
+        request_id: u64,
+        avoid: Vec<AvoidRect>,
+        authority: Option<script::native::HostAuthority>,
+    ) -> bool {
+        self.queue_route_impl(
+            to.x,
+            to.z,
+            to.level,
+            opts,
+            radius,
+            true,
+            request_id,
+            Some(snapshot),
+            RouteCompletion::default(),
+            avoid,
+            authority,
+        )
+    }
+
     /// Explicit WalkNear, including radius 0: an armed or in-flight route is
     /// replaced through the existing generation / pending-route coalescing path.
     /// A latched bank-fetch session still refuses.
@@ -596,7 +625,7 @@ impl ScriptWalkArm {
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
         let live_candidates = if radius > 0 {
-            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to))
+            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to, radius))
         } else {
             None
         };
@@ -619,9 +648,18 @@ impl ScriptWalkArm {
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
             bot.walk_request_id = request_id;
-            // A host or legacy walk displacing a live native walk ends it
-            // visibly; the same owner's replaced walk is already revoked.
-            bot.end_native_walk(script::native::WalkEnd::Cancelled);
+            // A geometry refresh keeps the same live action and correlation;
+            // only a genuinely replacing request cancels the previous owner.
+            let same_owner = bot
+                .native_walk
+                .as_ref()
+                .zip(authority.as_ref())
+                .is_some_and(|(old, new)| {
+                    old.run() == new.run() && old.request_id() == new.request_id()
+                });
+            if !same_owner {
+                bot.end_native_walk(script::native::WalkEnd::Cancelled);
+            }
             bot.native_walk = authority;
             bot.native_walk_failure = None;
             bot.requested_route = Some(key);
@@ -808,74 +846,148 @@ impl ScriptWalkArm {
     }
 }
 
-const MAX_LIVE_CANDIDATES: usize = 4;
-
-/// Fixed-capacity arm-time goals. The destination tile has at most four
-/// orthogonal arrival stands, so the worker receives only inline coordinates.
-#[derive(Clone, Copy)]
-pub(crate) struct LiveCandidates {
-    tiles: [WorldTile; MAX_LIVE_CANDIDATES],
-    len: usize,
+/// Arm-time legal stands for the whole live footprint, clipped to the requested
+/// radius. The existing operable-tile producer owns shape/rotation/force sides.
+pub(crate) enum LiveCandidates {
+    Modeled(Vec<WorldTile>),
+    Cardinal { tiles: [WorldTile; 4], len: usize },
 }
 
 impl LiveCandidates {
-    fn empty(fill: WorldTile) -> Self {
-        Self {
-            tiles: [fill; MAX_LIVE_CANDIDATES],
-            len: 0,
-        }
-    }
-
-    fn push_unique(&mut self, tile: WorldTile) {
-        if self.as_slice().contains(&tile) {
-            return;
-        }
-        debug_assert!(self.len < MAX_LIVE_CANDIDATES);
-        self.tiles[self.len] = tile;
-        self.len += 1;
-    }
-
     fn as_slice(&self) -> &[WorldTile] {
-        &self.tiles[..self.len]
+        match self {
+            Self::Modeled(tiles) => tiles,
+            Self::Cardinal { tiles, len } => &tiles[..*len],
+        }
+    }
+
+    fn modeled(&self) -> bool {
+        matches!(self, Self::Modeled(_))
     }
 }
 
-/// For an in-scene solid destination, capture the target tile's own legal
-/// cardinal sides. A modeled footprint loc additionally requires an operable
-/// side, so a 2x2 loc cannot send a radius-1 walk to its far perimeter.
-///
-/// This deliberately does not filter by the current-scene flood: a shut door,
-/// gate, scene edge, or transport can separate `from` from a legal stand while
-/// the baked graph can still route there. `None` keeps the sequential
-/// off-scene and standable-target policy; an empty or unroutable `Some`
-/// falls back to the same radius goal set in
-/// [`ScriptRouteRequest::calculate_solid`].
-fn solid_target_approach_tiles(snapshot: &GameSnapshot, to: WorldTile) -> Option<LiveCandidates> {
-    let scene = snapshot.scene();
-    let query = api::query::SceneQuery::new(scene, None);
+/// Do not filter by the current-scene flood: the baked graph may cross a shut
+/// door or transport to a legal stand. Modeled live footprints have no fallback
+/// to proximity-only goals; unknown solids use the wall-aware radius estimate.
+fn solid_target_approach_tiles(
+    snapshot: &GameSnapshot,
+    to: WorldTile,
+    radius: i32,
+) -> Option<LiveCandidates> {
+    let query = api::query::SceneQuery::new(snapshot.scene(), None);
     if !query.contains(to) || query.walkable(to) {
         return None;
     }
-
-    let mut cardinal = LiveCandidates::empty(to);
-    for tile in query.arrival_stands(to) {
-        cardinal.push_unique(tile);
-    }
-
-    let mut modeled = false;
-    let mut operable_cardinal = LiveCandidates::empty(to);
+    let mut tiles: Option<Vec<WorldTile>> = None;
     for loc in snapshot.locs().iter().filter(|loc| loc.tile == to) {
-        let Some(operable) = query.operable_tiles(loc) else {
+        let Some(mut operable) = query.operable_tiles(loc) else {
             continue;
         };
-        modeled = true;
-        for &tile in cardinal.as_slice() {
-            if operable.contains(&tile) {
-                operable_cardinal.push_unique(tile);
+        operable.retain(|stand| {
+            api::query::loc_approach::distance_from(loc, *stand)
+                .is_some_and(|distance| distance <= radius.clamp(0, 104) as u32)
+        });
+        if let Some(tiles) = tiles.as_mut() {
+            for stand in operable {
+                if !tiles.contains(&stand) {
+                    tiles.push(stand);
+                }
+            }
+        } else {
+            tiles = Some(operable);
+        }
+    }
+    Some(match tiles {
+        Some(tiles) => LiveCandidates::Modeled(tiles),
+        None => {
+            let mut tiles = [to; 4];
+            let mut len = 0;
+            for stand in query.arrival_stands(to) {
+                tiles[len] = stand;
+                len += 1;
+            }
+            LiveCandidates::Cardinal { tiles, len }
+        }
+    })
+}
+
+/// Packed goals are approach estimates until a live loc supplies its true
+/// force-approach rule. Prefer generated rotated dimensions when already
+/// loaded; otherwise inspect only the bounded solid component containing `to`.
+fn packed_solid_stands(world: &NavWorld, to: WorldTile, mut emit: impl FnMut(WorldTile)) {
+    use api::query::loc_approach::LocApproach;
+    let flags = |tile: WorldTile| world.collision.walkable_word(tile.x, tile.z, tile.level) as i32;
+    if let Some((width, length)) = world.loc_footprint_at(to) {
+        let geometry = LocApproach {
+            width,
+            length,
+            blocked_sides: 0, // Not generated; live geometry owns final admission.
+        };
+        let mut side = |x, z| {
+            let stand = WorldTile {
+                x,
+                z,
+                level: to.level,
+            };
+            if world.collision.standable(stand) && geometry.can_operate(to, stand, flags(stand)) {
+                emit(stand);
+            }
+        };
+        for x in to.x..to.x + i32::from(width) {
+            side(x, to.z - 1);
+            side(x, to.z + i32::from(length));
+        }
+        for z in to.z..to.z + i32::from(length) {
+            side(to.x - 1, z);
+            side(to.x + i32::from(width), z);
+        }
+        return;
+    }
+    // Without a placed model, use an open anchor edge when one exists.
+    // Flooding every touching solid can merge unrelated furniture into a
+    // building wall and admit the wrong side (the wheel-room control).
+    let mut has_anchor_stand = false;
+    for stand in api::query::arrival_stands(
+        to,
+        |stand| world.collision.standable(stand),
+        |stand| Some(flags(stand)),
+    ) {
+        emit(stand);
+        has_anchor_stand = true;
+    }
+    if has_anchor_stand {
+        return;
+    }
+    // Unknown connected footprints can extend beyond the anchor's radius.
+    // Bound the one discovery flood to a scene, not to the requested margin.
+    let bound = 104;
+    let mut solid = vec![to];
+    let mut visited = std::collections::HashSet::from([to]);
+    let mut next = 0;
+    while next < solid.len() {
+        let tile = solid[next];
+        next += 1;
+        for stand in api::query::arrival_stands(
+            tile,
+            |stand| world.collision.standable(stand),
+            |stand| Some(flags(stand)),
+        ) {
+            emit(stand);
+        }
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let neighbour = WorldTile {
+                x: tile.x + dx,
+                z: tile.z + dz,
+                level: to.level,
+            };
+            if neighbour.x.abs_diff(to.x).max(neighbour.z.abs_diff(to.z)) <= bound
+                && flags(neighbour) & client::dash3d::CollisionFlag::SQ_BLOCKED != 0
+                && visited.insert(neighbour)
+            {
+                solid.push(neighbour);
             }
         }
     }
-    Some(if modeled { operable_cardinal } else { cardinal })
 }
 
 /// Candidate destinations for an explicit radius request. Exact walks retain
@@ -905,28 +1017,20 @@ pub(crate) fn approach_tiles(
             let connected = nav::router::local_step_component(&world.collision, to, r);
             tiles.retain(|tile| connected.contains(tile));
         } else {
-            let mut stands = api::query::arrival_stands(
-                to,
-                |tile| world.collision.standable(tile),
-                |tile| Some(world.collision.walkable_word(tile.x, tile.z, tile.level) as i32),
-            );
-            if let Some(seed) = stands.next() {
-                let component_radius = r + 1;
-                let mut connected =
-                    nav::router::local_step_component(&world.collision, seed, component_radius);
-                for seed in stands {
-                    if !connected.contains(&seed) {
-                        connected.extend(nav::router::local_step_component(
-                            &world.collision,
-                            seed,
-                            component_radius,
-                        ));
+            let mut connected = std::collections::HashSet::new();
+            packed_solid_stands(world, to, |seed| {
+                if !connected.contains(&seed) {
+                    if seed.x.abs_diff(to.x).max(seed.z.abs_diff(to.z)) > r as u32 {
+                        tiles.push(seed);
                     }
+                    connected.extend(nav::router::local_step_component(
+                        &world.collision,
+                        seed,
+                        r + 1,
+                    ));
                 }
-                tiles.retain(|tile| connected.contains(tile));
-            } else {
-                tiles.clear();
-            }
+            });
+            tiles.retain(|tile| connected.contains(tile));
         }
     }
     tiles.sort_by_key(|t| {
@@ -950,9 +1054,8 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Arm-time target-cardinal goals derived from the borrowed live scene.
-    /// `None` keeps the sequential radius policy; with `Some`, the radius
-    /// goal set is the fallback when no stand routes.
+    /// Arm-time full-footprint goals derived from the borrowed live scene.
+    /// Unknown solids retain a wall-aware radius fallback; modeled locs don't.
     pub(crate) live_candidates: Option<LiveCandidates>,
     /// Frozen `WalkOptions.avoidZones` rectangles: every search of this
     /// walk keeps out of them.
@@ -960,20 +1063,56 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
+    /// An off-scene solid endpoint is provisional. For a large radius, make
+    /// progress toward the target instead of repeatedly choosing the current
+    /// unobservable stand; the armed request's original radius is unchanged.
+    fn estimated_radius(&self) -> i32 {
+        if self.live_candidates.is_none() && !self.world.collision.standable(self.to) {
+            let distance = self
+                .from
+                .x
+                .abs_diff(self.to.x)
+                .max(self.from.z.abs_diff(self.to.z));
+            self.radius.min((distance / 2).max(1) as i32)
+        } else {
+            self.radius
+        }
+    }
+
+    fn packed_targets(&self) -> Vec<WorldTile> {
+        let mut targets = approach_tiles(&self.world, self.from, self.to, self.estimated_radius());
+        if matches!(self.live_candidates, Some(LiveCandidates::Cardinal { .. })) {
+            // The live scene has no modeled loc behind this tile. Its radius
+            // remains anchor-based, even if an offscene solid estimate was wider.
+            targets.retain(|tile| {
+                tile.x.abs_diff(self.to.x).max(tile.z.abs_diff(self.to.z))
+                    <= self.radius.clamp(0, 104) as u32
+            });
+        }
+        targets
+    }
+
     fn native_failure(&self, outcome: &RouteOutcome) -> Option<script::native::WalkEnd> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let mut targets = if self.radius <= 0 {
+        let targets = if self.radius <= 0 {
             vec![self.to]
+        } else if let Some(stands) = self
+            .live_candidates
+            .as_ref()
+            .filter(|stands| stands.modeled())
+        {
+            stands.as_slice().to_vec()
         } else {
-            approach_tiles(&self.world, self.from, self.to, self.radius)
+            let mut targets = self.packed_targets();
+            if let Some(stands) = &self.live_candidates {
+                targets.extend_from_slice(stands.as_slice());
+            }
+            targets
         };
-        if let Some(stands) = &self.live_candidates {
-            targets.extend_from_slice(stands.as_slice());
-        }
         Some(
             match nav::router::find_unresolved_quest_gates(
                 &self.world.collision,
@@ -1024,9 +1163,9 @@ impl ScriptRouteRequest {
             .collect()
     }
 
-    /// A solid in-scene target: its arrival stands, then the radius goal set
-    /// frozen PathFinder falls back to, in order: a strict route to a stand,
-    /// a BankBudget session to a stand, a strict route to a radius tile, a
+    /// A solid in-scene target: legal stands first, then an optional wall-aware
+    /// radius fallback for unmodeled solids only. In order: a strict route to a
+    /// stand, a BankBudget session to a stand, a strict route to a radius tile, a
     /// session to a radius tile. The strict search for the stands also
     /// answers for the tiles as a search over them alone would, where that
     /// needs no more settles ([`find_first_with_fallback`]: the tiles keep
@@ -1218,10 +1357,17 @@ impl ScriptRouteRequest {
             );
         }
 
-        // Frozen PathFinder falls back to the radius goal set after the
-        // target-cardinal goals fail. Standable and off-scene destinations
-        // keep the old sequential policy over the same set.
-        let generated = approach_tiles(&self.world, self.from, self.to, self.radius);
+        // Off-scene radius goals are only an approach estimate. Live modeled
+        // footprints route solely to real operable stands; unknown targets keep
+        // the wall-aware bounded radius fallback, which may correctly be empty.
+        if let Some(stands) = self
+            .live_candidates
+            .as_ref()
+            .filter(|stands| stands.modeled())
+        {
+            return self.calculate_solid(stands.as_slice(), &[], state);
+        }
+        let generated = self.packed_targets();
         match self.live_candidates.as_ref() {
             Some(stands) => self.calculate_solid(stands.as_slice(), &generated, state),
             None => {

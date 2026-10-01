@@ -589,10 +589,11 @@ impl Gatherer {
         // tile is not a navigation destination (and can move before arrival).
         if selected.class == PlacementClass::Unloaded
             || (selected.plan.npc_index < 0
-                && !adjacent(
-                    tick.cx.snapshot().here().map(|here| here.value),
-                    selected.plan.tile,
-                ))
+                && !tick.cx.snapshot().here().is_some_and(|here| {
+                    tick.cx
+                        .snapshot()
+                        .walk_arrived(here.value, selected.plan.tile, 1)
+                }))
         {
             let request = WalkRequest {
                 target: selected.plan.tile,
@@ -1303,12 +1304,6 @@ fn tool_gate_met(tool: &ToolUse, skill: Skill, stat: &StatView) -> bool {
             Skill::Woodcutting | Skill::Mining | Skill::Fishing => true,
         }
     }
-}
-
-fn adjacent(here: Option<WorldTile>, target: WorldTile) -> bool {
-    here.is_some_and(|here| {
-        here.level == target.level && (here.x - target.x).abs().max((here.z - target.z).abs()) <= 1
-    })
 }
 
 #[cfg(test)]

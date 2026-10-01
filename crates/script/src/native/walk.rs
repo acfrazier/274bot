@@ -39,11 +39,7 @@ impl Observation for Frame<'_> {
         let Some(here) = self.snapshot.here() else {
             return false;
         };
-        let unavailable = api::query::ReachQueryView::unavailable();
-        let reach = self.snapshot.reach();
-        api::query::is_arrived(here.value, key.tile, key.radius, || {
-            reach.map_or(&unavailable, |observed| observed.value)
-        })
+        self.snapshot.walk_arrived(here.value, key.tile, key.radius)
     }
 }
 
