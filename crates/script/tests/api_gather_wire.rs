@@ -8,7 +8,6 @@ use script::isolate_fb::{
     NativeFactsInput, ReachViewInput, Snapshot, SnapshotInput,
 };
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script::observed::GatherStatusField;
 use script::shim::InteractReq;
 use script::{observed, CompiledId};
 use std::sync::Arc;
@@ -369,32 +368,6 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
     observed::apply(&view);
     let observed_page = observed::with(|scene| scene.since_login().api_gather().unwrap().clone());
     assert_eq!(observed_page.request_id, 7);
-    assert!(observed_page.has_status);
-    assert_eq!(
-        observed_page.fields,
-        vec![
-            GatherStatusField {
-                key: "skill".into(),
-                value: script::observed::GatherStatusValue::Text("Mining".into()),
-            },
-            GatherStatusField {
-                key: "yielded".into(),
-                value: script::observed::GatherStatusValue::Integer(9),
-            },
-            GatherStatusField {
-                key: "tile".into(),
-                value: script::observed::GatherStatusValue::Tile(script::observed::Tile {
-                    x: 3200,
-                    z: 3210,
-                    level: 1,
-                }),
-            },
-            GatherStatusField {
-                key: "visible".into(),
-                value: script::observed::GatherStatusValue::Truth(Truth::Unknown),
-            },
-        ]
-    );
     fingerprint = next;
 
     let same_arc = GatherPage {
@@ -583,16 +556,4 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
         "canonical sample status exceeds the 2-KiB wire target"
     );
     assert!(!Snapshot::from_bytes(&unchanged).unwrap().has_api_gather());
-    observed::apply(&Snapshot::from_bytes(&populated).unwrap());
-    assert!(
-        observed::with(|scene| scene
-            .since_login()
-            .api_gather()
-            .unwrap()
-            .fields
-            .iter()
-            .any(|field| field.key == "yielded"
-                && field.value == script::observed::GatherStatusValue::Integer(29),)),
-        "wire budget must include the delivered canonical counter"
-    );
 }

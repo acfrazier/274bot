@@ -29,7 +29,6 @@
 use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
 use crate::isolate_fb::{
     ApiGather, ApiGatherOutcome, CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat,
-    StatusField,
 };
 use api::line_of_sight::CollisionQuery;
 use flatbuffers::{ForwardsUOffset, Vector};
@@ -505,31 +504,12 @@ pub struct WalkOutcome {
     /// The settled route end is frozen `'blocked'`.
     pub blocked: bool,
 }
-/// One typed status value published by the live Gatherer card.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GatherStatusValue {
-    Text(String),
-    Integer(i64),
-    Tile(Tile),
-    Truth(api::selected::Truth),
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GatherStatusField {
-    pub key: String,
-    pub value: GatherStatusValue,
-}
-
-/// The latest posted live Gatherer page. `has_status` distinguishes the
-/// preparation/install page from a published empty status object.
+/// The latest posted live Gatherer page, retained only for request identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatherObservation {
     pub request_id: u64,
-    pub phase: u8,
-    pub has_status: bool,
-    pub fields: Vec<GatherStatusField>,
 }
-
 /// The retained terminal result of the latest Gatherer session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatherOutcomeObservation {
@@ -768,47 +748,9 @@ fn read_buttons<'a>(
         .map(|row| ButtonRow::read(&row, strings))
         .collect()
 }
-fn read_gather_status(fields: TableVector<'_, StatusField<'_>>) -> Vec<GatherStatusField> {
-    fields
-        .into_iter()
-        .flat_map(|fields| fields.iter())
-        .filter_map(|field| {
-            let key = field.key()?.to_string();
-            let value = match field.kind() {
-                1 => GatherStatusValue::Text(field.text()?.to_string()),
-                2 => GatherStatusValue::Integer(field.integer()),
-                3 => {
-                    let tile = field.tile()?;
-                    GatherStatusValue::Tile(Tile {
-                        x: tile.x(),
-                        z: tile.z(),
-                        level: tile.level(),
-                    })
-                }
-                4 => GatherStatusValue::Truth(match field.truth() {
-                    1 => api::selected::Truth::True,
-                    2 => api::selected::Truth::False,
-                    3 => api::selected::Truth::Unknown,
-                    _ => return None,
-                }),
-                _ => return None,
-            };
-            Some(GatherStatusField { key, value })
-        })
-        .collect()
-}
-
 fn read_gather_page(page: ApiGather<'_>) -> GatherObservation {
-    let fields = if page.has_status() {
-        read_gather_status(page.fields())
-    } else {
-        Vec::new()
-    };
     GatherObservation {
         request_id: page.request_id(),
-        phase: page.phase(),
-        has_status: page.has_status(),
-        fields,
     }
 }
 
