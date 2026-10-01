@@ -24,6 +24,24 @@ pub struct LocApproach {
 }
 
 impl LocApproach {
+    /// Construct the packed approach geometry from a loc definition's raw,
+    /// unrotated dimensions and force-approach mask.
+    ///
+    /// Returns `None` when a dimension cannot be represented by the packed
+    /// footprint fields.
+    pub fn from_loc_def(width: i32, length: i32, angle: i32, force_approach: i32) -> Option<Self> {
+        let (width, length) = if angle & 1 == 0 {
+            (width, length)
+        } else {
+            (length, width)
+        };
+        Some(Self {
+            width: u8::try_from(width).ok()?,
+            length: u8::try_from(length).ok()?,
+            blocked_sides: rotate_force_approach(force_approach, angle) as u8,
+        })
+    }
+
     /// Test one stand against the footprint, not merely its south-west anchor.
     /// Callers check scene bounds and standability before admission.
     pub fn can_operate(self, origin: WorldTile, from: WorldTile, flags: i32) -> bool {
