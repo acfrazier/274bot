@@ -492,7 +492,6 @@ fn mint_live_names_are_unique_and_never_test() {
             assert_eq!(names.len(), n);
             for name in names {
                 assert_ne!(name, "test", "a live boot must never log in `test`");
-                assert!(name.starts_with("live"), "minted name: {name}");
                 assert!(
                     name.len() <= 12,
                     "the engine enforces the 12-char username limit: {name}"

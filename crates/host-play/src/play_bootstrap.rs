@@ -56,6 +56,8 @@ pub fn mint_vault_passphrase() -> String {
 /// the classic 12-character username limit. A randomly seeded counter
 /// keeps consecutive runs distinct; its low base-36 digits fit the token
 /// budget without truncating away the changing part of the counter.
+/// `BOT_LIVE_NAME_PREFIX` replaces `live` with its first four ASCII
+/// alphanumeric characters (lowercased); an empty prefix uses `live`.
 /// Player saves accumulate under the engine's `player/` dir — wipe it to
 /// reset.
 pub fn mint_live_names(n: usize) -> Vec<String> {
@@ -64,14 +66,24 @@ pub fn mint_live_names(n: usize) -> Vec<String> {
         .get_or_init(|| std::sync::atomic::AtomicU64::new(OsRng.next_u64()))
         .fetch_add(1, Ordering::Relaxed);
     let slot_digits = n.saturating_sub(1).max(1).to_string().len();
-    let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX")
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(4)
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect::<String>();
+    let prefix = if prefix.is_empty() { "live" } else { &prefix };
+    let max_token = 12usize
+        .saturating_sub(prefix.len() + 1 + slot_digits)
+        .max(1);
     let mut token = vec![b'0'; max_token];
     for digit in token.iter_mut().rev() {
         *digit = b"0123456789abcdefghijklmnopqrstuvwxyz"[(nonce % 36) as usize];
         nonce /= 36;
     }
     let token = String::from_utf8(token).expect("base-36 token is ASCII");
-    (0..n).map(|i| format!("live{token}_{i}")).collect()
+    (0..n).map(|i| format!("{prefix}{token}_{i}")).collect()
 }
 
 /// Profile login password for a freshly minted account.
