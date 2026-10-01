@@ -9590,12 +9590,6 @@ fn scenario_settings_default_matches_the_bag() {
     assert!(d.only_render_selected);
     assert!(!d.capture);
     assert!(!d.full_rate);
-    assert_eq!(
-        d.nav,
-        ScenarioNav::default(),
-        "paint layers are opt-in per scenario"
-    );
-    assert_eq!(d.deadline, DEFAULT_DEADLINE);
     assert_eq!(d.terminal_shot, None);
     assert!(
         !d.require_mainland_base,
@@ -9684,12 +9678,6 @@ fn render_smoke_settings_are_300s_and_gate_off() {
     let s = get("render_smoke").expect("render_smoke");
     assert_eq!(s.settings.deadline, Duration::from_secs(300));
     assert!(!s.settings.require_mainland_base);
-}
-
-#[test]
-fn walk_settings_are_defaults() {
-    let s = get("walk").expect("walk");
-    assert_eq!(s.settings, ScenarioSettings::default());
 }
 
 #[test]

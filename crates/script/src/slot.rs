@@ -245,6 +245,11 @@ pub struct SlotScript {
     /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
     #[cfg(feature = "load")]
     recovery_hints: Arc<crate::load::RecoveryHintsCell>,
+    /// Test-only spawn failure seam: when set, the next `spawn_isolate`
+    /// returns a deterministic thread-spawn diagnostic instead of spawning.
+    /// Never set outside `#[cfg(test)]`; production builds have no field.
+    #[cfg(all(test, feature = "load"))]
+    fail_spawn_for_test: bool,
 }
 
 impl Default for SlotScript {
@@ -320,6 +325,8 @@ impl SlotScript {
             native_input: NativeInputAuthority::new(),
             #[cfg(feature = "load")]
             recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
+            #[cfg(all(test, feature = "load"))]
+            fail_spawn_for_test: false,
         }
     }
 
@@ -507,6 +514,10 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_spawn_for_test) {
+            return Err("isolate thread: test-injected spawn failure".to_string());
+        }
         let isolate = LoadIsolate::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
@@ -537,6 +548,29 @@ impl SlotScript {
             self.last_settings_fp = None;
         }
         Ok(())
+    }
+    /// Test-only: arm the spawn-failure seam, then drive the real typed
+    /// Start producer. Lets a test assert the `Idle|Error` branch maps a
+    /// spawn failure to `RuntimeLoad` (not `Refused`) without spawning.
+    #[cfg(all(test, feature = "load"))]
+    pub(crate) fn start_with_injected_spawn_failure_for_test(
+        &mut self,
+        source: String,
+        shape: crate::load::LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartLoadError> {
+        self.fail_spawn_for_test = true;
+        self.start_load_with_loadouts_and_game_data_typed(
+            source,
+            shape,
+            siblings,
+            loadouts,
+            game_data,
+            named_banks,
+        )
     }
 
     #[cfg(feature = "load")]

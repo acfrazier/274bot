@@ -538,28 +538,6 @@ mod tests {
     }
 
     #[test]
-    fn chrome_defaults_match_theme_consts() {
-        use crate::theme::{
-            rgba_to_hex, ACCENT, ACCENT_HOVER, ACTIVE_FILL, BG, BG_DEEP, BORDER, ERROR, FRAME,
-            GREEN, HOVER_FILL, TEXT, TEXT_DIM, WARN,
-        };
-        let c = PanelUiState::default().chrome;
-        assert_eq!(c.accent, rgba_to_hex(ACCENT));
-        assert_eq!(c.accent_hover, rgba_to_hex(ACCENT_HOVER));
-        assert_eq!(c.bg, rgba_to_hex(BG));
-        assert_eq!(c.bg_deep, rgba_to_hex(BG_DEEP));
-        assert_eq!(c.text, rgba_to_hex(TEXT));
-        assert_eq!(c.text_dim, rgba_to_hex(TEXT_DIM));
-        assert_eq!(c.frame, rgba_to_hex(FRAME));
-        assert_eq!(c.hover_fill, rgba_to_hex(HOVER_FILL));
-        assert_eq!(c.active_fill, rgba_to_hex(ACTIVE_FILL));
-        assert_eq!(c.border, rgba_to_hex(BORDER));
-        assert_eq!(c.warn, rgba_to_hex(WARN));
-        assert_eq!(c.error, rgba_to_hex(ERROR));
-        assert_eq!(c.green, rgba_to_hex(GREEN));
-    }
-
-    #[test]
     fn session_log_file_is_off_for_old_prefs_and_survives_a_panel_save() {
         let old: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();

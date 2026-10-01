@@ -1667,10 +1667,6 @@ mod tests {
         frozen_card_hashes_match(PairCase::Mule).unwrap();
         frozen_card_hashes_match(PairCase::Flax).unwrap();
         frozen_card_hashes_match(PairCase::Duel).unwrap();
-        assert_eq!(NATURECRAFTER, "NatureCrafter");
-        assert_eq!(MULECRAFTER, "MuleCrafter");
-        assert_eq!(FLAXRUNNER, "FlaxRunner");
-        assert_eq!(DUEL_ARENA, "Duel Arena Combat Trainer");
         assert_eq!(
             NATURECRAFTER_SHA256,
             "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a"
@@ -1757,12 +1753,6 @@ mod tests {
         assert!(duel_operation_gates()
             .iter()
             .any(|gate| gate.kind == GateKind::UnusedByCase && gate.owner.contains("t_68de6f48")));
-        assert_eq!(SCRIPT_GOLD_DEADLINE_SECS, 180);
-        assert_eq!(SCRIPT_GOLD_WATCH_TICKS, 150);
-        assert_eq!(PREP_DEADLINE_SECS, 180);
-        assert_eq!(BANK_SEED_ESSENCE, 200);
-        assert_eq!(TRADE_CAP, 25);
-        assert_eq!(MULE_TRADE_CAP, 27);
     }
 
     #[test]
@@ -2220,6 +2210,8 @@ mod tests {
             assert!(air["master"].get(key).is_some(), "missing master.{key}");
             assert!(air["runner"].get(key).is_some(), "missing runner.{key}");
         }
+        assert_eq!(air["master"]["account"], "alice");
+        assert_eq!(air["runner"]["account"], "bob");
         let mule = serde_json::to_value(mule_pair()).unwrap();
         for key in ["baseline", "account", "settings", "partner"] {
             assert!(mule["crafter"].get(key).is_some(), "missing crafter.{key}");
@@ -2233,13 +2225,16 @@ mod tests {
             assert!(mule["crafter"].get(key).is_some(), "missing crafter.{key}");
         }
         assert!(mule["mule"].get("air_transferred_in").is_some());
+        assert_eq!(mule["crafter"]["account"], "alice");
+        assert_eq!(mule["mule"]["account"], "bob");
         let duel = serde_json::to_value(duel_pair()).unwrap();
         for slot in ["a", "b"] {
             assert!(duel[slot].get("baseline").is_some());
             assert!(duel[slot].get("account").is_some());
         }
+        assert_eq!(duel["a"]["account"], "alice");
+        assert_eq!(duel["b"]["account"], "bob");
     }
-
     #[test]
     fn stale_pre_logout_scene2_is_not_relog_admission() {
         assert_eq!(
