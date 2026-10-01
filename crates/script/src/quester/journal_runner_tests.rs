@@ -72,6 +72,7 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
             },
             path,
             quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         ),
         snapshot,
     )
@@ -720,6 +721,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
             },
             Arc::clone(&path),
             Arc::clone(&quests),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);

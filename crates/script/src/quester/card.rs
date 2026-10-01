@@ -64,6 +64,7 @@ fn released(index_json: &str, id: &str) -> bool {
 struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
     quest: String,
 }
 
@@ -103,6 +104,7 @@ fn prepare(
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
+        banks: Arc::clone(&cx.banks),
         quest,
     };
     Ok(PreparedConfig::new(
@@ -140,6 +142,7 @@ fn create(
         run,
         path,
         Arc::clone(&prepared.quests),
+        Arc::clone(&prepared.banks),
     )))
 }
 
