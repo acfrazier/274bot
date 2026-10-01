@@ -1,5 +1,7 @@
 use super::*;
 
+const RAW_289: &[u8] = include_bytes!("../data/game-data/289.json");
+
 #[test]
 fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
     let data = for_revision(ClientRevision::R289).unwrap();
@@ -12,7 +14,7 @@ fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
         legacy.selected_pin(),
         Err(FactError::FamilyUnavailable(_))
     ));
-    let unbound: SelectedGameData = serde_json::from_slice(REVISION_289).unwrap();
+    let unbound: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
     assert!(matches!(
         unbound.selected_pin(),
         Err(FactError::FamilyUnavailable(_))
@@ -22,17 +24,27 @@ fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
 #[test]
 fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
     let data = for_revision(ClientRevision::R289).unwrap();
-    let mut changed = REVISION_289.to_vec();
+    let mut changed = RAW_289.to_vec();
     changed.push(b' ');
     assert_eq!(
-        data.bind_pin(&changed, MANIFEST, ClientRevision::R289),
+        data.bind_pin(
+            changed.len() as u64,
+            Sha256::digest(&changed).into(),
+            MANIFEST,
+            ClientRevision::R289,
+        ),
         Err(FactError::PinMismatch)
     );
     // Same length but changed bytes must fail too.
-    changed = REVISION_289.to_vec();
+    changed = RAW_289.to_vec();
     changed[0] = b' ';
     assert_eq!(
-        data.bind_pin(&changed, MANIFEST, ClientRevision::R289),
+        data.bind_pin(
+            changed.len() as u64,
+            Sha256::digest(&changed).into(),
+            MANIFEST,
+            ClientRevision::R289,
+        ),
         Err(FactError::PinMismatch)
     );
     for field in ["nav_sha256", "flags_sha256", "content_id", "cache_id"] {
@@ -40,7 +52,8 @@ fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
         manifest["revisions"][1]["cache_identity"][field] = "00".repeat(32).into();
         assert_eq!(
             data.bind_pin(
-                REVISION_289,
+                RAW_289.len() as u64,
+                Sha256::digest(RAW_289).into(),
                 &serde_json::to_vec(&manifest).unwrap(),
                 ClientRevision::R289,
             ),
@@ -49,9 +62,28 @@ fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
         );
     }
     assert_eq!(
-        data.bind_pin(REVISION_289, MANIFEST, ClientRevision::R274),
+        data.bind_pin(
+            RAW_289.len() as u64,
+            Sha256::digest(RAW_289).into(),
+            MANIFEST,
+            ClientRevision::R274,
+        ),
         Err(FactError::PinMismatch)
     );
+}
+
+#[test]
+fn streamed_pin_covers_trailing_whitespace_and_refuses_truncated_input() {
+    // Cross the decode buffer boundary with valid JSON whitespace: it must
+    // count toward the original-byte pin, even though it adds no facts.
+    let bytes = RAW_289
+        .iter()
+        .copied()
+        .chain(std::iter::repeat_n(b' ', 128 * 1024));
+    let changed: Vec<u8> = bytes.collect();
+    let data = SelectedGameData::decode(changed.as_slice(), ClientRevision::R289).unwrap();
+    assert_eq!(data.selected_pin(), Err(FactError::PinMismatch));
+    assert!(SelectedGameData::decode(&RAW_289[..RAW_289.len() / 2], ClientRevision::R289).is_err());
 }
 
 #[test]

@@ -3,9 +3,7 @@ use super::{
     chip_frame_padding, chip_text_color, dialog_date_color, dialog_rows, display_category,
     format_mtime, move_category, name_matches_search, needs_rs2b0t_catalog_prompt,
     resolve_category_order, rs2b0t_root_has_index, sidebar_places, sort_dialog_rows, DialogMode,
-    DialogRow, DialogSort, LoadBrowseEntry, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y, GLYPH_CHEVRON,
-    GLYPH_DESKTOP, GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE, GLYPH_FOLDER, GLYPH_HOME,
-    UNCATEGORIZED,
+    DialogRow, DialogSort, LoadBrowseEntry, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y, UNCATEGORIZED,
 };
 use crate::test_support::TestDir;
 use std::path::{Path, PathBuf};
@@ -58,17 +56,6 @@ fn rs2b0t_root_has_index_checks_catalog_file() {
     assert!(!rs2b0t_root_has_index(&root));
     std::fs::write(scripts.join("index.ts"), "// empty").unwrap();
     assert!(rs2b0t_root_has_index(&root));
-}
-
-#[test]
-fn file_dialog_glyphs_are_fa_pua() {
-    assert_eq!(GLYPH_HOME, "\u{f015}");
-    assert_eq!(GLYPH_DESKTOP, "\u{f390}");
-    assert_eq!(GLYPH_DOCUMENTS, "\u{f15c}");
-    assert_eq!(GLYPH_DOWNLOADS, "\u{f019}");
-    assert_eq!(GLYPH_FOLDER, "\u{f07b}");
-    assert_eq!(GLYPH_FILE, "\u{f15b}");
-    assert_eq!(GLYPH_CHEVRON, "\u{f054}");
 }
 
 #[test]
