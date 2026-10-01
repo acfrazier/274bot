@@ -914,6 +914,18 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
     client.bump_gens(ServerProt::IF_OPENCHAT);
     let mut snapshot = ready();
     snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1737, "Wool"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![],
+            component_id: 3214,
+        }],
+        28,
+    );
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
         tick.actions
@@ -984,8 +996,15 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
         }],
         28,
     );
+    assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    client.chat_modal_id = -1;
+    client.bump_gens(ServerProt::IF_CLOSE);
+    snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
     assert!(matches!(
-        with_tick(&snapshot, &mut ledger, 6, |tick| {
+        with_tick(&snapshot, &mut ledger, 7, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         }),
         Poll::Ready(Ok(crate::native_production::MakeReceipt { held: 20 }))
