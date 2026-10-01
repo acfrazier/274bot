@@ -90,6 +90,21 @@ mod tests {
         assert_eq!(runtime_label(Some(&frozen)), "3h05m");
         assert_eq!(idle_label(Some(&progress(&[], Some(90)))), "1m");
     }
+    #[test]
+    fn unarmed_slots_render_absent_progress_in_all_cells() {
+        assert_eq!(runtime_label(None), NONE, "unarmed: no run");
+        assert_eq!(idle_label(None), NONE, "unarmed: no clock");
+        assert_eq!(levels_label(None), NONE, "unarmed: no gains");
+        // An armed-but-zero run must not look absent.
+        let zero = script::ScriptProgress {
+            running_for: Duration::from_secs(0),
+            idle_for: Some(Duration::from_secs(0)),
+            gained: [0u8; script::SKILL_SLOTS],
+        };
+        assert_eq!(runtime_label(Some(&zero)), "0s");
+        assert_eq!(idle_label(Some(&zero)), "0s");
+        assert_eq!(levels_label(Some(&zero)), "+0");
+    }
 
     #[test]
     fn levels_are_totalled_and_named() {

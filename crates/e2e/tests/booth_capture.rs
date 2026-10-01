@@ -36,6 +36,51 @@ fn save_ppm(frame: &[i32], path: &str) {
     std::fs::write(path, ppm).unwrap();
     println!("PASS: wrote {path}");
 }
+/// Pure verdict for the bank-booth dump: `None` means no failure (pass or
+/// warn-only), `Some(msg)` means the live run must report failure — always
+/// after IF-logout cleanup, never before. Off-bank spawns warn instead of
+/// failing: without bank structure in view there is no booth precondition.
+fn bank_dump_verdict(dumped: bool, at_bank: bool, booths_empty: bool) -> Option<&'static str> {
+    if !dumped {
+        return None;
+    }
+    if !at_bank {
+        return None;
+    }
+    if booths_empty {
+        return Some("dump_bank_locs: at bank but saw no bank booths within radius 20");
+    }
+    None
+}
+
+#[cfg(test)]
+mod bank_dump_verdict_tests {
+    use super::bank_dump_verdict;
+
+    #[test]
+    fn dump_never_running_warns_only() {
+        assert_eq!(bank_dump_verdict(false, false, true), None);
+        assert_eq!(bank_dump_verdict(false, true, true), None);
+    }
+
+    #[test]
+    fn off_bank_spawn_warns_instead_of_failing() {
+        assert_eq!(bank_dump_verdict(true, false, true), None);
+    }
+
+    #[test]
+    fn bank_with_booths_passes() {
+        assert_eq!(bank_dump_verdict(true, true, false), None);
+    }
+
+    #[test]
+    fn bank_without_booths_fails_after_logout() {
+        assert_eq!(
+            bank_dump_verdict(true, true, true),
+            Some("dump_bank_locs: at bank but saw no bank booths within radius 20")
+        );
+    }
+}
 
 #[test]
 #[ignore = "requires a local 274 engine and LIVE=1"]
@@ -142,6 +187,8 @@ fn dump_bank_locs() {
     let dumped_flag = Arc::clone(&dumped);
     let booths_seen = Arc::new(Mutex::new(Vec::new()));
     let booths_seen_hook = Arc::clone(&booths_seen);
+    let walls_seen: Arc<Mutex<Vec<(i32, i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let walls_seen_hook = Arc::clone(&walls_seen);
     let mut play = run_with_io(
         &options(),
         profiles(&[("test", "test")]),
@@ -235,19 +282,31 @@ fn dump_bank_locs() {
                     .iter()
                     .map(|(id, x, z, level, _, _)| (*id, *x, *z, *level)),
             );
+            walls_seen_hook
+                .lock()
+                .unwrap()
+                .extend(walls.iter().map(|(x, z, level, _, _)| (*x, *z, *level)));
         },
     );
 
     wait_ingame(&play, 1, Duration::from_secs(90), "dump_bank_locs");
     // Let one rebuild land in the hook.
     thread::sleep(Duration::from_secs(2));
-    if !dumped.load(Ordering::Relaxed) {
+    let dumped_now = dumped.load(Ordering::Relaxed);
+    if !dumped_now {
         eprintln!("WARN: loc dump did not run (scene never 2 in the hook)");
     }
-    let booths_seen = booths_seen.lock().unwrap();
-    if dumped.load(Ordering::Relaxed) && booths_seen.is_empty() {
-        fail("dump_bank_locs: hook ran but saw no bank booths within radius 20");
+    let booths_empty = booths_seen.lock().unwrap().is_empty();
+    // At-bank precondition: bank structure (walls) or booths in view proves
+    // the spawn was at a bank. An off-bank spawn warns instead of failing.
+    let at_bank = !walls_seen.lock().unwrap().is_empty() || !booths_empty;
+    if dumped_now && !at_bank {
+        eprintln!("WARN: dump ran off-bank (no walls/booths in radius 20); skipping booth assert");
     }
+    // Record the verdict now, report it only after IF-logout cleanup so the
+    // engine never 60s-locks the account on a booth failure.
+    let deferred_failure: Option<String> =
+        bank_dump_verdict(dumped_now, at_bank, booths_empty).map(str::to_string);
 
     if let Some(arm) = play.arm("test") {
         arm.request_logout();
@@ -256,5 +315,8 @@ fn dump_bank_locs() {
     }
     wait_logged_out(&play, 1, Duration::from_secs(30), "dump_bank_locs");
     play.stop_slot("test");
+    if let Some(msg) = deferred_failure {
+        fail(&msg);
+    }
     println!("PASS: dump_bank_locs (logged out)");
 }
