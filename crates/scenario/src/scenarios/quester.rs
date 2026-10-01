@@ -402,7 +402,7 @@ mod tests {
         client.stat_effective_level[DEFENCE_STAT_ID as usize] = defence_effective;
         client.bump_gens(ServerProt::UPDATE_STAT);
         let mut snapshot = GameSnapshot::new();
-        snapshot.rebuild(&mut client);
+        snapshot.rebuild(&client);
         snapshot
     }
 
