@@ -81,13 +81,15 @@ impl CacheManifest {
     }
 }
 
-/// Sidecar manifest binding a v8 navigation pack to world/cache inputs.
+/// Sidecar manifest binding a v12 navigation pack to world/cache inputs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NavManifest {
     pub revision: u16,
     pub cache_id: String,
     pub nav_sha256: String,
+    pub zone_count: u32,
+    pub zone_npc_count: u32,
     pub flags_sha256: Option<String>,
     #[serde(default)]
     pub reach_sha256: Option<String>,
@@ -106,6 +108,7 @@ pub struct NavManifest {
 }
 
 impl NavManifest {
+    /// Capture the pack identity and its v12 zone-table counts.
     #[allow(clippy::too_many_arguments)]
     pub fn capture(
         revision: u16,
@@ -115,6 +118,8 @@ impl NavManifest {
         reach: Option<&[u8]>,
         canlight: Option<&[u8]>,
         pois: Option<&[u8]>,
+        zone_count: u32,
+        zone_npc_count: u32,
     ) -> Result<Self, String> {
         validate_revision(revision)?;
         if cache.revision != revision {
@@ -127,6 +132,8 @@ impl NavManifest {
             revision,
             cache_id: cache.identity(),
             nav_sha256: hash_bytes(nav),
+            zone_count,
+            zone_npc_count,
             flags_sha256: flags.map(hash_bytes),
             reach_sha256: reach.map(hash_bytes),
             canlight_sha256: canlight.map(hash_bytes),
@@ -136,6 +143,8 @@ impl NavManifest {
         })
     }
 
+    /// Verify the pack identity and its zone-table counts from the decoded
+    /// v12 table supplied by the caller.
     #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
@@ -146,8 +155,20 @@ impl NavManifest {
         reach: Option<&[u8]>,
         canlight: Option<&[u8]>,
         pois: Option<&[u8]>,
+        zone_count: u32,
+        zone_npc_count: u32,
     ) -> Result<(), String> {
-        let actual = Self::capture(revision, cache, nav, flags, reach, canlight, pois)?;
+        let actual = Self::capture(
+            revision,
+            cache,
+            nav,
+            flags,
+            reach,
+            canlight,
+            pois,
+            zone_count,
+            zone_npc_count,
+        )?;
         if actual != *self {
             return Err(
                 "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
@@ -156,6 +177,7 @@ impl NavManifest {
         }
         Ok(())
     }
+
 
     /// Compare revision, cache identity and pack digest only. Flags stay
     /// optional and are checked later at paint-on against `flags_sha256`.

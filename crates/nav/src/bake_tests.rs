@@ -156,3 +156,56 @@ fn a_missing_canonical_input_fails_the_bake() {
     let error = bake_world(&request).err().expect("a bake without inputs");
     assert!(error.contains("doors.loc"), "{error}");
 }
+
+fn collision_with_flags(
+    width: usize,
+    height: usize,
+    entries: &[(usize, usize, u32)],
+) -> WorldCollision {
+    let mut flags = vec![0u32; 4 * width * height];
+    for &(x, z, face) in entries {
+        flags[z * width + x] |= face;
+    }
+    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    }
+}
+
+#[test]
+fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
+    let spawn = WorldTile {
+        x: 4,
+        z: 3,
+        level: 0,
+    };
+    let north_wall = collision_with_flags(8, 8, &[(4, 3, CollisionFlag::W_N as u32)]);
+    let north_wall_shape =
+        stationary_melee_shape(&north_wall, spawn, 1, &HashSet::new()).unwrap();
+    assert_ne!(north_wall_shape & (1u64 << 3), 0);
+    assert_eq!(north_wall_shape & (1u64 << 7), 0);
+
+    let west_wall = collision_with_flags(8, 8, &[(4, 3, CollisionFlag::W_W as u32)]);
+    let closed_shape = stationary_melee_shape(&west_wall, spawn, 1, &HashSet::new()).unwrap();
+    assert_eq!(closed_shape & (1u64 << 3), 0);
+
+    let door_faces = openable_door_faces(&[crate::map::services::OpenableDoor {
+        x: 3,
+        z: 3,
+        level: 0,
+        shape: LocShape::WALL_STRAIGHT as u8,
+        rotation: LocAngle::EAST as u8,
+    }])
+    .unwrap();
+    let open_shape = stationary_melee_shape(&west_wall, spawn, 1, &door_faces).unwrap();
+    assert_ne!(open_shape & (1u64 << 3), 0);
+}
