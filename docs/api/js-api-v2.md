@@ -320,9 +320,60 @@ reconnect walks and the carried host walk are discarded, not replayed after
 the session.
 Declarations are generated from the Rust tables
 (`cargo test -p script --test host_js regen_host_js -- --ignored`)
-and pinned by the freshness gate plus a pinned TypeScript 5.8.3 gather-only
-consumer probe. Quest progress reads (`questPaths`, `questProgress`) are a
-later slice, not this surface.
+and pinned by the freshness gate plus pinned TypeScript 5.8.3 consumer
+probes: gather-only, and quest progress using both calls and every row
+field.
+
+## Quest progress
+
+`api.questPaths()` is a sync read of the release Path index — not a
+Promise and not a `request()` op. `await api.questProgress({ quest })`
+is one awaited owned progress read: tab colour first; the quiet host
+journal read only when the colour is in-progress and the released Path
+has journal rules. Like the rest of `NativeApi`, these are host verbs;
+frozen rs2b0t signatures are irrelevant to them.
+
+The release index is Cook only: one row, `cook` with `journal: false`
+and `stages` `["cook:0", "cook:1", "cook:2"]`.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `api.questPaths()` | `{ rows: QuestPathRow[] }` | sync `HelperResult` errors only |
+| `await api.questProgress({ quest })` | one `QuestProgressOutcome` settlement | sync `invalid-args`; host `unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`, or a machine abort |
+
+A non-object input, or a non-string `quest`, is `invalid-args`. A quest
+without a released Path is `done{end:'refused', reason:'unknown-path'}`:
+nothing is synthesized. A read while a gather session is live — and a
+gather `run` while a read is live — is `done{end:'refused',
+reason:'busy'}`. The terminal is the nested `value` of the unchanged
+`done` envelope: `done` carries the `QuestProgressRow` (`quest`,
+`display`, `colour`, `stage`, `complete`, `rule`, `flags`, `evidence`,
+`journal_read`, `binding`, `role`); `refused` carries the host reason
+(`unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`) and never
+ran. Synchronous refusals are top-level `refused`; resets, supersessions
+and terminations are `aborted`.
+
+While a session or read is live the host owns the slot's foreground:
+the script's game rows are dropped, not deferred (see
+[script.md](script.md) "Two runners"); control rows still pass while
+paused.
+
+Example:
+
+```ts
+const paths = api.questPaths();
+if (paths.ok) {
+  for (const row of paths.value.rows) {
+    api.log(`${row.id}: ${row.display} (${row.stages.length} stages)`);
+  }
+}
+const out = await api.questProgress({ quest: 'cook' });
+if (out.kind === 'done' && out.value.end === 'done') {
+  const row = out.value.row;
+  const stage = row.stage.state === 'known' ? row.stage.value : `unknown(${row.stage.gap})`;
+  api.log(`Cook's Assistant: colour=${row.colour} stage=${stage} complete=${row.complete}`);
+}
+```
 
 ## Quest query helpers
 
