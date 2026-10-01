@@ -2220,6 +2220,12 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
             )
             .expect("the Falador booth stand routes independently");
             assert_eq!(route.ticks, independent.ticks);
+            if opts.zones.is_all() {
+                assert!(
+                    search.settled() > 32_768,
+                    "the all-exempt route must exercise the old scene cap"
+                );
+            }
         }
     }
     let web = [tile(3157, 3950, 0), tile(3156, 3949, 0)];
@@ -4345,6 +4351,47 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
         .unwrap();
         assert_eq!((route.ticks, zone_route_cell_count(&route)), (125.5, 252));
     }
+}
+
+#[test]
+fn real_289_first_refusal_witness_exempts_its_chosen_goal_zone() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let from = tile(3123, 3245, 0);
+    let goal = tile(3211, 3195, 0);
+    let state = WorldState {
+        combat_level: Some(3),
+        stats: (0..21).map(|skill| (skill, 1)).collect(),
+        ..WorldState::empty()
+    };
+    let opts = FindOptions::default();
+    let table = world.graph.zones.as_ref().expect("v12 zones");
+    let own_zone = table.resolve("giantrat1@3211,3195,0").unwrap();
+    assert!(table.at(goal).any(|index| table.key(index) == own_zone));
+    let single = crate::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        goal,
+        opts,
+        &state,
+        &[],
+    );
+    assert_eq!(single, None, "the goal's own zone is already exempt");
+    let first = crate::router::find_first_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        &[goal],
+        opts,
+        &state,
+        &[],
+    );
+    assert_eq!(
+        first, single,
+        "radius/bank witnesses must exempt the chosen end"
+    );
 }
 
 #[test]

@@ -118,14 +118,13 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let path = compile_path(cook_bytes(), &prepared.selected, &prepared.quests)
-        .map_err(|err| {
-            let message = match err.detail.as_deref() {
-                Some(detail) => format!("compile: {}: {detail}", err.code),
-                None => format!("compile: {}", err.code),
-            };
-            StartError::Unavailable(Arc::from(message))
-        })?;
+    let path = compile_path(cook_bytes(), &prepared.selected, &prepared.quests).map_err(|err| {
+        let message = match err.detail.as_deref() {
+            Some(detail) => format!("compile: {}: {detail}", err.code),
+            None => format!("compile: {}", err.code),
+        };
+        StartError::Unavailable(Arc::from(message))
+    })?;
     Ok(Box::new(Quester::new(
         run,
         path,

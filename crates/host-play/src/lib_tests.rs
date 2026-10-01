@@ -6982,11 +6982,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         )
         .expect("the test barrier fits its world"),
     );
-    let world = Some(Arc::new(NavWorld::from_parts(
-        collision,
-        graph,
-        Vec::new(),
-    )));
+    let world = Some(Arc::new(NavWorld::from_parts(collision, graph, Vec::new())));
     let (navs, _) = empty_nav();
     let mut client = bank_client();
     let mut snapshot = GameSnapshot::new();
@@ -7053,7 +7049,8 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
 
     let blocked = inspect(901, None);
     assert!(!blocked.ok, "the only route crosses an active zone");
-    let crossed = inspect(902, Some("test-barrier"));
+    assert!(blocked.reason.contains("test-barrier@2,0,0"));
+    let crossed = inspect(902, Some("test-barrier@2,0,0"));
     assert!(
         crossed.ok,
         "host InspectRoute must apply the wire's cross exemption: {}",

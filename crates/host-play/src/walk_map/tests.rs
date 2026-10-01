@@ -1568,7 +1568,10 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
     let WalkSlotOutcomeKind::Failed(error) = &report.outcomes[0].kind else {
         unreachable!("zone refusal must carry its error");
     };
-    let ActionError::BlockedByZones { detail: Some(detail) } = error else {
+    let ActionError::BlockedByZones {
+        detail: Some(detail),
+    } = error
+    else {
         unreachable!("zone refusal must carry its named diagnosis");
     };
     assert!(error.to_string().contains("test-barrier@3203,"), "{error}");
