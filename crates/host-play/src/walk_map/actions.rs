@@ -55,7 +55,7 @@ pub enum ActionKind {
     Walk,
     Teleport,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionError {
     NoSelection,
     Blocked,
@@ -65,7 +65,7 @@ pub enum ActionError {
     Stale,
     NoNavigation,
     NoPath,
-    BlockedByZones,
+    BlockedByZones { detail: Option<String> },
     MembersOnly,
     Unauthorized,
     WrongAction,
@@ -74,30 +74,43 @@ pub enum ActionError {
 }
 impl fmt::Display for ActionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NoSelection => "Select a map destination first",
-            Self::Blocked => "No walkable tile within radius 16 (or no proven POI stand)",
-            Self::NoOrigin => "Walk/Teleport unavailable: no observed player",
-            Self::OriginNotStandable => "Walk unavailable: observed player tile is not standable",
-            Self::NoFocus => "Walk/Teleport unavailable: no focused running slot",
-            Self::Stale => "Map selection expired: nav identity or map binding changed",
-            Self::NoNavigation => "Navigation unavailable",
-            Self::NoPath => "No path to the selected destination with these routing options",
-            Self::BlockedByZones => {
-                "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
-            },
-            Self::MembersOnly => "This route requires a members' world",
-            Self::Unauthorized => "Debug Teleport requires a local loopback engine target",
-            Self::WrongAction => "Map confirmation has a different action",
-            Self::InvalidCoordinates => "Enter x,z,plane (plane 0–3)",
-            Self::RunningScript => "running a script (stop the script to include it)",
-        })
+        match self {
+            Self::NoSelection => f.write_str("Select a map destination first"),
+            Self::Blocked => {
+                f.write_str("No walkable tile within radius 16 (or no proven POI stand)")
+            }
+            Self::NoOrigin => f.write_str("Walk/Teleport unavailable: no observed player"),
+            Self::OriginNotStandable => {
+                f.write_str("Walk unavailable: observed player tile is not standable")
+            }
+            Self::NoFocus => f.write_str("Walk/Teleport unavailable: no focused running slot"),
+            Self::Stale => {
+                f.write_str("Map selection expired: nav identity or map binding changed")
+            }
+            Self::NoNavigation => f.write_str("Navigation unavailable"),
+            Self::NoPath => {
+                f.write_str("No path to the selected destination with these routing options")
+            }
+            Self::BlockedByZones { detail: Some(detail) } => write!(
+                f,
+                "{detail}; tick \"Route through danger zones\" to walk anyway"
+            ),
+            Self::BlockedByZones { detail: None } => f.write_str(
+                "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway",
+            ),
+            Self::MembersOnly => f.write_str("This route requires a members' world"),
+            Self::Unauthorized => {
+                f.write_str("Debug Teleport requires a local loopback engine target")
+            }
+            Self::WrongAction => f.write_str("Map confirmation has a different action"),
+            Self::InvalidCoordinates => f.write_str("Enter x,z,plane (plane 0–3)"),
+            Self::RunningScript => f.write_str("running a script (stop the script to include it)"),
+        }
     }
 }
-
 impl ActionError {
     /// The short reason a bulk report names for a slot this refused.
-    pub fn short(self) -> &'static str {
+    pub fn short(&self) -> &'static str {
         match self {
             Self::NoSelection => "no destination selected",
             Self::Blocked => "destination blocked",
@@ -107,7 +120,7 @@ impl ActionError {
             Self::Stale => "stale",
             Self::NoNavigation => "navigation unavailable",
             Self::NoPath => "no path",
-            Self::BlockedByZones => "blocked by danger zones",
+            Self::BlockedByZones { .. } => "blocked by danger zones",
             Self::MembersOnly => "members-only path",
             Self::Unauthorized => "not authorised",
             Self::WrongAction => "wrong action",
@@ -158,7 +171,7 @@ impl WalkRequest<'_> {
             );
         }
         if let Err(reason) = outcome.as_ref() {
-            emit_walk_rejected(self.slot, self.destination, self.origin, *reason);
+            emit_walk_rejected(self.slot, self.destination, self.origin, reason);
         }
         outcome
     }
@@ -197,7 +210,7 @@ impl WalkRequest<'_> {
                 map_members: members.map_members(),
                 members,
             }
-            .run(|| Err(error));
+            .run(|| Err(error.clone()));
         }
     }
 }
@@ -363,7 +376,7 @@ fn emit_walk_rejected(
     slot: Option<&str>,
     destination: Option<Tile>,
     at: Option<Tile>,
-    reason: ActionError,
+    reason: &ActionError,
 ) {
     if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
         return;
@@ -549,7 +562,7 @@ impl MapWalkPlan {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkSlotOutcomeKind {
     Walking,
     Excluded(WalkExclude),
@@ -559,7 +572,7 @@ pub enum WalkSlotOutcomeKind {
 impl WalkSlotOutcomeKind {
     /// The short reason a slot did not start walking, in the wording every
     /// front end shows; `None` for a slot that is walking.
-    pub fn reason(self) -> Option<&'static str> {
+    pub fn reason(&self) -> Option<&'static str> {
         match self {
             Self::Walking => None,
             Self::Excluded(WalkExclude::NotLoggedIn) => Some("not logged in"),
@@ -574,7 +587,6 @@ impl WalkSlotOutcomeKind {
 pub struct WalkSlotOutcome {
     pub name: String,
     pub kind: WalkSlotOutcomeKind,
-    pub detail: Option<String>,
 }
 
 /// Per-bot Walk results, in request order. Front ends fold them into their
@@ -977,17 +989,21 @@ impl MapCommand {
                 &WalkSlotRequest { name, state, bank },
                 arms,
             ) {
-                if let Some(table) = world.graph.zones.as_ref() {
-                    let detail = crate::blocked_zone_detail(table, &keys);
+                let detail = world
+                    .graph
+                    .zones
+                    .as_ref()
+                    .map(|table| crate::blocked_zone_detail(table, &keys));
+                if let Some(detail) = detail.as_deref() {
                     crate::walk_map::emit_walk_aborted(
                         Some(name),
                         world_tile(self.destination),
                         Some(world_tile(self.origin)),
-                        &detail,
+                        detail,
                         false,
                     );
                 }
-                return Err(ActionError::BlockedByZones);
+                return Err(ActionError::BlockedByZones { detail });
             }
         }
         match result {
@@ -1158,29 +1174,6 @@ impl Play {
                 };
                 self.map_walk(command, &current, req.state, req.bank, arms)
             });
-            let detail = match &result {
-                Err(ActionError::BlockedByZones) => match (status, origin, self.world.as_deref()) {
-                    (WalkSlotStatus::Eligible(_), Some(origin), Some(world)) => {
-                        blocking_zones_for_walk(
-                            world,
-                            origin,
-                            plan.destination,
-                            plan.options,
-                            req,
-                            arms,
-                        )
-                        .and_then(|keys| {
-                            world
-                                .graph
-                                .zones
-                                .as_ref()
-                                .map(|table| crate::blocked_zone_detail(table, &keys))
-                        })
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
             let kind = match (status, result) {
                 (WalkSlotStatus::Excluded(reason), _) => WalkSlotOutcomeKind::Excluded(reason),
                 (_, Ok(_)) => WalkSlotOutcomeKind::Walking,
@@ -1189,7 +1182,6 @@ impl Play {
             outcomes.push(WalkSlotOutcome {
                 name: req.name.to_string(),
                 kind,
-                detail,
             });
         }
         GroupWalkReport {
