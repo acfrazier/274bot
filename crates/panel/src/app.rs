@@ -121,9 +121,12 @@ fn scaled_button_cells_min(ui: &Ui, avail: f32, count: usize, min_width: f32) ->
         .map(|(width, same_line)| (width * scale, same_line))
         .collect()
 }
-/// Push the amber CRT palette over Theme::Dark (kills default imgui blue).
+/// Initialize amber chrome and base sizes before the monitor scale is applied.
 fn amber_style(ctx: &mut dear_imgui_rs::Context) {
-    apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
+    let style = ctx.style_mut();
+    style.set_scrollbar_size(crate::theme::THIN_SCROLLBAR_SIZE);
+    style.set_scrollbar_rounding(crate::theme::THIN_SCROLLBAR_ROUNDING);
+    apply_amber(style, &crate::theme::ChromeColors::default());
 }
 
 /// Dock layouts for [`dock_host`]: single-bot `[game | panel]` or the

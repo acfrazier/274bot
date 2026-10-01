@@ -37,6 +37,10 @@ pub(crate) use work_area::fit_window_to_work_area;
 #[cfg(test)]
 pub(crate) use work_area::{fit_window_in, FitTarget, WorkArea};
 
+#[path = "ime.rs"]
+mod ime;
+use ime::attach_platform;
+
 /// What the panel window needs from the graphics stack, appended to the
 /// startup errors a missing driver produces. `BOT_CPU=1` selects the game
 /// view's CPU rasterizer; the window itself always presents through wgpu.
@@ -85,88 +89,6 @@ pub enum PanelError {
     Render(#[source] imgui_wgpu::RendererError),
     #[error("WGPU surface validation failed while acquiring the next frame")]
     SurfaceValidation,
-}
-
-/// Submit ImGui's platform IME area to the window. ImGui coordinates and the
-/// line height are physical pixels under `HiDpiMode::Locked(1.0)`. Winit's
-/// physical `Position` and `Size` use integer pixels, so round when adapting.
-fn submit_imgui_ime_area(
-    input_pos: [f32; 2],
-    viewport_pos: [f32; 2],
-    input_line_height: f32,
-    submit: impl FnOnce(winit::dpi::Position, winit::dpi::Size),
-) {
-    let position = winit::dpi::PhysicalPosition::new(
-        (input_pos[0] - viewport_pos[0]).round() as i32,
-        (input_pos[1] - viewport_pos[1]).round() as i32,
-    );
-    let line_height = if input_line_height > 0.0 {
-        input_line_height.round() as u32
-    } else {
-        16
-    };
-    submit(
-        position.into(),
-        winit::dpi::PhysicalSize::new(line_height, line_height).into(),
-    );
-}
-
-/// The winit backend exposes its IME callback only through raw PlatformIO.
-/// Keep the backend-owned window pointer and replace only the callback.
-fn install_physical_ime_callback(context: &mut imgui::Context) {
-    let platform_io = context.platform_io_mut();
-    let raw = platform_io.as_raw_mut();
-    // SAFETY: `platform_io_mut()` returns the unique, live PlatformIO for this
-    // context. Winit installed the window pointer before this callback is
-    // replaced, and the field's ABI matches `physical_ime_set_data`.
-    unsafe {
-        (*raw).Platform_SetImeDataFn = Some(physical_ime_set_data);
-    }
-}
-
-unsafe extern "C" fn physical_ime_set_data(
-    context: *mut imgui::sys::ImGuiContext,
-    viewport: *mut imgui::sys::ImGuiViewport,
-    data: *mut imgui::sys::ImGuiPlatformImeData,
-) {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: Dear ImGui invokes this hook synchronously with pointers
-        // owned by the active context; each pointer is checked before use.
-        // `Platform_ImeUserData` is the `&Window` installed by winit's
-        // `attach_window`, and AppWindow keeps that Window alive for the
-        // entire lifetime of the associated context/callback.
-        unsafe {
-            if context.is_null() || viewport.is_null() || data.is_null() {
-                return;
-            }
-            let platform_io = imgui::sys::igGetPlatformIO_ContextPtr(context);
-            if platform_io.is_null() {
-                return;
-            }
-            let window_ptr = (*platform_io).Platform_ImeUserData.cast::<Window>();
-            if window_ptr.is_null() {
-                return;
-            }
-
-            let window = &*window_ptr;
-            let ime = &*data;
-            let viewport = &*viewport;
-            if !ime.WantVisible && !ime.WantTextInput {
-                return;
-            }
-
-            submit_imgui_ime_area(
-                [ime.InputPos.x, ime.InputPos.y],
-                [viewport.Pos.x, viewport.Pos.y],
-                ime.InputLineHeight,
-                |position, size| window.set_ime_cursor_area(position, size),
-            );
-        }
-    }));
-    if result.is_err() {
-        eprintln!("panel: panic in physical IME callback");
-        std::process::abort();
-    }
 }
 
 /// A completed whole-window capture: RGBA8 pixels plus the scenario's
@@ -548,6 +470,15 @@ struct AppWindow {
     offscreen: Option<wgpu::Texture>,
 }
 
+impl Drop for AppWindow {
+    fn drop(&mut self) {
+        // Fields drop in declaration order (Window before ImguiState).
+        // The callback holds only a Weak and upgrades it per submission, so
+        // expiry cannot dangle. Clear first even if other Window Arcs survive.
+        ime::clear_window(&self.window);
+    }
+}
+
 /// How often the loop checks a pending GPU bring-up. Only runs until the
 /// device exists.
 const GPU_INIT_POLL: Duration = Duration::from_millis(50);
@@ -745,7 +676,8 @@ impl AppWindow {
         let base_style = self.imgui.base_style.clone();
         *self.imgui.context.style_mut() = base_style;
         crate::app::apply_ui_scale(self.imgui.context.style_mut(), dpi);
-        let _ = self.imgui.context.font_atlas_mut().build();
+        // RENDERER_HAS_TEXTURES makes ImGui lazily bake the new font size on
+        // the next frame; build() would not eagerly rebuild this atlas.
     }
 
     /// Create the OS window and surface, then hand adapter/device creation
@@ -905,8 +837,8 @@ impl AppWindow {
         // Keep one bundled base font at its logical 14 px size. FontScaleDpi
         // makes Dear ImGui rasterize it at the monitor's physical scale.
         // Dear ImGui 1.92 builds its atlas as a renderer-managed texture.
-        // Advertise that capability before the initial build so monitor
-        // changes can rebuild without switching to the legacy atlas path.
+        // Advertise that capability before the initial build; new monitor
+        // scales are baked lazily by ImGui without entering the legacy path.
         {
             let io = context.io_mut();
             let mut flags = io.backend_flags();
@@ -920,9 +852,7 @@ impl AppWindow {
         );
         let _ = context.font_atlas_mut().build();
 
-        let mut platform = imgui_winit::WinitPlatform::new(&mut context);
-        platform.attach_window(&window, imgui_winit::HiDpiMode::Locked(1.0), &mut context);
-        install_physical_ime_callback(&mut context);
+        let platform = attach_platform(&mut context, &window);
 
         let init_info =
             imgui_wgpu::WgpuInitInfo::new(device.clone(), queue.clone(), surface_desc.format);

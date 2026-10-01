@@ -256,12 +256,8 @@ pub fn apply_amber(style: &mut Style, chrome: &ChromeColors) {
     style.set_color(StyleColor::TitleBgActive, [0.12, 0.09, 0.02, 1.0]);
     style.set_color(StyleColor::TitleBgCollapsed, bg_deep);
     style.set_color(StyleColor::MenuBarBg, bg_deep);
-    // Thin scrollbars globally (ImGui default 14). A base size so
-    // `apply_ui_scale`'s ScaleAllSizes keeps them proportional on HiDpi;
-    // rounding is half the width so the grab stays a pill. The amber
-    // grab on the deep track below keeps the overflow cue.
-    style.set_scrollbar_size(THIN_SCROLLBAR_SIZE);
-    style.set_scrollbar_rounding(THIN_SCROLLBAR_ROUNDING);
+    // Sizes belong to the init-only amber_style; this live palette must not
+    // overwrite the monitor-scaled scrollbar width or rounding.
     style.set_color(StyleColor::ScrollbarBg, bg_deep);
     style.set_color(StyleColor::ScrollbarGrab, [0.35, 0.25, 0.05, 1.0]);
     style.set_color(StyleColor::ScrollbarGrabHovered, accent_hover);
