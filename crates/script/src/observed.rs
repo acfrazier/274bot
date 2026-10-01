@@ -827,7 +827,10 @@ fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObserv
     };
     let message = page.message().unwrap_or_default();
     let end = match page.end() {
-        1 => GatherEnd::Stopped { token: request_id, counts },
+        1 => GatherEnd::Stopped {
+            token: request_id,
+            counts,
+        },
         2 => GatherEnd::Blocked {
             token: request_id,
             failure: GatherFailure {

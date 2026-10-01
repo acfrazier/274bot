@@ -73,7 +73,7 @@ the genuine Gatherer card inside the slot with the slot's own ledger, and
 host owns the slot's foreground: the script's game rows are drained and
 dropped at admission exactly as under the watchdog recovery hold — never
 dispatched, never deferred — while control rows (`gather.stop`, run-policy)
-still pass. `questProgress` reads are refused `busy` for the same reason.
+still pass.
 When the session ends the seat is torn down and ordinary dispatch resumes.
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a

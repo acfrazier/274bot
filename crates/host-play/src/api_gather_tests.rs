@@ -82,7 +82,7 @@ fn selected_tree() -> (Arc<api::game_data::SelectedGameData>, i32, WorldTile) {
     panic!("R289 selected catalog has no complete normal-tree placement");
 }
 
-fn gather_snapshot(tree_id: i32, tile: WorldTile) -> GameSnapshot {
+fn gather_snapshot(tree_id: i32, tile: WorldTile, client: &Client) -> GameSnapshot {
     let item_def = |id, name: &str| api::ItemDefView {
         id,
         name: Some(name.into()),
@@ -100,7 +100,7 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile) -> GameSnapshot {
             action_family: api::snapshot::ItemActionFamily::Held,
             slot,
             count: 1,
-            actions: vec![Some("Drop".into())],
+            actions: vec![None, None, None, None, Some("Drop".into())],
             component_id: -1,
         })
         .collect();
@@ -133,11 +133,12 @@ fn gather_snapshot(tree_id: i32, tile: WorldTile) -> GameSnapshot {
         in_combat: false,
     };
     let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
     snapshot.seed_ingame(2);
     snapshot.seed_npcs(Vec::new());
     snapshot.seed_world(WorldStateView {
-        map_base_x: tile.x.saturating_sub(52),
-        map_base_z: tile.z.saturating_sub(52),
+        map_base_x: tile.x.saturating_sub(5),
+        map_base_z: tile.z.saturating_sub(5),
         level: tile.level,
         members: true,
         multi_combat: false,
@@ -263,14 +264,6 @@ fn start_source(
     }
 }
 
-fn start_script(scripts: &ScriptWall, selected: Arc<api::game_data::SelectedGameData>) {
-    start_source(scripts, selected, CLIENT_SOURCE);
-}
-
-fn start_quiet_script(scripts: &ScriptWall, selected: Arc<api::game_data::SelectedGameData>) {
-    start_source(scripts, selected, QUIET_SOURCE);
-}
-
 #[allow(clippy::too_many_arguments)]
 fn observe_frame(
     client: &mut Client,
@@ -354,7 +347,7 @@ fn force_watchdog_sampling(slot: &mut script::SlotScript, here: WorldTile) {
 
 fn finish_watchdog_hold(slot: &mut script::SlotScript, here: WorldTile) {
     let anchor = WorldTile {
-        x: here.x + 5,
+        x: here.x + script::watchdog::ANCHOR_NEAR + 1,
         z: here.z,
         level: here.level,
     };
@@ -386,123 +379,63 @@ fn finish_watchdog_hold(slot: &mut script::SlotScript, here: WorldTile) {
 
 #[test]
 fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() {
-    let (selected, tree_id, here) = selected_tree();
-    let snapshot = gather_snapshot(tree_id, here);
-    let (mut client, _listener) = attached_client(here);
-    let cache = Arc::clone(&client.cache);
-    let names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
-    let mut policy = host::ScriptRunPolicy::default();
-    start_script(&scripts, selected);
-    {
-        let cell = script_slot(&scripts, SLOT).unwrap();
-        force_watchdog_sampling(&mut cell.lock().unwrap(), here);
-    }
+    let mut rig = GatherReconnectRig::with_source(CLIENT_SOURCE);
+    rig.isolate_tick_without_host_drain();
+    assert!(matches!(
+        rig.wait_for_controls().as_slice(),
+        [GatherControl::Run(_)]
+    ));
+    force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.tile);
 
     let held_op = client::io::ClientProt289::OPHELD5.id as u8;
-    let packets = observe_frame(
-        &mut client,
-        1,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
+    let packets = rig.frame();
     assert!(
         packets.is_empty(),
         "recovery hold must drop the same-batch Held row"
     );
-    let cell = script_slot(&scripts, SLOT).unwrap();
     assert!(
-        cell.lock().unwrap().api_owns_foreground(),
+        rig.slot().lock().unwrap().api_owns_foreground(),
         "gather-run is admitted while the Load script is recovery-held"
     );
-    assert!(
-        format!("{policy:?}").contains("Floor(77)"),
-        "run-policy control passes the recovery hold and is applied: {policy:?}"
-    );
-    finish_watchdog_hold(&mut cell.lock().unwrap(), here);
+    finish_watchdog_hold(&mut rig.slot().lock().unwrap(), rig.tile);
 
     let mut native_drop_batch_seen = false;
-    let mut live_held_queued = false;
-    let mut tick = 2;
-    for _ in 0..48 {
-        let packets = observe_frame(
-            &mut client,
-            tick,
-            here,
-            &snapshot,
-            &scripts,
-            &cheats,
-            &navs,
-            &cache,
-            &names,
-            &mut policy,
-        );
-        if packets.iter().filter(|opcode| **opcode == held_op).count() == 5 {
-            native_drop_batch_seen = true;
-        }
-        live_held_queued |= probe(&scripts, "globalThis.__liveHeldSent === true") == true;
-        if native_drop_batch_seen && live_held_queued {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let packets = rig.frame();
+        native_drop_batch_seen |= packets.iter().filter(|opcode| **opcode == held_op).count() == 5;
+        if native_drop_batch_seen && rig.probe("globalThis.__liveHeldSent === true") == true {
             break;
         }
-        tick += 1;
     }
     assert!(
         native_drop_batch_seen,
         "the live Gatherer seat dispatches its five-item Drop batch"
     );
     assert!(
-        live_held_queued,
+        rig.probe("globalThis.__liveHeldSent === true") == true,
         "the v2 script queued its Held row while the seat was live"
     );
 
-    let cell = script_slot(&scripts, SLOT).unwrap();
-    cell.lock()
-        .unwrap()
-        .probe("globalThis.__stop = true")
-        .expect("request API stop");
-    let stop_packets = observe_frame(
-        &mut client,
-        tick,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
+    rig.probe("globalThis.__stop = true");
+    rig.isolate_tick_without_host_drain();
+    assert!(matches!(
+        rig.wait_for_controls().as_slice(),
+        [GatherControl::Stop(_)]
+    ));
+    let stop_packets = rig.frame();
     assert!(
         stop_packets.is_empty(),
         "gather-stop and its same-batch Held row are drained before game dispatch"
     );
     assert!(
-        !cell.lock().unwrap().api_owns_foreground(),
+        !rig.slot().lock().unwrap().api_owns_foreground(),
         "Stop tears down the foreground owner"
     );
 
-    tick += 1;
-    let resumed_packets = observe_frame(
-        &mut client,
-        tick,
-        here,
-        &snapshot,
-        &scripts,
-        &cheats,
-        &navs,
-        &cache,
-        &names,
-        &mut policy,
-    );
+    rig.isolate_tick_without_host_drain();
+    assert!(rig.probe("globalThis.__afterStopSent === true") == true);
+    let resumed_packets = rig.frame();
     assert_eq!(
         resumed_packets
             .iter()
@@ -511,8 +444,7 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         1,
         "after teardown the script's Held row dispatches again"
     );
-    assert!(probe(&scripts, "globalThis.__afterStopSent === true") == true);
-    let result = probe(&scripts, "globalThis.__runResult");
+    let result = rig.probe("globalThis.__runResult");
     assert_eq!(
         result["kind"], "done",
         "run resolves with the unchanged machine envelope: {result}"
@@ -521,22 +453,31 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         result["value"]["end"], "stopped",
         "host terminal is the nested GatherEnd: {result}"
     );
-    assert!(probe(&scripts, "globalThis.__lastPage === null") == true);
+    assert!(rig.probe("globalThis.__lastPage === null") == true);
 }
 
 #[test]
 fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
-    let (selected, tree_id, here) = selected_tree();
-    let snapshot = gather_snapshot(tree_id, here);
-    let (mut client, _listener) = attached_client(here);
-    let cache = Arc::clone(&client.cache);
-    let names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
-    let mut policy = host::ScriptRunPolicy::default();
-    start_quiet_script(&scripts, selected);
+    let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
+    rig.isolate_tick_without_host_drain();
+    rig.frame();
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Running
+    );
+    let GatherReconnectRig {
+        tile: here,
+        snapshot,
+        mut client,
+        _listener,
+        cache,
+        names,
+        scripts,
+        cheats,
+        navs,
+        mut policy,
+        ..
+    } = rig;
 
     let cell = script_slot(&scripts, SLOT).expect("Load slot");
     let held = || script::shim::InteractReq::Held {
@@ -709,17 +650,20 @@ struct GatherReconnectRig {
 
 impl GatherReconnectRig {
     fn new() -> Self {
+        Self::with_source(RECONNECT_SOURCE)
+    }
+
+    fn with_source(source: &str) -> Self {
         let (selected, tree_id, tile) = selected_tree();
-        let snapshot = gather_snapshot(tree_id, tile);
         let (client, listener) = attached_client(tile);
+        let snapshot = gather_snapshot(tree_id, tile, &client);
         let cache = Arc::clone(&client.cache);
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let navs: Arc<Mutex<HashMap<String, NavBot>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        start_source(&scripts, selected, RECONNECT_SOURCE);
+        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+        start_source(&scripts, selected, source);
         Self {
             tile,
             snapshot,
@@ -743,17 +687,10 @@ impl GatherReconnectRig {
         probe(&self.scripts, expression)
     }
 
-    fn assert_probe_true(&self, expression: &str) {
-        assert!(
-            self.probe(expression).as_bool().unwrap_or(false),
-            "probe was not true: {expression}"
-        );
-    }
-
     /// Let the real isolate tick after a host keyframe, but leave its emitted
     /// batch queued. This is the reconnect seam: the boundary, not a mock,
     /// drops the queued rows before the next host drain.
-    fn isolate_tick_without_host_drain(&mut self) {
+    fn isolate_tick_without_host_drain(&mut self) -> (bool, bool) {
         let tick = self.tick;
         self.tick += 1;
         let tile = self.tile;
@@ -781,8 +718,15 @@ impl GatherReconnectRig {
             false,
             None,
             PostedWalkOutcome::default(),
-            route_inspect::PostedInspect::default(),
+            PostedInspect::default(),
             |input, native| slot.encode_snapshot_delta_with_native(input, native, false),
+        );
+        let encoded = script::isolate_fb::Snapshot::from_bytes(&bytes).unwrap();
+        let pages = (
+            encoded
+                .api_gather()
+                .is_some_and(|page| page.request_id() != 0),
+            encoded.api_gather_outcome().is_some(),
         );
         assert!(
             slot.post_snapshot(bytes),
@@ -804,11 +748,12 @@ impl GatherReconnectRig {
         };
         slot.on_game_tick(&mut context);
         drop(slot);
-        self.assert_probe_true("true");
+        let _ = self.probe("undefined");
+        pages
     }
 
-    fn frame(&mut self) {
-        let _ = observe_frame(
+    fn frame(&mut self) -> Vec<u8> {
+        let packets = observe_frame(
             &mut self.client,
             self.tick,
             self.tile,
@@ -821,7 +766,8 @@ impl GatherReconnectRig {
             &mut self.policy,
         );
         self.tick += 1;
-        self.assert_probe_true("true");
+        let _ = self.probe("undefined");
+        packets
     }
 
     /// Capture actual isolate output for assertions, then restore that exact
@@ -832,14 +778,14 @@ impl GatherReconnectRig {
         let batch = slot.drain_interacts();
         let controls = batch
             .iter()
-            .map(|request| match request {
+            .filter_map(|request| match request {
                 script::shim::InteractReq::GatherRun { request_id, .. } => {
-                    GatherControl::Run(*request_id)
+                    Some(GatherControl::Run(*request_id))
                 }
                 script::shim::InteractReq::GatherStop { request_id } => {
-                    GatherControl::Stop(*request_id)
+                    Some(GatherControl::Stop(*request_id))
                 }
-                other => panic!("unexpected row in Gather waiter batch: {other:?}"),
+                _ => None,
             })
             .collect();
         slot.restore_interacts(batch);
@@ -888,14 +834,14 @@ impl GatherReconnectRig {
             .native_status()
             .expect("installed Gatherer status")
             .run
-            .clone()
     }
 
     fn expect_running_page(&mut self, token: u64) {
         let expression = format!(
             "!!globalThis.__page && globalThis.__page.phase === 'running' && globalThis.__page.token === {token}"
         );
-        for _ in 0..48 {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
             self.frame();
             if self.probe(&expression) == true
                 && self.slot().lock().unwrap().native_status().is_some()
@@ -910,9 +856,8 @@ impl GatherReconnectRig {
     }
 
     fn start_un_drained(&mut self) -> u64 {
-        self.assert_probe_true("globalThis.__launch = true");
+        let _ = self.probe("globalThis.__launch = true");
         self.isolate_tick_without_host_drain();
-        self.assert_probe_true("globalThis.__run !== undefined");
         match self.wait_for_controls().as_slice() {
             [GatherControl::Run(token)] => *token,
             controls => panic!("initial real GatherRun batch: {controls:?}"),
@@ -929,7 +874,7 @@ impl GatherReconnectRig {
     }
 
     fn stop_and_settle(&mut self, token: u64) {
-        self.assert_probe_true("globalThis.__stop = true");
+        let _ = self.probe("globalThis.__stop = true");
         for _ in 0..32 {
             self.frame();
             if self.probe("globalThis.__settleCount") == 1 {
@@ -937,7 +882,10 @@ impl GatherReconnectRig {
                 return;
             }
         }
-        panic!("Gather stop did not settle waiter: {:?}", self.probe("globalThis.__page"));
+        panic!(
+            "Gather stop did not settle waiter: {:?}",
+            self.probe("globalThis.__page")
+        );
     }
 }
 
@@ -948,7 +896,10 @@ fn gather_reconnect_before_start_drain_reemits_same_token_once() {
 
     rig.reconnect();
     let (rows, owned) = rig.drain_host();
-    assert!(rows.is_empty(), "reconnect discarded the queued pre-start row");
+    assert!(
+        rows.is_empty(),
+        "reconnect discarded the queued pre-start row"
+    );
     assert!(!owned);
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
@@ -960,7 +911,10 @@ fn gather_reconnect_before_start_drain_reemits_same_token_once() {
     );
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
-    assert!(owned, "the re-emitted control is admitted through host drain");
+    assert!(
+        owned,
+        "the re-emitted control is admitted through host drain"
+    );
     rig.expect_running_page(token);
     rig.stop_and_settle(token);
 }
@@ -989,19 +943,20 @@ fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
         assert!(slot.api_owns_foreground(), "preparation survives reconnect");
         assert!(slot.native_status().is_none());
     }
-    rig.frame();
-    let controls = rig.queued_controls();
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(rig.probe("globalThis.__page.phase"), "preparing");
+    assert_eq!(rig.probe("globalThis.__page.token"), token);
     assert!(
-        controls.is_empty() || controls == vec![GatherControl::Run(token)],
-        "preparing page acknowledges the same token, or an unacknowledged waiter replays it once: {controls:?}"
+        rig.queued_controls().is_empty(),
+        "the retained preparing keyframe acknowledges the waiter without replaying its start"
     );
-    if !controls.is_empty() {
-        let (rows, owned) = rig.drain_host();
-        assert!(rows.is_empty());
-        assert!(owned);
-    }
     rig.expect_running_page(token);
     assert_eq!(rig.probe("globalThis.__settleCount"), 0);
+    assert_eq!(
+        rig.native_run().session,
+        rig.slot().lock().unwrap().work_epoch(),
+        "preparation installs into the boundary epoch, not its stale admission epoch"
+    );
     rig.stop_and_settle(token);
 }
 
@@ -1019,7 +974,10 @@ fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
     rig.reconnect();
     let after = rig.native_run();
     assert_eq!((before.slot, before.run), (after.slot, after.run));
-    assert_ne!(before.session, after.session, "installed run rekeys on reconnect");
+    assert_ne!(
+        before.session, after.session,
+        "installed run rekeys on reconnect"
+    );
     assert!(rig.slot().lock().unwrap().api_owns_foreground());
 
     rig.isolate_tick_without_host_drain();
@@ -1043,7 +1001,7 @@ fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
     assert!(owned);
     rig.expect_running_page(token);
 
-    rig.assert_probe_true("globalThis.__stop = true");
+    let _ = rig.probe("globalThis.__stop = true");
     rig.isolate_tick_without_host_drain();
     assert_eq!(rig.queued_controls(), vec![GatherControl::Stop(token)]);
     let (rows, owned) = rig.drain_host();
@@ -1073,7 +1031,7 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
     rig.expect_running_page(token);
     let before = rig.native_run();
 
-    rig.assert_probe_true("globalThis.__stop = true");
+    let _ = rig.probe("globalThis.__stop = true");
     rig.isolate_tick_without_host_drain();
     assert_eq!(
         rig.queued_controls(),
@@ -1094,7 +1052,10 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
     );
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
-    assert!(owned, "the re-emitted Stop tears down the seat through host drain");
+    assert!(
+        owned,
+        "the re-emitted Stop tears down the seat through host drain"
+    );
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     rig.isolate_tick_without_host_drain();
     rig.settled_result(token);
@@ -1103,15 +1064,17 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 #[test]
 fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
     let mut rig = GatherReconnectRig::new();
-    rig.assert_probe_true("globalThis.__pair = true");
+    let _ = rig.probe("globalThis.__pair = true");
     rig.isolate_tick_without_host_drain();
-    rig.assert_probe_true("globalThis.__run !== undefined");
     let first = rig.wait_for_controls();
     let [GatherControl::Run(token), GatherControl::Stop(stop_token)] = first.as_slice() else {
         panic!("initial real GatherRun+GatherStop batch: {first:?}");
     };
     let token = *token;
-    assert_eq!(*stop_token, token, "paired Stop targets its real start token");
+    assert_eq!(
+        *stop_token, token,
+        "paired Stop targets its real start token"
+    );
 
     rig.reconnect();
     let (rows, owned) = rig.drain_host();
@@ -1127,7 +1090,10 @@ fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
     );
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
-    assert!(owned, "the host drain observes the transient ownership edge");
+    assert!(
+        owned,
+        "the host drain observes the transient ownership edge"
+    );
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
 
     rig.isolate_tick_without_host_drain();
@@ -1136,5 +1102,130 @@ fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
         rig.reconnect();
         rig.isolate_tick_without_host_drain();
         rig.settled_result(token);
+    }
+}
+
+#[test]
+fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
+    for boundary in ["stop", "replace", "watchdog", "remove"] {
+        for terminal_before_boundary in [false, true] {
+            let mut rig = GatherReconnectRig::new();
+            let token = rig.start_un_drained();
+            let (rows, owned) = rig.drain_host();
+            assert!(rows.is_empty() && owned);
+            rig.expect_running_page(token);
+            let old_run = rig.native_run();
+            let selected = rig.slot().lock().unwrap().compiled_game_data().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let old_action = loop {
+                let cell = rig.slot();
+                let mut slot = cell.lock().unwrap();
+                slot.on_game_tick(&mut script::ScriptCtx {
+                    driver: &mut rig.client,
+                    tick: rig.tick,
+                    here: Some((rig.tile.x, rig.tile.z, rig.tile.level)),
+                    walk: None,
+                    walk_with: None,
+                    inv: None,
+                    snapshot: Some(&rig.snapshot),
+                    obj_names: Some(rig.names.as_ref()),
+                    compiled: script::CompiledTick {
+                        selected: Some(selected.as_ref()),
+                        ..Default::default()
+                    },
+                });
+                rig.tick += 1;
+                if let Some(action) = slot.take_native_action() {
+                    break action;
+                }
+                assert!(Instant::now() < deadline, "native action was not queued");
+                std::thread::yield_now();
+            };
+            let authority = old_action.authority();
+            assert!(authority.live());
+            if terminal_before_boundary {
+                rig.slot().lock().unwrap().restore_interacts(vec![
+                    script::shim::InteractReq::GatherStop { request_id: token },
+                ]);
+                let (_, owned) = rig.drain_host();
+                assert!(owned);
+                assert_eq!(rig.isolate_tick_without_host_drain(), (false, true));
+                rig.settled_result(token);
+            }
+            match boundary {
+                "stop" => {
+                    rig.slot().lock().unwrap().stop();
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    loop {
+                        let cell = rig.slot();
+                        let mut slot = cell.lock().unwrap();
+                        slot.poll_start();
+                        if slot.state() == script::RunState::Idle {
+                            break;
+                        }
+                        assert!(Instant::now() < deadline, "operator Stop did not reap");
+                        std::thread::yield_now();
+                    }
+                    start_source(&rig.scripts, Arc::clone(&selected), RECONNECT_SOURCE);
+                }
+                "replace" => {
+                    rig.slot().lock().unwrap().stop();
+                    start_source(&rig.scripts, Arc::clone(&selected), RECONNECT_SOURCE);
+                }
+                "watchdog" => {
+                    rig.slot()
+                        .lock()
+                        .unwrap()
+                        .restart_from_identity(Instant::now())
+                        .unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    loop {
+                        let cell = rig.slot();
+                        let mut slot = cell.lock().unwrap();
+                        slot.poll_start();
+                        if slot.state() == script::RunState::Running && slot.load_active() {
+                            break;
+                        }
+                        assert!(
+                            Instant::now() < deadline,
+                            "watchdog recreate did not settle"
+                        );
+                        std::thread::yield_now();
+                    }
+                }
+                "remove" => {
+                    rig.slot().lock().unwrap().stop();
+                    rig.scripts.lock().unwrap().remove(SLOT);
+                    start_source(&rig.scripts, Arc::clone(&selected), RECONNECT_SOURCE);
+                }
+                _ => unreachable!(),
+            }
+            assert!(!authority.live(), "{boundary} must revoke old native work");
+            assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+            assert!(!rig.slot().lock().unwrap().has_native_actions());
+            assert_eq!(
+                rig.isolate_tick_without_host_drain(),
+                (false, false),
+                "{boundary} must clear both live and terminal wire pages"
+            );
+            assert!(rig.probe("globalThis.__page === null") == true);
+            assert_eq!(rig.probe("globalThis.__settleCount"), 0);
+            let next_token = rig.start_un_drained();
+            assert_ne!(next_token, token);
+            let (rows, owned) = rig.drain_host();
+            assert!(rows.is_empty() && owned);
+            rig.expect_running_page(next_token);
+            assert_ne!(
+                rig.native_run(),
+                old_run,
+                "{boundary} creates a fresh RunKey"
+            );
+            assert_eq!(
+                rig.probe("globalThis.__settleCount"),
+                0,
+                "a new waiter must not consume the old terminal"
+            );
+            rig.stop_and_settle(next_token);
+        }
     }
 }

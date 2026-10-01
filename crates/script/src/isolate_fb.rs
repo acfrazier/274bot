@@ -34,8 +34,7 @@ pub use generated::rs_2b_0t::isolate::{
     ApiGather, ApiGatherOutcome, AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine,
     ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch, MainModalTexts,
     MakeButton, MakeProduct, NearestBooth, NpcBox, PuzzleBoard, QuestStatus, Reach, Row,
-    SceneEntity, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
-    WidgetText,
+    SceneEntity, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -2833,7 +2832,6 @@ fn setting_text_bytes(key: &str, value: &serde_json::Value) -> Result<usize, Str
     Ok(bytes)
 }
 
-
 fn setting_row_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     key: &str,
@@ -2898,10 +2896,8 @@ fn setting_row_off<'b>(
 fn settings_vector_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     bag: &crate::native::SettingsBag,
-) -> Result<
-    WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SettingRow<'b>>>>,
-    String,
-> {
+) -> Result<WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SettingRow<'b>>>>, String>
+{
     if bag.len() > MAX_GATHER_SETTING_ROWS {
         return Err("gather-run settings exceed cap".into());
     }
@@ -3106,16 +3102,14 @@ fn api_gather_off<'b>(
         ),
         None => (0, 0, false),
     };
-    let fields = page
-        .and_then(|page| page.status.as_deref())
-        .map(|status| {
-            let rows = status
-                .fields
-                .iter()
-                .filter_map(|field| status_field_off(b, field))
-                .collect::<Vec<_>>();
-            b.create_vector(&rows)
-        });
+    let fields = page.and_then(|page| page.status.as_deref()).map(|status| {
+        let rows = status
+            .fields
+            .iter()
+            .filter_map(|field| status_field_off(b, field))
+            .collect::<Vec<_>>();
+        b.create_vector(&rows)
+    });
     let mut table = ApiGatherBuilder::new(b);
     table.add_request_id(request_id);
     table.add_phase(phase);
@@ -3142,7 +3136,9 @@ fn api_gather_outcome_off<'b>(
             failure.retryable,
             *counts,
         ),
-        GatherEnd::Refused { reason, .. } => (3, None, Some(reason.as_ref()), false, Default::default()),
+        GatherEnd::Refused { reason, .. } => {
+            (3, None, Some(reason.as_ref()), false, Default::default())
+        }
         GatherEnd::Failed { reason, counts, .. } => {
             (4, None, Some(reason.as_ref()), false, *counts)
         }

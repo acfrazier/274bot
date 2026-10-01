@@ -2,10 +2,10 @@
 //! Snapshot fields, [`crate::shim::InteractReq`] ops, and nav
 //! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is 0.2.5.
 
-use std::path::{Path, PathBuf};
-use crate::SettingDef;
 use crate::gatherer::settings::schema;
 use crate::gatherer::status::{FieldKind, KEYS};
+use crate::SettingDef;
+use std::path::{Path, PathBuf};
 
 struct TsField {
     name: &'static str,
@@ -895,7 +895,9 @@ fn render_gather_session(out: &mut String) {
     out.push_str("/** How a session ended (the `value` of a `done` outcome). `blocked` keeps the slot's retained anchor/counters so the next `run` resumes; `stopped` clears them (operator-Stop semantics). */\n");
     out.push_str("export type GatherEnd =\n");
     out.push_str("  | { end: 'stopped'; token: number; counts: GatherCounts }\n");
-    out.push_str("  | { end: 'blocked'; token: number; failure: GatherFailure; counts: GatherCounts }\n");
+    out.push_str(
+        "  | { end: 'blocked'; token: number; failure: GatherFailure; counts: GatherCounts }\n",
+    );
     out.push_str("  | { end: 'refused'; token: number; reason: string }\n");
     out.push_str("  | { end: 'failed'; token: number; reason: string; counts: GatherCounts };\n\n");
     out.push_str("export type GatherOutcome =\n");

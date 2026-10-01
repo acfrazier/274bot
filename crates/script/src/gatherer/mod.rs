@@ -11,8 +11,8 @@ mod gather;
 mod oneop;
 mod runner;
 mod select;
-mod settings;
-mod status;
+pub mod settings;
+pub mod status;
 mod widen;
 
 pub use area::{AreaMode, WorkArea};

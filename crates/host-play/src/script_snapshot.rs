@@ -1512,6 +1512,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                 .and_then(GameSnapshot::bank_snapshot_generation)
                 .map_or(-1, |generation| generation as i64),
         ),
+        api_gather: None,
+        api_gather_outcome: None,
     };
     f(&input, native)
 }

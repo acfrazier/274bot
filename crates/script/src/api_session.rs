@@ -11,7 +11,9 @@ use crate::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 const MAX_SAFE_TOKEN: u64 = (1 << 53) - 1;
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -23,7 +25,7 @@ thread_local! {
 }
 
 struct GatherRecord {
-    token: u64,
+    token: NonZeroU64,
     stop_requested: bool,
     stop_epoch: u64,
 }
@@ -57,7 +59,7 @@ fn settings_error(settings: &SettingsBag) -> Option<String> {
 /// unacknowledged start and Stop rows are carried into each new scene epoch.
 pub(crate) struct GatherSession {
     token: u64,
-    settings: SettingsBag,
+    settings: Arc<SettingsBag>,
     emitted_epoch: u64,
     acknowledged: bool,
 }
@@ -80,14 +82,15 @@ impl Family for GatherSession {
         let Some(token) = allocate_token(&NEXT_TOKEN) else {
             return Begin::Refuse("token-exhausted".into());
         };
+        let settings = Arc::new(settings);
         let epoch = observed::with(observed::Scene::epoch);
         cx.emit(InteractReq::GatherRun {
             request_id: token,
-            settings: settings.clone(),
+            settings: Arc::clone(&settings),
         });
         GATHER.with(|state| {
             *state.borrow_mut() = Some(GatherRecord {
-                token,
+                token: NonZeroU64::new(token).expect("nonzero session token"),
                 stop_requested: false,
                 stop_epoch: epoch,
             });
@@ -123,14 +126,17 @@ impl Family for GatherSession {
         if !self.acknowledged && epoch != self.emitted_epoch {
             cx.emit(InteractReq::GatherRun {
                 request_id: self.token,
-                settings: self.settings.clone(),
+                settings: Arc::clone(&self.settings),
             });
             self.emitted_epoch = epoch;
         }
 
         let carry_stop = GATHER.with(|state| {
             let mut state = state.borrow_mut();
-            let Some(record) = state.as_mut().filter(|record| record.token == self.token) else {
+            let Some(record) = state
+                .as_mut()
+                .filter(|record| record.token.get() == self.token)
+            else {
                 return false;
             };
             if record.stop_requested && record.stop_epoch != epoch {
@@ -163,7 +169,7 @@ impl Drop for GatherSession {
             let mut state = state.borrow_mut();
             if state
                 .as_ref()
-                .is_some_and(|record| record.token == self.token)
+                .is_some_and(|record| record.token.get() == self.token)
             {
                 *state = None;
             }
@@ -172,7 +178,7 @@ impl Drop for GatherSession {
 }
 
 #[derive(Deserialize)]
-struct StopArgs {}
+pub(crate) struct StopArgs {}
 
 /// Synchronous Stop request. Stop intent is retained on the live row so it
 /// can be re-emitted after the reconnect drops its original queued row.
@@ -195,7 +201,7 @@ impl Family for GatherStop {
             }
             record.stop_requested = true;
             record.stop_epoch = epoch;
-            Ok(Some(record.token))
+            Ok(Some(record.token.get()))
         });
         match stopped {
             Err(reason) => Begin::Refuse(reason.into()),
@@ -228,5 +234,14 @@ mod tests {
         assert_eq!(allocate_token(&AtomicU64::new(0)), None);
         assert_eq!(allocate_token(&AtomicU64::new(MAX_SAFE_TOKEN + 1)), None);
         assert_eq!(allocate_token(&AtomicU64::new(u64::MAX)), None);
+    }
+
+    #[test]
+    fn gather_isolate_rust_records_stay_inside_estimated_inline_bounds() {
+        let record = std::mem::size_of::<Option<super::GatherRecord>>();
+        let row = std::mem::size_of::<super::GatherSession>();
+        println!("API gather isolate Rust idle record={record}B, live family row={row}B (settings heap/wire pages measured separately)");
+        assert!(record <= 24);
+        assert!(row <= 64);
     }
 }

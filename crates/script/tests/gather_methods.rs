@@ -145,7 +145,6 @@ export function tick(api) {
     missingName: api.gatherResource({}),
     rocks: api.gatherResource({ name: 'Rocks' }),
     blankName: api.gatherResource({ name: '   ' }),
-    namespace: api.gather,
     promise: omitted instanceof Promise,
   });
 }
@@ -174,7 +173,6 @@ export function tick(api) {
         assert_eq!(value["missingName"]["error"], "invalid-args");
         assert_eq!(value["rocks"]["error"], "unknown-resource");
         assert_eq!(value["blankName"]["error"], "unknown-resource");
-        assert!(value["namespace"].is_null());
         assert_eq!(value["promise"], false);
     }
 }

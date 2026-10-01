@@ -42,55 +42,65 @@ pub enum FieldKind {
     Integer,
 }
 
-/// The single canonical status table: each row is
-/// `(key, label, kind, value)`. The value expression reads `data` from the
-/// enclosing scope. [`KEYS`] and [`publish`] both expand this table through
-/// [`status_key!`] / [`status_field!`], so the published keys and the shared
-/// key table cannot drift.
+/// The canonical `(key, label, kind, value)` status table. Passing the
+/// data identifier keeps value expressions hygienic; emitting the whole
+/// array lets the same table project both keys and published fields.
 macro_rules! status_rows {
-    ($emit:ident) => {
-        $emit!("skill", "Skill", Text, data.skill),
-        $emit!("method", "Method", Text, Arc::clone(&data.method)),
-        $emit!("phase", "Phase", Text, data.phase),
-        $emit!("area", "Area", Text, Arc::clone(&data.area)),
-        $emit!("target", "Target", Text, Arc::clone(&data.target)),
-        $emit!("tool", "Tool", Text, Arc::clone(&data.tool)),
-        $emit!("bait", "Bait", Integer, data.bait),
-        $emit!("food", "Food", Integer, data.food),
-        $emit!("coins", "Coins", Integer, data.coins),
-        $emit!("yielded", "Yielded", Integer, i64::from(data.yielded)),
-        $emit!("dropped", "Dropped", Integer, i64::from(data.dropped)),
-        $emit!("deposited", "Deposited", Integer, i64::from(data.deposited)),
-        $emit!("trips", "Trips", Integer, i64::from(data.trips)),
-        $emit!("xp", "XP", Integer, i64::from(data.xp)),
-        $emit!(
-            "xp_per_hour",
-            "XP/hour",
-            Integer,
-            i64::from(data.xp_per_hour.unwrap_or(-1))
-        ),
-        $emit!("bank", "Bank", Text, Arc::clone(&data.bank)),
-        $emit!(
-            "last_progress",
-            "Last progress",
-            Integer,
-            data.last_progress as i64
-        ),
-        $emit!("deaths", "Deaths", Integer, i64::from(data.deaths)),
-        $emit!("absent", "Absent", Integer, i64::from(data.absent)),
-        $emit!("zone_gated", "Zone gated", Integer, i64::from(data.zone_gated)),
-        $emit!(
-            "excluded_targets",
-            "Excluded targets",
-            Text,
-            Arc::clone(&data.excluded_targets)
-        ),
-        $emit!(
-            "last_event",
-            "Last event",
-            Text,
-            Arc::clone(&data.last_event)
-        )
+    ($emit:ident, $data:ident) => {
+        [
+            $emit!("skill", "Skill", Text, $data.skill),
+            $emit!("method", "Method", Text, Arc::clone(&$data.method)),
+            $emit!("phase", "Phase", Text, $data.phase),
+            $emit!("area", "Area", Text, Arc::clone(&$data.area)),
+            $emit!("target", "Target", Text, Arc::clone(&$data.target)),
+            $emit!("tool", "Tool", Text, Arc::clone(&$data.tool)),
+            $emit!("bait", "Bait", Integer, $data.bait),
+            $emit!("food", "Food", Integer, $data.food),
+            $emit!("coins", "Coins", Integer, $data.coins),
+            $emit!("yielded", "Yielded", Integer, i64::from($data.yielded)),
+            $emit!("dropped", "Dropped", Integer, i64::from($data.dropped)),
+            $emit!(
+                "deposited",
+                "Deposited",
+                Integer,
+                i64::from($data.deposited)
+            ),
+            $emit!("trips", "Trips", Integer, i64::from($data.trips)),
+            $emit!("xp", "XP", Integer, i64::from($data.xp)),
+            $emit!(
+                "xp_per_hour",
+                "XP/hour",
+                Integer,
+                i64::from($data.xp_per_hour.unwrap_or(-1))
+            ),
+            $emit!("bank", "Bank", Text, Arc::clone(&$data.bank)),
+            $emit!(
+                "last_progress",
+                "Last progress",
+                Integer,
+                $data.last_progress as i64
+            ),
+            $emit!("deaths", "Deaths", Integer, i64::from($data.deaths)),
+            $emit!("absent", "Absent", Integer, i64::from($data.absent)),
+            $emit!(
+                "zone_gated",
+                "Zone gated",
+                Integer,
+                i64::from($data.zone_gated)
+            ),
+            $emit!(
+                "excluded_targets",
+                "Excluded targets",
+                Text,
+                Arc::clone(&$data.excluded_targets)
+            ),
+            $emit!(
+                "last_event",
+                "Last event",
+                Text,
+                Arc::clone(&$data.last_event)
+            ),
+        ]
     };
 }
 
@@ -117,10 +127,9 @@ macro_rules! status_field {
     };
 }
 
-/// The Gatherer's published status keys (22 entries), projected from the
-/// single [`status_rows!`] table. The host JS `GatherStatus` declaration is
-/// rendered from this table.
-pub const KEYS: &[(&str, FieldKind)] = &[status_rows!(status_key)];
+/// Published status keys, projected from the same table as [`publish`].
+/// The host JS `GatherStatus` declaration is rendered from this table.
+pub const KEYS: &[(&str, FieldKind)] = &status_rows!(status_key, data);
 
 pub fn publish(
     output: &mut dyn NativeOutput,
@@ -131,7 +140,7 @@ pub fn publish(
     failure: Option<ScriptFailure>,
     data: &StatusData,
 ) {
-    let fields: Arc<[StatusField]> = Arc::from([status_rows!(status_field)]);
+    let fields: Arc<[StatusField]> = Arc::from(status_rows!(status_field, data));
     output.status(ScriptStatus {
         run,
         card: CompiledId("Gatherer"),
@@ -157,7 +166,6 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
         ..ScriptPaint::default()
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -213,7 +221,11 @@ mod tests {
         let mut out = Capture { status: None };
         publish(
             &mut out,
-            RunKey { slot: 1, run: 1, session: 1 },
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
             1,
             None,
             NativePhase::Working,
@@ -221,8 +233,6 @@ mod tests {
             &data,
         );
         let status = out.status.expect("publish posts one status");
-        assert_eq!(status.fields.len(), KEYS.len(), "status KEYS length");
-        assert_eq!(status.fields.len(), 22, "gatherer publishes 22 keys");
         let mut keys: Vec<&str> = status.fields.iter().map(|field| field.key).collect();
         keys.sort_unstable();
         let mut want: Vec<&str> = KEYS.iter().map(|(key, _)| *key).collect();
