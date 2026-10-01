@@ -57,13 +57,16 @@ mod tests {
     use super::*;
     use crate::native::ledger::TickBudget;
     use crate::native::{ActionContext, RetainedMemory};
-    use crate::quester::compile::{compile_uncached_for_test, decode_cook, PredicateContext};
-    use crate::quester::path::PredicateDocument;
+    use crate::quester::compile::{
+        compile_uncached_for_test, decode_cook, PredicateContext, RUNE_MYSTERIES_JSON, SHEEP_JSON,
+    };
+    use crate::quester::path::{PathDocument, PredicateDocument};
     use api::game_data::SelectedGameData;
+    use api::obj_names::ItemDefView;
     use api::quest_facts::QuestCatalog;
-    use api::quest_progress::EvidenceStamp;
-    use api::selected::{ClientRevision, RunKey};
-    use api::snapshot::{GameSnapshot, SnapshotView};
+    use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
+    use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -85,6 +88,120 @@ mod tests {
             tick: 1,
             sequence: 1,
         }
+    }
+
+    fn path(json: &str, data: &SelectedGameData, quests: &QuestCatalog) -> CompiledPath {
+        let document: PathDocument = serde_json::from_str(json).unwrap();
+        compile_uncached_for_test(&document, data, quests).unwrap()
+    }
+
+    fn inventory_snapshot(data: &SelectedGameData, items: &[(&str, i32)]) -> GameSnapshot {
+        let rows = items
+            .iter()
+            .enumerate()
+            .map(|(slot, (alias, count))| {
+                let item = data.item_by_alias(alias).unwrap();
+                ItemView {
+                    def: ItemDefView {
+                        id: item.id,
+                        name: Some((*alias).into()),
+                        stackable: false,
+                        members: false,
+                        base_value: 1,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count: *count,
+                    actions: Vec::new(),
+                    component_id: 0,
+                }
+            })
+            .collect();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(rows, 28);
+        snapshot.seed_equipment(Vec::new());
+        snapshot
+    }
+
+    fn progress(
+        path: &CompiledPath,
+        data: &SelectedGameData,
+        stage: &str,
+        flags: &[(&str, Truth, Option<u32>)],
+    ) -> QuestProgress {
+        let stage = FactKey::new(stage);
+        QuestProgress {
+            quest: path.id.clone(),
+            stage: Knowledge::Known(stage.clone()),
+            complete: Truth::False,
+            signals: Arc::from(Vec::new()),
+            flags: Arc::from(
+                flags
+                    .iter()
+                    .map(|(flag, truth, count)| ProgressFlag {
+                        flag: FactKey::new(*flag),
+                        truth: *truth,
+                        count: *count,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            evidence: stamp(),
+            binding: path.progress.binding.clone(),
+            role: path.progress.role.clone(),
+            rule: Knowledge::Known(stage),
+            pin: data.selected_pin().unwrap(),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Choice {
+        Step(String),
+        Unknown,
+        Exhausted,
+    }
+
+    fn choice_for_stage(
+        path: &CompiledPath,
+        stage: &str,
+        snapshot: &GameSnapshot,
+        quests: &QuestCatalog,
+        progress: &[QuestProgress],
+        bank: &crate::quester::bank_memo::BankMemo,
+    ) -> Choice {
+        let sequence = sequence_for_stage(path, stage).unwrap();
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick(snapshot, &mut ledger, 1, |tick| {
+            let cx = PredicateContext {
+                cx: &tick.cx,
+                quests,
+                progress,
+                required_after: stamp(),
+                chat_since: 0,
+                outcome: None,
+                bank,
+            };
+            match select(path, sequence, &cx) {
+                SelectionDecision::Selected(selected) => {
+                    Choice::Step(selected.step.id.0.to_string())
+                }
+                SelectionDecision::Unknown => Choice::Unknown,
+                SelectionDecision::Exhausted => Choice::Exhausted,
+            }
+        })
+    }
+
+    fn known_empty_bank() -> crate::quester::bank_memo::BankMemo {
+        let mut bank = crate::quester::bank_memo::BankMemo::default();
+        bank.update(&crate::native_bank::BankReceipt {
+            counts: Vec::new(),
+            complete: true,
+        });
+        bank
     }
 
     #[test]
@@ -184,5 +301,242 @@ mod tests {
             });
             assert_eq!(selected_id(&bank, &mut ledger), acquire);
         }
+    }
+
+    #[test]
+    fn rune_stage_one_selects_talisman_recovery_and_package_steps_in_order() {
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = path(RUNE_MYSTERIES_JSON, &data, &quests);
+        let pending = progress(
+            &compiled,
+            &data,
+            "runemysteries:1",
+            &[
+                ("runemysteries:talisman_pending", Truth::True, None),
+                ("runemysteries:package_delivered", Truth::False, None),
+            ],
+        );
+        let unknown_bank = crate::quester::bank_memo::BankMemo::default();
+        let known_bank = known_empty_bank();
+
+        let talisman = inventory_snapshot(&data, &[("air_talisman", 1)]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &talisman,
+                &quests,
+                std::slice::from_ref(&pending),
+                &unknown_bank,
+            ),
+            Choice::Step("deliver-talisman".into())
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &talisman,
+                &quests,
+                std::slice::from_ref(&pending),
+                &known_bank,
+            ),
+            Choice::Step("deliver-talisman".into())
+        );
+
+        let empty = inventory_snapshot(&data, &[]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &empty,
+                &quests,
+                std::slice::from_ref(&pending),
+                &unknown_bank,
+            ),
+            Choice::Step("scan-bank".into()),
+            "a bank scan remains available when no quest item is held"
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &empty,
+                &quests,
+                std::slice::from_ref(&pending),
+                &known_bank,
+            ),
+            Choice::Step("recover-duke".into())
+        );
+
+        let package = inventory_snapshot(&data, &[("research_package", 1)]);
+        let package_pending = progress(
+            &compiled,
+            &data,
+            "runemysteries:1",
+            &[
+                ("runemysteries:talisman_pending", Truth::False, None),
+                ("runemysteries:package_delivered", Truth::False, None),
+            ],
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &package,
+                &quests,
+                std::slice::from_ref(&package_pending),
+                &unknown_bank,
+            ),
+            Choice::Step("deliver-package".into())
+        );
+
+        let package_delivered = progress(
+            &compiled,
+            &data,
+            "runemysteries:1",
+            &[
+                ("runemysteries:talisman_pending", Truth::False, None),
+                ("runemysteries:package_delivered", Truth::True, None),
+            ],
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &empty,
+                &quests,
+                std::slice::from_ref(&package_delivered),
+                &known_bank,
+            ),
+            Choice::Step("collect-notes".into())
+        );
+
+        let notes = inventory_snapshot(&data, &[("research_notes", 1)]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "runemysteries:1",
+                &notes,
+                &quests,
+                std::slice::from_ref(&package_delivered),
+                &known_bank,
+            ),
+            Choice::Step("deliver-notes".into())
+        );
+    }
+
+    #[test]
+    fn sheep_partial_products_use_journal_remaining_count_and_keep_full_supply_recoverable() {
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = path(SHEEP_JSON, &data, &quests);
+        let sequence_progress = progress(
+            &compiled,
+            &data,
+            "sheep:1",
+            &[("sheep:balls_to_go", Truth::True, Some(12))],
+        );
+        let progress = [sequence_progress];
+        let bank = known_empty_bank();
+
+        let partial = inventory_snapshot(
+            &data,
+            &[("shears", 1), ("bronze_sword", 1), ("ball_of_wool", 8)],
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &partial,
+                &quests,
+                &progress,
+                &bank,
+            ),
+            Choice::Step("shear".into()),
+            "the 12 remaining balls minus 8 held balls requires only 4 new wool; the bronze sword is not a quest equip"
+        );
+
+        let ready_to_spin = inventory_snapshot(
+            &data,
+            &[
+                ("shears", 1),
+                ("bronze_sword", 1),
+                ("ball_of_wool", 8),
+                ("wool", 4),
+            ],
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &ready_to_spin,
+                &quests,
+                &progress,
+                &bank,
+            ),
+            Choice::Step("spin".into())
+        );
+
+        let mixed_partial = inventory_snapshot(
+            &data,
+            &[
+                ("shears", 1),
+                ("ball_of_wool", 6),
+                ("wool", 10),
+            ],
+        );
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &mixed_partial,
+                &quests,
+                &progress,
+                &bank,
+            ),
+            Choice::Step("spin".into()),
+            "existing wool plus held balls already meets the remaining shear target"
+        );
+
+        let enough_balls = inventory_snapshot(&data, &[("ball_of_wool", 12)]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &enough_balls,
+                &quests,
+                &progress,
+                &bank,
+            ),
+            Choice::Step("hand-in".into())
+        );
+
+        let no_progress = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 8)]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &no_progress,
+                &quests,
+                &[],
+                &bank,
+            ),
+            Choice::Unknown,
+            "a partial inventory must wait for journal quantity evidence"
+        );
+        let full_supply = inventory_snapshot(&data, &[("shears", 1), ("ball_of_wool", 20)]);
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "sheep:1",
+                &full_supply,
+                &quests,
+                &[],
+                &bank,
+            ),
+            Choice::Step("hand-in".into()),
+            "the full hand-in quantity remains usable before the first journal read"
+        );
     }
 }
