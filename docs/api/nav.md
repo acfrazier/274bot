@@ -261,6 +261,8 @@ approach selection and approach settlement share that geometry. A 2×2 stair
 may legitimately be operable two tiles from its anchor, while a neighbouring
 tile separated by a wall is not. This does not make occupied goals standable:
 route to an operable adjacent stand for scenery such as the spinning wheel.
+The shared sparse transport index reserves spare hash-table capacity when it is
+rebuilt, keeping negative neighbour probes cheap without per-query allocation.
 
 Straight wall doors join the loc's own tile (`at`) and the adjacent tile
 along its placement angle. Opening removes the closed wall between those
