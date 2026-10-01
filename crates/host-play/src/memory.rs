@@ -1991,7 +1991,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
+        write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
 
     /// The duel fleet's recorded failure, named with its slot's account,
@@ -2029,7 +2029,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        if let Err(write_error) = writeln!(self.qualification_output, "{value}") {
+        if let Err(write_error) = write_row(&mut self.qualification_output, &value) {
             eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
         }
     }
@@ -2047,9 +2047,9 @@ impl Run {
         let row = serde_json::json!({"record":"diagnostics","elapsed_s":self.started.elapsed().as_secs_f64(),"failure":failure,"slots":slots});
         // A separate record type in the diagnostic-only sidecar keeps original
         // Sample consumers and baseline JSONL unchanged.
-        writeln!(
+        write_row(
             self.diagnostic_output.as_mut().expect("diagnostic output"),
-            "{row}"
+            &row,
         )
         .map_err(|e| e.to_string())
     }
@@ -2062,6 +2062,16 @@ impl Run {
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
     }
+}
+
+/// One sidecar row in a single write. JSON's `Display` emits token-sized
+/// writes, which cost a measured frame when a sidecar row lands inside the
+/// observed window; one `write_all` per row also leaves nothing buffered
+/// for `process::exit` to lose.
+fn write_row(file: &mut std::fs::File, value: &serde_json::Value) -> std::io::Result<()> {
+    let mut line = value.to_string();
+    line.push('\n');
+    file.write_all(line.as_bytes())
 }
 
 #[cfg(test)]
