@@ -4153,7 +4153,7 @@ fn same_key_pending_route_refuses_distinct_id() {
                 bank: vec![],
                 live_candidates: None,
                 completion: Default::default(),
-                avoid: Vec::new(),
+                exclusions: None,
             }),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
@@ -4687,7 +4687,10 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid,
+        exclusions: Some(Arc::new(ScriptRouteExclusions {
+            avoid,
+            ..Default::default()
+        })),
     };
     let thrower = nav::router::AvoidRect {
         min_x: 2,
@@ -4767,7 +4770,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("open floor should route");
@@ -4813,7 +4816,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("same-room approach should route");
@@ -4864,7 +4867,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("occupied target should route to a neighbour");
@@ -4915,7 +4918,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
@@ -4969,7 +4972,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
@@ -5021,7 +5024,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("actual 289 route should exist");

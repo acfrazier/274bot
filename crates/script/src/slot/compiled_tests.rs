@@ -550,6 +550,7 @@ impl Script for Relog {
                     options: crate::FindOptions::default(),
                     required_after: first,
                     evidence: None,
+                    cross: Vec::new().into_boxed_slice(),
                 };
                 frame.stale_walk = Some(
                     cx.actions

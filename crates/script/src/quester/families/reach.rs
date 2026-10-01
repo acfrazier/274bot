@@ -393,6 +393,7 @@ pub fn walk_request(tile: WorldTile, radius: u16, required_after: EvidenceStamp)
         options: crate::FindOptions::default(),
         required_after,
         evidence: None,
+        cross: Vec::new().into_boxed_slice(),
     }
 }
 

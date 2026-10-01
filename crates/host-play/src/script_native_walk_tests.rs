@@ -15,7 +15,10 @@ struct Walker {
     /// On the next tick, cancel the walk and walk the same tile again.
     rewalk: bool,
     begun: usize,
+    walks: usize,
+    cross_first: Vec<Arc<str>>,
     result: Option<Result<WalkReceipt, ActionError>>,
+    results: Vec<Result<WalkReceipt, ActionError>>,
 }
 
 /// One native `Walk` to `(4, 0, 0)`, begun on the first eligible tick and
@@ -36,10 +39,16 @@ impl Script for WalkerScript {
         }
         if let Some(handle) = &self.handle {
             if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
-                shared.result = Some(result);
+                shared.result = Some(result.clone());
+                shared.results.push(result);
                 self.handle = None;
             }
-        } else if shared.begun == 0 {
+        } else if shared.begun < shared.walks {
+            let cross = if shared.begun == 0 {
+                shared.cross_first.clone()
+            } else {
+                Vec::new()
+            };
             shared.begun += 1;
             let request = WalkRequest {
                 target: WorldTile {
@@ -51,10 +60,15 @@ impl Script for WalkerScript {
                 options: script::FindOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
+                cross: cross.into_boxed_slice(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => self.handle = Some(handle),
-                Err(error) => shared.result = Some(Err(error)),
+                Err(error) => {
+                    let result = Err(error);
+                    shared.result = Some(result.clone());
+                    shared.results.push(result);
+                }
             }
         }
         if shared.blocked {
@@ -83,6 +97,7 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let shared = Arc::new(parking_lot::Mutex::new(Walker {
         blocked,
+        walks: 1,
         ..Walker::default()
     }));
     script_slot_or_insert(&scripts, "alice")
@@ -116,6 +131,119 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
 
 fn open_rig(blocked: bool) -> Rig {
     rig(Some(Arc::new(open_world(40, 1))), blocked)
+}
+fn zoned_open_world() -> NavWorld {
+    let mut world = open_world(40, 1);
+    let zones = vec![nav::zones::Zone::npc(
+        WorldTile {
+            x: 2,
+            z: 0,
+            level: 0,
+        },
+        0,
+        nav::zones::ZoneClass::Always,
+        u16::MAX,
+        0,
+    )];
+    let kinds = vec![nav::zones::ZoneKind::new(
+        "test-barrier",
+        "Test barrier",
+        123,
+        0,
+        false,
+        false,
+    )];
+    let table = nav::zones::ZoneTable::from_parts(
+        zones,
+        kinds,
+        vec![],
+        vec![],
+        vec![],
+        world.collision.origin,
+        world.collision.width as u32,
+        world.collision.height as u32,
+        &world.graph.wilderness,
+    )
+    .unwrap();
+    world.graph.zones = Some(table);
+    world
+}
+fn catalog_open_world() -> NavWorld {
+    let mut world = open_world(40, 1);
+    let mut zones = vec![
+        nav::zones::Zone::npc(
+            WorldTile {
+                x: 2,
+                z: 0,
+                level: 0,
+            },
+            0,
+            nav::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav::zones::Zone::npc(
+            WorldTile {
+                x: 3,
+                z: 0,
+                level: 0,
+            },
+            0,
+            nav::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+    ];
+    zones[0].group = 0;
+    zones[1].group = 1;
+    let kinds = vec![nav::zones::ZoneKind::new(
+        "test-barrier",
+        "Test barrier",
+        123,
+        0,
+        false,
+        false,
+    )];
+    let groups = vec![
+        nav::zones::ZoneGroup::new(
+            "white-wolf-mountain",
+            "White Wolf Mountain",
+            nav::router::AvoidRect {
+                min_x: 2,
+                max_x: 2,
+                min_z: 0,
+                max_z: 0,
+                level: Some(0),
+            },
+            vec![0].into_boxed_slice(),
+        ),
+        nav::zones::ZoneGroup::new(
+            "draynor-jail-guards",
+            "Draynor jail guards",
+            nav::router::AvoidRect {
+                min_x: 3,
+                max_x: 3,
+                min_z: 0,
+                max_z: 0,
+                level: Some(0),
+            },
+            vec![1].into_boxed_slice(),
+        ),
+    ];
+    let table = nav::zones::ZoneTable::from_parts(
+        zones,
+        kinds,
+        groups,
+        vec![],
+        vec![],
+        world.collision.origin,
+        world.collision.width as u32,
+        world.collision.height as u32,
+        &world.graph.wilderness,
+    )
+    .unwrap();
+    world.graph.zones = Some(table);
+    world
 }
 
 impl Rig {
@@ -346,4 +474,196 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
     rig.observe(3);
     assert_eq!(rig.end(), None, "the re-walk is in flight, not refused");
     rig.wait_routed();
+}
+
+#[test]
+fn native_cross_exemption_is_scoped_to_one_walk() {
+    let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.walks = 2;
+        shared.cross_first = vec![Arc::from("test-barrier@2,0,0")];
+    }
+
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    assert_eq!(rig.shared.lock().results.len(), 1);
+
+    rig.observe(3);
+    assert!(wait_until(5_000, || {
+        rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_outcome_seq >= 2)
+    }));
+    rig.observe(4);
+
+    let shared = rig.shared.lock();
+    assert_eq!(shared.results.len(), 2);
+    assert!(shared.results[0].as_ref().unwrap().blocked.is_none());
+    let second = shared.results[1].as_ref().unwrap();
+    assert_eq!(second.end, WalkEnd::Refused);
+    assert_eq!(
+        second.blocked.as_deref(),
+        Some(&[nav::zones::ZoneKey::Zone(0)][..])
+    );
+    assert!(
+        second
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("test-barrier@2,0,0"))
+    );
+}
+
+#[test]
+fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
+    use script::shim::InspectAvoidWire;
+
+    let world = catalog_open_world();
+    let outside = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let inside_jail = WorldTile {
+        x: 3_100,
+        z: 3_230,
+        level: 0,
+    };
+    let resolve_avoid = |from, state: &WorldState, id: &str| {
+        let mut exclusions = crate::script_nav::ScriptRouteExclusions::default();
+        exclusions
+            .avoid_wire
+            .push(InspectAvoidWire::Catalog(id.to_string()));
+        crate::script_nav::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            outside,
+            state,
+            exclusions,
+        )
+    };
+
+    let state = WorldState::empty();
+    let (_, white_wolf) = resolve_avoid(outside, &state, "white-wolf-mountain").unwrap();
+    assert_eq!(white_wolf.avoid.len(), 1);
+    assert_eq!(
+        (
+            white_wolf.avoid[0].min_x,
+            white_wolf.avoid[0].max_x,
+            white_wolf.avoid[0].min_z,
+            white_wolf.avoid[0].max_z,
+            white_wolf.avoid[0].level,
+        ),
+        (2828, 2878, 3468, 3538, None)
+    );
+
+    let (_, jail) = resolve_avoid(outside, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(jail.avoid.len(), 4);
+    let mut high_combat = WorldState::empty();
+    high_combat.combat_level = Some(51);
+    let (_, skipped_for_combat) =
+        resolve_avoid(outside, &high_combat, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_combat.avoid.is_empty());
+    let (_, skipped_for_endpoint) =
+        resolve_avoid(inside_jail, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_endpoint.avoid.is_empty());
+}
+
+#[test]
+fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
+    use script::shim::InspectAvoidWire;
+
+    let world = catalog_open_world();
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let state = WorldState::empty();
+    let mut unknown = crate::script_nav::ScriptRouteExclusions::default();
+    unknown
+        .avoid_wire
+        .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
+    assert_eq!(
+        crate::script_nav::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            unknown,
+        )
+        .unwrap_err(),
+        "avoidZones: unknown zone \"no-such-zone\""
+    );
+
+    let mut unknown_cross = crate::script_nav::ScriptRouteExclusions::default();
+    unknown_cross.cross.push("no-such-zone".to_string());
+    assert_eq!(
+        crate::script_nav::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            unknown_cross,
+        )
+        .unwrap_err(),
+        "crossZones: unknown zone \"no-such-zone\""
+    );
+
+    let mut too_many = crate::script_nav::ScriptRouteExclusions::default();
+    too_many.cross = (0..9).map(|_| "test-barrier@2,0,0".to_string()).collect();
+    assert_eq!(
+        crate::script_nav::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            too_many,
+        )
+        .unwrap_err(),
+        "crossZones: more than 8 zone names"
+    );
+}
+
+#[test]
+fn native_walk_receipt_marks_legacy_zone_catalog_unavailable() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(
+        receipt.detail.as_deref(),
+        Some("zones: unavailable (legacy grid pack)")
+    );
 }
