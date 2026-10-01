@@ -2192,9 +2192,9 @@ impl<'a> ReverseClosure<'a> {
             return Some(ReverseProof::Abandoned);
         }
         let admitted = self.seen.len();
-        for edge in &graph.edges {
+        for (index, edge) in graph.edges.iter().enumerate() {
             if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax) {
-                if let Some(proof) = self.admit_takeoffs(edge.at, edge.to) {
+                if let Some(proof) = self.admit_edge_takeoffs(index) {
                     return Some(proof);
                 }
             }
@@ -2209,6 +2209,30 @@ impl<'a> ReverseClosure<'a> {
             }
         }
         (self.seen.len() == admitted).then_some(ReverseProof::Unreachable)
+    }
+
+    /// Mirror forward footprint admission, including rotated force-approach
+    /// sides and source wall faces. Radius-only predecessors are not a proof.
+    fn admit_edge_takeoffs(&mut self, index: usize) -> Option<ReverseProof> {
+        let (min, max) = self.graph.takeoff_bounds(index);
+        let to = self.graph.edges[index].to;
+        for x in min.x..=max.x {
+            for z in min.z..=max.z {
+                let takeoff = WorldTile {
+                    x,
+                    z,
+                    level: min.level,
+                };
+                if self.graph.admissible_from(self.collision, index, takeoff)
+                    && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                {
+                    if let Some(proof) = self.admit(takeoff) {
+                        return Some(proof);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// The forward search takes an edge at `at` from any standable tile
@@ -2435,13 +2459,9 @@ fn search_kernel(
                 }
             }
         }
-        // Transport edges are usable from any standable tile within the
-        // interact radius of their `at` — the approach is derived here,
-        // never baked. `at` itself is the interact target and may be
-        // blocked (a wall loc or NPC); only the take-off tile needs to be
-        // standable. Each edge is indexed under its unique `at`, so the
-        // fixed offset sweep finds it exactly once per node (a radius-1
-        // square may cover several `at` tiles — each is a distinct edge).
+        // Footprint edges are indexed at each admissible stand; process those
+        // only at cur, not again through neighbouring index entries. Other
+        // transports remain indexed at their radius-one target anchor.
         if collision.standable(cur) {
             for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
                 for dz in -INTERACT_RADIUS..=INTERACT_RADIUS {
@@ -2454,7 +2474,13 @@ fn search_kernel(
                         continue;
                     };
                     for &ei in idxs {
+                        if at != cur && graph.approaches.get(ei).is_some_and(Option::is_some) {
+                            continue;
+                        }
                         let edge = &graph.edges[ei];
+                        if !graph.admissible_from(collision, ei, cur) {
+                            continue;
+                        }
                         if !edge_allowed(state, edge, relax) {
                             continue;
                         }

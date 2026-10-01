@@ -188,6 +188,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
     let graph = crate::transport::TransportGraph {
         edges: vec![free.clone(), toll.clone()],
         at: HashMap::from([(at, vec![0, 1])]),
+        approaches: vec![None; 2],
         teleports: vec![],
         wilderness: crate::transport::WildernessRules::default(),
         quest_family: None,
