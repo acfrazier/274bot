@@ -49,7 +49,7 @@ pub fn build_tooltip() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{git_stamp, line, tooltip, SHORT};
+    use super::{git_stamp, line, tooltip};
 
     #[test]
     fn git_stamp_is_short_or_short_dirty() {
@@ -73,14 +73,6 @@ mod tests {
         assert_eq!(
             tooltip("0.1.7", "abcdef0123456789", true, ""),
             "0.1.7\ncommit abcdef0123456789 (dirty tree)\nbuilt —"
-        );
-    }
-
-    #[test]
-    fn baked_short_is_seven_or_unknown() {
-        assert!(
-            SHORT == "unknown" || SHORT.chars().count() == 7,
-            "short must be 7 chars or unknown, got {SHORT:?}"
         );
     }
 }

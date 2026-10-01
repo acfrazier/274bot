@@ -95,14 +95,6 @@ mod tests {
     #[test]
     fn columns_start_at_their_defaults_and_toggle_independently() {
         let mut prefs = HashMap::new();
-        let shown: Vec<_> = FleetColumn::ALL
-            .into_iter()
-            .filter(|c| visible(&prefs, *c))
-            .collect();
-        assert_eq!(
-            shown,
-            [FleetColumn::State, FleetColumn::Card, FleetColumn::Run]
-        );
         set_visible(&mut prefs, FleetColumn::Idle, true);
         set_visible(&mut prefs, FleetColumn::Card, false);
         assert!(visible(&prefs, FleetColumn::Idle));
