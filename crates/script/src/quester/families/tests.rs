@@ -1770,6 +1770,77 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
     });
 }
 
+#[test]
+fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(4893, vec!["Give 'em here then.".into()]);
+    snapshot.seed_chat_options(vec![], 4899);
+    let mut wool = ItemView {
+        def: def(1759, "Ball of wool"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 20,
+        actions: vec![],
+        component_id: 3214,
+    };
+    snapshot.seed_inventory(vec![wool.clone()], 28);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    id: 0,
+                    npc: Arc::from("Fred the Farmer"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for tick in 3..=22 {
+        wool.count = 23 - tick as i32;
+        snapshot.seed_inventory(vec![wool.clone()], 28);
+        assert!(
+            with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending(),
+            "bulk handover is still active at tick {tick}"
+        );
+    }
+    ledger.as_mut().unwrap().outbox.clear();
+    snapshot.seed_chat_modal(4893, vec!["I guess I'd better pay you then.".into()]);
+    snapshot.seed_chat_options(vec![], 4899);
+    assert!(with_tick(&snapshot, &mut ledger, 23, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    })
+    .is_pending());
+    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    snapshot.seed_chat_modal(-1, vec![]);
+    snapshot.seed_chat_options(vec![], -1);
+    for tick in 24..29 {
+        assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+        .is_pending());
+    }
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 29, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        }),
+        Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+    ));
+}
+
 pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool) {
     snapshot.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
