@@ -84,13 +84,15 @@ Dead runtime copies and interrupted-publication staging folders left by crashes
 or explicit exits are swept on the next preparation without deleting a live
 process's copy.
 
-Only the newest verified snapshot per revision is kept: retaining a new
-namespace prunes older same-revision namespaces with no live owner. A copy a
-live process may still read is never removed; liveness uses a conservative
-PID probe, so an unknown result counts as alive. Snapshots in the old layout
+The three most recently used verified snapshot namespaces per revision are
+kept, with recency refreshed on every successful preparation, including reuse.
+This lets you switch between servers without downloading their assets again,
+while bounding abandoned copies. A copy a live process may still read or write
+is never removed, even outside that bound; liveness uses a conservative PID
+probe, so an unknown result counts as alive. Snapshots in the old layout
 directly under `unpack-289/<version>/` are neither read nor removed.
-Reusing individual files across negotiation keys is out of scope: a changed
-negotiation key refills from validated entries.
+Reusing individual files across negotiation keys is out of scope: a new or
+evicted negotiation key refills from validated entries.
 
 If saving retained assets fails (for example, the destination is read-only),
 startup warns once and continues using the verified private runtime copy.

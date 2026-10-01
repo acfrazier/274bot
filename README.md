@@ -91,6 +91,8 @@ cd 274bot
 
 Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP and retains the checked JAGs plus the decoded snapshots under the revision unpack root; later boots revalidate and reuse them instead of downloading everything again. See [FIRST-START.md](FIRST-START.md) for the retention layout.
 
+Stock Lost City Server uses the **Java default login RSA key pair** for local — no key bake. If you rotated `private.pem`, login reads the public half from `$ENGINE_DIR/data/config/private.pem` (or `LOGIN_RSAN` / `LOGIN_RSAE`).
+
 ```bash
 # The vault passphrase is never read from the environment or the command line:
 # the panel asks in its unlock window, host-play and tui-play ask on the terminal.
