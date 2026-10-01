@@ -45,13 +45,9 @@ fn allocate_token(next: &AtomicU64) -> Option<u64> {
 }
 
 fn settings_error(settings: &SettingsBag) -> Option<String> {
-    GathererSettings::from_bag(settings).err().map(|error| {
-        if error.field.is_empty() {
-            "invalid-settings".to_owned()
-        } else {
-            format!("invalid-setting:{}:{}", error.field, error.code)
-        }
-    })
+    GathererSettings::from_bag(settings)
+        .err()
+        .map(crate::api_gather::settings_refusal)
 }
 
 /// One awaited Gatherer-card session, correlated with host pages by a public

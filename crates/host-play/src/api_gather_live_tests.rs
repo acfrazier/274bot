@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
 
 const LIVE_SOURCE: &str = r#"
+const channel = new BroadcastChannel(__GATHER_CHANNEL__);
 export const apiVersion = 2;
 export function tick(api) {
   const page = api.snapshot.gather;
@@ -23,18 +24,28 @@ export function tick(api) {
   if (globalThis.__start && !globalThis.__run) {
     globalThis.__run = api.gather.run({ skill: 'Woodcutting', woodcuttingResources: ['normal'], disposition: 'Power', location: 'Custom', customTile: globalThis.__tile });
     api.request({ op: 'held', name: 'Logs', action: 'Drop' });
+    channel.postMessage({ proof: 'run' });
     globalThis.__run.then(value => { globalThis.__result = value; });
   }
   if (page && page.status && !globalThis.__liveHeldSent) {
     globalThis.__liveHeldSent = true;
     api.request({ op: 'held', name: 'Logs', action: 'Drop' });
+    channel.postMessage({ proof: 'live' });
   }
   if (globalThis.__stop && api.snapshot.gather && !globalThis.__stopped) {
     globalThis.__stopped = true;
     globalThis.__stopResult = api.gather.stop();
     api.request({ op: 'held', name: 'Logs', action: 'Drop' });
+    channel.postMessage({ proof: 'stop' });
   }
 }
+"#;
+
+const CHANNEL_RECEIVER_SOURCE: &str = r#"
+const channel = new BroadcastChannel(__GATHER_CHANNEL__);
+globalThis.__receivedMessages = [];
+channel.onmessage = event => globalThis.__receivedMessages.push(event.data);
+export function tick(_api) {}
 "#;
 
 #[derive(Default)]
@@ -101,9 +112,9 @@ struct ThrowawayHome {
 }
 
 impl ThrowawayHome {
-    fn enter(label: &str) -> Self {
+    fn enter(label: &str, evidence_dir: &Path) -> Self {
         let previous = std::env::var_os("HOME");
-        let path = std::env::temp_dir().join(format!(
+        let path = evidence_dir.join(format!(
             "274bot-api-gather-{label}-{}-{}",
             std::process::id(),
             SystemTime::now()
@@ -459,6 +470,8 @@ fn wire_shadow_lengths(
 #[test]
 #[ignore = "requires LIVE=1 and local R289 Gatherer fixtures"]
 fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
+    use script::shim::InteractReq;
+    use script_channels::BrokerWorld;
     assert!(
         std::env::var("LIVE").is_ok_and(|value| value == "1"),
         "run this ignored receipt only with LIVE=1"
@@ -477,17 +490,22 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         "run this ignored live receipt in its own test process"
     );
     api::hostlog::set_debug(true);
-    let home = ThrowawayHome::enter("receipt");
+    let home = ThrowawayHome::enter("receipt", &evidence_dir);
     let options = live_options(&home.path);
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare cold local-289 template");
-    let names = mint_live_names(1);
+    let names = play_bootstrap::mint_live_names_with("sb", 2);
     let credentials = mint_live_entries(&names);
-    let account = names.first().expect("minted account").clone();
-    let password = credentials.first().expect("minted credentials").1.clone();
+    let account = names.first().expect("minted Gather account").clone();
+    let receiver_account = names.get(1).expect("minted channel receiver").clone();
+    let channel_name = format!("rs2b0t:kq:v1:{account},{receiver_account},carol,dave");
+    let channel_literal =
+        serde_json::to_string(&channel_name).expect("encode BroadcastChannel name");
+    let live_source = LIVE_SOURCE.replace("__GATHER_CHANNEL__", &channel_literal);
+    let receiver_source = CHANNEL_RECEIVER_SOURCE.replace("__GATHER_CHANNEL__", &channel_literal);
     let setup = Arc::new(Mutex::new(LiveSetup::default()));
     let frame_setup = Arc::clone(&setup);
     let frame_account = account.clone();
@@ -501,18 +519,32 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         },
     )
     .expect("start live Play");
-    play.try_spawn_slot(
-        Profile {
-            username: account.clone(),
-            password: password.into(),
-            uid: 274_279_003,
-            settings: ProfileSettings::default(),
-        },
-        None,
-        None,
-        None,
-    )
-    .expect("spawn minted live account");
+    for (index, peer_name) in ["carol", "dave"].into_iter().enumerate() {
+        let peer = play.channels.slot(peer_name);
+        let _ = peer.pump(
+            index as u64 + 1,
+            BrokerWorld::Local,
+            true,
+            vec![InteractReq::ChannelOpen {
+                channel_id: index as u64 + 1,
+                name: channel_name.clone(),
+            }],
+        );
+    }
+    for (index, (username, password)) in credentials.iter().enumerate() {
+        play.try_spawn_slot(
+            Profile {
+                username: username.clone(),
+                password: password.clone().into(),
+                uid: 274_279_003 + index as i32,
+                settings: ProfileSettings::default(),
+            },
+            None,
+            None,
+            None,
+        )
+        .expect("spawn minted live account");
+    }
 
     wait_until(
         "Gather API fixture readiness",
@@ -526,16 +558,34 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
                 error.is_none(),
                 "Gather API fixture setup failed: {error:?}"
             );
+            let statuses = play.statuses();
             ready
-                && play.statuses().iter().any(|status| {
-                    status.username == account && status.ingame && status.scene_state == 2
+                && [&account, &receiver_account].into_iter().all(|name| {
+                    statuses.iter().any(|status| {
+                        status.username.as_str() == name.as_str()
+                            && status.ingame
+                            && status.scene_state == 2
+                    })
                 })
         },
     );
 
     play.script_start_load(
+        &receiver_account,
+        receiver_source,
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .expect("start real BroadcastChannel receiver Load script");
+    wait_until(
+        "BroadcastChannel receiver Load script Running",
+        Duration::from_secs(30),
+        || play.script_state(&receiver_account) == script::RunState::Running,
+    );
+    play.script_start_load(
         &account,
-        LIVE_SOURCE.into(),
+        live_source,
         script::LoadShape::NativeTick,
         None,
         vec![],
@@ -582,6 +632,33 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         .expect("live Gatherer status")
         .clone();
     let (changed_bytes, unchanged_bytes) = wire_shadow_lengths(token, status, tile);
+    let expected_during_seat = serde_json::json!([
+        {"proof": "run"},
+        {"proof": "live"}
+    ]);
+    wait_until(
+        "run and live BroadcastChannel posts reach the real receiver while Gather owns foreground",
+        Duration::from_secs(30),
+        || {
+            slot_probe(&play, &receiver_account, "globalThis.__receivedMessages")
+                == expected_during_seat
+        },
+    );
+    let received_during_seat =
+        slot_probe(&play, &receiver_account, "globalThis.__receivedMessages");
+    let seat_owned_when_posts_arrived = script_slot(&play.scripts, &account)
+        .expect("Gather sender script slot")
+        .lock()
+        .expect("Gather sender slot lock")
+        .api_owns_foreground();
+    assert!(
+        seat_owned_when_posts_arrived,
+        "the real receiver saw run/live posts while Gather owned the sender slot"
+    );
+    assert_eq!(
+        received_during_seat, expected_during_seat,
+        "the real receiver got exactly the run/live posts during the owned seat"
+    );
 
     {
         let mut state = setup.lock().expect("live setup lock");
@@ -615,6 +692,24 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let metrics_after = play
         .memory_script_metrics(&account)
         .expect("real Play memory metrics after API Stop");
+    let expected_channel_messages = serde_json::json!([
+        {"proof": "run"},
+        {"proof": "live"},
+        {"proof": "stop"}
+    ]);
+    wait_until(
+        "run/live/stop BroadcastChannel posts reach the real receiver",
+        Duration::from_secs(30),
+        || {
+            slot_probe(&play, &receiver_account, "globalThis.__receivedMessages")
+                == expected_channel_messages
+        },
+    );
+    let received_after_stop = slot_probe(&play, &receiver_account, "globalThis.__receivedMessages");
+    assert_eq!(
+        received_after_stop, expected_channel_messages,
+        "real Load receiver observed exactly the BroadcastChannel posts from run/live/stop"
+    );
     let terminal = slot_probe(&play, &account, "globalThis.__result");
     assert_eq!(terminal["kind"], "done");
     assert_eq!(terminal["value"]["token"].as_u64(), Some(token));
@@ -645,11 +740,13 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         .filter(|(slot, _)| slot == &account)
         .map(|(_, message)| message.clone())
         .collect();
-    assert!(
-        dropped_rows
-            .iter()
-            .any(|message| message == "gather foreground: dropped 3 script game rows total"),
-        "all three emitted script game rows must be dropped, not controls: {dropped_rows:?}"
+    assert_eq!(
+        dropped_rows,
+        vec![
+            "gather foreground: dropped 1 script game rows",
+            "gather foreground: dropped 3 script game rows total",
+        ],
+        "only the three emitted game rows count as dropped; broker posts are preserved"
     );
     let receipt = serde_json::json!({
         "proof": "live Gather API seat memory and reconnect receipt",
@@ -659,6 +756,15 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         "settings": {"skill": "Woodcutting", "woodcuttingResources": ["normal"], "disposition": "Power"},
         "snapshot_phases": phases,
         "foreground_drop_trace": dropped_rows,
+        "broadcast_channel": {
+            "name": channel_name,
+            "sender": account,
+            "receiver": receiver_account,
+            "seat_token": token,
+            "received_while_seat_owned": received_during_seat,
+            "received_run_live_stop": received_after_stop,
+            "seat_owned_when_run_live_arrived": seat_owned_when_posts_arrived,
+        },
         "driver_trace": "native-packet account/run/tick lines in the full live command log; InteractTrace is stderr-only",
         "token_before_reconnect": token,
         "token_after_reconnect": reconnect_page["token"],

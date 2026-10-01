@@ -70,11 +70,15 @@ instance; `want_run` distinguishes operator Pause from offline.
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session. While the seat is live the
-host owns the slot's foreground: the script's game rows are drained and
-dropped at admission exactly as under the watchdog recovery hold — never
-dispatched, never deferred — while control rows (`gather.stop`, run-policy)
-still pass.
-When the session ends the seat is torn down and ordinary dispatch resumes.
+host owns the slot's foreground: only the script's game rows are drained and
+dropped at admission — never dispatched, never deferred. Control rows
+(`gather.stop`, run-policy), BroadcastChannel open/post/close, inspect-route
+requests and acknowledgements, and host-local camera yaw writes still pass.
+Held reconnect walks and the host's carried walk are discarded while the seat
+owns the slot, not saved for replay after it ends. This deliberately differs
+from design §3.6's held-walk deferral: an old route must not regain foreground
+authority after a native session. The carried host walk is not counted as a
+dropped script row. When the session ends ordinary game dispatch resumes.
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,

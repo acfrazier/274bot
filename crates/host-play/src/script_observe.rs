@@ -383,6 +383,8 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             if !owned {
                 slot.restore_interacts(queued);
+            } else {
+                interact.extend(queued);
             }
         }
         // Reap a script-requested Stop before advancing host continuations.
@@ -944,9 +946,11 @@ pub(crate) fn script_observe_cached_with_channels(
                 let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
                 if slot.watchdog().holds_script_actions() || owned {
                     if owned {
-                        let held = slot.take_held_walks();
-                        let carried = take_carried_walk(navs, name, slot.runtime_generation());
-                        slot.record_api_dropped_rows(held.len() + usize::from(carried.is_some()));
+                        // Admission already discarded held script walks. The
+                        // host's carried walk is also discarded, but is not a
+                        // script row and must not inflate its drop count.
+                        let _ = take_carried_walk(navs, name, slot.runtime_generation());
+                        interact.extend(reqs);
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);

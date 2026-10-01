@@ -1491,8 +1491,15 @@ impl SlotScript {
             _ => true,
         });
         if owned {
-            self.record_api_dropped_rows(reqs.len());
-            reqs.clear();
+            let before = reqs.len();
+            reqs.retain(|req| !req.is_game());
+            // Reconnect rows are script game work too; discard them at this
+            // admission edge rather than replaying an old route after the seat.
+            let held = self.take_held_walks();
+            self.record_api_dropped_rows(before - reqs.len() + held.len());
+        }
+        if !self.api_owns_foreground() {
+            self.log_api_drop_total();
         }
         (policy, reqs, owned)
     }
