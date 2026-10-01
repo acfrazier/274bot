@@ -62,8 +62,7 @@ fn refusal(error: StartError) -> String {
         StartError::Busy => "busy".into(),
         StartError::Unavailable(reason) => format!("unavailable:{reason}"),
         StartError::Facts(error) => format!("facts:{error:?}"),
-        StartError::Config(error) if error.field.is_empty() => "invalid-settings".into(),
-        StartError::Config(error) => format!("invalid-setting:{}:{}", error.field, error.code),
+        StartError::Config(error) => crate::api_gather::settings_refusal(error),
     }
 }
 
@@ -237,7 +236,6 @@ impl SlotScript {
         }
         seat.page = None;
         seat.terminal = Some(GatherEnd::Stopped { token, counts });
-        self.log_api_drop_total();
     }
 
     pub(super) fn tick_api(&mut self, ctx: &mut ScriptCtx<'_>) {
@@ -415,7 +413,7 @@ impl SlotScript {
         let _ = catch_unwind(AssertUnwindSafe(|| drop(seat)));
     }
 
-    pub fn record_api_dropped_rows(&mut self, count: usize) {
+    pub(super) fn record_api_dropped_rows(&mut self, count: usize) {
         if count == 0 {
             return;
         }
@@ -434,12 +432,9 @@ impl SlotScript {
             );
         }
         seat.dropped_rows = seat.dropped_rows.saturating_add(count);
-        if !self.api_owns_foreground() {
-            self.log_api_drop_total();
-        }
     }
 
-    fn log_api_drop_total(&mut self) {
+    pub(super) fn log_api_drop_total(&mut self) {
         if let Some(seat) = self.api.as_mut() {
             if seat.dropped_rows != seat.reported_drops {
                 api::hostlog::emit(

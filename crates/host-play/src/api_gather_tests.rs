@@ -457,6 +457,181 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
 }
 
 #[test]
+fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows() {
+    use script::shim::InteractReq;
+    use script_channels::{BrokerWorld, ChannelBroker};
+
+    let mut rig = GatherReconnectRig::with_source(
+        r#"export const apiVersion = 2;
+           export function tick(api) {
+             globalThis.__api = api;
+             if (!globalThis.__run) {
+               globalThis.__run = api.gather.run({ skill: 'Woodcutting' });
+             }
+           }"#,
+    );
+    rig.isolate_tick_without_host_drain();
+    rig.wait_for_controls();
+    rig.drain_host();
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+    force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.tile);
+
+    let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
+    let mut receiver = GatherReconnectRig::with_source(
+        r#"export const apiVersion = 2;
+           globalThis.__received = [];
+           const channel = new BroadcastChannel('rs2b0t:kq:v1:gather-api,bob,carol,dave');
+           channel.onmessage = e => __received.push(e.data);
+           export function tick(_api) {}"#,
+    );
+    receiver.isolate_tick_without_host_drain();
+    rig.scripts
+        .lock()
+        .unwrap()
+        .insert("bob".into(), receiver.slot());
+    let broker = ChannelBroker::default();
+    let sender = broker.slot(SLOT);
+    let peers = ["bob", "carol", "dave"].map(|name| broker.slot(name));
+    let (_, receiver_rows, _) = receiver.slot().lock().unwrap().drain_host_interacts();
+    let receiver_generation = receiver.slot().lock().unwrap().runtime_generation();
+    let receiver_channel_id = receiver_rows
+        .iter()
+        .find_map(|row| match row {
+            InteractReq::ChannelOpen { channel_id, .. } => Some(*channel_id),
+            _ => None,
+        })
+        .expect("real receiver opens its channel");
+    peers[0].pump(receiver_generation, BrokerWorld::Local, true, receiver_rows);
+    for (id, peer) in (11..).zip(&peers[1..]) {
+        peer.pump(
+            1,
+            BrokerWorld::Local,
+            true,
+            vec![InteractReq::ChannelOpen {
+                channel_id: id,
+                name: channel.into(),
+            }],
+        );
+    }
+    rig.probe(&format!(
+        "globalThis.__channel = new BroadcastChannel('{channel}'); \
+         __channel.postMessage({{ proof: 'during-seat' }}); \
+         __api.request({{ op: 'held', name: 'Logs', action: 'Drop' }})"
+    ));
+    rig.isolate_tick_without_host_drain();
+    {
+        let cell = rig.slot();
+        let mut slot = cell.lock().unwrap();
+        let rows = slot.drain_interacts();
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row, InteractReq::ChannelPost { .. })),
+            "the real isolate must emit its BroadcastChannel post: {rows:?}"
+        );
+        slot.restore_interacts(rows);
+    }
+    rig.slot()
+        .lock()
+        .unwrap()
+        .restore_interacts(vec![InteractReq::SetCameraYaw { yaw: 777 }]);
+    // Use the production observation and broker path, not a second drain/filter.
+    let checkpoint = api::interact::Driver::packet_checkpoint(&rig.client).unwrap();
+    script_observe_cached_with_channels(
+        &mut rig.client,
+        SLOT,
+        true,
+        true,
+        true,
+        rig.tick,
+        Some((rig.tile.x, rig.tile.z, rig.tile.level)),
+        None,
+        None,
+        Some(&rig.snapshot),
+        None,
+        Some(rig.names.as_ref()),
+        &rig.scripts,
+        &rig.cheats,
+        &rig.navs,
+        &None,
+        false,
+        false,
+        None,
+        None,
+        Some(Arc::clone(&rig.cache)),
+        Some(Arc::clone(&rig.names)),
+        Some(&sender),
+        BrokerWorld::Local,
+        Some(&mut rig.policy),
+        None,
+    );
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &rig.client,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode)
+    ));
+    assert!(
+        !packets.contains(&(client::io::ClientProt289::OPHELD5.id as u8)),
+        "the script's game row must be dropped: {packets:?}"
+    );
+    receiver.isolate_tick_without_host_drain();
+    assert_eq!(
+        receiver.probe("globalThis.__received"),
+        serde_json::json!([{ "proof": "during-seat" }]),
+        "the BroadcastChannel post must be delivered while the seat is live"
+    );
+    assert_eq!(rig.client.orbit_camera_yaw, 777);
+    // A reply reaches the real sending isolate only if its open/post reached
+    // the broker during ownership; it also proves membership stayed in sync.
+    rig.probe("globalThis.__received = []; __channel.onmessage = e => __received.push(e.data)");
+    let reply = peers[0].pump(
+        receiver_generation,
+        BrokerWorld::Local,
+        true,
+        vec![InteractReq::ChannelPost {
+            channel_id: receiver_channel_id,
+            name: channel.into(),
+            data: script::channel::encode(&serde_json::json!({ "reply": "during-seat" })).unwrap(),
+        }],
+    );
+    assert!(
+        reply.iter().any(|delivery| delivery.account == SLOT),
+        "the channel opened during a live seat must receive a broker delivery"
+    );
+    deliver_channel_events(&rig.scripts, reply);
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(
+        rig.probe("globalThis.__received"),
+        serde_json::json!([{ "reply": "during-seat" }])
+    );
+    rig.probe("__channel.close()");
+    rig.isolate_tick_without_host_drain();
+    let (_, rows, owned) = rig.slot().lock().unwrap().drain_host_interacts();
+    assert!(owned);
+    sender.pump(
+        rig.slot().lock().unwrap().runtime_generation(),
+        BrokerWorld::Local,
+        true,
+        rows,
+    );
+    let after_close = peers[0].pump(
+        receiver_generation,
+        BrokerWorld::Local,
+        true,
+        vec![InteractReq::ChannelPost {
+            channel_id: receiver_channel_id,
+            name: channel.into(),
+            data: script::channel::encode(&serde_json::json!("after-close")).unwrap(),
+        }],
+    );
+    assert!(
+        !after_close.iter().any(|delivery| delivery.account == SLOT),
+        "close must reach the broker during ownership"
+    );
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
 fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
     let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
     rig.isolate_tick_without_host_drain();

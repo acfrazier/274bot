@@ -312,8 +312,11 @@ reason with counts.
 
 While a session is live the host owns the slot's foreground: the script's
 game rows are dropped, not deferred (see [script.md](script.md) "Two
-runners"); control rows still pass. Declarations are generated from the Rust
-tables (`cargo test -p script --test host_js regen_host_js -- --ignored`)
+runners"); control and non-game rows still pass, including BroadcastChannel
+open/post/close, inspect requests/acks and camera yaw. Held reconnect walks
+and the carried host walk are discarded, not replayed after the session.
+Declarations are generated from the Rust tables
+(`cargo test -p script --test host_js regen_host_js -- --ignored`)
 and pinned by the freshness gate plus a pinned TypeScript 5.8.3 gather-only
 consumer probe. Quest progress reads (`questPaths`, `questProgress`) are a
 later slice, not this surface.

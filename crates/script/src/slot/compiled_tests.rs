@@ -1378,16 +1378,28 @@ mod api_gather_seat {
                 policy: Some(policy_override),
             },
             InteractReq::GatherStop { request_id: 202 },
+            InteractReq::InspectAck {
+                seq: 9,
+                generation: 7,
+            },
+            InteractReq::SetCameraYaw { yaw: 777 },
         ]);
-        let (policy, game_rows, owned) = slot.drain_host_interacts();
+        let (policy, rows, owned) = slot.drain_host_interacts();
         assert_eq!(policy, Some(Some(policy_override)));
         assert!(
             owned,
             "Stop retains ownership for its whole admission batch"
         );
-        assert!(
-            game_rows.is_empty(),
-            "owned game rows are dropped while run-policy and Stop controls pass"
+        assert_eq!(
+            rows,
+            vec![
+                InteractReq::InspectAck {
+                    seq: 9,
+                    generation: 7,
+                },
+                InteractReq::SetCameraYaw { yaw: 777 },
+            ],
+            "the Stop edge drops game work but preserves host-local work"
         );
         assert!(authorities.iter().all(|authority| !authority.live()));
         assert!(

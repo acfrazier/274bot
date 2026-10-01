@@ -408,6 +408,34 @@ pub enum InteractReq {
     },
 }
 
+impl InteractReq {
+    /// Foreground game work, as distinct from host-local, broker and lifecycle
+    /// rows. Walks and canvas input still compete for foreground ownership.
+    pub fn is_game(&self) -> bool {
+        !matches!(
+            self,
+            Self::InspectRoute { .. }
+                | Self::InspectAck { .. }
+                | Self::SetCameraYaw { .. }
+                | Self::ChannelOpen { .. }
+                | Self::ChannelPost { .. }
+                | Self::ChannelClose { .. }
+                | Self::ChannelMessage { .. }
+                | Self::ChannelStatus { .. }
+                | Self::RunPolicyOverride { .. }
+                | Self::GatherRun { .. }
+                | Self::GatherStop { .. }
+                | Self::ProgressRead { .. }
+                | Self::NoteProgress
+                | Self::LoopSettled
+                | Self::WaitEnqueued
+                | Self::WaitSettled
+                | Self::RecoveryAnchor { .. }
+                | Self::RecoveryAnchorNone
+        )
+    }
+}
+
 /// One avoid entry of an inspect route or a walk. Typed rects keep their
 /// bounds; anything else (a catalog zone id) is `Unsupported` so Rust can
 /// refuse `invalid-args` instead of dropping the request.
