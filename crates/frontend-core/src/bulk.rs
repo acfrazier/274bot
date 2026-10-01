@@ -44,6 +44,9 @@ impl BulkOutcome {
 pub struct BulkRow {
     pub profile: String,
     pub outcome: BulkOutcome,
+    /// Host detail carries zone labels or the legacy-grid note through row
+    /// inspection and summary rendering without changing the short outcome.
+    pub detail: Option<String>,
 }
 
 impl BulkRow {
@@ -51,7 +54,29 @@ impl BulkRow {
         Self {
             profile: profile.into(),
             outcome,
+            detail: None,
         }
+    }
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+}
+
+fn write_row_reason(text: &mut String, row: &BulkRow, reason: &str) {
+    let _ = write!(text, "{}: ", row.profile);
+    if let Some(detail) = row.detail.as_deref() {
+        let detail_includes_reason = detail == reason
+            || detail
+                .strip_prefix(reason)
+                .is_some_and(|suffix| suffix.starts_with(':'));
+        if detail_includes_reason {
+            text.push_str(detail);
+        } else {
+            let _ = write!(text, "{reason} — {detail}");
+        }
+    } else {
+        text.push_str(reason);
     }
 }
 
@@ -128,8 +153,8 @@ impl BulkReport {
     }
 
     /// `Label: verb D, skipped K[, failed F]`, then the failure reasons and
-    /// the skip reasons, in the wording of the Start report. A refused
-    /// command names its one cause instead.
+    /// the skip reasons plus any per-row host detail. Successful detailed rows
+    /// are also named. A refused command names its one cause instead.
     pub fn summary(&self) -> String {
         if let Some(reason) = &self.refusal {
             return format!(
@@ -151,34 +176,49 @@ impl BulkReport {
             let _ = write!(text, ", failed {failed}");
         }
         let mut sep = ": ";
-        for (name, reason) in self.reasons(|o| match o {
-            BulkOutcome::Failed(reason) => Some(reason),
-            _ => None,
-        }) {
-            let _ = write!(text, "{sep}{name}: {reason}");
+        for row in self
+            .rows
+            .iter()
+            .filter(|row| matches!(&row.outcome, BulkOutcome::Failed(_)))
+            .take(LISTED)
+        {
+            let BulkOutcome::Failed(reason) = &row.outcome else {
+                continue;
+            };
+            let _ = write!(text, "{sep}");
+            write_row_reason(&mut text, row, reason);
             sep = "; ";
         }
         let mut sep = if failed > 0 { "; skipped " } else { ": " };
-        for (name, reason) in self.reasons(|o| match o {
-            BulkOutcome::Skipped(reason) => Some(reason),
-            _ => None,
-        }) {
-            let _ = write!(text, "{sep}{name}: {reason}");
+        for row in self
+            .rows
+            .iter()
+            .filter(|row| matches!(&row.outcome, BulkOutcome::Skipped(_)))
+            .take(LISTED)
+        {
+            let BulkOutcome::Skipped(reason) = &row.outcome else {
+                continue;
+            };
+            let _ = write!(text, "{sep}");
+            write_row_reason(&mut text, row, reason);
             sep = ", ";
         }
-        text
-    }
-
-    fn reasons<'a>(
-        &'a self,
-        pick: impl Fn(&'a BulkOutcome) -> Option<&'a String> + 'a,
-    ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
-        self.rows
+        let mut detail_sep = if failed > 0 || skipped > 0 {
+            "; "
+        } else {
+            ": "
+        };
+        for row in self
+            .rows
             .iter()
-            .filter_map(move |row| {
-                pick(&row.outcome).map(|reason| (row.profile.as_str(), reason.as_str()))
-            })
+            .filter(|row| matches!(&row.outcome, BulkOutcome::Done) && row.detail.is_some())
             .take(LISTED)
+        {
+            let detail = row.detail.as_deref().unwrap_or_default();
+            let _ = write!(text, "{detail_sep}{}: {detail}", row.profile);
+            detail_sep = "; ";
+        }
+        text
     }
 }
 
@@ -236,6 +276,35 @@ mod tests {
         assert_eq!(
             BulkReport::none_marked("Log out marked", "logged out").summary(),
             "Log out marked: no bots marked"
+        );
+    }
+
+    #[test]
+    fn per_bot_details_survive_in_rows_and_the_report_summary() {
+        let report = BulkReport::new(
+            "Walk marked",
+            "walking",
+            vec![
+                BulkRow::new("alice", BulkOutcome::Done)
+                    .with_detail("zones: unavailable (legacy grid pack)"),
+                BulkRow::new("bob", BulkOutcome::failed("blocked by danger zones"))
+                    .with_detail("blocked by danger zones: White Wolf Mountain"),
+            ],
+            None,
+        );
+        assert_eq!(
+            report.rows()[0].detail.as_deref(),
+            Some("blocked by danger zones: White Wolf Mountain")
+        );
+        assert_eq!(
+            report.rows()[1].detail.as_deref(),
+            Some("zones: unavailable (legacy grid pack)")
+        );
+        assert_eq!(
+            report.summary(),
+            "Walk marked: walking 1, skipped 0, failed 1: \
+             bob: blocked by danger zones: White Wolf Mountain; \
+             alice: zones: unavailable (legacy grid pack)"
         );
     }
 }

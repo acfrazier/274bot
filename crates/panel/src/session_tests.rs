@@ -28,6 +28,7 @@ use nav::tile::Tile;
 use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use nav::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -2515,6 +2516,14 @@ fn multibox_toggle_does_not_arm_scatter() {
 fn walk_status_is_dash_when_no_route() {
     let s = Session::new();
     assert_eq!(s.walk_status_text(), "—");
+}
+
+#[test]
+fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
+    let mut session = Session::new();
+    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+    session.route_through_zones = true;
+    assert!(session.walk_find_options().zones.is_all());
 }
 
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {

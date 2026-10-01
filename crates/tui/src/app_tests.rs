@@ -635,6 +635,40 @@ fn map_enter_confirms_a_walk_selection() {
         "the next Enter confirms the pending centre selection"
     );
 }
+#[test]
+fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
+    let mut app = open_map_world();
+    app.nav.allow_teleports = true;
+
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert!(app.map_find_options().allow_teleports);
+
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(app.map_route_through_zones);
+    assert!(app.map_find_options().zones.is_all());
+    let crossing = text(&draw(&mut app, 120, 40));
+    assert!(
+        crossing.contains("zones: crossing (z)"),
+        "Map info must show the live zone choice: {crossing}"
+    );
+
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::MapClose);
+    assert!(!app.map_route_through_zones);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    assert!(!app.map_route_through_zones);
+    let avoided = text(&draw(&mut app, 120, 40));
+    assert!(
+        avoided.contains("zones: avoided"),
+        "a fresh Map open starts with zones avoided: {avoided}"
+    );
+
+    app.map_route_through_zones = true;
+    assert_eq!(app.map_open(), AppAction::MapOpen);
+    assert!(!app.map_route_through_zones, "MapOpen also resets stale state");
+}
 
 #[test]
 fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {

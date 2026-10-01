@@ -114,7 +114,11 @@ pub fn walk_marked<Io>(
             WalkSlotOutcomeKind::Excluded(_) => BulkOutcome::skipped(reason),
             WalkSlotOutcomeKind::Failed(_) => BulkOutcome::failed(reason),
         };
-        BulkRow::new(outcome.name, result)
+        let row = BulkRow::new(outcome.name, result);
+        match outcome.detail {
+            Some(detail) => row.with_detail(detail),
+            None => row,
+        }
     }));
     BulkReport::new(LABEL, DONE, rows, None)
 }

@@ -51,6 +51,7 @@ use nav::paint::{
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Secret, Vault};
 
@@ -947,6 +948,8 @@ pub struct Session {
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
+    /// WalkTo-only opt-out, reset when the picker opens; never persisted.
+    pub route_through_zones: bool,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1347,6 +1350,7 @@ impl Session {
             fleet_report_follows_start: false,
             fleet_restart_confirm: false,
             walkto_open: false,
+            route_through_zones: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -4553,6 +4557,20 @@ impl Session {
             .availability(kind, &self.picker_context(world), origin)
     }
 
+    fn walk_find_options(&self) -> FindOptions {
+        FindOptions {
+            allow_teleports: self.ui.nav.allow_teleports,
+            allow_wilderness: self.ui.nav.allow_wilderness,
+            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+            zones: if self.route_through_zones {
+                ZoneExempt::all()
+            } else {
+                ZoneExempt::NONE
+            },
+            ..Default::default()
+        }
+    }
+
     /// Consume a pending selection once. Missing player/focus is an explicit
     /// refusal, never an arm stored for a future login.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
@@ -4561,12 +4579,7 @@ impl Session {
         let origin = self
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });
-        let options = FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            ..Default::default()
-        };
+        let options = self.walk_find_options();
         let name = self.focused_name();
         let profile = self.server_profile.clone();
         let request = WalkRequest {
@@ -4722,12 +4735,7 @@ impl Session {
     pub fn confirm_picker_group_walk(&mut self, world: &NavWorld) -> bool {
         use frontend_core::{MarkedWalk, WalkInputs};
         let context = self.picker_context(world);
-        let options = FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            ..Default::default()
-        };
+        let options = self.walk_find_options();
         let destination = self
             .map_model
             .pending()
