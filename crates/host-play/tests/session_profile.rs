@@ -202,6 +202,34 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
 }
 
 #[test]
+fn unpack_root_inside_selected_engine_or_content_is_rejected() {
+    let fixture = Fixture::new();
+    let mut options = ProfileOptions {
+        profile: Some("local-289".into()),
+        engine_dir: Some(fixture.0.join("engine")),
+        content_dir: Some(fixture.0.join("content")),
+        nav_pack: Some(fixture.0.join("missing.navpack")),
+        ..Default::default()
+    };
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selected.unpack_dir().ends_with(".274bot/unpack-289"));
+    assert!(!selected.unpack_dir().starts_with(selected.content_dir()));
+    assert!(!selected.unpack_dir().starts_with(selected.engine_dir()));
+
+    for (label, root) in [
+        ("content", fixture.0.join("content")),
+        ("engine", fixture.0.join("engine")),
+    ] {
+        options.unpack_dir = Some(root.join("runtime"));
+        let error = options.resolve_with_env(None, &fixture.env()).unwrap_err();
+        assert!(
+            error.contains("unpack root") && error.contains(label),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     let fixture = Fixture::new();
     let mut lower_priority = fixture.env();
@@ -598,6 +626,26 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
     }
 }
 
+#[test]
+fn shared_template_client_members_follow_world_members_fact() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    for (uid, members) in [(740_101, false), (740_102, true)] {
+        let mut options = fixture.options(289);
+        options.world_members = Some(members);
+        let profile = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap();
+        let template = SharedClientTemplate::load(profile).unwrap();
+        let client = template.prepare_client(uid, false).unwrap();
+        assert_eq!(
+            client.config.members, members,
+            "bound client must use WORLD membership, not a hard-coded account flag"
+        );
+    }
+}
 #[test]
 fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
     let _clients = CLIENTS.lock().unwrap();
@@ -1197,6 +1245,31 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
         "explicit --nav-flags must not inherit pack bundled trust"
     );
     assert_eq!(profile.nav_flags(), sibling_flags);
+}
+
+#[test]
+fn external_nav_identity_includes_trailing_bytes_beyond_the_read_buffer() {
+    let fixture = Fixture::new();
+    let mut bytes = tiny_v8_pack();
+    bytes.resize(bytes.len() + 128 * 1024, 0x5a);
+    let pack = fixture.0.join("trailing.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    write_nav_sidecar(&pack, 289, cache_id, &bytes);
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack.clone());
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let profile = selection.bind().unwrap();
+    let collision = &profile.world().unwrap().collision;
+    assert_eq!((collision.origin.x, collision.origin.z), (3200, 3200));
+    assert_eq!((collision.width, collision.height), (2, 1));
+
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(&pack, &bytes).unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
 }
 
 #[test]

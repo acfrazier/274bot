@@ -1056,7 +1056,13 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
 /// or they float over the panel with a leftover tab bar.
 fn dock_panel_tabs(ui: &Ui, panel: Id) {
     DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
-    for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
+    for title in [
+        "Profiles",
+        "General config",
+        "Nav config",
+        "Script prefs",
+        "Debug",
+    ] {
         DockBuilder::dock_window(ui, title, panel);
     }
 }
@@ -1978,8 +1984,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         let caption = debug_caption(label);
         match *label {
             "DebugPanel" => {
-                let _off = ui.begin_disabled();
-                let _ = ui.button_with_size(caption, [w, 0.0]);
+                if ui.button_with_size(caption, [w, 0.0]) {
+                    session.debug_panel_open = true;
+                }
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
             "TutSkip" => {
@@ -1997,11 +2004,19 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             }
             "maxme" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
-                    for cmd in debug_maxme_cheats() {
-                        session.cheat_focused(cmd);
-                    }
+                    session.debug_panel_open = true;
+                    crate::debug_panel::request_destructive_send(
+                        ui,
+                        session,
+                        "maxme".into(),
+                        debug_maxme_cheats()
+                            .iter()
+                            .map(|cmd| (*cmd).to_string())
+                            .collect(),
+                        "maxme (19× setstat 99)".into(),
+                    );
                 }
-                ui.set_item_tooltip("19× setstat 99");
+                ui.set_item_tooltip("19× setstat 99 — confirmation is required");
             }
             "Teles" if ui.button_with_size(caption, [w, 0.0]) => {
                 ui.open_popup("##debug-teles");
@@ -2009,6 +2024,10 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             _ => {}
         }
     }
+    debug_teleports_popup(ui, session);
+}
+
+fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
         let dests = debug_dest_cheats();
         let avail = PANEL_WIDTH;
@@ -3414,20 +3433,25 @@ fn edit_parameters_enabled() -> bool {
 }
 
 /// status: the selected bot's rows from the shared detail projection
-/// (state, player, world, tile, walk, queue, modals, welcome, random, the
-/// last login error while retrying, the newest operation, mem), wrapped.
+/// (state, player, world, tile, meaningful walk/queue/modal values, welcome,
+/// random, the last login error while retrying, the newest operation, mem),
+/// wrapped.
 fn status_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "status") {
         return;
     }
     let walk = session.walk_status_text();
-    let mem = Session::mem_status_text(session.focused_lowmem());
+    let mem = Session::mem_notice_text(session.focused_lowmem(), session.focused_memory_notice());
     let Some(d) = session.core.fleet_view().detail() else {
         kv_row(ui, "state", "no bot selected");
-        kv_row(ui, "walk", &walk);
-        kv_row(ui, "mem", mem);
+        status_kv_row(ui, "walk", &walk);
+        kv_row(ui, "mem", &mem);
         return;
     };
+    status_detail_rows(ui, d, &walk, &mem);
+}
+
+fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", &d.state);
     kv_row(
         ui,
@@ -3438,13 +3462,15 @@ fn status_section(ui: &Ui, session: &mut Session) {
         kv_row(ui, "world", &format!("w{world}"));
     }
     kv_row(ui, "tile", &format!("{} {}", d.tile.0, d.tile.1));
-    kv_row(ui, "walk", &walk);
+    status_kv_row(ui, "walk", walk);
     let queue = d
         .row
         .queue
         .map_or_else(|| "—".to_string(), |q| q.to_string());
-    kv_row(ui, "queue", &queue);
-    kv_row(ui, "modals", &d.modal.to_string());
+    status_kv_row(ui, "queue", &queue);
+    if matches!(d.row.phase, Phase::Ready) {
+        status_kv_row(ui, "modals", &d.modal.to_string());
+    }
     if let Some(welcome) = d.welcome.as_deref() {
         kv_row(ui, "welcome", welcome);
     }
@@ -3462,6 +3488,12 @@ fn status_section(ui: &Ui, session: &mut Session) {
     kv_row(ui, "mem", mem);
 }
 
+fn status_kv_row(ui: &Ui, label: &str, value: &str) {
+    if status_value_visible(label, value) {
+        kv_row(ui, label, value);
+    }
+}
+
 fn resource_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "resource") {
         return;
@@ -3474,7 +3506,42 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    crate::log_pane::log_body(ui, session, last);
+    if session.ui.log_detached {
+        ui.text_disabled("log is floating in a separate window");
+        if ui.button("Attach log") {
+            session.ui.log_detached = false;
+            crate::ui_state::save(&session.ui);
+        }
+    } else {
+        crate::log_pane::log_body(ui, session, last);
+    }
+}
+
+/// Draw the shared log in a separate in-app window.
+fn floating_log_window(ui: &Ui, session: &mut Session) {
+    if !session.ui.log_detached {
+        return;
+    }
+    let viewport = ui.main_viewport();
+    let work_pos = viewport.work_pos();
+    let work_size = viewport.work_size();
+    let size = [PANEL_WIDTH, (work_size[1] - 80.0).clamp(240.0, 560.0)];
+    let pos = [
+        work_pos[0] + ((work_size[0] - size[0]) * 0.5).max(0.0),
+        work_pos[1] + ((work_size[1] - size[1]) * 0.5).max(0.0),
+    ];
+    let mut open = true;
+    ui.window("Log")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_DOCKING)
+        .position(pos, Condition::FirstUseEver)
+        .size(size, Condition::FirstUseEver)
+        .size_constraints([280.0, 180.0], [f32::MAX, 720.0])
+        .build(|| crate::log_pane::log_body(ui, session, true));
+    if !open {
+        session.ui.log_detached = false;
+        crate::ui_state::save(&session.ui);
+    }
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -3500,6 +3567,25 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
         gap_line(ui);
         if inverted_button(ui, "lowmem", low, [0.0, 0.0]) {
             session.request_focused_lowmem(true);
+        }
+        if session
+            .focused_memory_notice()
+            .is_some_and(|notice| notice.differs())
+        {
+            ui.text_wrapped("server tabs + sound follow at the next login");
+            let notice = session.focused_memory_notice().expect("checked above");
+            if notice.relog_pending {
+                ui.text_disabled("relog queued…");
+            } else if session.mem_relog_armed() || !session.focused_memory_relog_warning() {
+                if ui.button_with_size("Relog now", [0.0, 0.0]) {
+                    session.request_focused_memory_relog();
+                }
+            } else if ui.button_with_size(
+                "Relog now (interrupts script work — click again)",
+                [0.0, 0.0],
+            ) {
+                session.request_focused_memory_relog();
+            }
         }
     });
 }
@@ -3535,7 +3621,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
         ui.open_popup(MEM_POPUP);
     }
     ui.set_item_tooltip(
-        "Game pane highmem / lowmem — switching mem reattaches the renderer on the live client",
+        "Game pane highmem / lowmem — the live client flips at once, server tabs + sound follow at the next login (Relog now in this picker)",
     );
     mem_popup(ui, session);
 }
@@ -3640,33 +3726,37 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.accent_rgba());
         ui.text_wrapped(session.server_label());
     }
-    let revision_preview = session
-        .effective_revision_label()
-        .unwrap_or_else(|error| format!("invalid: {error}"));
-    let revision_label = if session.profile_bound() {
-        "Bound session revision"
+    if session.profile_bound() {
+        // `server_label` already carries the active revision (for example
+        // "local-289 · revision 289"); don't repeat a second bare 289.
+        ui.text_disabled("revision fixed for this session");
     } else {
-        "Revision before session"
-    };
-    ui.text(revision_label);
-    ui.set_next_item_width(-1.0);
-    if let Some(_open) = ui.begin_combo("##session_revision", &revision_preview) {
-        for revision in [274_u16, 289] {
-            let selected = revision_preview == revision.to_string();
-            if ui
-                .selectable_config(revision.to_string())
-                .selected(selected)
-                .build()
-            {
-                session.error = session.set_server_revision(revision).err();
-            }
-            if selected {
-                ui.set_item_default_focus();
+        let revision_preview = session
+            .effective_revision_label()
+            .unwrap_or_else(|error| format!("invalid: {error}"));
+        ui.text("Revision before session");
+        ui.set_next_item_width(-1.0);
+        if let Some(_open) = ui.begin_combo("##session_revision", &revision_preview) {
+            for revision in [274_u16, 289] {
+                let selected = revision_preview == revision.to_string();
+                if ui
+                    .selectable_config(revision.to_string())
+                    .selected(selected)
+                    .build()
+                {
+                    session.error = session.set_server_revision(revision).err();
+                }
+                if selected {
+                    ui.set_item_default_focus();
+                }
             }
         }
+        ui.text_wrapped(
+            "Restart to apply a revision change; explicit CLI/environment selection still wins.",
+        );
     }
-    ui.text_wrapped("The active server profile is immutable. Restart to apply a revision change; explicit CLI/environment selection still wins.");
     ui.spacing();
+    ui.text_colored(session.ui.chrome.accent_rgba(), "Session");
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Slot:");
     ui.same_line();
     let slot = session.focused_name().unwrap_or_else(|| "—".into());
@@ -3913,6 +4003,12 @@ fn scary_confirm_popup(
     did
 }
 
+/// Status values that carry no information are omitted instead of showing
+/// placeholder punctuation. Other rows keep their existing text unchanged.
+pub fn status_value_visible(label: &str, value: &str) -> bool {
+    !matches!(label, "walk" | "queue" | "modals") || !matches!(value.trim(), "" | "—" | "-1")
+}
+
 /// Scary confirm before "only render selected" can be unchecked: OK stays
 /// disabled until "I understand" is ticked, then writes
 /// `only_render_selected = false`. Cancel keeps the safe default; the
@@ -4093,8 +4189,8 @@ fn rail_cap(
     gap_line(ui);
     let red = ui.push_style_color(StyleColor::Text, ERROR);
     let removed = ui.button_with_size(REMOVE_GLYPH, [BTN, 0.0]);
-    ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
+    ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     (clicked, removed, folded)
 }
 
@@ -4226,26 +4322,49 @@ fn chooser_dock_id(panel: Option<Id>) -> Option<Id> {
     panel
 }
 
-/// Unsaved-changes prompt for a staged edit-target switch: Discard drops
-/// the draft and opens the pending target, Keep editing (or Escape) stays
-/// on the current form. Rendered from the Profiles window while
-/// `pending_edit_switch` is set.
+/// The right edge Profiles controls may reach, in screen space: the docked
+/// window runs past the viewport's right edge on a narrow display
+/// (1024×768), so its controls end that edge less the window's own left
+/// padding. Call at the top of the window.
+fn chooser_right_edge(ui: &Ui) -> f32 {
+    let viewport = ui.main_viewport();
+    let padding = ui.cursor_screen_pos()[0] - ui.window_pos()[0];
+    viewport.work_pos()[0] + viewport.work_size()[0] - padding
+}
+
+/// The width from the cursor that is both inside the current window and on
+/// screen, up to `right` from [`chooser_right_edge`].
+fn on_screen_avail(ui: &Ui, right: f32) -> f32 {
+    ui.content_region_avail()[0]
+        .min(right - ui.cursor_screen_pos()[0])
+        .max(0.0)
+}
+
+/// Unsaved-changes prompt for a staged leave of the edit form (switch,
+/// close, delete of its profile, MultiBox off): Discard drops the draft and
+/// leaves, Keep editing (or Escape) stays on the current form. Rendered from
+/// the Profiles window while `pending_edit_switch` is set. The prompt goes
+/// when the session retires it (the save it waited on settled), so it never
+/// shows over the result it warned about.
 fn edit_switch_popup(ui: &Ui, session: &mut Session) {
-    if session.pending_edit_switch.is_none() {
+    let open = ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP);
+    if session.pending_edit_switch.is_none() && !open {
         return;
     }
-    if !ui.is_popup_open(PROFILE_EDIT_SWITCH_POPUP) {
+    if !open {
         ui.open_popup(PROFILE_EDIT_SWITCH_POPUP);
     }
     ui.popup(PROFILE_EDIT_SWITCH_POPUP, || {
+        let Some(switch) = session.pending_edit_switch.as_ref() else {
+            ui.close_current_popup();
+            return;
+        };
         if ui.is_key_pressed(Key::Escape) {
             session.cancel_pending_edit_switch();
             ui.close_current_popup();
             return;
         }
-        if let Some(switch) = session.pending_edit_switch.as_ref() {
-            popup_text(ui, &switch.prompt);
-        }
+        popup_text(ui, &switch.prompt);
         ui.spacing();
         let avail = ui.content_region_avail()[0];
         let (w, stack) = button_row_layout(avail, 2);
@@ -4254,7 +4373,7 @@ fn edit_switch_popup(ui: &Ui, session: &mut Session) {
             ui.close_current_popup();
         }
         if !stack {
-            ui.same_line();
+            gap_line(ui);
         }
         if ui.button_with_size("Keep editing", [w, 0.0]) {
             session.cancel_pending_edit_switch();
@@ -4270,6 +4389,11 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         return;
     }
+    // A leave prompt was staged from elsewhere (the tab's ✕, MultiBox): its
+    // popup draws inside this window, so bring the window's tab forward.
+    if std::mem::take(&mut session.focus_profiles) {
+        ui.set_window_focus(Some("Profiles"));
+    }
     let mut open = true;
     ui.set_next_window_class(&panel_window_class());
     if let Some(id) = chooser_dock_id(panel_dock) {
@@ -4278,17 +4402,20 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     ui.window("Profiles")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([RAIL_W, 480.0], Condition::FirstUseEver)
-        .size_constraints([200.0, 80.0], [f32::MAX, 720.0])
+        .size([PANEL_WIDTH, 560.0], Condition::FirstUseEver)
         .build(|| {
-            let _wrap = ui.push_text_wrap_pos(0.0);
+            let right = chooser_right_edge(ui);
+            // Wrap text where the on-screen part of the window ends.
+            let wrap =
+                ui.cursor_screen_pos()[0] + on_screen_avail(ui, right) - ui.window_pos()[0];
+            let _wrap = ui.push_text_wrap_pos(wrap);
             if session.core.vault().is_none() {
                 vault_unlock_prompt(ui, session);
             } else {
             let names: Vec<String> = session.core.vault()
                 .map(|v| v.profiles().map(|p| p.username.clone()).collect())
                 .unwrap_or_default();
-            let w = ui.content_region_avail()[0];
+            let w = on_screen_avail(ui, right);
             let focused = session.focused_name();
             let members = session.core.members().to_vec();
             let multibox = session.multibox;
@@ -4299,6 +4426,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 session.begin_edit_profile(None);
             }
             ui.spacing();
+            ui.text_colored(ACCENT, "Vault profiles");
             let mut picked: Option<String> = None;
             let mut removed: Option<String> = None;
             let mut edit: Option<String> = None;
@@ -4306,8 +4434,14 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 ui.text_disabled("vault is empty — New profile then Save");
             } else {
                 const ROW_H: f32 = 24.0;
-                let vp_h = ui.main_viewport().size()[1];
-                let max_list = (vp_h - 240.0).clamp(88.0, 480.0);
+                let viewport_h = ui.main_viewport().work_size()[1];
+                // Leave room for the edit form when it is open; the list has
+                // its own scroll region, so a long vault remains usable.
+                let max_list = if session.chooser_edit.is_some() {
+                    220.0
+                } else {
+                    (viewport_h - 280.0).clamp(120.0, 360.0)
+                };
                 let need = (names.len() as f32) * ROW_H + 8.0;
                 let list_h = need.min(max_list);
                 ui.child_window("##profiles-list")
@@ -4324,7 +4458,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             // deletable until the write settles.
                             let saving = session.core.profile_saving(name);
                             let _saving = saving.then(|| ui.begin_disabled());
-                            let (p, r, e) = chooser_row(ui, name, selected);
+                            let (p, r, e) = chooser_row(ui, name, selected, right);
                             if saving {
                                 continue;
                             }
@@ -4386,47 +4520,50 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 slot_capture_section(ui, session);
                 slot_random_section(ui, session);
                 slot_clue_section(ui, session);
-                // Save's outcome, next to Save: a refusal (nothing was
-                // written; the banner is hidden while Profiles is open) or,
-                // once the write is durable, `Saved <name>.`.
+                // Save's outcome, next to Save: a refusal or a write that
+                // failed after it was queued (nothing was written; the
+                // banner is hidden while Profiles is open) or, once the
+                // write is durable, `Saved <name>.`.
                 match session.chooser_save.notice() {
-                    Some(FormNotice::Refused(reason)) => {
-                        ui.text_colored(ERROR, reason);
-                        ui.text_disabled(frontend_core::NOTHING_SAVED);
-                    }
                     Some(FormNotice::Saved(saved)) => ui.text_colored(GREEN, saved),
+                    Some(notice) => {
+                        if let Some(reason) = notice.error() {
+                            ui.text_colored(ERROR, reason);
+                            ui.text_disabled(frontend_core::NOTHING_SAVED);
+                        }
+                    }
                     None => {}
                 }
-                let avail = ui.content_region_avail()[0];
+                let avail = on_screen_avail(ui, right);
                 let (bw, stack) = button_row_layout(avail, 2);
                 // One Save at a time: the form follows a rename or a new
                 // profile only once its write is durable.
-                let saving = session.chooser_save.saving().then(|| ui.begin_disabled());
+                let saving = session.form_saving().then(|| ui.begin_disabled());
                 if ui.button_with_size("Save", [bw, 0.0]) {
                     session.save_credentials();
                 }
                 drop(saving);
                 if !stack {
-                    ui.same_line();
+                    gap_line(ui);
                 }
                 if ui.button_with_size("Cancel", [bw, 0.0]) {
-                    session.cancel_edit_profile();
+                    session.request_cancel_edit();
                 }
             }
             edit_switch_popup(ui, session);
             }
             ui.spacing();
-            if let Some(name) = session.chooser_save.in_flight() {
+            if let Some(record) = session.core.saves_in_flight().last() {
+                let name = record.destination.as_str();
                 ui.text_disabled("saving ");
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled(name);
                 ui.same_line_with_spacing(0.0, 0.0);
                 ui.text_disabled("…");
             }
-            let w = ui.content_region_avail()[0];
+            let w = on_screen_avail(ui, right);
             if ui.button_with_size("Close", [w, 0.0]) {
-                session.wall.chooser_open = false;
-                session.cancel_edit_profile();
+                session.request_close_profiles();
             }
             let pending = session.pending_profile_delete.clone();
             let body = match pending.as_deref() {
@@ -4443,17 +4580,16 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 &mut session.delete_understood,
             ) {
                 if let Some(name) = session.pending_profile_delete.take() {
-                    if session.chooser_edit.as_deref() == Some(name.as_str()) {
-                        session.cancel_edit_profile();
-                    }
-                    session.vault_remove(&name);
+                    session.delete_profile(&name);
                 }
             } else if !ui.is_popup_open(PROFILE_DELETE_POPUP) {
                 session.pending_profile_delete = None;
             }
         });
+    // The ✕ closes Profiles like Close does: while the form's save is
+    // still being written Discard / Keep editing asks first.
     if !open {
-        session.cancel_edit_profile();
+        open = !session.request_close_profiles();
     }
     session.wall.chooser_open = session.wall.chooser_open && open;
 }
@@ -4483,6 +4619,33 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             });
         });
     session.global_settings_open = open;
+}
+
+fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    if !session.debug_panel_open || !session.debug_ui() {
+        session.release_debug_catalog();
+        return;
+    }
+    let mut open = true;
+    ui.set_next_window_class(&panel_window_class());
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
+    ui.window("Debug")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size([PANEL_WIDTH, 480.0], Condition::FirstUseEver)
+        .build(|| {
+            crate::debug_panel::draw(ui, session);
+            if std::mem::take(&mut session.debug_open_teleports) {
+                ui.open_popup("##debug-teles");
+            }
+            debug_teleports_popup(ui, session);
+        });
+    session.debug_panel_open = open;
+    if !open {
+        session.release_debug_catalog();
+    }
 }
 
 /// Profile-global clue traversal partner. Unlike card parameters this follows
@@ -4595,10 +4758,12 @@ fn lamp_skill_presets() -> Vec<&'static str> {
 
 /// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
 /// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
+/// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
+/// on screen when the docked window runs past the display.
+fn chooser_row(ui: &Ui, name: &str, selected: bool, right: f32) -> (bool, bool, bool) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
-    let avail = ui.content_region_avail()[0];
+    let avail = on_screen_avail(ui, right);
     let name_w = (avail - EDIT_W - X_W - BUTTON_GAP * 2.0).max(10.0);
     let loaded = ui
         .selectable_config(name)
@@ -4686,7 +4851,7 @@ fn init_panel_running(
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts.clone());
-    crate::log_pane::apply_session_log_pref(&state.session);
+    crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {
         scenario::FixtureMode::RunPrepared
     } else {
@@ -4775,6 +4940,30 @@ fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Opti
     }
 }
 
+/// Resolve a normal event-loop return against any failure latched by `--live`.
+/// A live failure remains fatal if the window closes before the frame exits.
+fn finish_panel_run(
+    result: Result<(), window::PanelError>,
+    live_failure: Option<String>,
+) -> Result<(), window::PanelError> {
+    match (result, live_failure) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Some(message)) => Err(window::PanelError::LiveHarnessFailure(message)),
+        (Ok(()), None) => Ok(()),
+    }
+}
+
+/// Exit status for a live terminal decision; failure takes precedence.
+fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
+    if failure.is_some() || live.failure().is_some() {
+        Some(1)
+    } else if live.exit_pass() {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
@@ -4820,7 +5009,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
-    window::run(
+    let live_failure = Arc::new(Mutex::new(None));
+    let live_failure_frame = Arc::clone(&live_failure);
+    let result = window::run(
         cfg,
         amber_style,
         move |window, device, queue, _| {
@@ -4836,8 +5027,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             let _profile_draw = client::profiling::UI_DRAW.start();
             if let Some(holder) = instance_prompt.as_ref() {
                 match instance_conflict_choice(ui, holder) {
-                    None => return,
-                    Some(false) => std::process::exit(0),
+                    None => return false,
+                    Some(false) => return true,
                     Some(true) => {
                         instance_prompt = None;
                         match init_panel_running(
@@ -4855,7 +5046,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let Some((state, startup)) = running.as_mut() else {
-                return;
+                return false;
             };
             if presented {
                 drive_startup(state, startup);
@@ -4881,9 +5072,11 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             let progress = startup_progress(startup, state.session.profile_generation());
-            ui_frame(ui, gpu, state, progress);
+            ui_frame(ui, gpu, state, progress, &live_failure_frame)
         },
-    )
+    );
+    let failure = live_failure.lock().unwrap().take();
+    finish_panel_run(result, failure)
 }
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
@@ -5078,7 +5271,13 @@ fn record_presented_upload(
 
 /// The per-frame UI body: session pump, live harness ticks, dock host,
 /// chrome, game pane, rail.
-fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<StartupProgressView>) {
+fn ui_frame(
+    ui: &Ui,
+    gpu: &mut Gpu,
+    state: &mut PanelState,
+    progress: Option<StartupProgressView>,
+    live_failure: &Mutex<Option<String>>,
+) -> bool {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
@@ -5115,18 +5314,21 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
                 .map(|label| state.shot_state.lock().unwrap().status(label))
                 .unwrap_or(ShotStatus::Missing)
         };
-        if let Some(msg) = live.tick(
+        let failure = live.tick(
             &mut state.session,
             &statuses,
             &terminal_shot_status,
             Some(&state.shot_state),
             wrote_shots,
-        ) {
-            eprintln!("FAIL: {msg}");
-            std::process::exit(1);
-        }
-        if live.exit_pass() {
-            std::process::exit(0);
+        );
+        if let Some(code) = live_exit_code(live, failure.as_deref()) {
+            if code == 1 {
+                if let Some(msg) = failure.as_deref().or_else(|| live.failure()) {
+                    eprintln!("FAIL: {msg}");
+                    *live_failure.lock().unwrap() = Some(msg.to_owned());
+                }
+            }
+            return true;
         }
     }
     // Interactive whole-window capture: F12 enqueues one shot per press
@@ -5143,6 +5345,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
+    floating_log_window(ui, &mut state.session);
     crate::fleet::window(ui, &mut state.session);
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
@@ -5173,6 +5376,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     // the close so the next open is a fresh rising edge.
     chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
+    debug_panel_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
@@ -5180,6 +5384,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);
     discard_unconsumed_native_capture();
+    false
 }
 
 #[cfg(test)]

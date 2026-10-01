@@ -70,6 +70,10 @@ pub enum ConfirmKind {
     /// Remove this member from the fleet (the target is frozen here).
     Remove(String),
     Quit,
+    /// Relog this member now so a memory-mode switch reaches the server.
+    /// Offered when running script work would be interrupted or a queued
+    /// Start would be cancelled.
+    MemoryRelog(String),
     /// A fleet-wide command over the membership frozen when it opened.
     Bulk {
         command: Command,
@@ -144,6 +148,7 @@ impl Confirm {
         match &self.kind {
             ConfirmKind::Remove(_) => "Remove from fleet",
             ConfirmKind::Quit => "Quit tui-play",
+            ConfirmKind::MemoryRelog(_) => "Relog now",
             ConfirmKind::Bulk { command, .. } => command.label(app),
             ConfirmKind::ApplyMarked(_) => Command::ScriptApplyMarked.label(app),
         }
@@ -155,6 +160,12 @@ impl Confirm {
                 format!("Remove BOT {name} from the fleet?"),
                 "It logs out cleanly, then its slot stops.".into(),
                 "The vault profile is kept: this is not Delete profile.".into(),
+            ],
+            ConfirmKind::MemoryRelog(name) => vec![
+                format!("Relog BOT {name} now?"),
+                "It logs out and back in through the login queue, so the".into(),
+                "memory switch reaches the server tabs and sound.".into(),
+                "Running script work is interrupted; a queued Start is cancelled.".into(),
             ],
             ConfirmKind::Quit => {
                 let counts = app.counts;
@@ -250,6 +261,7 @@ impl Confirm {
         match self.kind {
             ConfirmKind::Remove(_) => "[Remove y]",
             ConfirmKind::Quit => "[Quit y]",
+            ConfirmKind::MemoryRelog(_) => "[Relog y]",
             ConfirmKind::Bulk { .. } => "[Run y]",
             ConfirmKind::ApplyMarked(_) => "[Apply y]",
         }
@@ -391,6 +403,7 @@ impl TuiApp {
     fn run_confirm(&mut self, confirm: Confirm) -> (Option<Modal>, AppAction) {
         match confirm.kind {
             ConfirmKind::Remove(name) => (None, AppAction::Remove(name)),
+            ConfirmKind::MemoryRelog(name) => (None, AppAction::MemoryRelogNow(name)),
             ConfirmKind::Quit => {
                 self.quit = true;
                 (None, AppAction::Quit)

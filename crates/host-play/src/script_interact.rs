@@ -651,16 +651,15 @@ where
             // slot-owned continuation only after the X action was sent.
             // Direct callers cannot safely create host pending state.
             InteractReq::WithdrawX { .. } | InteractReq::WithdrawLoad { .. } => {}
-            InteractReq::Held { name, action } => {
-                // rs2b0t `Item.interact` / `Inventory.first`: one name → one
-                // held row (same as Withdraw's `.find`). A name the table
-                // does not know or an item that is no longer held fails
-                // closed — nothing is sent.
+            InteractReq::Held { name, action, slot } => {
+                // An explicit slot never falls back to another matching item.
+                // Legacy wire requests retain the first matching row rule.
                 let wanted = name.to_lowercase();
                 if let Some(item) = snapshot.inventory().iter().find(|it| {
-                    obj_names
-                        .and_then(|n| n.name(it.def.id))
-                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+                    slot.is_none_or(|slot| it.slot == slot)
+                        && obj_names
+                            .and_then(|n| n.name(it.def.id))
+                            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
                 }) {
                     let res = ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
                     if api::hostlog::enabled(Category::InteractTrace) {

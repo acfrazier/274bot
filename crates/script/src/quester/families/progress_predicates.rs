@@ -17,11 +17,17 @@ pub fn compile_stage_in(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     let args: StageInArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    cx.quests
-        .quest(&args.quest)
-        .map_err(|_| CompileError::code("unresolved-quest"))?;
+    validate_progress_quest(cx, &args.quest)?;
     if args.any.is_empty() || args.any.iter().any(|stage| stage.is_empty()) {
         return Err(CompileError::code("invalid-args"));
+    }
+    if args.any.iter().any(|stage| {
+        !cx.progress
+            .stage_keys
+            .iter()
+            .any(|known| known.0.as_ref() == stage)
+    }) {
+        return Err(CompileError::code("unresolved-progress-stage"));
     }
     Ok(Arc::new(StageIn {
         quest: FactKey::new(&args.quest),
@@ -70,15 +76,20 @@ pub fn compile_flag(
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
     let args: FlagArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    cx.quests
-        .quest(&args.quest)
-        .map_err(|_| CompileError::code("unresolved-quest"))?;
+    validate_progress_quest(cx, &args.quest)?;
     if args.flag.is_empty() || (args.count.is_some() && args.at_least.is_some()) {
         return Err(CompileError::code("invalid-args"));
     }
+    let flag = FactKey::new(&args.flag);
+    let Some(rule) = cx.progress.flags.iter().find(|rule| rule.flag == flag) else {
+        return Err(CompileError::code("unresolved-progress-flag"));
+    };
+    if (args.count.is_some() || args.at_least.is_some()) && rule.count.is_none() {
+        return Err(CompileError::code("unresolved-progress-count"));
+    }
     Ok(Arc::new(Flag {
         quest: FactKey::new(&args.quest),
-        flag: FactKey::new(&args.flag),
+        flag,
         is: args.is,
         count: args.count,
         at_least: args.at_least,
@@ -127,6 +138,15 @@ impl PredicatePlan for Flag {
     }
 }
 
+fn validate_progress_quest(cx: &CompileContext<'_>, quest: &str) -> Result<(), CompileError> {
+    cx.quests
+        .quest(quest)
+        .map_err(|_| CompileError::code("unresolved-quest"))?;
+    if cx.path.0.as_ref() != quest {
+        return Err(CompileError::code("foreign-progress-quest"));
+    }
+    Ok(())
+}
 fn matching_progress<'a>(
     cx: &'a PredicateContext<'_, '_>,
     quest: &FactKey,

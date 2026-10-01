@@ -26,13 +26,17 @@ pub(super) fn teleport_edges(
     jewellery_teleports(content_root, &objs, graph, skipped);
 }
 
+/// The spell table every spell teleport is read from.
+pub(super) const MAGIC_SPELLS_DBROW: &str = "scripts/skill_magic/configs/magic_spells.dbrow";
+
 /// Spell teleports from `skill_magic/configs/magic_spells.dbrow`: each
 /// `[magic_spell_teleport_*]` block declares `data=levelrequired,N`,
 /// `data=runesrequired,<rune>,<count>[,<rune>,<count>]` (rune names
-/// resolved through `pack/obj.pack`), and `data=tele_coord,<coord>`
-/// (absolute). Requirement = the magic level (`skill_req`) plus the runes
-/// (`item_req`); the members flag declares no gate this model carries.
-/// Ticks = [`SPELL_TELEPORT_TICKS`].
+/// resolved through `pack/obj.pack`), `data=members,<bool>` and
+/// `data=tele_coord,<coord>` (absolute). Requirement = the magic level
+/// (`skill_req`) plus the runes (`item_req`), and a members world when the
+/// row is `members,true` (`check_spell_requirements` refuses that column on
+/// an F2P world). Ticks = [`SPELL_TELEPORT_TICKS`].
 pub(super) fn spell_teleports(
     content_root: &Path,
     objs: &HashMap<String, i32>,
@@ -40,16 +44,9 @@ pub(super) fn spell_teleports(
     skipped: &mut HashMap<&'static str, usize>,
     wildy_cap: Option<i32>,
 ) {
-    let path = content_root
-        .join("scripts")
-        .join("skill_magic")
-        .join("configs")
-        .join("magic_spells.dbrow");
-    let Ok(text) = fs::read_to_string(&path) else {
+    let Ok(text) = fs::read_to_string(content_root.join(MAGIC_SPELLS_DBROW)) else {
         return;
     };
-    // (levelrequired, rune pairs, tele_coord) of the current teleport block.
-    type SpellTeleportBlock = (Option<i32>, Vec<(String, i32)>, Option<String>);
     let mut cur: Option<SpellTeleportBlock> = None;
     for raw in text.lines() {
         let line = raw.trim();
@@ -59,23 +56,34 @@ pub(super) fn spell_teleports(
             }
             cur = name
                 .starts_with("magic_spell_teleport_")
-                .then(|| (None, Vec::new(), None));
+                .then(SpellTeleportBlock::default);
             continue;
         }
-        let Some((level, runes, coord)) = &mut cur else {
+        let Some(block) = &mut cur else {
             continue;
         };
         if let Some(rest) = line.strip_prefix("data=levelrequired,") {
-            *level = rest.trim().parse().ok();
+            block.level = rest.trim().parse().ok();
         } else if let Some(rest) = line.strip_prefix("data=runesrequired,") {
-            *runes = rune_pairs(rest);
+            block.runes = rune_pairs(rest);
+        } else if let Some(rest) = line.strip_prefix("data=members,") {
+            block.members = rest.trim() == "true";
         } else if let Some(rest) = line.strip_prefix("data=tele_coord,") {
-            *coord = Some(rest.trim().to_string());
+            block.coord = Some(rest.trim().to_string());
         }
     }
     if let Some(block) = cur.take() {
         push_spell_teleport(objs, graph, skipped, block, wildy_cap);
     }
+}
+
+/// One `[magic_spell_teleport_*]` dbrow block as read so far.
+#[derive(Debug, Default)]
+pub(super) struct SpellTeleportBlock {
+    pub(super) level: Option<i32>,
+    pub(super) runes: Vec<(String, i32)>,
+    pub(super) members: bool,
+    pub(super) coord: Option<String>,
 }
 
 /// `[<name>]` dbrow section header → the block name.
@@ -107,19 +115,19 @@ pub(super) fn push_spell_teleport(
     objs: &HashMap<String, i32>,
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
-    (level, runes, coord): (Option<i32>, Vec<(String, i32)>, Option<String>),
+    block: SpellTeleportBlock,
     wildy_cap: Option<i32>,
 ) {
-    let Some(level) = level else {
+    let Some(level) = block.level else {
         bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
         return;
     };
-    let Some(coord) = coord.and_then(|c| coord_literal(&c)) else {
+    let Some(coord) = block.coord.and_then(|c| coord_literal(&c)) else {
         bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
         return;
     };
-    let mut item_req = Vec::with_capacity(runes.len());
-    for (rune, count) in &runes {
+    let mut item_req = Vec::with_capacity(block.runes.len());
+    for (rune, count) in &block.runes {
         let Some(&id) = objs.get(rune) else {
             bump(skipped, SKIP_TELEPORT_UNRESOLVED_RUNE, 1);
             return;
@@ -144,7 +152,7 @@ pub(super) fn push_spell_teleport(
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
-        members_req: false,
+        members_req: block.members,
         wildy_cap,
         quest_gates: None,
     });

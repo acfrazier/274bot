@@ -2,9 +2,9 @@ use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
     live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow, null_raster_live_entries,
     parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
-    script_active, script_pause_enabled, script_stop_enabled, seed_on_first_world,
-    stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion, Session, SlotIo,
-    WalkArm,
+    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
+    seed_on_first_world, stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion,
+    Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -59,6 +59,31 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
     s.set_memory_override(Some(false));
 
     s.load("alice");
+    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    assert_eq!(
+        arm.lowmem_handshake(),
+        Some(false),
+        "the session override seeds the effective handshake mode"
+    );
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(false),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
+    assert!(
+        !s.core.memory_status("alice").unwrap().differs(),
+        "the override must not create a permanent false notice"
+    );
 
     assert!(s.audio.music_on("alice"), "spawn must use explicit highmem");
     assert!(
@@ -1946,6 +1971,24 @@ fn live_client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
         c.try_move_path.len(),
         3,
         "unknown here must not retire a pending trail"
+    );
+}
+
+#[test]
+fn inactive_slot_retires_stale_client_trail() {
+    let mut c = paint_client();
+    c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
+
+    retire_client_trail(&mut c, Some(wt(3201, 3200)));
+    assert_eq!(
+        c.try_move_path.len(),
+        3,
+        "an inactive slot keeps a trail while still walking it"
+    );
+    retire_client_trail(&mut c, Some(wt(3202, 3200)));
+    assert!(
+        c.try_move_path.is_empty(),
+        "arrival retires the producer without paint materialization"
     );
 }
 
@@ -4665,7 +4708,13 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         let terminal_shot = scenario.settings.terminal_shot;
         session.live_prepare_script(scenario).unwrap();
         session.pump_status();
-        let published = session.nav_publish.lock().unwrap().settings.clone();
+        let published = session
+            .nav_publish
+            .lock()
+            .unwrap()
+            .settings
+            .as_ref()
+            .clone();
         assert_eq!(published, session.effective_nav());
         assert!(published.allow_teleports && published.allow_wilderness);
         assert_eq!(published.allow_bank_fetch, baseline.allow_bank_fetch);
@@ -5996,6 +6045,18 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     s.select("alice");
     assert_eq!(s.focused_raster(), vault::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
+    assert!(s.set_focused_lowmem(false));
+    s.core.flush_writes();
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the memory switch is persisted before an unrelated raster write"
+    );
     assert!(s.set_focused_raster(vault::RasterMode::Off));
     assert_eq!(s.focused_raster(), vault::RasterMode::Off);
     assert_eq!(
@@ -6018,6 +6079,16 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
             .settings
             .raster,
         vault::RasterMode::Cpu
+    );
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "changing raster must not restore the pre-toggle memory mode"
     );
 }
 
@@ -7422,4 +7493,199 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
         "selected once durable"
     );
     assert!(s.core.play().unwrap().arm("bob").is_some());
+}
+
+#[test]
+fn memory_toggle_reports_login_divergence_through_the_shared_command() {
+    let path = tmp_vault("mem-toggle.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut alice = profile("alice", "pw", 42);
+    alice.settings.lowmem = true;
+    vault.upsert(alice).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    s.select("alice");
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
+
+    let clean = s
+        .focused_memory_notice()
+        .expect("a spawn records its login mode");
+    assert!(!clean.differs());
+
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.audio.music_on("alice"), "the gate arms the speaker");
+    assert!(s.mem_toggled.contains("alice"));
+    let notice = s.focused_memory_notice().expect("recorded login");
+    assert!(notice.differs(), "server tabs/sound still follow lowmem");
+    assert_eq!(
+        s.core
+            .play()
+            .unwrap()
+            .arm("alice")
+            .unwrap()
+            .lowmem_handshake(),
+        Some(false),
+        "the shared command arms the next handshake"
+    );
+    s.core.flush_writes();
+    assert!(
+        !s.core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .lowmem,
+        "the setting is durable"
+    );
+}
+
+#[test]
+fn memory_relog_starts_at_once_without_a_running_script() {
+    let path = tmp_vault("mem-relog.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    s.core
+        .play()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        });
+    s.core.poll();
+    s.select("alice");
+
+    assert!(!s.focused_memory_relog_warning(), "no script runs");
+    assert!(!s.mem_relog_armed());
+    assert!(s.request_focused_memory_relog());
+    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    assert!(arm.login_latched() && arm.wants_logout());
+    assert!(
+        s.core.memory_status("alice").unwrap().relog_pending,
+        "the poll must see the armed relog"
+    );
+}
+
+#[test]
+fn memory_relog_arm_is_per_bot() {
+    let path = tmp_vault("mem-arm.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    vault.upsert(profile("bob", "pw", 43)).unwrap();
+    s.core.set_vault(Some(vault));
+    assert!(s.load("alice"));
+    assert!(s.load("bob"));
+    s.select("alice");
+    s.mem_relog_armed = Some("alice".into());
+    assert!(s.mem_relog_armed());
+    // An armed execute clears the arm.
+    assert!(s.request_focused_memory_relog());
+    assert!(!s.mem_relog_armed());
+    s.select("bob");
+    assert!(!s.mem_relog_armed(), "arming never leaks across bots");
+}
+
+#[test]
+fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
+    let mut play = empty_play();
+    play.spawn_slot(
+        profile("alice", "pw", 11),
+        None,
+        None,
+        Some(SlotArm::new(11, false)),
+    );
+    play.spawn_slot(
+        profile("bob", "pw", 22),
+        None,
+        None,
+        Some(SlotArm::new(22, false)),
+    );
+    {
+        let mut statuses = play.statuses.lock().unwrap();
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "alice")
+            .unwrap()
+            .ingame = true;
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "alice")
+            .unwrap()
+            .scene_state = 2;
+        statuses
+            .iter_mut()
+            .find(|status| status.username == "bob")
+            .unwrap()
+            .ingame = false;
+    }
+
+    let path = tmp_vault("marked-debug-command.vault");
+    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    vault.upsert(profile("alice", "pw", 11)).unwrap();
+    vault.upsert(profile("bob", "pw", 22)).unwrap();
+    vault.upsert(profile("missing", "pw", 33)).unwrap();
+
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.core.set_vault(Some(vault));
+    session.core.set_play(Some(play));
+    session.fleet_selection.mark_all([
+        frontend_core::ProfileIdentity::uid(11),
+        frontend_core::ProfileIdentity::uid(22),
+        frontend_core::ProfileIdentity::uid(33),
+    ]);
+
+    // A marked row can disappear after the target snapshot; the shared
+    // adapter still accounts for its identity instead of dropping the mark.
+    let snapshot = session
+        .debug_target_snapshot()
+        .into_iter()
+        .filter(|(_, name)| name != "missing")
+        .collect();
+    let report = session.send_debug_command_marked_snapshot("getcoord", snapshot);
+    assert_eq!(report.accepted, 1);
+    assert_eq!(report.total(), 3);
+    assert_eq!(
+        report
+            .skipped
+            .iter()
+            .map(|skip| (skip.profile.as_str(), skip.reason.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("bob", "bot is not in game"),
+            ("profile#33", "profile unavailable"),
+        ]
+    );
 }

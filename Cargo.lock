@@ -102,6 +102,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocation-counter"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2366,6 +2372,7 @@ dependencies = [
  "client",
  "libc",
  "num-bigint",
+ "parking_lot",
  "vault",
  "windows-sys 0.59.0",
 ]
@@ -2382,6 +2389,7 @@ dependencies = [
  "libc",
  "nav",
  "parking_lot",
+ "png",
  "rand_core",
  "scenario",
  "script",
@@ -4604,12 +4612,14 @@ name = "script"
 version = "0.1.9"
 dependencies = [
  "ab_glyph",
+ "allocation-counter",
  "api",
  "client",
  "deno_ast",
  "deno_core",
  "flatbuffers",
  "nav",
+ "parking_lot",
  "rustyscript",
  "script",
  "serde",

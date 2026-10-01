@@ -275,7 +275,9 @@ pub(crate) fn script_observe_cached(
         None,
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
+        None,
     )
+    .wrote
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +309,14 @@ pub(crate) fn drain_observed_host_interacts(
     )
 }
 
+/// Paint ownership leaves the same locked observation that admits and drains
+/// game work. The client flag is applied before this pump can rasterize.
+#[derive(Default)]
+pub(crate) struct ScriptObservation {
+    pub wrote: bool,
+    pub journal_paint_hidden: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe_cached_with_channels(
     driver: &mut dyn Driver,
@@ -334,11 +344,14 @@ pub(crate) fn script_observe_cached_with_channels(
     channels: Option<&super::script_channels::SlotChannels>,
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
-) -> bool {
+    mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
+) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
     }
     let mut wrote = false;
+    let mut journal_wall_now = None;
+    let mut journal_paint_hidden = false;
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
@@ -838,6 +851,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 &[]
             };
             let now = Instant::now();
+            journal_wall_now = Some(now);
             if frozen {
                 if slot.watchdog().recovering_anchor().is_some() {
                     if hold {
@@ -986,6 +1000,7 @@ pub(crate) fn script_observe_cached_with_channels(
         )
         .then_some(slot.runtime_generation());
         has_native_actions = slot.has_native_actions();
+        journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
     }
     if let Some(run_policy) = run_policy {
         run_policy.sync_runtime(policy_runtime_generation);
@@ -1035,7 +1050,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     .as_ref()
                     .is_some_and(|observed| Arc::ptr_eq(observed, &dispatch_slot));
                 let Ok(mut slot) = dispatch_slot.lock() else {
-                    return wrote;
+                    return ScriptObservation {
+                        wrote,
+                        journal_paint_hidden,
+                    };
                 };
                 if same_lifetime
                     && slot.state() == script::RunState::Running
@@ -1048,6 +1066,12 @@ pub(crate) fn script_observe_cached_with_channels(
                         }
                         match action.effect {
                             script::native::HostEffect::Interaction(request) => {
+                                let packet_trace = api::hostlog::enabled(Category::InteractTrace)
+                                    .then(|| driver.packet_checkpoint())
+                                    .flatten();
+                                #[cfg(all(windows, test, feature = "journal-paint-proof"))]
+                                let proof_close =
+                                    matches!(&request, script::shim::InteractReq::CloseModal);
                                 let accepted = dispatch_script_interact_cached(
                                     driver,
                                     snapshot,
@@ -1061,7 +1085,40 @@ pub(crate) fn script_observe_cached_with_channels(
                                     cache.clone(),
                                     obj_names_arc.clone(),
                                 );
+                                if let Some(checkpoint) = packet_trace {
+                                    let mut count = 0;
+                                    let decoded = driver.trace_packets(*checkpoint, &mut |opcode| {
+                                        count += 1;
+                                        host_log!(
+                                            Category::InteractTrace,
+                                            Level::Debug,
+                                            "native-packet account={name} run={:?} tick={tick} request={} opcode={opcode}",
+                                            authority.run(),
+                                            authority.request_id(),
+                                        );
+                                    });
+                                    host_log!(
+                                        Category::InteractTrace,
+                                        Level::Debug,
+                                        "native-packets account={name} run={:?} tick={tick} request={} count={count} decoded={decoded} accepted={accepted}",
+                                        authority.run(),
+                                        authority.request_id(),
+                                    );
+                                }
                                 wrote |= accepted;
+                                #[cfg(all(windows, test, feature = "journal-paint-proof"))]
+                                if proof_close {
+                                    eprintln!(
+                                        "journal-proof-close origin=host-native effect=CloseModal accepted={accepted} run={:?} request={} tick={tick} snapshot_root={:?} unix_ns={}",
+                                        authority.run(),
+                                        authority.request_id().get(),
+                                        snapshot.modals().main,
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .expect("journal proof clock")
+                                            .as_nanos(),
+                                    );
+                                }
                                 slot.complete_native_interaction(
                                     &authority,
                                     script::native::InteractionReceipt {
@@ -1358,7 +1415,10 @@ pub(crate) fn script_observe_cached_with_channels(
                         .as_ref()
                         .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
                     let Ok(mut slot) = slot.lock() else {
-                        return wrote;
+                        return ScriptObservation {
+                            wrote,
+                            journal_paint_hidden,
+                        };
                     };
                     if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                         for _ in 0..rejected_x {
@@ -1399,7 +1459,10 @@ pub(crate) fn script_observe_cached_with_channels(
                     .as_ref()
                     .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
                 let Ok(mut slot) = slot.lock() else {
-                    return wrote;
+                    return ScriptObservation {
+                        wrote,
+                        journal_paint_hidden,
+                    };
                 };
                 if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                     for _ in 0..rejected_x {
@@ -1419,11 +1482,31 @@ pub(crate) fn script_observe_cached_with_channels(
         let mut all = cheats.lock().unwrap();
         all.get_mut(name).map(std::mem::take).unwrap_or_default()
     };
-    for cmd in cmds.into_iter().filter(|_| up) {
-        api::interact::cheat(driver, &cmd);
-        wrote = true;
+    for queued in cmds.into_iter().filter(|_| up) {
+        let (cmd, observe_replies) = match queued.strip_prefix(crate::Play::INTERNAL_CHEAT_PREFIX) {
+            Some(cmd) => (cmd.to_string(), false),
+            None => (queued, true),
+        };
+        if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
+            wrote = true;
+            if observe_replies {
+                if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
+                    replies.sent(name, cmd, snapshot);
+                }
+            }
+        } else {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Warn,
+                slot = name,
+                "debug ::{cmd}: refused by client cheat admission"
+            );
+        }
     }
-    wrote
+    ScriptObservation {
+        wrote,
+        journal_paint_hidden,
+    }
 }
 
 /// Hand a native walk's terminal to its owner's ledger. Two sources: a

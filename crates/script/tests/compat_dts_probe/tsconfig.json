@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": false,
+    "skipLibCheck": false,
+    "noEmit": true
+  },
+  "files": ["probe.ts", "../../compat-js/index.d.ts"]
+}

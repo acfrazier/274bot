@@ -8,6 +8,7 @@
 //! doors) still loads through [`NavWorld::from_grid`] as a fallback for
 //! old `.navpack` files.
 
+use std::io::BufRead;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -18,7 +19,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_grid, BankStand, PackError};
+use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -80,6 +81,16 @@ impl NavWorld {
             Err(PackError::BadMagic) => Ok(Self::from_grid(&decode_grid(bytes)?)),
             Err(e) => Err(e),
         }
+    }
+
+    /// Stream a bounded pack or legacy 274N grid into the router's world.
+    /// The decoder dispatches only by magic, so a stale 274V version is
+    /// reported as `BadVersion` rather than falling through to the grid.
+    /// Accepted trailing bytes are drained without buffering.
+    pub fn from_reader(reader: &mut impl BufRead, length: usize) -> Result<Self, PackError> {
+        decode_any_reader(reader, length, Self::from_parts, |grid| {
+            Self::from_grid(&grid)
+        })
     }
 
     /// Load the baked nav pack (`$NAV_PACK` or the default path) into the

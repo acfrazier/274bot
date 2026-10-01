@@ -9,16 +9,16 @@ use nav::collision::WorldCollision;
 use nav::map::spatial::{
     select_lod, GameTile, TileKey, View, TEXTURE_CAP, TILE_PIXELS, TILE_RGBA_BYTES,
 };
-use nav::transport::TransportGraph;
+use nav::transport::{TransportGraph, WildernessZone};
 use nav::world::NavWorld;
 
 use super::overlay::{self, OverlayColors, OverlayFit, OverlayLayers, OverlayPaint};
 use super::{
     content_priority, decode_tile, dist2_to_centre, encode_tile, kind_rank, overlay_fit,
-    parse_coord, phys_footprint_bytes, place_map_labels, rasterize_overlay, view_from_canvas,
-    FixtureStore, LabelRect, MapLabelCandidate, MapPhase, WalkMapRenderer, CACHE_UNBOUND,
-    MAX_IDX_DEFAULT, MAX_IDX_LAYERS, MAX_LABELS, MAX_VTX_DEFAULT, MAX_VTX_LAYERS, MIN_CELL_PPT,
-    OVERLAY_BYTE_CAP, OVERLAY_MAX_H, OVERLAY_MAX_W,
+    parse_coord, phys_footprint_bytes, place_map_labels, rasterize_overlay, special_area_rect,
+    view_from_canvas, FixtureStore, LabelRect, MapLabelCandidate, MapPhase, WalkMapRenderer,
+    CACHE_UNBOUND, MAX_IDX_DEFAULT, MAX_IDX_LAYERS, MAX_LABELS, MAX_VTX_DEFAULT, MAX_VTX_LAYERS,
+    MIN_CELL_PPT, OVERLAY_BYTE_CAP, OVERLAY_MAX_H, OVERLAY_MAX_W,
 };
 use crate::game_view::FrameGpu;
 use nav::map::poi::PoiKind;
@@ -74,6 +74,7 @@ fn layers_grid() -> OverlayLayers {
         nsew: false,
         path: false,
         flood: false,
+        special_areas: false,
     }
 }
 
@@ -85,6 +86,7 @@ fn layers_none() -> OverlayLayers {
         nsew: false,
         path: false,
         flood: false,
+        special_areas: false,
     }
 }
 
@@ -96,6 +98,7 @@ fn layers_all() -> OverlayLayers {
         nsew: true,
         path: true,
         flood: true,
+        special_areas: false,
     }
 }
 
@@ -152,6 +155,32 @@ fn overlay_fit_uses_world_span_not_window_scale() {
     };
     assert_eq!(overlay_fit(coarse), OverlayFit::ZoomIn);
 }
+#[test]
+fn special_area_rect_uses_exclusive_content_zone_edges_at_coarse_zoom() {
+    let view = View {
+        west: 2944.0,
+        south: 3519.0,
+        east: 3392.0,
+        north: 3523.0,
+        pixels_per_tile: 2.0,
+        plane: 0,
+        max_lod: 0,
+    };
+    let zone = WildernessZone {
+        x1: 2944,
+        z1: 3520,
+        x2: 3391,
+        z2: 3521,
+        level1: 0,
+        level2: 0,
+        origin_z: 3520,
+    };
+    assert_eq!(
+        special_area_rect(view, [10.0, 20.0], [896.0, 8.0], zone),
+        Some(([10.0, 22.0], [906.0, 26.0])),
+        "inclusive zone facts become exclusive screen bounds at 2 px/tile"
+    );
+}
 
 #[test]
 fn overlay_rasterizes_collision_not_per_tile_quads() {
@@ -184,6 +213,7 @@ fn overlay_rasterizes_collision_not_per_tile_quads() {
                 nsew: false,
                 path: false,
                 flood: false,
+                special_areas: false,
             },
             colors,
             path: &[],
@@ -553,6 +583,7 @@ fn flood_change_rerasterizes_overlay() {
         nsew: false,
         path: false,
         flood: true,
+        special_areas: false,
     };
     let a: Arc<HashSet<WorldTile>> = Arc::new(
         [WorldTile {
@@ -672,6 +703,29 @@ fn last_layer_off_drops_overlay_buffers() {
     assert_eq!(map.overlay_size(), (0, 0));
 }
 
+#[test]
+fn special_area_layer_avoids_raster_buffers() {
+    let world = open_world(8, 8);
+    let mut map = WalkMapRenderer::new();
+    map.note_open();
+    let visible = OverlayLayers {
+        special_areas: true,
+        ..OverlayLayers::default()
+    };
+    let zoom_in = map.test_sync(
+        None,
+        small_view(),
+        &world,
+        visible,
+        OverlayColors::default(),
+        &[],
+        &[],
+        None,
+    );
+    assert!(!zoom_in, "screen-space area rectangles work at coarse zoom");
+    assert_eq!(map.counters().overlay_cpu_bytes, 0);
+    assert_eq!(map.overlay_size(), (0, 0));
+}
 #[test]
 fn close_then_reopen_releases_overlay_and_starts_empty() {
     let world = bake_world(8, 8, &[]);

@@ -30,7 +30,10 @@ use crate::essence::{
 };
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::{DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
+use crate::transport::{
+    is_dialogue_door_loc, DoorDir, TransportEdge, TransportKind, AL_KHARID_TOLL_LEFT_LOC_ID,
+    AL_KHARID_TOLL_RIGHT_LOC_ID, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+};
 
 mod dialog;
 mod legacy_grid;

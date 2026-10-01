@@ -559,7 +559,7 @@ export default class T extends LoopingBot {
         iso.probe("__food").unwrap(),
         serde_json::json!(["Lobster", 12])
     );
-    assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
+    assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action,..} if name=="Lobster" && action=="Eat")));
     iso.join();
 }
 

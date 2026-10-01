@@ -16,10 +16,20 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::task::Poll;
 
 use std::time::Duration;
+
+// A read has at most three transactions (each can emit at most one row
+// click). Adoption consumes a transaction too, but never adds a click.
+const JOURNAL_READ_ATTEMPTS: u8 = 3;
+const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
+const JOURNAL_RETRY_LIMIT_BUSY: &str =
+    "journal read retry limit reached (journal remained busy during read)";
+const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
+    "journal read retry limit reached (journal ownership repeatedly lost)";
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
@@ -43,6 +53,9 @@ pub struct Quester {
     needs_read: bool,
     unreadable_since: Option<Duration>,
     unreadable_reads: u8,
+    journal_attempts: u8,
+    journal_retry_pending: bool,
+    journal_quiet_since: Option<NonZeroU32>,
     empty_reads: u8,
     park_reason: &'static str,
     last_error: Option<Arc<str>>,
@@ -83,6 +96,9 @@ impl Quester {
             needs_read: true,
             unreadable_since: None,
             unreadable_reads: 0,
+            journal_attempts: 0,
+            journal_retry_pending: false,
+            journal_quiet_since: None,
             empty_reads: 0,
             park_reason: "no progress",
             last_error: None,
@@ -139,7 +155,9 @@ impl Quester {
 
     fn record_failure(&mut self, error: ActionError) {
         self.last_error = Some(match error {
-            ActionError::Unavailable(reason) | ActionError::Failed(reason) => reason,
+            ActionError::Unavailable(reason)
+            | ActionError::Failed(reason)
+            | ActionError::Blocked(reason) => reason,
             error => Arc::from(format!("step error: {error:?}")),
         });
         self.dirty = true;
@@ -216,14 +234,11 @@ impl Quester {
                 value: StatusValue::Text(Arc::clone(text)),
             });
         }
-        if let Some(hint) = self.stage.as_ref().and_then(|stage| {
-            self.path
-                .progress
-                .rules
-                .iter()
-                .find(|rule| &rule.stage == stage)
-                .and_then(|rule| rule.varp)
-        }) {
+        if let Some(hint) = self
+            .stage
+            .as_ref()
+            .and_then(|stage| self.path.progress.varp_hint(stage))
+        {
             fields.push(StatusField {
                 key: "varp_hint",
                 label: "Fixture stage hint",
@@ -303,14 +318,76 @@ impl Quester {
         false
     }
 
+    fn wait_for_journal_read(&mut self, tick: &NativeTick<'_>, reason: &'static str) -> bool {
+        let waiting = self.wait_for_read(tick, reason);
+        if self.parked {
+            if let Some(chat) = tick.cx.snapshot().chat_modal() {
+                if chat.value.root != -1 || !chat.value.texts.is_empty() {
+                    self.last_error = Some(Arc::from(format!(
+                        "journal blocked by modal root {}{}",
+                        chat.value.root,
+                        chat.value
+                            .texts
+                            .iter()
+                            .find(|text| !text.is_empty())
+                            .map(|text| format!(" ({text})"))
+                            .unwrap_or_default()
+                    )));
+                }
+            }
+        }
+        waiting
+    }
+
+    /// `limit` is the Blocked message once the per-read cap is spent; it names
+    /// the cap and the same transient cause as `reason`.
+    fn retry_journal_read(
+        &mut self,
+        tick: &NativeTick<'_>,
+        reason: &'static str,
+        limit: &'static str,
+    ) -> bool {
+        self.journal_retry_pending = true;
+        self.journal_quiet_since = None;
+        if self.journal_attempts >= JOURNAL_READ_ATTEMPTS {
+            self.parked = true;
+            self.park_reason = "journal read retry limit reached";
+            self.last_error = Some(Arc::from(limit));
+            self.dirty = true;
+            return false;
+        }
+        self.wait_for_read(tick, reason)
+    }
+
     fn read_stage(&mut self, tick: &mut NativeTick<'_>, retarget: bool) -> bool {
         let progress = if let Some(handle) = self.journal.as_ref() {
             match tick.actions.poll(handle, &mut tick.cx) {
                 Poll::Pending => return false,
                 Poll::Ready(Err(error)) => {
                     self.journal = None;
-                    self.record_failure(error);
-                    self.parked = true;
+                    match error {
+                        ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted => {
+                            return self.retry_journal_read(
+                                tick,
+                                "journal remained busy during read",
+                                JOURNAL_RETRY_LIMIT_BUSY,
+                            );
+                        }
+                        ActionError::Failed(reason)
+                            if reason.as_ref() == "journal ownership lost before close"
+                                || reason.as_ref() == "journal ownership lost while closing" =>
+                        {
+                            return self.retry_journal_read(
+                                tick,
+                                "journal ownership repeatedly lost",
+                                JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST,
+                            );
+                        }
+                        error => {
+                            self.record_failure(error);
+                            self.parked = true;
+                        }
+                    }
                     return false;
                 }
                 Poll::Ready(Ok(read)) => {
@@ -335,6 +412,33 @@ impl Quester {
                 return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
             }
             if colour == QuestListStatus::InProgress && !self.path.progress.rules.is_empty() {
+                if self.journal_retry_pending {
+                    let closed = tick.cx.snapshot().main_modal().is_some_and(|modal| {
+                        modal.value.root == -1 && modal.value.texts.is_empty()
+                    }) && tick.cx.snapshot().chat_modal().is_some_and(|modal| {
+                        modal.value.root == -1 && modal.value.texts.is_empty()
+                    });
+                    if !closed {
+                        self.journal_quiet_since = None;
+                        return self
+                            .wait_for_journal_read(tick, "journal retry quiet period unavailable");
+                    }
+                    let current_tick = tick.cx.evidence().tick;
+                    // The +1 encoding reserves zero for "not started"; 32-bit
+                    // game ticks cover about 81 years at the engine's tick rate,
+                    // and a saturated stamp only shortens that quiet wait.
+                    let since = self.journal_quiet_since.get_or_insert_with(|| {
+                        let stamp =
+                            u32::try_from(current_tick.saturating_add(1)).unwrap_or(u32::MAX);
+                        NonZeroU32::new(stamp).unwrap_or(NonZeroU32::MIN)
+                    });
+                    if current_tick.saturating_sub(u64::from(since.get().saturating_sub(1)))
+                        < JOURNAL_RETRY_QUIET_TICKS
+                    {
+                        return self
+                            .wait_for_journal_read(tick, "journal retry quiet period unavailable");
+                    }
+                }
                 let args = JournalRequest {
                     quest: self.path.id.clone(),
                     facts: Arc::clone(&self.quests),
@@ -342,11 +446,15 @@ impl Quester {
                 match tick.actions.begin::<JournalMachine>(args, &mut tick.cx) {
                     Ok(handle) => {
                         self.journal = Some(handle);
+                        self.journal_attempts += 1;
+                        self.journal_retry_pending = false;
+                        self.journal_quiet_since = None;
                         self.journal_opened = true;
                         self.dirty = true;
                     }
                     Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted) => {
-                        return self.wait_for_read(tick, "journal blocked by an occupied modal");
+                        return self
+                            .wait_for_journal_read(tick, "journal blocked by an occupied modal");
                     }
                     Err(error) => {
                         self.record_failure(error);
@@ -366,6 +474,9 @@ impl Quester {
             Knowledge::Known(stage) => Some(stage.clone()),
             Knowledge::Unknown(_) | Knowledge::Partial { .. } => None,
         };
+        self.journal_attempts = 0;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
         self.progress = Some(Arc::new(progress));
         self.dirty = true;
         let sequence = stage
@@ -682,6 +793,14 @@ impl Script for Quester {
                         .map(|step| step.plan.settle_timeout())
                         .unwrap_or_default();
             }
+            Poll::Ready(Err(error @ ActionError::Blocked(_))) => {
+                self.step = None;
+                self.parked = true;
+                self.record_failure(error);
+                self.update_wait();
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+            }
             Poll::Ready(Err(error)) => {
                 self.step = None;
                 self.fail_streak = self.fail_streak.saturating_add(1);
@@ -706,6 +825,9 @@ impl Script for Quester {
                 self.journal = None;
                 self.progress = None;
                 self.unreadable_since = None;
+                self.journal_attempts = 0;
+                self.journal_retry_pending = false;
+                self.journal_quiet_since = None;
                 self.selection_since = None;
                 self.dirty = true;
                 self.waiting = None;
@@ -716,6 +838,9 @@ impl Script for Quester {
                 self.progress = None;
                 self.settling = false;
                 self.needs_read = true;
+                self.journal_attempts = 0;
+                self.journal_retry_pending = false;
+                self.journal_quiet_since = None;
                 self.waiting = None;
             }
             Interrupt::Pause | Interrupt::Hold(_) => {}
@@ -732,9 +857,7 @@ impl Script for Quester {
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
         if self.parked {
-            self.parked = false;
-            self.unreadable_since = None;
-            self.unreadable_reads = 0;
+            self.retry()?;
         }
         self.read_requested = true;
         self.dirty = true;
@@ -755,6 +878,9 @@ impl Script for Quester {
         self.empty_reads = 0;
         self.unreadable_reads = 0;
         self.unreadable_since = None;
+        self.journal_attempts = 0;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
         self.last_error = None;
         self.waiting = None;
         self.park_reason = "no progress";
@@ -857,6 +983,106 @@ mod tests {
             ),
             s,
         )
+    }
+
+    #[test]
+    fn combat_interrupted_talk_parks_without_advancing_or_reading() {
+        use super::super::families::tests::{seed_dialogue_combat, with_tick, with_tick_output};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "talk".into();
+        step.args = serde_json::json!({"npc": "cook"});
+        step.advances = true;
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            quests,
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        seed_dialogue_combat(&mut snapshot, false);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        snapshot.seed_chat_modal(4882, vec![]);
+        let mut ledger = None;
+        for tick in 1..=3 {
+            with_tick(&snapshot, &mut ledger, tick, |t| {
+                assert!(matches!(script.tick(t).unwrap(), ScriptFlow::Continue));
+            });
+        }
+        let cursor = (script.seq_index, script.step_index);
+        let progress_evidence = script.progress.as_ref().unwrap().evidence;
+        snapshot.seed_chat_modal(-1, vec![]);
+        seed_dialogue_combat(&mut snapshot, true);
+        let mut output = Capture::default();
+        for tick in 4..=9 {
+            if tick > 4 {
+                seed_dialogue_combat(&mut snapshot, false);
+            }
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |t| {
+                assert!(matches!(
+                    script.tick(t).unwrap(),
+                    ScriptFlow::Blocked(failure)
+                        if failure.message.as_ref() == "dialogue interrupted by combat"
+                ));
+            });
+        }
+        assert_eq!((script.seq_index, script.step_index), cursor);
+        assert_eq!(
+            script.progress.as_ref().unwrap().evidence,
+            progress_evidence
+        );
+        assert!(!script.needs_read && !script.settling);
+        assert!(!script.journal_opened());
+        let status = output.0.last().unwrap();
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(
+            status.failure.as_ref().unwrap().message.as_ref(),
+            "dialogue interrupted by combat"
+        );
+        script.interrupt(Interrupt::Resume);
+        with_tick_output(&snapshot, &mut ledger, 10, &mut output, |t| {
+            assert!(matches!(
+                script.tick(t).unwrap(),
+                ScriptFlow::Blocked(failure)
+                    if failure.message.as_ref() == "dialogue interrupted by combat"
+            ));
+        });
+        script.interrupt(Interrupt::SessionReady);
+        with_tick_output(&snapshot, &mut ledger, 11, &mut output, |t| {
+            assert!(matches!(
+                script.tick(t).unwrap(),
+                ScriptFlow::Blocked(failure)
+                    if failure.message.as_ref() == "dialogue interrupted by combat"
+            ));
+        });
     }
 
     #[test]

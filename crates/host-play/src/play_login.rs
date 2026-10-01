@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -156,6 +156,12 @@ pub struct SlotArm {
     /// An operator Logout issued while offline still ends held script work.
     /// The slot thread consumes this once at the next session/title boundary.
     logout_work_reset_pending: AtomicBool,
+    /// Effective memory mode for the live client and the next handshake.
+    /// 0 = no front-end-owned value, 1 = highmem, 2 = lowmem. A surface
+    /// seeds this from its disposable spawn profile (including session-only
+    /// overrides); operator toggles then replace it. The slot pump reads it
+    /// every frame without taking a lock.
+    lowmem_handshake: AtomicU8,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
@@ -207,6 +213,7 @@ impl SlotArm {
             script_active: AtomicBool::new(false),
             session_online: AtomicBool::new(false),
             logout_work_reset_pending: AtomicBool::new(false),
+            lowmem_handshake: AtomicU8::new(0),
             password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -377,6 +384,24 @@ impl SlotArm {
 
     pub fn login_latch_reason(&self) -> Option<LoginLatchReason> {
         self.intent.lock().login_latch
+    }
+
+    /// Record the effective memory mode for the live client and next
+    /// handshake.
+    pub fn set_lowmem_handshake(&self, lowmem: bool) {
+        self.lowmem_handshake
+            .store(if lowmem { 2 } else { 1 }, Ordering::Relaxed);
+    }
+
+    /// The effective front-end-owned mode, or `None` before a surface seeds
+    /// it. Relaxed ordering is sufficient: the value is an independent
+    /// idempotent configuration latch.
+    pub fn lowmem_handshake(&self) -> Option<bool> {
+        match self.lowmem_handshake.load(Ordering::Relaxed) {
+            1 => Some(false),
+            2 => Some(true),
+            _ => None,
+        }
     }
 
     pub(super) fn logout_work_reset_pending(&self) -> bool {

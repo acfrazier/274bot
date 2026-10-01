@@ -4,13 +4,36 @@ use vault::{Profile, ProfileSettings};
 
 use super::{fresh_uid, Session};
 
-/// An explicit switch of an unsaved edit form to `target` (`""` is a new
-/// profile), waiting on the Discard / Keep editing prompt. The prompt text
-/// is built once, when the switch is staged, so drawing it only borrows.
+/// What Discard does on a staged Discard / Keep editing prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditLeave {
+    /// Open [`EditSwitch::target`] over the form.
+    Switch,
+    /// Close the form, leaving Profiles open.
+    CloseForm,
+    /// Close Profiles, and the form with it.
+    CloseWindow,
+    /// Remove the profile [`EditSwitch::target`] from the vault; it is the
+    /// one the form edits, so the form closes with it.
+    DeleteTarget,
+    /// Turn MultiBox off, which closes Profiles and the form with it.
+    MultiBoxOff,
+}
+
+/// A staged Discard / Keep editing prompt: the operator asked to leave the
+/// form (an explicit switch of it to `target`, `""` for a new profile, a
+/// close, the delete of its profile, or MultiBox off) while it holds unsaved
+/// edits or a save that has not settled. The prompt text is built once, when
+/// the prompt is staged, so drawing it only borrows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditSwitch {
     pub target: String,
     pub prompt: String,
+    pub leave: EditLeave,
+    /// The prompt was staged because the form's save had not settled (its
+    /// text says the save may fail). It ends when that save settles, since
+    /// the result is then on the form.
+    pub saving: bool,
 }
 
 impl Session {
@@ -23,14 +46,15 @@ impl Session {
     /// write is durable, then follows a renamed or new profile to its saved
     /// name and shows `Saved <name>.`; the profile is selected (and so
     /// spawned) only then. A write that fails later leaves the form on its
-    /// target, so Save retries the same rename or create; its error is on
-    /// the banner. Returns whether the write was accepted: a refusal shows
-    /// inline and writes nothing, and a Save while this form's previous save
-    /// is still being written is not accepted.
+    /// target with its draft, so Save retries the same rename or create; its
+    /// error shows in the form and on the banner. Returns whether the write
+    /// was accepted: a refusal shows inline and writes nothing, and a Save
+    /// while this form's previous save is still being written is not
+    /// accepted.
     pub fn save_credentials(&mut self) -> bool {
         // The form keeps its target until the write is durable, so a second
         // Save before then would not follow a rename or create.
-        if self.chooser_save.saving() {
+        if self.form_saving() {
             return false;
         }
         self.pending_edit_switch = None;
@@ -102,7 +126,9 @@ impl Session {
         self.error = None;
         // Select (and so spawn) only once the credentials are durable: a
         // failed write must not leave a worker logging in with them.
-        self.chooser_save.submitted(op, username);
+        let source = self.chooser_edit.as_deref().filter(|t| !t.is_empty());
+        self.chooser_save
+            .submitted(&mut self.core, op, source, username);
         true
     }
 
@@ -116,20 +142,30 @@ impl Session {
         false
     }
 
-    /// Settle the credentials Save being written. Once it is durable, the
+    /// Settle the credentials Saves being written. Once one is durable, the
     /// form it came from, if still showing, follows the saved name (a
     /// rename's or a new profile's) and shows `Saved <name>.`, and the
-    /// profile is selected. A failed write selects nothing and leaves the
-    /// form alone: its error is on the banner.
+    /// profile is selected. A write that failed after it was queued shows
+    /// in the form it came from, which keeps its draft and its target, so
+    /// Save retries; it selects nothing. Its error is on the banner too.
+    /// A Discard / Keep editing prompt staged because the form's save had
+    /// not settled ends with it: it would say the save may fail over its
+    /// result, and the leave it asked for is the operator's to ask again.
     pub(crate) fn settle_profile_save(&mut self) {
-        let Some(saved) = self.chooser_save.settle(&self.core) else {
-            return;
-        };
-        if saved.same_form {
-            self.chooser_edit = Some(saved.name.clone());
+        for settled in self.chooser_save.settle(&mut self.core) {
+            let frontend_core::FormSettled::Saved(saved) = settled else {
+                continue;
+            };
+            let name = saved.record.destination;
+            if saved.same_form {
+                self.chooser_edit = Some(name.clone());
+            }
+            // `select` builds the arm from the durable auto-login.
+            self.select(&name);
         }
-        // `select` builds the arm from the durable auto-login.
-        self.select(&saved.name);
+        if self.pending_edit_switch.as_ref().is_some_and(|s| s.saving) && !self.form_saving() {
+            self.pending_edit_switch = None;
+        }
     }
 
     /// Empty the credentials-section fields. The vault entry is untouched.
@@ -139,9 +175,11 @@ impl Session {
     }
 
     /// Open the profile picker on `name` (or a blank new row). With unsaved
-    /// changes on another target the switch waits: the form stays on its
-    /// target with its buffers, and the pending target is staged for the
-    /// Discard / Keep editing prompt ([`Self::confirm_pending_edit_switch`],
+    /// changes on another target, or this form's save still being written
+    /// (it can still fail, and the draft is all that is left of it), the
+    /// switch waits: the form stays on its target with its buffers, and the
+    /// pending target is staged for the Discard / Keep editing prompt
+    /// ([`Self::confirm_pending_edit_switch`],
     /// [`Self::cancel_pending_edit_switch`]). Focus changes never come
     /// through here, so they can never retarget the form.
     pub fn begin_edit_profile(&mut self, name: Option<&str>) {
@@ -152,20 +190,36 @@ impl Session {
             self.wall.chooser_open = true;
             return;
         }
-        if self.edit_dirty() {
-            let prompt = if target.is_empty() {
-                "Discard unsaved edits and start a new profile?".to_string()
+        if self.edit_dirty() || self.form_saving() {
+            let next = if target.is_empty() {
+                "start a new profile".to_string()
             } else {
-                format!("Discard unsaved edits and edit {target}?")
+                format!("edit {target}")
             };
-            self.pending_edit_switch = Some(EditSwitch {
-                target: target.to_string(),
-                prompt,
-            });
+            self.stage_edit_exit(EditLeave::Switch, target, &next);
             self.wall.chooser_open = true;
             return;
         }
         self.open_edit_profile(target);
+    }
+
+    /// Stage the Discard / Keep editing prompt for leaving the form to
+    /// `then` (`target` only matters to [`EditLeave::Switch`]).
+    pub(super) fn stage_edit_exit(&mut self, leave: EditLeave, target: &str, then: &str) {
+        let saving = self.chooser_save.saving_name(&self.core);
+        let prompt = match saving {
+            Some(saving) => format!(
+                "Saving {saving} has not finished and may fail; its edits would be lost. Discard them and {then}?"
+            ),
+            None => format!("Discard unsaved edits and {then}?"),
+        };
+        self.pending_edit_switch = Some(EditSwitch {
+            target: target.to_string(),
+            prompt,
+            leave,
+            saving: saving.is_some(),
+        });
+        self.focus_profiles = true;
     }
 
     /// Switch the form to `target` (`""` is the blank new-profile row),
@@ -191,17 +245,61 @@ impl Session {
         self.wall.chooser_open = true;
     }
 
-    /// Discard the draft and switch to the pending target. No-op when no
-    /// switch is waiting.
+    /// Discard the draft and leave the form as the prompt asked (open the
+    /// pending target, or close the form or Profiles). No-op when no prompt
+    /// is waiting.
     pub fn confirm_pending_edit_switch(&mut self) {
-        if let Some(switch) = self.pending_edit_switch.take() {
-            self.open_edit_profile(&switch.target);
+        let Some(switch) = self.pending_edit_switch.take() else {
+            return;
+        };
+        match switch.leave {
+            EditLeave::Switch => self.open_edit_profile(&switch.target),
+            EditLeave::CloseForm => self.cancel_edit_profile(),
+            EditLeave::CloseWindow => {
+                self.wall.chooser_open = false;
+                self.cancel_edit_profile();
+            }
+            EditLeave::DeleteTarget => {
+                self.cancel_edit_profile();
+                self.vault_remove(&switch.target);
+            }
+            EditLeave::MultiBoxOff => {
+                self.cancel_edit_profile();
+                self.apply_multibox(false);
+            }
         }
     }
 
-    /// Keep editing: drop the pending target switch, the form untouched.
+    /// Keep editing: drop the pending prompt, the form untouched.
     pub fn cancel_pending_edit_switch(&mut self) {
         self.pending_edit_switch = None;
+    }
+
+    /// The form's Cancel: closes the form. Refused while the form's save is
+    /// still being written: the Discard / Keep editing prompt is staged
+    /// instead. Returns whether the form closed.
+    pub fn request_cancel_edit(&mut self) -> bool {
+        if self.form_saving() {
+            self.stage_edit_exit(EditLeave::CloseForm, "", "close the form");
+            return false;
+        }
+        self.cancel_edit_profile();
+        true
+    }
+
+    /// Close Profiles (its Close button and its ✕), and the form with it.
+    /// Refused while the form's save is still being written: the Discard /
+    /// Keep editing prompt is staged and Profiles stays open. Returns
+    /// whether Profiles closed.
+    pub fn request_close_profiles(&mut self) -> bool {
+        if self.form_saving() {
+            self.stage_edit_exit(EditLeave::CloseWindow, "", "close Profiles");
+            self.wall.chooser_open = true;
+            return false;
+        }
+        self.wall.chooser_open = false;
+        self.cancel_edit_profile();
+        true
     }
 
     /// Whether the open edit form holds changes its Save would write (user,
@@ -243,11 +341,38 @@ impl Session {
         }
     }
 
-    /// Close the edit form. A save it submitted still settles (selecting
-    /// its profile once durable) but never shows a notice again.
+    /// Close the edit form, whatever it holds. A save it submitted still
+    /// settles (selecting its profile once durable), but a failure of it no
+    /// longer shows in any form: only on the banner. Operator closes ask
+    /// first while the save is unsettled ([`Self::request_cancel_edit`],
+    /// [`Self::request_close_profiles`]).
     pub fn cancel_edit_profile(&mut self) {
         self.chooser_edit = None;
         self.pending_edit_switch = None;
         self.chooser_save.form_changed();
+    }
+
+    /// The chooser's confirmed delete of `name`: the vault row goes, and
+    /// the form editing it closes with it. While that form's save has not
+    /// settled the delete waits instead, and the Discard / Keep editing
+    /// prompt is staged: the write can still fail, which puts the profile
+    /// back and would leave the draft nowhere. Returns whether a row was
+    /// removed.
+    pub fn delete_profile(&mut self, name: &str) -> bool {
+        let editing = self.chooser_edit.as_deref() == Some(name);
+        if editing && self.form_saving() {
+            self.stage_edit_exit(EditLeave::DeleteTarget, name, &format!("delete {name}"));
+            self.wall.chooser_open = true;
+            return false;
+        }
+        if editing {
+            self.cancel_edit_profile();
+        }
+        self.vault_remove(name)
+    }
+
+    /// Whether the open edit form's own save is still being written.
+    pub fn form_saving(&self) -> bool {
+        self.chooser_save.saving(&self.core)
     }
 }

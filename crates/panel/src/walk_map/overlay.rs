@@ -18,7 +18,7 @@ pub const MIN_CELL_PPT: f64 = 4.0;
 /// NSEW text is drawn only at this screen density.
 pub const NSEW_PPT: f64 = 16.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OverlayLayers {
     pub grid: bool,
     pub collision_fill: bool,
@@ -26,10 +26,19 @@ pub struct OverlayLayers {
     pub nsew: bool,
     pub path: bool,
     pub flood: bool,
+    /// Content-defined area tint (currently the packed wilderness zones).
+    pub special_areas: bool,
 }
 
 impl OverlayLayers {
     pub fn any(self) -> bool {
+        self.raster_any() || self.special_areas
+    }
+
+    /// Whether the packed per-cell raster has work to do. Content-defined
+    /// areas are drawn as world rectangles so they remain visible below the
+    /// raster's minimum zoom.
+    pub fn raster_any(self) -> bool {
         self.grid || self.collision_fill || self.reach || self.nsew || self.path || self.flood
     }
 }
@@ -61,7 +70,7 @@ pub fn overlay_fit(view: View) -> OverlayFit {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayColors {
     pub grid: [u8; 4],
     pub collision: [u8; 4],
@@ -71,8 +80,9 @@ pub struct OverlayColors {
     pub flood_b: [u8; 4],
     pub unreached: [u8; 4],
     pub nsew: [u8; 4],
+    /// A translucent tint for tiles in content-defined special areas.
+    pub special_areas: [u8; 4],
 }
-
 impl Default for OverlayColors {
     fn default() -> Self {
         Self {
@@ -84,6 +94,7 @@ impl Default for OverlayColors {
             flood_b: [200, 40, 240, 160],
             unreached: [200, 40, 240, 160],
             nsew: [220, 220, 220, 220],
+            special_areas: [0, 180, 160, 52],
         }
     }
 }
@@ -104,7 +115,7 @@ pub fn rasterize(rgba: &mut [u8], w: u32, h: u32, view: View, paint: OverlayPain
         return;
     }
     rgba[..n].fill(0);
-    if !paint.layers.any() {
+    if !paint.layers.raster_any() {
         return;
     }
     let path_at: HashMap<WorldTile, bool> = if paint.layers.path {
@@ -316,6 +327,27 @@ mod rasterize_rules {
         )
     }
 
+    #[test]
+    fn special_area_is_not_rasterized_per_tile() {
+        let world = bake_world(5, 4, &[]);
+        let view = View {
+            west: 0.0,
+            south: 0.0,
+            east: 5.0,
+            north: 4.0,
+            pixels_per_tile: 2.0,
+            plane: 0,
+            max_lod: 0,
+        };
+        let layers = OverlayLayers {
+            special_areas: true,
+            ..OverlayLayers::default()
+        };
+        let (rgba, _, _) = sample(view, &world, layers, &[], &[], None);
+        assert!(layers.any());
+        assert!(!layers.raster_any());
+        assert!(rgba.iter().all(|&byte| byte == 0));
+    }
     fn disconnected_world() -> NavWorld {
         let mut extras = Vec::new();
         for z in 0..7 {
@@ -383,6 +415,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
         let colors = OverlayColors::default();
@@ -427,6 +460,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], None);
         let colors = OverlayColors::default();
@@ -471,6 +505,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: true,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &floods, None);
         let colors = OverlayColors::default();
@@ -541,6 +576,7 @@ mod rasterize_rules {
             nsew: false,
             path: false,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &[], &[], Some(&bits));
         let colors = OverlayColors::default();
@@ -585,6 +621,7 @@ mod rasterize_rules {
             nsew: false,
             path: true,
             flood: false,
+            special_areas: false,
         };
         let (rgba, w, h) = sample(view, &world, layers, &path, &[], None);
         let colors = OverlayColors::default();

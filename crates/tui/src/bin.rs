@@ -934,6 +934,30 @@ impl TuiSession {
         self.core.logout_all();
     }
 
+    /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
+    /// first when running script work would be interrupted or a queued Start
+    /// would be cancelled; otherwise relogs directly.
+    fn memory_relog_request(&mut self, app: &mut TuiApp, name: &str) {
+        let script_work =
+            self.core.memory_relog_warning(name) || self.scripts.start_queue_place(name).is_some();
+        if script_work {
+            app.confirm(ConfirmKind::MemoryRelog(name.to_string()));
+        } else {
+            self.memory_relog_now(app, name);
+        }
+    }
+
+    /// Relog `name` now: log out and back in through the login FIFO so
+    /// the toggled memory mode reaches the server tabs and sound.
+    fn memory_relog_now(&mut self, app: &mut TuiApp, name: &str) {
+        self.scripts.cancel_queued_as(name, "logged out");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice(app);
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.request_memory_relog(name, &mut surface);
+        app.error = core.failure(op);
+    }
+
     /// Remove `name` (frozen when the operator confirmed): clean logout,
     /// then its worker stops. The neighbour becomes selected when it was.
     fn remove(&mut self, app: &mut TuiApp, name: &str) {
@@ -1010,6 +1034,7 @@ impl TuiSession {
         self.live_stop_wait_started = None;
         let world = play.world();
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+        runner.set_map_members(play.map_members());
         let budget = scenario::budget_s_from_env();
         if let Some(budget) = budget {
             runner.set_deadline(budget);
@@ -1988,25 +2013,45 @@ impl TuiSession {
 
     /// Persist the settings popup's changes onto the profile it was opened
     /// for (the operator vault; `--live`'s temp vault is ephemeral) and
-    /// mirror guardian settings onto a running slot's arm. A refusal shows
-    /// on the message line and in the popup; `Saved <name>.` shows in the
-    /// same popup once the write is durable. A write that fails later is
-    /// reported on the message line only.
+    /// mirror guardian and memory settings onto a running slot's arm. A
+    /// refusal shows on the message line and in the popup; `Saved <name>.`
+    /// shows in the same popup once the write is durable, and a write that
+    /// fails later shows its error there too, with the popup back on what is
+    /// saved.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(name) = app.settings_profile.clone() else {
             return;
         };
-        // Field edit, not a whole-settings replacement: the popup owns only
-        // the guardian fields, and the arm changes only after the vault
-        // write succeeded.
+        // Field edit, not a whole-settings replacement: the popup owns the
+        // guardian fields and the memory row, and each arm change lands
+        // through its own write (the form tracks the latest).
         let settings = &app.settings;
+        let lowmem_changed = self
+            .core
+            .vault()
+            .and_then(|v| v.get(&name))
+            .is_some_and(|p| p.settings.lowmem != settings.lowmem);
+        if lowmem_changed {
+            match self.core.set_memory_mode(&name, settings.lowmem) {
+                Ok(op) => app
+                    .settings_save
+                    .submitted(&mut self.core, op, Some(&name), &name),
+                Err(e) => {
+                    let reason = format!("settings: {e}");
+                    app.settings_save.refused(reason.clone());
+                    app.error = Some(reason);
+                }
+            }
+        }
         match self.core.set_random_settings(
             &name,
             settings.random_events,
             &settings.lamp_skill,
             settings.lamp_auto,
         ) {
-            Ok(op) => app.settings_save.submitted(op, name),
+            Ok(op) => app
+                .settings_save
+                .submitted(&mut self.core, op, Some(&name), &name),
             Err(e) => {
                 let reason = format!("settings: {e}");
                 app.settings_save.refused(reason.clone());
@@ -2089,6 +2134,11 @@ impl TuiSession {
             .selected()
             .and_then(|selected| app.names.iter().position(|n| n == selected));
         self.copy_projection(app);
+        // The status pane follows the focused slot. The settings popup has
+        // a separate value below because it stays bound across focus changes.
+        app.memory = app
+            .focused_name()
+            .and_then(|name| self.core.memory_status(&name));
         // A Browse pick is the pending selection of the profile whose
         // heading it replaced.
         if std::mem::take(&mut app.browse_changed) {
@@ -2139,10 +2189,14 @@ impl TuiSession {
                 app.settings_dirty = false;
             }
         }
+        app.settings_memory = app
+            .settings_profile
+            .as_deref()
+            .and_then(|name| self.core.memory_status(name));
 
         let mut write_failed = false;
         for failure in self.core.take_write_failures() {
-            app.error = Some(failure);
+            app.error = Some(failure.to_string());
             write_failed = true;
         }
         if write_failed && app.params_state.open {
@@ -2313,10 +2367,27 @@ impl TuiSession {
         // persisted there; a persist still in flight then never shows in a
         // later popup.
         if !app.settings_state.open && app.settings_profile.take().is_some() {
+            app.settings_memory = None;
             app.settings_save.form_changed();
         }
-        // `Saved <name>.` shows only on the popup the persist came from.
-        app.settings_save.settle(&self.core);
+        // `Saved <name>.` or the failure shows only on the popup the persist
+        // came from. A failed write put the profile back, so that popup
+        // shows what is saved rather than the edit that did not land.
+        for settled in app.settings_save.settle(&mut self.core) {
+            let frontend_core::FormSettled::Failed(failed) = settled else {
+                continue;
+            };
+            if !failed.same_form {
+                continue;
+            }
+            if let Some(saved) = app
+                .settings_profile
+                .as_deref()
+                .and_then(|name| self.core.vault().and_then(|v| v.get(name)))
+            {
+                app.settings = saved.settings.clone();
+            }
+        }
         if app.map_bake_dirty {
             self.persist_map_bake(app);
             app.map_bake_dirty = false;
@@ -2625,6 +2696,12 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 }
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
+fn new_app(title: impl Into<String>) -> TuiApp {
+    let mut app = TuiApp::new(title);
+    app.restore_map_preferences(host_play::panel_ui_path());
+    app
+}
+
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -2684,11 +2761,12 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
             world: session.core.play().and_then(|p| p.world()),
             obj_names: session.core.play().map(|p| p.obj_names()),
+            map_members: session.core.play().is_some_and(|p| p.map_members()),
         })?;
         session.names = run.names.clone();
         session.load_and_login_all();
         session.focus(&run.names[0]);
-        let mut app = TuiApp::new(format!(
+        let mut app = new_app(format!(
             "{} memory benchmark · {}",
             session.app_title(),
             session.profile_label()
@@ -2706,7 +2784,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
-            let mut app = TuiApp::new(format!(
+            let mut app = new_app(format!(
                 "tui-play --live {name} · {}",
                 session.profile_label()
             ));
@@ -2737,7 +2815,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let focus = session.bootstrap_interactive_profiles(&args.users)?;
             session.load_and_login(&focus);
             session.focus(&focus);
-            let mut app = TuiApp::new(format!(
+            let mut app = new_app(format!(
                 "{} headless · {}",
                 session.app_title(),
                 session.profile_label()
@@ -2951,6 +3029,8 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Login => session.login(app),
         AppAction::Logout => session.logout(app),
         AppAction::LogoutAll => session.logout_all(),
+        AppAction::MemoryRelog(name) => session.memory_relog_request(app, &name),
+        AppAction::MemoryRelogNow(name) => session.memory_relog_now(app, &name),
         AppAction::Remove(name) => session.remove(app, &name),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),

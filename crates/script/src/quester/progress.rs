@@ -20,6 +20,7 @@ pub struct CompiledProgress {
     pub colour_not_started: FactKey,
     pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
+    pub stage_keys: Arc<[FactKey]>,
     pub rules: Arc<[CompiledProgressRule]>,
     pub flags: Arc<[CompiledProgressFlagRule]>,
     pub monotonic: bool,
@@ -103,7 +104,13 @@ pub(crate) fn compile_progress(
         }
     }
 
-    let stages: std::collections::HashSet<&str> = role
+    let stage_keys: Arc<[FactKey]> = Arc::from(
+        role.sequences
+            .iter()
+            .map(|sequence| sequence.stage.clone())
+            .collect::<Vec<_>>(),
+    );
+    let stage_names: std::collections::HashSet<&str> = role
         .sequences
         .iter()
         .map(|sequence| sequence.stage.0.as_ref())
@@ -113,20 +120,25 @@ pub(crate) fn compile_progress(
         &progress.colour.in_progress,
         &progress.colour.complete,
     ] {
-        if stage.0.is_empty() || !stages.contains(stage.0.as_ref()) {
+        if stage.0.is_empty() || !stage_names.contains(stage.0.as_ref()) {
             return Err(super::compile::CompileError::code("unbound-progress-stage"));
         }
     }
 
     let mut rules = Vec::with_capacity(progress.rules.len());
     for rule in &progress.rules {
-        if rule.stage.0.is_empty() || !stages.contains(rule.stage.0.as_ref()) {
+        if rule.stage.0.is_empty() || !stage_names.contains(rule.stage.0.as_ref()) {
             return Err(super::compile::CompileError::code("unbound-progress-stage"));
+        }
+        let all = compile_needles(&rule.all)?;
+        let any = compile_needles(&rule.any)?;
+        if all.is_empty() && any.is_empty() {
+            return Err(super::compile::CompileError::code("invalid-progress-rule"));
         }
         rules.push(CompiledProgressRule {
             stage: rule.stage.clone(),
-            all: compile_needles(&rule.all)?,
-            any: compile_needles(&rule.any)?,
+            all,
+            any,
             not: compile_needles(&rule.not)?,
             varp: rule.varp,
         });
@@ -137,10 +149,15 @@ pub(crate) fn compile_progress(
         if flag.flag.0.is_empty() {
             return Err(super::compile::CompileError::code("invalid-progress-flag"));
         }
+        let all = compile_needles(&flag.all)?;
+        let any = compile_needles(&flag.any)?;
+        if all.is_empty() && any.is_empty() {
+            return Err(super::compile::CompileError::code("invalid-progress-flag"));
+        }
         flags.push(CompiledProgressFlagRule {
             flag: flag.flag.clone(),
-            all: compile_needles(&flag.all)?,
-            any: compile_needles(&flag.any)?,
+            all,
+            any,
             count: flag.count.as_deref().map(compile_count).transpose()?,
         });
     }
@@ -151,6 +168,7 @@ pub(crate) fn compile_progress(
         colour_not_started: progress.colour.not_started.clone(),
         colour_in_progress: progress.colour.in_progress.clone(),
         colour_complete: progress.colour.complete.clone(),
+        stage_keys,
         rules: Arc::from(rules),
         flags: Arc::from(flags),
         monotonic: progress.monotonic,
@@ -208,32 +226,58 @@ fn compile_count(pattern: &str) -> Result<CountCapture, super::compile::CompileE
 
 /// Normalize the journal representation used by the authored substring rules.
 ///
-/// Colour tags are exactly the client form `@xxx@`; pipes are line breaks and
-/// the remaining text is lowercased. The bounded output keeps a malformed or
-/// unexpectedly large journal from growing a per-read allocation without
-/// limit.
+/// Colour tags are exactly the client form `@xxx@`; whitespace and pipes are
+/// one separator and the remaining text is lowercased. The bounded output
+/// keeps a malformed or unexpectedly large journal from growing a per-read
+/// allocation without limit.
 pub fn normalize_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len().min(MAX_NORMALIZED_JOURNAL_BYTES));
     normalize_into(text, &mut out);
     out
 }
 
+struct NormalizedJournal {
+    text: String,
+    lines: Vec<std::ops::Range<usize>>,
+}
+
 pub fn normalize_journal(lines: &[Arc<str>]) -> String {
-    let mut out = String::new();
-    for (index, line) in lines.iter().enumerate() {
-        if index != 0 {
-            push_bounded(&mut out, '\n');
-        }
-        normalize_into(line, &mut out);
-        if out.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
-            break;
+    normalize_journal_parts(lines).text
+}
+
+fn normalize_journal_parts(lines: &[Arc<str>]) -> NormalizedJournal {
+    let mut journal = NormalizedJournal {
+        text: String::new(),
+        lines: Vec::with_capacity(lines.len()),
+    };
+    for line in lines {
+        for fragment in line.split('|') {
+            let before = journal.text.len();
+            if before != 0 {
+                push_bounded(&mut journal.text, ' ');
+            }
+            if journal.text.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
+                return journal;
+            }
+            let start = journal.text.len();
+            normalize_into(fragment, &mut journal.text);
+            let end = journal.text.len();
+            if start == end || &journal.text[start..end] == "close window" {
+                journal.text.truncate(before);
+                continue;
+            }
+            journal.lines.push(start..end);
+            if journal.text.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
+                return journal;
+            }
         }
     }
-    out
+    journal
 }
 
 fn normalize_into(text: &str, out: &mut String) {
     let mut chars = text.chars();
+    let mut pending_space = false;
     while let Some(ch) = chars.next() {
         if ch == '@' {
             let mut probe = chars.clone();
@@ -248,18 +292,26 @@ fn normalize_into(text: &str, out: &mut String) {
                 continue;
             }
         }
-        let ch = match ch {
-            '|' => '\n',
-            value => value,
-        };
+        if ch == '|' || ch.is_whitespace() {
+            if !out.is_empty() && !out.ends_with(' ') {
+                pending_space = true;
+            }
+            continue;
+        }
+        if pending_space {
+            if !out.ends_with(' ') {
+                push_bounded(out, ' ');
+            }
+            if out.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
+                return;
+            }
+            pending_space = false;
+        }
         for lower in ch.to_lowercase() {
             if out.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
-                break;
+                return;
             }
             out.push(lower);
-        }
-        if out.len() >= MAX_NORMALIZED_JOURNAL_BYTES {
-            break;
         }
     }
 }
@@ -337,14 +389,14 @@ pub fn resolve_journal(
     if read.quest != path.id {
         return unknown_journal_progress(path, read);
     }
-    let text = normalize_journal(&read.lines);
+    let journal = normalize_journal_parts(&read.lines);
     let evidence = read.closed;
     let hit = path.progress.rules.iter().enumerate().find(|(_, rule)| {
         rule_matches(
             rule.all.as_ref(),
             rule.any.as_ref(),
             rule.not.as_ref(),
-            &text,
+            &journal.text,
         )
     });
 
@@ -394,7 +446,7 @@ pub fn resolve_journal(
         stage,
         complete,
         signals: Arc::from(Vec::<api::selected::SignalRange>::new()),
-        flags: resolve_flags(&path.progress.flags, &text),
+        flags: resolve_flags(&path.progress.flags, &journal),
         evidence,
         binding: path.progress.binding.clone(),
         role: path.progress.role.clone(),
@@ -418,7 +470,10 @@ fn unknown_journal_progress(path: &CompiledPath, read: &JournalRead) -> QuestPro
     }
 }
 
-fn resolve_flags(rules: &[CompiledProgressFlagRule], text: &str) -> Arc<[ProgressFlag]> {
+fn resolve_flags(
+    rules: &[CompiledProgressFlagRule],
+    journal: &NormalizedJournal,
+) -> Arc<[ProgressFlag]> {
     let mut flags = Vec::with_capacity(rules.len());
     for rule in rules {
         if flags
@@ -429,13 +484,18 @@ fn resolve_flags(rules: &[CompiledProgressFlagRule], text: &str) -> Arc<[Progres
         }
         let matched = rules.iter().find(|candidate| {
             candidate.flag == rule.flag
-                && rule_matches(candidate.all.as_ref(), candidate.any.as_ref(), &[], text)
+                && rule_matches(
+                    candidate.all.as_ref(),
+                    candidate.any.as_ref(),
+                    &[],
+                    &journal.text,
+                )
         });
         let (truth, count) = match matched {
             None => (Truth::False, None),
             Some(rule) => match rule.count {
                 None => (Truth::True, None),
-                Some(capture) => match capture_number(rule, text, capture) {
+                Some(capture) => match capture_number(rule, journal, capture) {
                     Some(value) => (Truth::True, Some(value)),
                     None => (Truth::Unknown, None),
                 },
@@ -452,32 +512,62 @@ fn resolve_flags(rules: &[CompiledProgressFlagRule], text: &str) -> Arc<[Progres
 
 fn capture_number(
     rule: &CompiledProgressFlagRule,
-    text: &str,
+    journal: &NormalizedJournal,
     capture: CountCapture,
 ) -> Option<u32> {
-    let mut count = None;
-    // A flag's capture belongs to its matching journal line, not to the
-    // first unrelated number anywhere in the quest. Ambiguity stays unknown.
-    for line in text
-        .lines()
-        .filter(|line| rule_matches(&rule.all, &rule.any, &[], line))
-    {
-        let bytes = line.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() {
-            if !bytes[index].is_ascii_digit() {
-                index += 1;
+    let mut best_width = None;
+    for start in 0..journal.lines.len() {
+        for end in start..journal.lines.len() {
+            let window = &journal.text[journal.lines[start].start..journal.lines[end].end];
+            if !rule_matches(&rule.all, &rule.any, &[], window) {
                 continue;
             }
-            let begin = index;
-            while index < bytes.len() && bytes[index].is_ascii_digit() {
-                index += 1;
+            let width = end - start;
+            if best_width.is_none_or(|best| width < best) {
+                best_width = Some(width);
             }
-            let digits = &line[begin..index];
-            if digits.len() > capture.max_digits as usize || count.is_some() {
-                return None;
+        }
+    }
+    let width = best_width?;
+    let mut seen_lines = vec![false; journal.lines.len()];
+    let mut count = None;
+    // A flag's capture belongs to the smallest matching span of journal
+    // lines, so a number on another line cannot become its count. If more
+    // than one matching span contributes a number, ambiguity stays unknown.
+    for start in 0..journal.lines.len() {
+        for end in start..journal.lines.len() {
+            if end - start != width {
+                continue;
             }
-            count = Some(digits.parse::<u32>().ok()?);
+            let window = &journal.text[journal.lines[start].start..journal.lines[end].end];
+            if !rule_matches(&rule.all, &rule.any, &[], window) {
+                continue;
+            }
+            for (line_index, range) in journal.lines[start..=end].iter().enumerate() {
+                let line_index = start + line_index;
+                if seen_lines[line_index] {
+                    continue;
+                }
+                seen_lines[line_index] = true;
+                let line = &journal.text[range.clone()];
+                let bytes = line.as_bytes();
+                let mut index = 0;
+                while index < bytes.len() {
+                    if !bytes[index].is_ascii_digit() {
+                        index += 1;
+                        continue;
+                    }
+                    let begin = index;
+                    while index < bytes.len() && bytes[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                    let digits = &line[begin..index];
+                    if digits.len() > capture.max_digits as usize || count.is_some() {
+                        return None;
+                    }
+                    count = Some(digits.parse::<u32>().ok()?);
+                }
+            }
         }
     }
     count
@@ -564,6 +654,11 @@ mod tests {
                 colour_not_started: FactKey::new("synthetic:0"),
                 colour_in_progress: FactKey::new("synthetic:1"),
                 colour_complete: FactKey::new("synthetic:2"),
+                stage_keys: Arc::from(vec![
+                    FactKey::new("synthetic:0"),
+                    FactKey::new("synthetic:1"),
+                    FactKey::new("synthetic:2"),
+                ]),
                 rules: Arc::from(rules),
                 flags: Arc::from(flags),
                 monotonic,
@@ -586,12 +681,127 @@ mod tests {
             pin,
         }
     }
+    fn read_lines(path: &CompiledPath, tick: u64, lines: &[&str]) -> JournalRead {
+        let pin = pin();
+        JournalRead {
+            quest: path.id.clone(),
+            root: 0,
+            lines: Arc::from(
+                lines
+                    .iter()
+                    .map(|line| Arc::<str>::from(*line))
+                    .collect::<Vec<_>>(),
+            ),
+            colour: None,
+            acquired: stamp(tick),
+            closed: stamp(tick),
+            pin,
+        }
+    }
+
+    #[test]
+    fn normalization_joins_wrapped_lines_and_ignores_window_chrome() {
+        assert_eq!(
+            normalize_text("@red@HELLO|\n World\tagain"),
+            "hello world again"
+        );
+        let lines: Arc<[Arc<str>]> = Arc::from(vec![
+            Arc::<str>::from("Close Window"),
+            Arc::<str>::from("@red@Speak to"),
+            Arc::<str>::from("Aubury"),
+        ]);
+        assert_eq!(normalize_journal(&lines), "speak to aubury");
+        let wrapped_path = path(
+            vec![rule("synthetic:1", &["speak to aubury"], &[], &[])],
+            Vec::new(),
+            false,
+        );
+        let progress = resolve_journal(
+            &wrapped_path,
+            &read_lines(&wrapped_path, 1, &["Close Window", "Speak to", "Aubury"]),
+            None,
+        );
+        assert!(matches!(
+            &progress.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "synthetic:1"
+        ));
+        let chrome_path = path(
+            vec![rule("synthetic:1", &["window"], &[], &[])],
+            Vec::new(),
+            false,
+        );
+        let chrome = resolve_journal(
+            &chrome_path,
+            &read_lines(&chrome_path, 1, &["Close Window", "Speak to", "Aubury"]),
+            None,
+        );
+        assert!(matches!(&chrome.stage, Knowledge::Unknown(_)));
+    }
+
+    #[test]
+    fn any_rule_and_flag_needles_resolve() {
+        let path = path(
+            vec![rule(
+                "synthetic:1",
+                &[],
+                &["research package", "aubury"],
+                &[],
+            )],
+            vec![CompiledProgressFlagRule {
+                flag: FactKey::new("crystals"),
+                all: needles(&[]),
+                any: needles(&["crystals", "gems"]),
+                count: Some(CountCapture { max_digits: 9 }),
+            }],
+            false,
+        );
+        let progress = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                1,
+                &["Close Window", "I spoke to", "Aubury", "3 crystals"],
+            ),
+            None,
+        );
+        assert!(matches!(
+            &progress.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "synthetic:1"
+        ));
+        assert_eq!(progress.flags[0].truth, Truth::True);
+        assert_eq!(progress.flags[0].count, Some(3));
+    }
+
+    #[test]
+    fn count_capture_ignores_numbers_on_other_journal_lines() {
+        let path = path(
+            vec![rule("synthetic:1", &["journal"], &[], &[])],
+            vec![CompiledProgressFlagRule {
+                flag: FactKey::new("crystals"),
+                all: needles(&[]),
+                any: needles(&["crystals placed"]),
+                count: Some(CountCapture { max_digits: 9 }),
+            }],
+            false,
+        );
+        let progress = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                1,
+                &["Close Window", "journal 99", "3 crystals", "placed"],
+            ),
+            None,
+        );
+        assert_eq!(progress.flags[0].truth, Truth::True);
+        assert_eq!(progress.flags[0].count, Some(3));
+    }
 
     #[test]
     fn normalization_and_no_match_are_explicit() {
-        assert_eq!(normalize_text("@red@HELLO|World"), "hello\nworld");
+        assert_eq!(normalize_text("@red@HELLO|World"), "hello world");
         let path = path(
-            vec![rule("synthetic:1", &["hello\nworld"], &[], &[])],
+            vec![rule("synthetic:1", &["hello world"], &[], &[])],
             Vec::new(),
             false,
         );

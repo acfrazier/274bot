@@ -20,8 +20,12 @@ pub struct StatusPane<'a> {
     pub detail: Option<&'a SlotDetail>,
     /// The walk cell: the operator's picked dest (`x z level`) or `—`.
     pub walk: &'a str,
-    /// The mem cell: `lowmem` / `highmem`.
+    /// The mem cell: `lowmem` / `highmem` (plus the login mode while the
+    /// server still runs it).
     pub mem: &'a str,
+    /// Pending memory-mode notice while login and setting differ: the
+    /// server-side part follows at the next login. Own wrapped line.
+    pub mem_notice: Option<&'a str>,
     pub resources: Option<&'a ResourceView>,
     pub background_notice: Option<&'a str>,
 }
@@ -32,9 +36,15 @@ impl<'a> StatusPane<'a> {
             detail,
             walk,
             mem,
+            mem_notice: None,
             resources: None,
             background_notice: None,
         }
+    }
+
+    pub fn mem_notice(mut self, notice: Option<&'a str>) -> Self {
+        self.mem_notice = notice;
+        self
     }
 
     pub fn resources(mut self, view: &'a ResourceView) -> Self {
@@ -94,6 +104,9 @@ impl Widget for StatusPane<'_> {
                     "queue: {queue} · modals: {} · mem: {}",
                     d.modal, self.mem
                 )));
+                if let Some(note) = self.mem_notice {
+                    lines.push(Line::from(format!("mem: {note}")));
+                }
                 lines
             }
         };

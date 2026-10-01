@@ -25,6 +25,7 @@ pub mod map_bake;
 pub mod marked;
 pub mod operations;
 pub mod profile_form;
+pub mod profile_saves;
 mod profiles;
 pub mod progress;
 pub mod resources;
@@ -43,18 +44,22 @@ pub use map_bake::{
 };
 pub use marked::{
     assign_and_restart_marked, assign_marked, login_marked, logout_marked,
-    prepare_apply_settings_marked, restart_scope, RestartScope,
+    prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
+    RestartScope,
 };
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
-pub use profile_form::{FormNotice, ProfileFormSave, SavedProfile, NOTHING_SAVED};
+pub use profile_form::{
+    FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
+};
+pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
     start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
 };
 pub use session::{
-    ArmMirror, OperatorSession, Removal, ScriptStart, Selection, SlotTransition, StartSettled,
-    Transition, SLOT_REMOVE_TIMEOUT,
+    ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
+    StartSettled, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

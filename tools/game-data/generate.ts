@@ -6,11 +6,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
-import { extractGatheringFamily, miningHazards } from './extractors/gathering.ts';
-import { questIdentityContentFiles, extractQuestIdentityFacts } from './extractors/quests.ts';
+import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
+import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
+import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
+import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -85,6 +87,8 @@ export const CONTENT_TREE_PATHSPECS = ['scripts', 'pack', 'maps'];
 export const ENGINE_INPUT_PATHS = [
     ...decoderSources,
     'src/network/game/client/ClientGameProtCategory.ts',
+    'src/network/game/client/handler/ClientCheatHandler.ts',
+    'src/engine/entity/PlayerStat.ts',
     'src/engine/entity/NetworkPlayer.ts',
     'src/network/game/client/model',
     'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config',
@@ -2547,6 +2551,47 @@ export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
     return { facts: { rows, missing }, inputs: { loc_configs: locTree.digest, npc_configs: npcTree.digest, maps: fileInventoryDigest(maps), loc_pack: sourceFile(content, 'pack/loc.pack'), npc_pack: sourceFile(content, 'pack/npc.pack') } };
 }
 
+/* ------------------------------------------------------------------------- *
+ * debug family: the independent local-engine Debug catalog (M1/M2).
+ *
+ * The base asset carries no debug fields: its engine provenance is exactly
+ * obj.dat, npc.dat and client/config, and its content provenance is exactly
+ * the base contentFiles list. Everything the debug catalog alone needs —
+ * the cheat handler, PlayerStat, the npc.dat join and the extractor's own
+ * content inputs — lives in the debug artifact's provenance, so a
+ * debug-only drift withholds only the Debug catalog. The object picker
+ * reuses the base items table, so the artifact never duplicates obj names.
+ * ------------------------------------------------------------------------- */
+export const DEBUG_SCHEMA_VERSION = 1;
+export const DEBUG_STAT_RELATIVE = 'src/engine/entity/PlayerStat.ts';
+export const BASE_ENGINE_INPUT_PATHS = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'];
+export const DEBUG_ENGINE_INPUT_PATHS = [engineHandlerRelative(), DEBUG_STAT_RELATIVE, 'data/pack/server/npc.dat'];
+export type DebugArtifactProvenance = { engine_commit: string; content_commit: string; inputs: InputHash[]; content_inputs: InputHash[]; cache_identity: Revision['cacheIdentity'] };
+export type DebugArtifact = { schema_version: 1; revision: number; provenance: DebugArtifactProvenance; debug_commands: unknown[]; debug_names: Record<string, unknown[]> };
+/** Base provenance digests: the original engine inputs and contentFiles only. */
+export function baseProvenanceInputs(engineDir: string, contentDir: string): { inputs: InputHash[]; content_inputs: InputHash[] } {
+    return {
+        inputs: BASE_ENGINE_INPUT_PATHS.map((file) => sourceFile(engineDir, file)),
+        content_inputs: contentFiles.map((file) => sourceFile(contentDir, file)),
+    };
+}
+/** Debug-only engine digests: the cheat handler, PlayerStat and the npc.dat join. */
+export function debugProvenanceInputs(engineDir: string): InputHash[] {
+    return DEBUG_ENGINE_INPUT_PATHS.map((file) => sourceFile(engineDir, file));
+}
+/** The base content input list, without any debug extractor inputs. */
+export function baseContentFileList(): string[] {
+    return [...contentFiles];
+}
+export function buildDebugArtifact(revision: number, provenance: DebugArtifactProvenance, catalog: { commands: unknown[]; names: Record<string, unknown[]> }): DebugArtifact {
+    if (Object.hasOwn(catalog.names, 'obj') || Object.hasOwn(catalog.names, 'namedobj')) throw new Error(`${revision}: debug artifact must not duplicate base item names`);
+    return { schema_version: DEBUG_SCHEMA_VERSION, revision, provenance, debug_commands: catalog.commands, debug_names: catalog.names };
+}
+export function debugArtifactBytes(artifact: DebugArtifact): string {
+    if (artifact.schema_version !== DEBUG_SCHEMA_VERSION) throw new Error(`${artifact.revision}: invalid debug artifact schema`);
+    return `${JSON.stringify(artifact, null, 2)}\n`;
+}
+
 async function generate(spec: Revision) {
     const pinned = assertPinned(spec);
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
@@ -2557,6 +2602,11 @@ async function generate(spec: Revision) {
     const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
+    const debugHandlerPath = engineHandlerRelative();
+    const debugHandlerText = fs.readFileSync(path.join(spec.engine, debugHandlerPath), 'utf8');
+    const debugStatPath = DEBUG_STAT_RELATIVE;
+    const debugStatText = fs.readFileSync(path.join(spec.engine, debugStatPath), 'utf8');
+    const debugCatalog = extractDebugCatalog(spec.content, debugHandlerText, debugStatText, npcModule.default.configs);
     const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs);
     if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
@@ -2587,6 +2637,10 @@ async function generate(spec: Revision) {
     fs.writeFileSync(gatheringFile, familyBytes(gatheringInputs, gathering, 'gathering'));
     const gatheringArtifact = { path: path.relative(path.dirname(spec.output), gatheringFile), schema: gathering.schema, ...sha256(gatheringFile) };
     const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision);
+    const contentId = spec.cacheIdentity.content_id;
+    if (!contentId) throw new Error(`${spec.revision}: quest starts require content identity`);
+    const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
+    Object.assign(facts, { quest_starts: questStarts });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
     const deathRow = questIdentity.rows.find((row) => row.id === 'death');
     if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
@@ -2610,8 +2664,10 @@ async function generate(spec: Revision) {
     const trioGivers = extractTrioGiversFacts(spec.content);
     assertTrioGiverPins(trioGivers.facts, spec.revision);
     assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
-    const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file));
-    const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file));
+    const baseProvenance = baseProvenanceInputs(spec.engine, spec.content);
+    const inputs = baseProvenance.inputs;
+    const contentInputPaths = [...new Set([...contentFiles, ...questStartContentFiles(spec.content)])];
+    const contentInputs = contentInputPaths.map((file) => sourceFile(spec.content, file));
     const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
     assertRs2b0tPinned(rs2b0tRoot);
@@ -2629,7 +2685,25 @@ async function generate(spec: Revision) {
     const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
     const cookInputs = { catalog: Object.values(cookFiles).map((file) => ({ path: `rs2b0t-00d39a17e0/${file}`, ...sha256(path.join(rs2b0tRoot, file)) })), ...cookSurfaces.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), cookCatalogRust(cookCatalog));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact }, gathering: gathering.summary, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
+    const gatherItemNames = new Map<number, string>();
+    for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
+    const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);
+    Object.assign(facts, { gather_resources: gatherResourceRows });
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
+    const debugArtifact = buildDebugArtifact(spec.revision, { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs: debugProvenanceInputs(spec.engine), content_inputs: debugCatalog.inputs, cache_identity: spec.cacheIdentity }, debugCatalog);
+    const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
+    fs.mkdirSync(path.dirname(debugFile), { recursive: true });
+    fs.writeFileSync(debugFile, debugArtifactBytes(debugArtifact));
+    const debugDescriptor = { path: path.relative(path.dirname(spec.output), debugFile), schema: DEBUG_SCHEMA_VERSION, ...sha256(debugFile) };
+    const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes);
+    return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact, debug: debugDescriptor }, gathering: gathering.summary,
+        equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel,
+        special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length },
+        trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length },
+        talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') },
+        trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') },
+        bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs,
+        bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
 }
 
 /** Shared CLI selection. With no flag, 274 is best-effort corroboration of 289. */

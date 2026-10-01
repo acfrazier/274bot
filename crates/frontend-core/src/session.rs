@@ -10,7 +10,7 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,6 +24,7 @@ use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
 };
+use crate::profile_saves::{SaveBook, SaveRecord, SaveResult, SaveSettled, WriteFailure};
 use crate::profiles::{ProfileWriter, Written};
 use crate::resources::{ResourceView, Resources};
 use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
@@ -130,6 +131,12 @@ pub enum ArmMirror {
         lamp_skill: String,
         lamp_auto: bool,
     },
+    /// Memory mode (`ProfileSettings.lowmem`): re-affirmed to the slot's
+    /// arm once the write is durable. The arm is also set when the toggle
+    /// is issued (a parked slot's hooks never run, so the live client may
+    /// not have converged by the next handshake); a failed write resets
+    /// the arm to the restored durable value.
+    Memory(bool),
     /// Handshake-time settings (password, world) for the next login, and
     /// the whole bag for the run captured at edit time when the save
     /// changed its profile-global settings (the clue duel partner).
@@ -159,7 +166,8 @@ impl ArmMirror {
         match (self, earlier) {
             (Self::AutoLogin(_), Self::AutoLogin(_))
             | (Self::Guardian { .. }, Self::Guardian { .. })
-            | (Self::Remember(_), Self::Remember(_)) => true,
+            | (Self::Remember(_), Self::Remember(_))
+            | (Self::Memory(_), Self::Memory(_)) => true,
             (Self::ScriptSettings { card: later, .. }, Self::ScriptSettings { card, .. }) => {
                 later == card
             }
@@ -172,6 +180,27 @@ struct PendingWrite {
     label: &'static str,
     mirror: ArmMirror,
     member: String,
+}
+
+/// What the Music/SFX (memory-mode) toggle shows for one slot: the detail
+/// mode the server fixed at login against the operator's current setting.
+/// While they differ the server-side tabs, music and sound still follow
+/// the login mode; the client side already follows the setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryNotice {
+    /// The slot's detail mode as the login handshake sent it.
+    pub login_lowmem: bool,
+    /// The effective setting for the next handshake (profile or session override).
+    pub desired_lowmem: bool,
+    /// A Relog-now is in flight: logout issued or its login half queued.
+    pub relog_pending: bool,
+}
+
+impl MemoryNotice {
+    /// Whether the server still runs the login mode: the notice shows.
+    pub fn differs(self) -> bool {
+        self.login_lowmem != self.desired_lowmem
+    }
 }
 
 mod native_settings;
@@ -212,7 +241,9 @@ pub struct OperatorSession<Io> {
     native_edits: HashMap<(String, String), OperationId>,
     preparations: HashMap<OperationId, PendingPreparation>,
     deliveries: Vec<PendingDelivery>,
-    write_failures: Vec<String>,
+    write_failures: Vec<WriteFailure>,
+    /// Profile-form saves in flight and settled ones not yet taken.
+    saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
     /// Load Starts whose setup has not settled, by slot.
@@ -225,6 +256,10 @@ pub struct OperatorSession<Io> {
     views: Views,
     /// Start-all / marked-Start places fed into the single row derivation.
     start_places: HashMap<String, QueuePlace>,
+    /// Slots whose operator-requested Relog-now is still in its logout half.
+    mem_relog: HashSet<String>,
+    /// Slots whose Relog-now has parked and queued its automatic login half.
+    mem_relog_login: HashSet<String>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -265,6 +300,7 @@ impl<Io> OperatorSession<Io> {
             preparations: HashMap::new(),
             deliveries: Vec::new(),
             write_failures: Vec::new(),
+            saves: SaveBook::default(),
             settings_writes: Vec::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
@@ -273,6 +309,8 @@ impl<Io> OperatorSession<Io> {
             bypass_asset_startup: false,
             views: Views::default(),
             start_places: HashMap::new(),
+            mem_relog: HashSet::new(),
+            mem_relog_login: HashSet::new(),
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
@@ -308,6 +346,8 @@ impl<Io> OperatorSession<Io> {
     /// Drop the play (joins its workers). Final teardown only.
     pub fn close_play(&mut self) {
         self.deferred.clear();
+        self.mem_relog.clear();
+        self.mem_relog_login.clear();
         self.play = None;
     }
 
@@ -511,6 +551,12 @@ impl<Io> OperatorSession<Io> {
         surface.lifetime_reset(name);
         let retained = self.slots.remove(name);
         let attach = surface.attach(name, &mut profile, retained);
+        if let Some(arm) = arm.as_ref() {
+            // The surface may apply a session-only override to the disposable
+            // spawn profile. Keep the arm on that effective mode so both the
+            // live client and every later handshake use the same value.
+            arm.set_lowmem_handshake(profile.settings.lowmem);
+        }
         if !self.spawn_workers {
             self.old_lifetime_retired(name);
             if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
@@ -727,6 +773,12 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         surface: &mut S,
     ) -> Result<(), String> {
+        // A manual login supersedes either half of any Relog-now for the
+        // slot. The server-mode baseline changes only when the worker
+        // publishes a successful handshake; arming intent here must not hide
+        // the notice.
+        self.mem_relog.remove(name);
+        self.mem_relog_login.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
             arm.arm_explicit_login();
             return Ok(());
@@ -793,6 +845,10 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn logout_member(&mut self, op: OperationId, name: &str) {
+        // An explicit user Logout/Logout-all always outranks a pending
+        // Relog-now; once parked, no automatic login half may fire.
+        self.mem_relog.remove(name);
+        self.mem_relog_login.remove(name);
         self.fleet.latch_logout(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
@@ -803,6 +859,148 @@ impl<Io> OperatorSession<Io> {
             arm.hold_logged_out();
         }
         self.operations.set(op, name, Outcome::Pending);
+    }
+
+    /// The Music/SFX (memory-mode) state for `name`: the mode published by
+    /// the last successful login handshake against the effective session
+    /// mode, plus any Relog-now in flight. `None` until a handshake succeeds.
+    pub fn memory_status(&self, name: &str) -> Option<MemoryNotice> {
+        let login_lowmem = self
+            .statuses
+            .iter()
+            .find(|status| status.username == name)?
+            .login_lowmem?;
+        let desired_lowmem = self
+            .play
+            .as_ref()
+            .and_then(|play| play.arm(name))
+            .and_then(|arm| arm.lowmem_handshake())
+            .or_else(|| {
+                self.vault
+                    .as_ref()
+                    .and_then(|vault| vault.get(name))
+                    .map(|profile| profile.settings.lowmem)
+            })?;
+        Some(MemoryNotice {
+            login_lowmem,
+            desired_lowmem,
+            relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
+        })
+    }
+
+    /// Whether Relog-now must warn first: the slot runs a script a logout
+    /// would interrupt (starting, running or paused).
+    pub fn memory_relog_warning(&self, name: &str) -> bool {
+        matches!(
+            self.play.as_ref().map(|play| play.script_state(name)),
+            Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
+        )
+    }
+
+    /// The shared Music/SFX toggle both front ends call: persist the new
+    /// mode to the vault and arm it for the next handshake at once, so a
+    /// parked slot (whose hooks never run) still handshakes the new mode.
+    /// The live client follows within a frame through the slot pump; the
+    /// server-side tabs, music and sound follow at the next login, shown
+    /// by [`Self::memory_status`] until then. Never logs out on its own.
+    pub fn set_memory_mode(&mut self, name: &str, lowmem: bool) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "memory: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("memory: no profile {name}"))?;
+        profile.settings.lowmem = lowmem;
+        let op = self.save_profile(profile, ArmMirror::Memory(lowmem), "memory")?;
+        if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
+            arm.set_lowmem_handshake(lowmem);
+        }
+        if let Some(spawn) = self.deferred.get_mut(name) {
+            spawn.profile.settings.lowmem = lowmem;
+            if let Some(arm) = spawn.arm.as_ref() {
+                arm.set_lowmem_handshake(lowmem);
+            }
+        }
+        Ok(op)
+    }
+
+    /// Relog-now for a memory-mode switch: log out through the normal path
+    /// and re-arm the login once the poll sees the slot parked, so the new
+    /// mode goes through the login FIFO like any operator login. A slot
+    /// with no worker logs straight back in. Never automatic: only the
+    /// operator's Relog action calls this.
+    pub fn request_memory_relog<S: SlotSurface<Io = Io>>(
+        &mut self,
+        name: &str,
+        surface: &mut S,
+    ) -> OperationId {
+        if self.play.as_ref().and_then(|play| play.arm(name)).is_none() {
+            return self.login(name, surface);
+        }
+        let op = self.operations.open(ActionKind::Logout);
+        self.logout_member(op, name);
+        self.mem_relog.insert(name.to_string());
+        self.mem_relog_login.remove(name);
+        if let Some(play) = self.play.as_ref() {
+            play.wake(name);
+        }
+        op
+    }
+
+    /// Fire the login half of operator Relog-nows whose logout has parked:
+    /// the slot sits latched on the title, so re-arming logs it back in
+    /// through the login FIFO. The relog stays pending until that login
+    /// succeeds. Runs in the poll, never on the caller.
+    fn complete_memory_relogs(&mut self) {
+        if self.mem_relog.is_empty() || self.play.is_none() {
+            return;
+        }
+        let ready: Vec<String> = self
+            .mem_relog
+            .iter()
+            .filter(|name| {
+                self.statuses
+                    .iter()
+                    .find(|s| &s.username == *name)
+                    .is_some_and(|s| s.login_latched && !s.connected)
+            })
+            .cloned()
+            .collect();
+        for name in ready {
+            let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) else {
+                continue;
+            };
+            arm.arm_explicit_login();
+            self.fleet.clear_latch(&name);
+            self.mem_relog.remove(&name);
+            self.mem_relog_login.insert(name.clone());
+            self.operations.cancel_pending(ActionKind::Logout, &name);
+            self.operations.cancel_pending(ActionKind::Login, &name);
+            let op = self.operations.open(ActionKind::Login);
+            self.operations.set(op, &name, Outcome::Pending);
+            if let Some(play) = self.play.as_ref() {
+                play.wake(&name);
+            }
+        }
+    }
+
+    /// Settle Relog-now's visible queued state after the login half reaches
+    /// the game or stops on a terminal login error. While it remains queued,
+    /// another Relog action must not be offered.
+    fn finish_memory_relogs(&mut self) {
+        let statuses = &self.statuses;
+        let play = self.play.as_ref();
+        self.mem_relog_login.retain(|name| {
+            let logged_in = statuses
+                .iter()
+                .find(|status| status.username == *name)
+                .is_some_and(|status| status.ingame);
+            let failed = play
+                .and_then(|play| play.arm(name))
+                .is_some_and(|arm| arm.login_held_by_error());
+            !logged_in && !failed
+        });
     }
 
     /// Adopt every running slot into the fleet (MultiBox on), cancelling
@@ -846,6 +1044,8 @@ impl<Io> OperatorSession<Io> {
         self.fleet.clear_latch(name);
         self.operations.cancel_pending(ActionKind::Login, name);
         self.deferred.remove(name);
+        self.mem_relog.remove(name);
+        self.mem_relog_login.remove(name);
         let connected = self
             .play
             .as_ref()
@@ -938,6 +1138,10 @@ impl<Io> OperatorSession<Io> {
             self.poll_starts();
             record_transitions(&self.statuses, &self.polled, &mut self.transitions);
             std::mem::swap(&mut self.statuses, &mut self.polled);
+            // Parked Relog-nows re-arm here so their login half is logged
+            // and settled like any operator command this poll.
+            self.complete_memory_relogs();
+            self.finish_memory_relogs();
             self.log_poll();
             self.settle_operations();
             self.log_operations();
@@ -1128,6 +1332,12 @@ impl<Io> OperatorSession<Io> {
             let Some(spawn) = self.deferred.remove(&name) else {
                 continue;
             };
+            // A fresh lifetime handshakes on its own: any Relog-now
+            // sequencing for the previous lifetime is moot (its baseline
+            // is recorded below; a still-unsettled toggle stays visible
+            // until it settles and the slot logs in again).
+            self.mem_relog.remove(&name);
+            self.mem_relog_login.remove(&name);
             self.old_lifetime_retired(&name);
             // Deleted while it waited: nothing to spawn.
             let Some(mut profile) = self.durable_profile(&name).cloned() else {
@@ -1662,9 +1872,29 @@ impl<Io> OperatorSession<Io> {
         Some(())
     }
 
-    /// Failed profile writes since the last take, as `label: error` lines.
-    pub fn take_write_failures(&mut self) -> Vec<String> {
+    /// Failed profile writes since the last take, for the banner or status
+    /// line (each displays as `label: error`).
+    pub fn take_write_failures(&mut self) -> Vec<WriteFailure> {
         std::mem::take(&mut self.write_failures)
+    }
+
+    /// Register the form save `record` under its write's operation. The
+    /// write settles in [`Self::poll`]; the record then moves from
+    /// [`Self::saves_in_flight`] to [`Self::take_settled_saves`], with the
+    /// write's result.
+    pub fn track_save(&mut self, record: SaveRecord) {
+        self.saves.track(record);
+    }
+
+    /// The form saves whose writes have not settled, oldest first.
+    pub fn saves_in_flight(&self) -> &[SaveRecord] {
+        self.saves.in_flight()
+    }
+
+    /// The form saves settled since the last take, in the order they
+    /// settled.
+    pub fn take_settled_saves(&mut self) -> Vec<SaveSettled> {
+        self.saves.take_settled()
     }
 
     /// Script-parameter writes settled since the last take: what was saved
@@ -1726,9 +1956,23 @@ impl<Io> OperatorSession<Io> {
         // through the write owning the row.
         let own_setting =
             written.superseded && self.keeps_own_setting(&member, &pending.mirror, &written.later);
+        // A form save registered under this operation settles from this
+        // write's own commit result, superseded or not: every write in a
+        // commit shares it.
+        let tracked = self.saves.tracks(written.op);
+        let durable_row = committed.is_some();
+        let commit_error = written.result.as_ref().err().filter(|_| tracked).cloned();
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
+                if tracked {
+                    let saved = if durable_row {
+                        SaveResult::Saved
+                    } else {
+                        SaveResult::Gone
+                    };
+                    self.saves.settle(written.op, saved);
+                }
                 if let ArmMirror::Remember(Some(live)) = &pending.mirror {
                     if live.run.is_some() {
                         if let Some(play) = self.play.as_mut() {
@@ -1743,19 +1987,66 @@ impl<Io> OperatorSession<Io> {
                 SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
             }
             Err(error) if !written.superseded => {
+                // A failed memory toggle put the arm ahead of the restored
+                // durable row: pull it back so the next handshake sends the
+                // restored value, never the refused one.
+                let reset_lowmem = match &pending.mirror {
+                    ArmMirror::Memory(_) => newest
+                        .iter()
+                        .find(|(name, _)| *name == member)
+                        .and_then(|(_, durable)| durable.as_ref())
+                        .map(|profile| profile.settings.lowmem),
+                    _ => None,
+                };
                 if let Some(vault) = self.vault.as_mut() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
                     }
                 }
-                self.write_failures
-                    .push(format!("{}: {error}", pending.label));
+                if let Some(lowmem) = reset_lowmem {
+                    if let Some(play) = self.play.as_mut() {
+                        if let Some(arm) = play.arm(&member) {
+                            arm.set_lowmem_handshake(lowmem);
+                        }
+                    }
+                    if let Some(spawn) = self.deferred.get_mut(&member) {
+                        spawn.profile.settings.lowmem = lowmem;
+                        if let Some(arm) = spawn.arm.as_ref() {
+                            arm.set_lowmem_handshake(lowmem);
+                        }
+                    }
+                }
+                let failure = WriteFailure {
+                    op: written.op,
+                    target: member.clone(),
+                    label: pending.label,
+                    error: error.clone(),
+                };
+                if tracked {
+                    self.saves
+                        .settle(written.op, SaveResult::Failed(failure.clone()));
+                }
+                self.write_failures.push(failure);
                 self.operations
                     .set(written.op, &member, Outcome::Failed(error.clone()));
                 SettingsResult::Failed(error)
             }
             _ => {
                 self.operations.set(written.op, &member, Outcome::Cancelled);
+                if tracked {
+                    // Reported once, through the write that owns the row.
+                    let result = match commit_error {
+                        Some(error) => SaveResult::Failed(WriteFailure {
+                            op: written.op,
+                            target: member.clone(),
+                            label: pending.label,
+                            error,
+                        }),
+                        None if durable_row => SaveResult::Saved,
+                        None => SaveResult::Gone,
+                    };
+                    self.saves.settle(written.op, result);
+                }
                 SettingsResult::Superseded
             }
         };
@@ -1807,6 +2098,13 @@ impl<Io> OperatorSession<Io> {
                     arm.random_events.store(random_events, Ordering::Relaxed);
                     arm.lamp_auto.store(lamp_auto, Ordering::Relaxed);
                     *arm.lamp_skill.lock().unwrap() = lamp_skill;
+                }
+            }
+            ArmMirror::Memory(lowmem) => {
+                // Re-affirm the toggle the command already armed: the
+                // durable row and the handshake channel agree again.
+                if let Some(arm) = play.arm(name) {
+                    arm.set_lowmem_handshake(lowmem);
                 }
             }
             ArmMirror::Remember(live) => {

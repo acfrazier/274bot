@@ -152,6 +152,52 @@ fn respond(sock: &mut std::net::TcpStream, body: &[u8]) {
     .concat();
     let _ = sock.write_all(&response);
 }
+/// Local update endpoint which rejects the checksum negotiation.
+fn reject_crc() -> (u16, thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let request = read_http_request(&mut sock);
+        let path = request
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or_default()
+            .to_string();
+        sock.write_all(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            .unwrap();
+        path
+    });
+    (port, handle)
+}
+
+#[test]
+fn failed_cold_preparation_is_reported_with_missing_archive() {
+    let root = TempRoot::new("cache-rejected-crc");
+    let cache = root.join("cache");
+    assert!(!cache.exists(), "the cache root starts absent");
+
+    let (port, server) = reject_crc();
+    let selection = selection(&root, "274", port);
+    let error = selection
+        .bind_with_progress(&ProfileProgressObserver::default())
+        .unwrap_err();
+    let request_path = server.join().unwrap();
+
+    assert_eq!(request_path, "/crc", "the update endpoint rejected /crc");
+    assert!(
+        !cache.exists(),
+        "a rejected cold fetch leaves the root absent"
+    );
+    assert!(
+        error.contains("cache preparation degraded")
+            && error.contains("cache fetch failed")
+            && error.contains("title"),
+        "the missing archive and preparation failure must both be reported, got: {error}"
+    );
+}
 
 /// Mock update server: `/crc` plus one `GET /{name}{crc}` response per pack
 /// file, each on its own connection (the client's HTTP helper opens one per

@@ -492,7 +492,6 @@ fn mint_live_names_are_unique_and_never_test() {
             assert_eq!(names.len(), n);
             for name in names {
                 assert_ne!(name, "test", "a live boot must never log in `test`");
-                assert!(name.starts_with("live"), "minted name: {name}");
                 assert!(
                     name.len() <= 12,
                     "the engine enforces the 12-char username limit: {name}"
@@ -521,6 +520,38 @@ fn mint_live_names_keep_the_12_char_limit_at_scale() {
 #[test]
 fn mint_live_names_zero_is_empty() {
     assert!(mint_live_names(0).is_empty());
+}
+
+#[test]
+fn live_name_prefix_override_replaces_live_within_the_name_budget() {
+    use crate::play_bootstrap::mint_live_names_with;
+    let mut all = std::collections::HashSet::new();
+    for n in [1, 2, 10, 50] {
+        for prefix in ["tm", "abcd", "q"] {
+            let names = mint_live_names_with(prefix, n);
+            for name in &names {
+                assert!(name.starts_with(prefix), "{name} lacks {prefix}");
+                assert!(!name.starts_with("live"), "{name} kept the default");
+                assert!(name.len() <= 12, "{name} (n={n}) exceeds the limit");
+                assert!(all.insert(name.clone()), "duplicate minted name {name}");
+            }
+            // A shorter prefix hands its budget to the random token, so the
+            // widest slot index fills all 12 characters.
+            assert_eq!(names.last().map(String::len), Some(12), "{names:?}");
+        }
+    }
+}
+
+#[test]
+fn live_name_prefix_accepts_only_short_lowercase_letters() {
+    use crate::play_bootstrap::parse_live_name_prefix;
+    assert_eq!(parse_live_name_prefix(None), Ok("live"));
+    assert_eq!(parse_live_name_prefix(Some("tm")), Ok("tm"));
+    assert_eq!(parse_live_name_prefix(Some("abcd")), Ok("abcd"));
+    for bad in ["", "abcde", "Tm", "t1", "t_", "tm "] {
+        let err = parse_live_name_prefix(Some(bad)).unwrap_err();
+        assert!(err.contains("BOT_LIVE_NAME_PREFIX"), "{bad:?}: {err}");
+    }
 }
 
 #[test]
@@ -700,6 +731,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         |_, _, _| {},
     );
     let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(false);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
@@ -717,6 +749,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
             .contains("transferred in: 0 seconds")
             && row.startup_phase == StartupPhase::Connecting
             && row.error.is_none()
+            && row.login_lowmem.is_none()
     }));
     assert!(
         play.queue.lock().status_owner(arm.queue_owner).is_none(),
@@ -754,7 +787,9 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
             .iter()
             .find(|status| status.username == "alice")
             .unwrap();
-        row.startup_phase == StartupPhase::LoadingScene && row.error.is_none()
+        row.startup_phase == StartupPhase::LoadingScene
+            && row.error.is_none()
+            && row.login_lowmem == Some(false)
     }));
 
     arm.stop.store(true, Ordering::Relaxed);
@@ -6145,7 +6180,10 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
     play.script_stop("ghost");
     play.script_paint_click("ghost", "gobank", 0);
     assert_eq!(play.script_state("ghost"), script::RunState::Idle);
-    play.cheat("ghost", "tele 0,50,50,20,20");
+    assert_eq!(
+        play.cheat("ghost", "tele 0,50,50,20,20"),
+        Err(CheatRefusal::UnknownBot)
+    );
     assert!(
         play.cheats.lock().unwrap().is_empty(),
         "unknown uid cheat is a no-op"
@@ -6348,17 +6386,177 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
         .unwrap()
         .insert("alice".into(), VecDeque::new());
 
-    play.cheat("alice", "setvar tutorial 1000");
+    assert_eq!(
+        play.cheat("alice", "setvar tutorial 1000"),
+        Err(CheatRefusal::NotInGame)
+    );
     play.queue_wire("alice", WireCmd::Continue);
 
     assert!(play.cheats.lock().unwrap()["alice"].is_empty());
     assert!(play.wires.lock().unwrap()["alice"].is_empty());
 
     play.statuses.lock().unwrap()[0].ingame = true;
-    play.cheat("alice", "setvar tutorial 1000");
+    assert_eq!(play.cheat("alice", "setvar tutorial 1000"), Ok(()));
     play.queue_wire("alice", WireCmd::Continue);
     assert_eq!(play.cheats.lock().unwrap()["alice"].len(), 1);
     assert_eq!(play.wires.lock().unwrap()["alice"].len(), 1);
+}
+#[test]
+fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ingame: true,
+        scene_state: 2,
+        ..SlotStatus::default()
+    });
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), VecDeque::new());
+    play.cheat_internal("alice", "getvar tutorial").unwrap();
+
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let mut replies = super::debug_replies::DebugReplies::default();
+    let mark = crate::walk_map::test_log::mark();
+
+    super::script_observe_cached_with_channels(
+        &mut client,
+        "alice",
+        true,
+        false,
+        false,
+        1,
+        None,
+        None,
+        None,
+        Some(&snapshot),
+        None,
+        None,
+        &scripts,
+        &play.cheats,
+        &navs,
+        &world,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        super::script_channels::BrokerWorld::Unavailable,
+        None,
+        Some(&mut replies),
+    );
+
+    assert_eq!(
+        replies.pending_len(),
+        0,
+        "host-internal tutorial probes must not enter DebugReplies"
+    );
+    let records = crate::walk_map::test_log::records_since(mark)
+        .into_iter()
+        .map(|(_, message)| message)
+        .filter(|message| message.contains("reply candidate"))
+        .collect::<Vec<_>>();
+    assert!(
+        records.is_empty(),
+        "host-internal probe logged a reply candidate"
+    );
+}
+
+#[test]
+fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
+    for (host, transport, admitted) in [
+        ("127.0.0.1", client::Transport::Tcp, true),
+        ("example.invalid", client::Transport::Tcp, false),
+        ("127.0.0.1", client::Transport::Wss, false),
+    ] {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: host.into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        // No slots or sockets: vary the admission metadata after constructing
+        // the TCP-only offline fixture, including the production WSS transport.
+        let crate::play_bootstrap::PlayConnection::Direct(options) = &mut play.connection else {
+            unreachable!("run_with_io creates the direct offline fixture");
+        };
+        options.transport = transport;
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+        play.cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        for invalid in [
+            "".to_string(),
+            "x".repeat(81),
+            "~help\ngetcoord".into(),
+            "give café".into(),
+        ] {
+            let expected = if admitted {
+                CheatRefusal::InvalidBody
+            } else {
+                CheatRefusal::Unauthorized
+            };
+            assert_eq!(play.cheat("alice", &invalid), Err(expected));
+            assert!(
+                play.cheats.lock().unwrap()["alice"].is_empty(),
+                "{invalid:?} was queued"
+            );
+        }
+        assert_eq!(play.cheat("alice", "getcoord").is_ok(), admitted);
+        let queues = play.cheats.lock().unwrap();
+        let expected = if admitted {
+            VecDeque::from(["getcoord".to_string()])
+        } else {
+            VecDeque::new()
+        };
+        assert_eq!(queues["alice"], expected, "{host} {transport:?}");
+    }
 }
 
 #[test]
@@ -9588,7 +9786,8 @@ fn dispatch_script_interact_sends_held_item_bury() {
             "alice",
             vec![script::shim::InteractReq::Held {
                 name: "Bones".into(),
-                action: "Bury".into()
+                action: "Bury".into(),
+                slot: None,
             }],
         ),
         "held Bury must dispatch"
@@ -9609,17 +9808,130 @@ fn dispatch_script_interact_sends_held_item_bury() {
         vec![
             script::shim::InteractReq::Held {
                 name: "Bones".into(),
-                action: "Wear".into()
+                action: "Wear".into(),
+                slot: None,
             },
             script::shim::InteractReq::Held {
                 name: "Lobster".into(),
-                action: "Bury".into()
+                action: "Bury".into(),
+                slot: None,
             },
         ],
     ));
     assert_eq!(
         c.out.pos, before,
         "a label no held op resolves and an unknown name send nothing"
+    );
+}
+
+#[test]
+fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_slot() {
+    let mut c = bank_fetch_client();
+    Arc::get_mut(&mut c.cache).unwrap().objs[1].iop = [None, None, None, None, Some("Drop".into())];
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![2, 2, 2, 2, 2, 3]),
+            link_obj_number: Some(vec![1; 6]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let (navs, world) = empty_nav();
+    let before = c.out.pos;
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        (0..5)
+            .map(|slot| script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Drop".into(),
+                slot: Some(slot),
+            })
+            .collect(),
+    ));
+    let bytes = &c.out.data()[before..c.out.pos];
+    assert_eq!(bytes.len(), 5 * 7);
+    for (slot, packet) in bytes.as_chunks::<7>().0.iter().enumerate() {
+        assert_eq!(packet[0], client::io::ClientProt::OPHELD5.id as u8);
+        assert_eq!(u16::from_be_bytes([packet[1], packet[2]]), 1);
+        assert_eq!(u16::from_be_bytes([packet[3], packet[4]]), slot as u16);
+        assert_eq!(u16::from_be_bytes([packet[5], packet[6]]), 500);
+    }
+    let mut traced = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |op| traced.push(op)
+    ));
+    assert_eq!(traced, vec![client::io::ClientProt::OPHELD5.id as u8; 5]);
+    let before = c.out.pos;
+    for slot in [5, 9, -1] {
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Held {
+                name: "Bones".into(),
+                action: "Drop".into(),
+                slot: Some(slot),
+            }],
+        ));
+    }
+    assert_eq!(
+        c.out.pos, before,
+        "a changed or missing slot cannot fall back"
+    );
+    c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    let requests = std::iter::once(script::shim::InteractReq::CloseModal)
+        .chain((0..4).map(|slot| script::shim::InteractReq::Held {
+            name: "Bones".into(),
+            action: "Drop".into(),
+            slot: Some(slot),
+        }))
+        .collect();
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        requests,
+    ));
+    let mut traced = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |op| traced.push(op)
+    ));
+    assert_eq!(
+        traced,
+        [
+            client::io::ClientProt::CLOSE_MODAL.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+            client::io::ClientProt::OPHELD5.id as u8,
+        ],
     );
 }
 
@@ -9927,6 +10239,37 @@ fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
         action: action.into(),
         id,
     }
+}
+
+#[test]
+fn native_loc_click_driver_trace_counts_move_and_operation_packets() {
+    let (mut client, snapshot) = colocated_wall_flax(false);
+    let (navs, world) = empty_nav();
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    assert!(dispatch_script_interact(
+        &mut client,
+        &snapshot,
+        None,
+        Some((4, 5, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![loc_req(Some(2646), "Pick")],
+    ));
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert_eq!(
+        packets,
+        [
+            client::io::ClientProt::MOVE_OPCLICK.id as u8,
+            client::io::ClientProt::OPLOC2.id as u8,
+        ],
+    );
 }
 
 fn dispatch_loc(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
@@ -11079,7 +11422,8 @@ fn dispatch_script_interact_held_first_match_only() {
         "alice",
         vec![script::shim::InteractReq::Held {
             name: "Bones".into(),
-            action: "Bury".into()
+            action: "Bury".into(),
+            slot: None,
         }],
     ));
     let one_op = one.out.pos - before_one;
@@ -11123,7 +11467,8 @@ fn dispatch_script_interact_held_first_match_only() {
         "alice",
         vec![script::shim::InteractReq::Held {
             name: "Bones".into(),
-            action: "Bury".into()
+            action: "Bury".into(),
+            slot: None,
         }],
     ));
     assert_eq!(
@@ -17248,6 +17593,7 @@ impl ReconnectRig {
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
             None,
+            None,
         );
         self.slot().lock().unwrap().probe("true").unwrap();
     }
@@ -22234,3 +22580,156 @@ mod native_walk;
 
 #[path = "script_progress_tests.rs"]
 mod script_progress;
+
+#[cfg(test)]
+mod read_journal_tests {
+    use super::*;
+    use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+
+    struct ParkedRead {
+        requested: bool,
+        panic_on_read: bool,
+    }
+
+    impl Script for ParkedRead {
+        fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.requested {
+                Ok(ScriptFlow::Complete)
+            } else {
+                Ok(ScriptFlow::Blocked(ScriptFailure {
+                    code: "journal-no-match".into(),
+                    message: "no journal rule matched".into(),
+                    retryable: true,
+                }))
+            }
+        }
+
+        fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+            assert!(!self.panic_on_read, "read callback panicked");
+            self.requested = true;
+            Ok(())
+        }
+    }
+
+    fn play(panic_on_read: bool) -> (Play, ScriptSlot) {
+        let play = crate::run_with_io(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        let slot = script_slot_or_insert(&play.scripts, "alice");
+        slot.lock()
+            .unwrap()
+            .start_test_script(
+                Box::new(ParkedRead {
+                    requested: false,
+                    panic_on_read,
+                }),
+                None,
+            )
+            .unwrap();
+        tick(&slot, 1);
+        (play, slot)
+    }
+
+    fn tick(slot: &ScriptSlot, tick: u64) {
+        slot.lock().unwrap().on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+    }
+
+    #[test]
+    fn host_read_journal_restarts_blocked_dispatch_and_finishes_the_read() {
+        let (play, slot) = play(false);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Blocked
+        );
+        play.script_native_read_journal("alice", run).unwrap();
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Waiting
+        );
+        tick(&slot, 2);
+        let slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Idle);
+        assert_eq!(
+            slot.lifecycle_receipt().unwrap().state,
+            script::ScriptTerminalState::Completed
+        );
+    }
+
+    #[test]
+    fn host_read_journal_refuses_every_stale_run_key_dimension() {
+        let (play, slot) = play(false);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        for stale in [
+            api::selected::RunKey {
+                slot: run.slot + 1,
+                ..run
+            },
+            api::selected::RunKey {
+                run: run.run + 1,
+                ..run
+            },
+            api::selected::RunKey {
+                session: run.session + 1,
+                ..run
+            },
+        ] {
+            assert_eq!(
+                play.script_native_read_journal("alice", stale),
+                Err("stale native run".into())
+            );
+            assert_eq!(
+                slot.lock().unwrap().native_status().unwrap().phase,
+                script::native::NativePhase::Blocked
+            );
+        }
+        tick(&slot, 2);
+        assert_eq!(
+            slot.lock().unwrap().native_status().unwrap().phase,
+            script::native::NativePhase::Blocked
+        );
+        play.script_native_read_journal("alice", run).unwrap();
+        tick(&slot, 3);
+        assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
+    }
+
+    #[test]
+    fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
+        let (play, slot) = play(true);
+        let run = slot.lock().unwrap().native_run().unwrap();
+        assert_eq!(
+            play.script_native_read_journal("alice", run),
+            Err("read callback panicked".into())
+        );
+        let slot = slot.lock().expect("panic fence must keep the lock usable");
+        assert_eq!(slot.state(), script::RunState::Error);
+        assert!(slot.native_run().is_none());
+        assert_eq!(
+            slot.lifecycle_receipt().unwrap().state,
+            script::ScriptTerminalState::Failed
+        );
+        assert_eq!(slot.last_error(), Some("read callback panicked"));
+    }
+}
+#[path = "script_journal_paint_tests.rs"]
+mod journal_paint;

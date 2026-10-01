@@ -117,6 +117,7 @@ fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
 struct MachinesStop;
 impl Drop for MachinesStop {
     fn drop(&mut self) {
+        crate::quest_journal::on_stop();
         crate::machine::on_stop();
         crate::hunt::on_stop();
     }
@@ -151,6 +152,7 @@ pub(super) fn isolate_main(
     out: Sender<ThreadMsg>,
     setup: Sender<SetupMessage>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
@@ -224,6 +226,7 @@ pub(super) fn isolate_main(
         cmds,
         out,
         work_generation,
+        compat_journal,
         paint_generation,
         teardown,
         proof,
@@ -1071,6 +1074,7 @@ fn tick_loop(
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
@@ -1083,6 +1087,9 @@ fn tick_loop(
     // Locals drop before the `runtime` parameter: machine rows (and any
     // V8 handles they hold) never outlive the isolate.
     let _machines = MachinesStop;
+    if let Some(lease) = compat_journal.as_ref() {
+        crate::quest_journal::bind_compat_runtime(lease.clone());
+    }
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
     let mut paused = false;
@@ -1742,6 +1749,11 @@ fn tick_loop(
                 keep_work,
                 generation: reset_generation,
             } => {
+                if let Some(lease) = compat_journal.as_ref() {
+                    lease.set_generation(reset_generation);
+                    lease.revoke();
+                }
+                crate::quest_journal::on_reset();
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
@@ -1758,7 +1770,6 @@ fn tick_loop(
                     crate::hunt_key::on_reset();
                     crate::hunt_cell::on_reset();
                     crate::hunt_bank::on_reset();
-                    crate::quest_journal::on_reset();
                     crate::clue::on_reset();
                     crate::duel::on_reset();
                 }

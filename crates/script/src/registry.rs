@@ -6,6 +6,7 @@ use crate::native::CompiledCard;
 pub struct CompiledId(pub &'static str);
 
 static CARDS: &[CompiledCard] = &[
+    crate::gatherer::CARD,
     crate::quester::CARD,
     #[cfg(feature = "load")]
     crate::sherlock::CARD,

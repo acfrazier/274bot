@@ -88,6 +88,7 @@ const REGISTRY: &[Entry] = &[
         "actor_observation_v2_ts",
         scenarios::actor_observation_v2_scenario,
     ),
+    Entry::new("gatherer", scenarios::gatherer_scenario),
     Entry::new("fight_field_v2_ts", scenarios::fight_field_v2_scenario),
     Entry::new("hold_spot_v2_ts", scenarios::hold_spot_v2_scenario),
     Entry::new("retreat_spot_v2_ts", scenarios::retreat_spot_v2_scenario),

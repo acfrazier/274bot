@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true
+  },
+  "files": [
+    "consumer.ts",
+    "valid-extra.ts",
+    "invalid-extra.ts",
+    "reach.ts",
+    "settings.ts",
+    "emit-round2.ts",
+    "../../compat-js/index.d.ts"
+  ]
+}

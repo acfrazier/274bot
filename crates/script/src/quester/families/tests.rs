@@ -381,9 +381,13 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
 fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::empty();
+    let path = FactKey::new("synthetic");
+    let progress = test_progress();
     let areas = Default::default();
     let recipes = Default::default();
     let compile = CompileContext {
+        path: &path,
+        progress: &progress,
         selected: &data,
         quests: &quests,
         gathering: None,
@@ -586,10 +590,45 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
     }
 }
 
+fn test_progress() -> crate::quester::progress::CompiledProgress {
+    crate::quester::progress::CompiledProgress {
+        binding: FactKey::new("journal:cook"),
+        role: None,
+        colour_not_started: FactKey::new("cook:0"),
+        colour_in_progress: FactKey::new("cook:1"),
+        colour_complete: FactKey::new("cook:2"),
+        stage_keys: Arc::from(vec![
+            FactKey::new("cook:0"),
+            FactKey::new("cook:1"),
+            FactKey::new("cook:2"),
+        ]),
+        rules: Arc::from([]),
+        flags: Arc::from(vec![
+            crate::quester::progress::CompiledProgressFlagRule {
+                flag: FactKey::new("feather"),
+                all: Arc::from([]),
+                any: Arc::from([Arc::<str>::from("feather")]),
+                count: None,
+            },
+            crate::quester::progress::CompiledProgressFlagRule {
+                flag: FactKey::new("crystals"),
+                all: Arc::from([]),
+                any: Arc::from([Arc::<str>::from("crystals")]),
+                count: Some(crate::quester::progress::CountCapture { max_digits: 9 }),
+            },
+        ]),
+        monotonic: false,
+    }
+}
+
 fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let path = FactKey::new("cook");
+    let progress = test_progress();
     f(&CompileContext {
+        path: &path,
+        progress: &progress,
         selected: &data,
         quests: &quests,
         gathering: None,
@@ -1368,4 +1407,360 @@ fn progress_predicates_require_known_same_run_evidence() {
             assert_eq!(flag.evaluate(&known), Truth::True);
         });
     });
+}
+
+#[test]
+fn progress_predicates_validate_references_and_count_requirements() {
+    compile_context_test(|cx| {
+        let fact = |kind: &str, args: serde_json::Value| PredicateDocument::Fact {
+            kind: kind.into(),
+            version: 1,
+            args,
+        };
+        let error_code = |document: &PredicateDocument| {
+            compile_predicate(document, cx)
+                .err()
+                .expect("predicate must be rejected")
+                .code
+        };
+
+        assert_eq!(
+            error_code(&fact(
+                "stage_in",
+                serde_json::json!({"quest":"cook","any":[]}),
+            ))
+            .as_ref(),
+            "invalid-args"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "stage_in",
+                serde_json::json!({"quest":"cook","any":["cook:99"]}),
+            ))
+            .as_ref(),
+            "unresolved-progress-stage"
+        );
+        assert_eq!(
+            error_code(&fact("flag", serde_json::json!({"quest":"cook","flag":""}),)).as_ref(),
+            "invalid-args"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "flag",
+                serde_json::json!({"quest":"cook","flag":"missing"}),
+            ))
+            .as_ref(),
+            "unresolved-progress-flag"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "stage_in",
+                serde_json::json!({"quest":"imp","any":["imp:1"]}),
+            ))
+            .as_ref(),
+            "foreign-progress-quest"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "flag",
+                serde_json::json!({"quest":"imp","flag":"feather"}),
+            ))
+            .as_ref(),
+            "foreign-progress-quest"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "flag",
+                serde_json::json!({"quest":"cook","flag":"feather","count":1}),
+            ))
+            .as_ref(),
+            "unresolved-progress-count"
+        );
+        assert_eq!(
+            error_code(&fact(
+                "flag",
+                serde_json::json!({"quest":"cook","flag":"feather","at_least":1}),
+            ))
+            .as_ref(),
+            "unresolved-progress-count"
+        );
+        assert!(compile_predicate(
+            &fact(
+                "flag",
+                serde_json::json!({"quest":"cook","flag":"crystals","count":3}),
+            ),
+            cx
+        )
+        .is_ok());
+        assert!(compile_predicate(
+            &fact(
+                "flag",
+                serde_json::json!({"quest":"cook","flag":"crystals","at_least":2}),
+            ),
+            cx
+        )
+        .is_ok());
+    });
+}
+
+#[test]
+fn progress_predicates_cover_negation_counts_and_unknown_stage() {
+    compile_context_test(|cx| {
+        let fact = |args| PredicateDocument::Fact {
+            kind: "flag".into(),
+            version: 1,
+            args,
+        };
+        let not_set = compile_predicate(
+            &fact(serde_json::json!({"quest":"cook","flag":"feather","is":false})),
+            cx,
+        )
+        .unwrap();
+        let exact = compile_predicate(
+            &fact(serde_json::json!({"quest":"cook","flag":"crystals","count":3})),
+            cx,
+        )
+        .unwrap();
+        let minimum = compile_predicate(
+            &fact(serde_json::json!({"quest":"cook","flag":"crystals","at_least":2})),
+            cx,
+        )
+        .unwrap();
+        let stage = compile_predicate(
+            &PredicateDocument::Fact {
+                kind: "stage_in".into(),
+                version: 1,
+                args: serde_json::json!({"quest":"cook","any":["cook:1"]}),
+            },
+            cx,
+        )
+        .unwrap();
+        let snapshot = ready();
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |t| {
+            let evidence = t.cx.evidence();
+            let pin = cx.selected.selected_pin().unwrap();
+            let progress = [QuestProgress {
+                quest: FactKey::new("cook"),
+                stage: Knowledge::Known(FactKey::new("cook:1")),
+                complete: Truth::False,
+                signals: Arc::from(Vec::<api::selected::SignalRange>::new()),
+                flags: Arc::from(vec![
+                    ProgressFlag {
+                        flag: FactKey::new("feather"),
+                        truth: Truth::True,
+                        count: None,
+                    },
+                    ProgressFlag {
+                        flag: FactKey::new("crystals"),
+                        truth: Truth::True,
+                        count: Some(3),
+                    },
+                ]),
+                evidence,
+                binding: FactKey::new("journal:cook"),
+                role: None,
+                rule: Knowledge::Known(FactKey::new("cook:1")),
+                pin: Arc::clone(&pin),
+            }];
+            let known = PredicateContext {
+                cx: &t.cx,
+                quests: cx.quests,
+                progress: &progress,
+                required_after: evidence,
+                chat_since: 0,
+                outcome: None,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+            };
+            assert_eq!(not_set.evaluate(&known), Truth::False);
+            assert_eq!(exact.evaluate(&known), Truth::True);
+            assert_eq!(minimum.evaluate(&known), Truth::True);
+            assert_eq!(stage.evaluate(&known), Truth::True);
+
+            let unknown_stage = [QuestProgress {
+                stage: Knowledge::Unknown(api::selected::Gap {
+                    code: Arc::from("missing-stage"),
+                    sources: Arc::from([]),
+                }),
+                ..progress[0].clone()
+            }];
+            let unknown = PredicateContext {
+                progress: &unknown_stage,
+                ..known
+            };
+            assert_eq!(stage.evaluate(&unknown), Truth::Unknown);
+        });
+    });
+}
+
+#[test]
+fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(4882, vec![]);
+    seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    id: 0,
+                    npc: Arc::from("Aubury"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        t.cx.active_now = Duration::from_secs(30);
+        assert!(
+            t.actions.poll(&handle, &mut t.cx).is_pending(),
+            "host delay without game progress cannot end a conversation"
+        );
+    });
+    snapshot.seed_chat_modal(4893, vec![]);
+    with_tick(&snapshot, &mut ledger, 4, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    for tick in 5..9 {
+        with_tick(&snapshot, &mut ledger, tick, |t| {
+            assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        });
+    }
+    with_tick(&snapshot, &mut ledger, 9, |t| {
+        assert!(matches!(
+            t.actions.poll(&handle, &mut t.cx),
+            Poll::Ready(Ok(crate::dialogue_outcome::DialogueOutcome::Completed))
+        ));
+    });
+}
+
+pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool) {
+    snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile: tile(3253, 3401),
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat,
+            },
+            combat_level: 3,
+            skill_level: 0,
+        },
+        energy: 100,
+        weight: 0,
+    });
+}
+
+#[test]
+fn dialogue_hostile_close_never_reports_success() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(4882, vec![]);
+    seed_dialogue_combat(&mut snapshot, false);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    id: 0,
+                    npc: Arc::from("Aubury"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    snapshot.seed_chat_modal(-1, vec![]);
+    seed_dialogue_combat(&mut snapshot, true);
+    let mut result = Poll::Pending;
+    for tick in 2..=6 {
+        result = with_tick(&snapshot, &mut ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        });
+        if result.is_ready() {
+            break;
+        }
+    }
+    assert!(
+        matches!(
+            result,
+            Poll::Ready(Ok(
+                crate::dialogue_outcome::DialogueOutcome::CombatInterrupted
+            ))
+        ),
+        "a hostile close, including a zero-damage hit, cannot complete dialogue: {result:?}"
+    );
+}
+
+#[test]
+fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
+    use super::dialogue::{Dialogue, DialogueArgs};
+    use crate::dialogue_outcome::DialogueOutcome;
+    for continue_component in [None, Some(4883), Some(-1)] {
+        let mut snapshot = ready();
+        seed_dialogue_combat(&mut snapshot, false);
+        if let Some(component) = continue_component {
+            snapshot.seed_chat_modal(4882, vec![]);
+            snapshot.seed_chat_options(
+                if component == -1 {
+                    vec![api::snapshot::ChatOptionView {
+                        component_id: 1,
+                        text: "I have a package for you.".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                component,
+            );
+        }
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+            t.actions
+                .begin::<Dialogue>(
+                    DialogueArgs {
+                        id: 0,
+                        npc: Arc::from("Aubury"),
+                        prefer: Arc::from([]),
+                        choose: None,
+                    },
+                    &mut t.cx,
+                )
+                .unwrap()
+        });
+        with_tick(&snapshot, &mut ledger, 2, |t| {
+            assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+        });
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        seed_dialogue_combat(&mut snapshot, true);
+        with_tick(&snapshot, &mut ledger, 3, |t| {
+            assert!(matches!(
+                t.actions.poll(&handle, &mut t.cx),
+                Poll::Ready(Ok(DialogueOutcome::CombatInterrupted))
+            ));
+        });
+    }
 }

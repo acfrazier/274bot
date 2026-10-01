@@ -63,6 +63,7 @@ pub use host::Host;
 pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
+mod debug_replies;
 mod instance_lock;
 mod play_bootstrap;
 mod play_login;
@@ -149,11 +150,11 @@ pub use play_status::{
 };
 #[cfg(test)]
 use play_wires::dispatch_wires;
-pub use play_wires::WireCmd;
+pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, panel_ui_path, panel_ui_value, persist_background_bots_ack,
-    persist_panel_ui_value, LiveSlot,
+    clear_background_bots_ack_error, panel_ui_path, panel_ui_value, panel_ui_value_at,
+    persist_background_bots_ack, persist_panel_ui_value, persist_panel_ui_value_at, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};

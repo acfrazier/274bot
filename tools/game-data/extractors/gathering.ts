@@ -6,7 +6,7 @@ import { indexContent, parseDbRows, parseCoord, scanMapSection, spanRef, stripCo
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
-export const GATHERING_SCHEMA = 1;
+export const GATHERING_SCHEMA = 2;
 
 /** Engine `PlayerStat` order (`src/engine/entity/PlayerStat.ts`): a protocol constant, not gathering data. */
 const SKILL = { attack: 0, woodcutting: 8, fishing: 10, mining: 14 } as const;
@@ -54,6 +54,8 @@ export type GatheringFacts = {
     zones: ZoneWire[];
     movements: MovementWire[];
     placements: PlacementFile[];
+    hazard_npcs: number[];
+    incidental_gem_ids: number[];
 };
 export type GatheringSummary = {
     methods: Record<SkillName, number>;
@@ -547,6 +549,22 @@ const GEM_DBROW = 'scripts/skill_mining/configs/gem_rock_table.dbrow';
 
 type MiningOutput = { methods: MethodWire[]; loose: LooseWire[]; model: MiningModel };
 
+/** Named objects returned by the content's `mining_gem_table` proc, joined through obj.pack. */
+function miningGemIds(ctx: Ctx): number[] {
+    const block = uniqueBlock(ctx, 'proc', 'mining_gem_table');
+    if (!block) throw new Error(`${MINING_SCRIPT}: expected one mining_gem_table proc`);
+    const outputs = flatten(block).flat.filter(({ stmt }) => /^return\b/.test(stmt.text));
+    if (outputs.length === 0) throw new Error(`${MINING_SCRIPT}:${block.span.first}: mining_gem_table has no return statements`);
+    const ids = new Set<number>();
+    for (const { stmt } of outputs) {
+        const returned = /^return\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*;?$/.exec(stmt.text);
+        if (!returned) throw new Error(`${MINING_SCRIPT}:${stmt.line}: unrecognized mining_gem_table output ${stmt.text}`);
+        if (returned[1] !== 'null') ids.add(ctx.entities.id('obj', returned[1], 'mining_gem_table'));
+    }
+    if (ids.size === 0) throw new Error(`${MINING_SCRIPT}:${block.span.first}: mining_gem_table has no named object outputs`);
+    return [...ids].sort((a, b) => a - b);
+}
+
 function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Gap, zones: Zones): MiningOutput {
     const dbtable = 'scripts/skill_mining/configs/mine.dbtable';
     for (const column of MINING_COLUMNS) if (!new RegExp(`^column=${column},`, 'm').test(ctx.idx.text(dbtable))) throw new Error(`${dbtable}: missing selected column ${column}`);
@@ -736,7 +754,7 @@ function treeGap(ctx: Ctx, def: Section | undefined, category: string | undefine
     return custom.length > 0 ? gap('custom-handler', def.span, ...custom.map((header) => header.span)) : gap('tree-category-unrecognized', def.span);
 }
 
-function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerScale | Gap, zones: Zones): { methods: MethodWire[]; loose: LooseWire[] } {
+function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerScale | Gap, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; hazardNpcs: number[] } {
     const dbtable = 'scripts/skill_woodcutting/configs/trees.dbtable';
     for (const column of TREE_COLUMNS) if (!new RegExp(`^column=${column},`, 'm').test(ctx.idx.text(dbtable))) throw new Error(`${dbtable}: missing selected column ${column}`);
     const rows = parseDbRows(TREES_DBROW, ctx.idx.text(TREES_DBROW)).filter((row) => row.table === 'woodcutting_trees');
@@ -744,6 +762,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
     const model = woodModel(ctx);
     const methods: MethodWire[] = [];
     const loose: LooseWire[] = [];
+    const hazardNpcs = new Set<number>();
     for (const row of rows) {
         const key = woodKey(row.name);
         const id = `woodcutting.${key}`;
@@ -760,6 +779,8 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
         for (const data of row.data.get('tree') ?? []) {
             const alias = data.values[0];
             const def = ctx.idx.loc.get(alias);
+            const ent = def?.params.get('ent')?.[0];
+            if (ent && ent !== 'null') hazardNpcs.add(ctx.entities.id('npc', ent, `${row.name} tree ent`));
             const locId = ctx.entities.id('loc', alias, row.name);
             const aliasHeaders = [1, 2, 3, 4, 5].flatMap((each) => ctx.idx.headers.get(`oploc${each},${alias}`) ?? []);
             const category = def?.props.get('category')?.[0];
@@ -821,7 +842,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
             sources,
         });
     }
-    return { methods, loose };
+    return { methods, loose, hazardNpcs: [...hazardNpcs].sort((a, b) => a - b) };
 }
 
 // ---- fishing -------------------------------------------------------------------------------------------------
@@ -1008,11 +1029,12 @@ function regionOf(ctx: Ctx, alias: string): Know<RegionWire | null> {
     return known({ min_x: Math.min(...coords.map((c) => c.x)), min_z: Math.min(...coords.map((c) => c.z)), max_x: Math.max(...coords.map((c) => c.x)), max_z: Math.max(...coords.map((c) => c.z)), level: coords[0].plane });
 }
 
-function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; movements: MovementWire[] } {
+function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; movements: MovementWire[]; hazardNpcs: number[] } {
     const npcs = ctx.idx.npc.all().filter((section) => section.span.file === FISHING_NPC);
     if (npcs.length === 0) throw new Error(`${FISHING_NPC}: no fishing npc types`);
     const subjects = new Map<string, FishSubject>();
     const loose: LooseWire[] = [];
+    const hazardAliases = new Set<string>();
     const looseNpc = (alias: string, code: string, ...spans: Span[]) => loose.push({ skill: 'fishing', kind: 'npc', id: ctx.entities.id('npc', alias, `loose ${alias}`), class: 'unclassified', gap: gap(code, ...spans) });
     const join = (key: string, subject: FishSubject) => subjects.get(key) ?? subjects.set(key, subject).get(key)!;
     for (const section of npcs) {
@@ -1033,13 +1055,14 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
         const match = /^oploc\d,(?!_)(.+)$/.exec(name);
         if (match && headers.every((header) => header.span.file.startsWith(FISHING_SCRIPTS))) join(match[1], { kind: 'loc', dispatch: match[1], id: match[1], members: [{ alias: match[1], def: ctx.idx.loc.get(match[1]) }], hazards: [] });
     }
-    // Hazard spots link from the spot type's `whirlpool` param and must carry `is_whirlpool`.
+    // Hazard spots link from fishing spot types and must carry the content's is_whirlpool flag.
     for (const section of npcs) {
         const link = section.params.get('whirlpool')?.[0];
+        if (!link || ctx.idx.npc.get(link)?.params.get('is_whirlpool')?.[0] !== '^true') continue;
+        hazardAliases.add(link);
         const category = section.props.get('category')?.[0];
         const subject = category ? subjects.get(`_${category}`) : undefined;
-        if (!link || !subject || subject.hazards.includes(link)) continue;
-        if (ctx.idx.npc.get(link)?.params.get('is_whirlpool')?.[0] === '^true') subject.hazards.push(link);
+        if (subject && !subject.hazards.includes(link)) subject.hazards.push(link);
     }
     const rollGaps = { fish_roll: rollShape(ctx, 'fish_roll'), fish_roll_loc: rollShape(ctx, 'fish_roll_loc') };
     const equipmentGap = checkEquipmentShape(ctx);
@@ -1119,7 +1142,7 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
         }
     }
     const movements = [...movementIds].sort((a, b) => a - b).map((id) => ({ npc: id, region: regionOf(ctx, ctx.entities.alias('npc', id)) }));
-    return { methods, loose, movements };
+    return { methods, loose, movements, hazardNpcs: [...hazardAliases].map((alias) => ctx.entities.id('npc', alias, 'fishing whirlpool')).sort((a, b) => a - b) };
 }
 
 // ---- placements ------------------------------------------------------------------------------------------------
@@ -1215,10 +1238,12 @@ export function extractGatheringFamily(content: string): GatheringFamily {
     if (wood.methods.length === 0 || mining.methods.length === 0 || fishing.methods.length === 0) throw new Error('gathering: no extracted methods');
     const placements = scanPlacements(ctx, methods);
     const loose = [...wood.loose, ...mining.loose, ...fishing.loose].sort((a, b) => a.skill.localeCompare(b.skill) || a.kind.localeCompare(b.kind) || a.id - b.id);
+    const incidentalGemIds = miningGemIds(ctx);
+    const hazardNpcs = [...new Set([...wood.hazardNpcs, ...fishing.hazardNpcs])].sort((a, b) => a - b);
     const zoneList = zones.list();
     return {
         schema: GATHERING_SCHEMA,
-        payload: { entities: ctx.entities.lines(), methods, loose, zones: zoneList, movements: fishing.movements, placements },
+        payload: { entities: ctx.entities.lines(), methods, loose, zones: zoneList, movements: fishing.movements, placements, hazard_npcs: hazardNpcs, incidental_gem_ids: incidentalGemIds },
         summary: summarize(methods, mining.model, placements, zoneList),
     };
 }
@@ -1235,5 +1260,108 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
         if (method.skill !== 'mining' || method.targets.state === 'unknown') return [];
         const locs = method.targets.value.filter((target) => target.class === 'hazard' && target.kind === 'loc').map((target) => target.id);
         return locs.length === 0 ? [] : [{ resources: method.resources, locs }];
+    });
+}
+
+/**
+ * The one admission rule (design-gatherer §2.2 step 4, also §3 rule 1, as
+ * ruled: copper/tin default work). Targets admit per row: rows without a
+ * respawn fact (tutorial-gate rocks) are excluded, and the method is admitted
+ * on its Known target rows, refusing iff zero remain. `tools`, `consumes`,
+ * `requirements` and `spots` must be `Known`; `products` may be `Known` or
+ * `Partial` whose gap codes are all incidental gem rolls. Anything else
+ * refuses the method with its gap code (e.g. `woodcutting.jungle`, karambwan,
+ * memberfish on 289). There is no target-gap allowlist: excluded rows never
+ * block, they simply do not admit.
+ */
+export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
+
+/**
+ * One pinned row of the selected core's `gather_resources` slice. `key` is the
+ * selectable setting value: the resource key for woodcutting/mining (one row
+ * per resource) or the method id for fishing (one row per method, which can
+ * name several resources). `gap` is present exactly when the method fails
+ * admission; the UI shows such rows with their gap code and Start refuses them.
+ */
+export type GatherResourceWire = {
+    skill: SkillName;
+    method: string;
+    key: string;
+    resources: string[];
+    label: string;
+    level: number;
+    selectable: boolean;
+    gap: string | null;
+};
+
+/** A target row the slice admits on: it carries a respawn fact (`Known`, even `null` for never-depleting spots). */
+export function isKnownGatherTarget(target: TargetWire): boolean {
+    return target.respawn.state === 'known';
+}
+
+/** First blocking gap code of one method, in design cell order; null when admitted. */
+export function gatherMethodGap(method: MethodWire): string | null {
+    const knownTargets = method.targets.state === 'unknown' ? [] : method.targets.value.filter(isKnownGatherTarget);
+    if (knownTargets.length === 0) {
+        if (method.targets.state === 'unknown') return method.targets.gap.code;
+        if (method.targets.state === 'partial' && method.targets.gaps.length > 0) return method.targets.gaps[0].code;
+        const excluded = method.targets.state === 'known' ? method.targets.value.find((target) => !isKnownGatherTarget(target)) : undefined;
+        if (excluded !== undefined && excluded.respawn.state === 'unknown') return excluded.respawn.gap.code;
+        return 'no-known-target';
+    }
+    const cells: Know<unknown>[] = [method.tools, method.consumes, method.requirements, method.spots];
+    for (const knowledge of cells) {
+        if (knowledge.state === 'unknown') return knowledge.gap.code;
+        if (knowledge.state === 'partial' && knowledge.gaps.length > 0) return knowledge.gaps[0].code;
+    }
+    if (method.products.state === 'unknown') return method.products.gap.code;
+    if (method.products.state === 'partial') {
+        const blocking = method.products.gaps.find((each) => !ACCEPTED_PRODUCT_GAPS.includes(each.code));
+        if (blocking !== undefined) return blocking.code;
+    }
+    return null;
+}
+
+/** `raw_shrimp` → `Raw shrimp`; already-spaced keys (`rune stones`) only gain a capital. */
+export function humanizeResourceKey(key: string): string {
+    const spaced = key.replace(/_/g, ' ');
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * Display label from the method's own product facts joined to obj display
+ * names: one product name, or several joined with ` / `. Methods with no
+ * product rows (refused) fall back to the humanized resource keys.
+ */
+export function gatherResourceLabel(method: MethodWire, itemNames: ReadonlyMap<number, string>): string {
+    const products = method.products.state === 'unknown' ? [] : method.products.value;
+    const names = products.map((product) => itemNames.get(product.item)).filter((name) => name !== undefined && name !== '');
+    if (names.length > 0) return names.join(' / ');
+    return method.resources.map(humanizeResourceKey).join(' / ');
+}
+
+/** Minimum product level of one method; 0 when it names no product rows. */
+export function gatherMethodLevel(method: MethodWire): number {
+    const products = method.products.state === 'unknown' ? [] : method.products.value;
+    if (products.length === 0) return 0;
+    return products.reduce((min, product) => Math.min(min, product.level), Number.POSITIVE_INFINITY);
+}
+
+/**
+ * The pinned per-skill option rows the selected core carries so the UI never
+ * decodes the family: every method in content order, selectable or refused
+ * with its gap code. Labels come from the family's own product facts, never a
+ * hand table.
+ */
+export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<number, string>): GatherResourceWire[] {
+    return facts.methods.flatMap((method) => {
+        const gap = gatherMethodGap(method);
+        const label = gatherResourceLabel(method, itemNames);
+        const level = gatherMethodLevel(method);
+        const selectable = gap === null;
+        if (method.skill === 'fishing') {
+            return [{ skill: method.skill, method: method.id, key: method.id, resources: [...method.resources], label, level, selectable, gap }];
+        }
+        return method.resources.map((resource) => ({ skill: method.skill, method: method.id, key: resource, resources: [...method.resources], label, level, selectable, gap }));
     });
 }

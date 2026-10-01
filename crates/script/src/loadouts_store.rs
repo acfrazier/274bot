@@ -413,6 +413,8 @@ impl ResolvedSettingOptions {
 /// borrowed selected facts without mutating the schema. Recognized imported
 /// catalog tables are a last-resort host metadata lookup. W1c equipment idents
 /// resolve from borrowed `equipment_names` facts; `AXES` / `DROP_DB` stay empty.
+/// `gather:<skill>` resolves from the pinned `gather_resources` slice and
+/// `named-banks` from the frozen `BANK_CATALOG` names.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
@@ -460,6 +462,17 @@ pub fn resolve_setting_options_with_labels(
         }
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
+        }
+        if let Some(skill) = from.strip_prefix("gather:") {
+            return resolve_gather_options(skill, game_data);
+        }
+        if from == "named-banks" {
+            return ResolvedSettingOptions::from_values(
+                api::named_banks::BANK_CATALOG
+                    .iter()
+                    .map(|bank| bank.name.to_string())
+                    .collect(),
+            );
         }
         if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
             return ResolvedSettingOptions::from_values(
@@ -511,6 +524,33 @@ fn resolve_w1c_equipment_options(
                 .to_string();
             values.push(key);
             labels.push(label);
+        }
+    }
+    ResolvedSettingOptions { values, labels }
+}
+
+/// Pinned gather options for one skill (`gather:<skill>`): values are the
+/// selectable keys (resource keys for woodcutting/mining, method ids for
+/// fishing) in generator order with parallel display labels. Refused rows stay
+/// visible with their admission gap code; Start refuses them. Empty without
+/// borrowed selected facts.
+fn resolve_gather_options(
+    skill: &str,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions::default();
+    };
+    let mut values = Vec::new();
+    let mut labels = Vec::new();
+    for row in data.gather_resources_for(skill) {
+        values.push(row.key.clone());
+        if row.selectable {
+            labels.push(row.label.clone());
+        } else if let Some(gap) = row.gap.as_deref() {
+            labels.push(format!("{} ({gap})", row.label));
+        } else {
+            labels.push(row.label.clone());
         }
     }
     ResolvedSettingOptions { values, labels }
@@ -1302,6 +1342,99 @@ mod tests {
         let rows = vec![Loadout::new("loadout"), Loadout::new("loadout 2")];
         assert_eq!(unique_loadout_name(&rows, "loadout"), "loadout 3");
         assert_eq!(unique_loadout_name(&rows, "fresh"), "fresh");
+    }
+
+    fn gather_game_data() -> api::game_data::SelectedGameData {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 4,
+            "revision": 289,
+            "provenance": {"cache_identity": {"cache_id": "x"}, "inputs": [], "content_inputs": [], "decoder_sources": []},
+            "items": [],
+            "consumption": [],
+            "pickpocket": [],
+            "gather_resources": [
+                {"skill": "mining", "method": "mining.copper", "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
+                {"skill": "mining", "method": "mining.iron", "key": "iron", "resources": ["iron"], "label": "Iron ore", "level": 15, "selectable": true, "gap": null},
+                {"skill": "woodcutting", "method": "woodcutting.jungle", "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
+                {"skill": "fishing", "method": "fishing.saltfish.op1", "key": "fishing.saltfish.op1", "resources": ["raw_shrimp", "raw_anchovies"], "label": "Raw shrimps / Raw anchovies", "level": 0, "selectable": true, "gap": null}
+            ]
+        }))
+        .expect("gather test facts decode")
+    }
+
+    #[test]
+    fn resolve_gather_options_values_labels_and_gap_suffix() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let data = gather_game_data();
+        let mining = resolve_setting_options_with_labels(
+            &equipment_from("gather:mining"),
+            &store,
+            Some(&data),
+        );
+        assert_eq!(
+            mining.values,
+            vec!["copper".to_string(), "iron".to_string()]
+        );
+        assert_eq!(
+            mining.labels,
+            vec!["Copper ore".to_string(), "Iron ore".to_string()]
+        );
+        let jungle = resolve_setting_options_with_labels(
+            &equipment_from("gather:woodcutting"),
+            &store,
+            Some(&data),
+        );
+        assert_eq!(jungle.values, vec!["jungle".to_string()]);
+        assert_eq!(
+            jungle.labels,
+            vec!["Jungle (no-resource-target)".to_string()]
+        );
+        let fishing = resolve_setting_options_with_labels(
+            &equipment_from("gather:fishing"),
+            &store,
+            Some(&data),
+        );
+        assert_eq!(fishing.values, vec!["fishing.saltfish.op1".to_string()]);
+        assert_eq!(
+            fishing.labels,
+            vec!["Raw shrimps / Raw anchovies".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_gather_options_empty_without_facts() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        assert!(resolve_setting_options(&equipment_from("gather:mining"), &store, None).is_empty());
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        assert!(
+            resolve_setting_options(
+                &equipment_from("gather:unknown-skill"),
+                &store,
+                Some(data.as_ref())
+            )
+            .is_empty(),
+            "an unknown skill is no options, never the whole slice"
+        );
+    }
+
+    #[test]
+    fn resolve_named_banks_lists_catalog_names() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let banks = resolve_setting_options(&equipment_from("named-banks"), &store, None);
+        assert!(!banks.is_empty());
+        assert_eq!(banks[0], "Varrock East");
+        assert!(banks.contains(&"Varrock West".to_string()));
+        assert_eq!(
+            banks,
+            api::named_banks::BANK_CATALOG
+                .iter()
+                .map(|bank| bank.name.to_string())
+                .collect::<Vec<_>>(),
+            "names follow the frozen catalog order"
+        );
     }
 }
 

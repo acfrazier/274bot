@@ -223,6 +223,8 @@ pub struct GatherCatalog {
     pub(super) aliases: Box<[(EntityKey, Arc<str>)]>,
     pub(super) loose: Box<[LooseEntity]>,
     pub(super) rocks: HashMap<i32, RockEntry>,
+    pub(super) hazard_npcs: Arc<[i32]>,
+    pub(super) incidental_gem_ids: Arc<[i32]>,
 }
 
 impl std::fmt::Debug for GatherCatalog {
@@ -272,6 +274,16 @@ impl GatherCatalog {
     /// Every method: woodcutting, then mining, then fishing, each in content order.
     pub fn methods(&self) -> &[GatherMethod] {
         &self.methods
+    }
+
+    /// NPC type ids that can appear as skill hazards (tree ents and fishing whirlpools).
+    pub fn hazard_npcs(&self) -> &[i32] {
+        &self.hazard_npcs
+    }
+
+    /// Item ids returned by `mining_gem_table`; any mining method can yield one.
+    pub fn incidental_gem_ids(&self) -> &[i32] {
+        &self.incidental_gem_ids
     }
 
     pub fn method(&self, id: &str) -> Result<&GatherMethod, FactError> {

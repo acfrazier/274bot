@@ -192,9 +192,10 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
 
 /// The Zanaris shed door (`quest_zanaris.rs2:89-100`
 /// `[oploc1,zanarisdoor]`): its Open channel teleports through to Zanaris
-/// (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is worn, so the
-/// door edge carries the staff's obj id as `worn_req` and the Lost City
-/// quest name, and names the `loc_1532` leaf it swings.
+/// (`0_50_149_20_56` = (3220,9592)) when the Dramen staff is worn on a
+/// members world, so the edge carries both the staff's obj id as `worn_req`
+/// and `members_req`, plus the Lost City quest name, and names the `loc_1532`
+/// leaf it swings.
 #[test]
 fn derive_transports_emits_zanaris_shed_door_with_worn_dramen() {
     let fx = Fixture::new();
@@ -246,9 +247,487 @@ if($entering = false) {
         "Zanaris landing, not Lumbridge swamp"
     );
     assert_eq!(e.worn_req, [772]);
+    assert!(e.members_req, "Zanaris requires a members world");
     assert_eq!(e.quest_req, ["Lost City"]);
     assert_eq!(e.open_loc_id, Some(1532));
     assert_eq!(e.ticks, ZANARIS_DOOR_TICKS);
+    let mut facts = crate::world_state::WorldState::empty();
+    facts.worn.insert(772);
+    facts.quests.insert("Lost City".into());
+    assert!(
+        !facts.allows(e),
+        "the source's map_members check must block F2P even with staff and quest"
+    );
+    assert!(
+        facts.with_map_members(true).allows(e),
+        "the same Zanaris edge is usable on a members world"
+    );
+}
+#[test]
+fn entrana_boat_members_guard_controls_world_behavior() {
+    let fx = Fixture::new();
+    fx.write("pack/npc.pack", "657=shipmonk\n658=shipmonk2\n");
+    fx.write(
+        "scripts/areas/area_port_sarim/scripts/monk_of_entrana.rs2",
+        "\
+[opnpc1,shipmonk]
+if(map_members = ^false) {
+    mes(\"You need to be on a members' world to access this content.\");
+    return;
+}
+",
+    );
+    // The return monk's handler exists and has no guard.
+    fx.write(
+        "scripts/areas/area_entrana/scripts/monk_of_entrana.rs2",
+        "\
+[opnpc1,shipmonk2]
+~chatnpc(\"<p,neutral>Do you wish to leave holy Entrana?\");
+",
+    );
+    let graph = derive_static_routes_for(&fx);
+    let outbound = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657)
+        .expect("Port Sarim -> Entrana boat");
+    assert!(outbound.members_req, "shipmonk is members-gated");
+    assert!(
+        !crate::world_state::WorldState::empty().allows(outbound),
+        "F2P cannot take the Entrana boat"
+    );
+    assert!(
+        crate::world_state::WorldState::empty()
+            .with_map_members(true)
+            .allows(outbound),
+        "members worlds can take the Entrana boat"
+    );
+
+    let return_boat = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 658)
+        .expect("Entrana -> Port Sarim boat");
+    assert!(
+        !return_boat.members_req,
+        "the return script has no map_members guard"
+    );
+}
+
+#[test]
+fn castlecrumbly_members_guard_controls_world_behavior() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1947=castlecrumbly\n");
+    fx.write(
+        "scripts/skill_agility/scripts/shortcuts.rs2",
+        "\
+[oploc1,castlecrumbly]
+if (map_members = ^false) {
+    mes(^mes_members_feature);
+    return;
+}
+if(stat(agility) < 5) {
+    return;
+}
+",
+    );
+    fx.write(
+        "maps/m45_52.jm2",
+        "\
+==== MAP ====
+0 55 27: h1 u50
+==== LOC ====
+0 55 27: 1947 0 0
+",
+    );
+    let defs = loc_defs(&[(1947, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::AgilityShortcut && edge.loc_id == 1947)
+        .expect("Falador castlecrumbly shortcut");
+    assert!(edge.members_req, "castlecrumbly is members-gated");
+    assert!(
+        !crate::world_state::WorldState::empty().allows(edge),
+        "F2P cannot climb castlecrumbly"
+    );
+    let mut members = crate::world_state::WorldState::empty().with_map_members(true);
+    members.stats.insert(SKILL_AGILITY, 5);
+    assert!(
+        members.allows(edge),
+        "members worlds with Agility 5 can climb castlecrumbly"
+    );
+}
+
+/// The Duel Arena gates (`loc_3197`/`loc_3198`) are plain `gates.loc`
+/// fence gates whose own `[oploc1,…]` opens with the F2P refusal before
+/// `~open_gate` (`game_duelarena/scripts/misc_locs.rs2`): both crossings
+/// need a members world, like any other gate in that config would.
+#[test]
+fn gates_loc_gate_behind_members_refusal_requires_a_members_world() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "3197=loc_3197\n");
+    fx.write(
+        "scripts/general_use/configs/gates.loc",
+        "[loc_3197]\nname=Gate\nop1=Open\nactive=yes\ncategory=gate_main_closed\n",
+    );
+    fx.write(
+        "scripts/minigames/game_duelarena/scripts/misc_locs.rs2",
+        "\
+[oploc1,loc_3197]
+if (map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_gate;
+",
+    );
+    fx.write(
+        "maps/m44_53.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 5 46: 3197 0 0\n",
+    );
+    let defs = loc_defs(&[(3197, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([3197]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let gate: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 3197).collect();
+    assert_eq!(gate.len(), 2, "{gate:?}");
+    let f2p = crate::world_state::WorldState::empty();
+    for e in gate {
+        assert!(e.members_req, "{e:?}");
+        assert!(!f2p.allows(e), "F2P cannot open the Duel Arena gate");
+        assert!(f2p.clone().with_map_members(true).allows(e));
+    }
+}
+
+/// The Shantay henge doorway's `[oploc1,shantay_pass_henge_doorway]`
+/// refuses F2P worlds before either branch (`shantay_pass.rs2`), so the
+/// paid entry and the free exit both need a members world.
+#[test]
+fn shantay_henge_doorway_requires_a_members_world_both_ways() {
+    let fx = Fixture::new();
+    fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+    fx.write(
+        "pack/loc.pack",
+        "4031=shantay_pass_henge_doorway\n2882=border_gate_toll_left\n1562=loc_1562\n",
+    );
+    fx.write(
+        "scripts/areas/area_alkharid/configs/border_gate.loc",
+        "[border_gate_toll_left]\nname=Gate\nop1=Open\ncategory=border_gate_toll_left\nparam=next_loc_stage,loc_1562\n",
+    );
+    fx.write(
+        "scripts/areas/area_alkharid/scripts/shantay_pass.rs2",
+        "\
+[oploc1,shantay_pass_henge_doorway]
+if (map_members = ^false) {
+    mes(^mes_members_gate); // guess
+    return;
+}
+if (coordz(coord) <= coordz(loc_coord)) {
+    p_telejump(movecoord(coord, 0, 0, 3));
+    return;
+}
+queue(shantay_pass_enter, 0, 0);
+",
+    );
+    fx.write(
+        "maps/m51_48.jm2",
+        "==== MAP ====\n0 38 44: h1 u50\n==== LOC ====\n0 38 44: 4031 10 0\n",
+    );
+    let defs = loc_defs(&[(4031, 1, 1)]);
+    let wc = bake_collision(&fx, &defs, &HashSet::from([4031]));
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let henge: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 4031).collect();
+    assert_eq!(henge.len(), 2, "{henge:?}");
+    let mut f2p = crate::world_state::WorldState::empty();
+    f2p.inv.insert(1854, 1);
+    for e in henge {
+        assert!(e.members_req, "{e:?}");
+        assert!(!f2p.allows(e), "F2P cannot pass the Shantay doorway");
+        assert!(f2p.clone().with_map_members(true).allows(e));
+    }
+}
+
+fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
+    TransportEdge {
+        kind,
+        at: WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        loc_id,
+        option,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
+}
+
+/// The bake's two-way check: a packed edge whose source handler reads
+/// `map_members` in a form the shared pass does not set (here a positive
+/// `map_members = ^true` arm reached through the loc's category and a
+/// label) fails while free, and still fails when marked members-only,
+/// because that arm is not a pinned producer gate.
+#[test]
+fn members_check_fails_an_edge_whose_source_reads_map_members() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "100=bridge\n");
+    fx.write(
+        "scripts/areas/configs/bridge.loc",
+        "[bridge]\nname=Bridge\nop1=Cross\ncategory=rope_bridge\n",
+    );
+    fx.write(
+        "scripts/areas/scripts/bridge.rs2",
+        "\
+[oploc1,_rope_bridge] @cross_bridge;
+
+[label,cross_bridge]
+if (%bridge_quest >= 3 & map_members = ^true) {
+    p_telejump(movecoord(coord, 1, 0, 0));
+}
+",
+    );
+    let mut graph = TransportGraph::default();
+    graph
+        .edges
+        .push(members_check_edge(TransportKind::Door, 100, 1));
+    let err = require_members_guards(fx.path(), &graph).expect_err("ungated read");
+    assert!(err.contains("[label,cross_bridge]"), "{err}");
+    graph.edges[0].members_req = true;
+    let err = require_members_guards(fx.path(), &graph).expect_err("unpinned members arm");
+    assert!(
+        err.contains("leading path of [oploc1,_rope_bridge] does not refuse F2P"),
+        "{err}"
+    );
+}
+
+/// The shared pass gates an edge whose source opens with the F2P refusal,
+/// found through the NPC's category; a pinned non-gate read passes only
+/// while its statement is unchanged; an edge with no handler, and a
+/// members spell packed free, fail the check.
+#[test]
+fn members_guards_follow_the_handler_and_pin_non_gate_reads() {
+    let fx = Fixture::new();
+    fx.write("pack/npc.pack", "378=seaman_thresnor\n500=ferryman\n");
+    fx.write(
+        "scripts/areas/configs/sailors.npc",
+        "[seaman_thresnor]\nname=Seaman\ncategory=sailor\n\n[ferryman]\nname=Ferryman\ncategory=ferry\n",
+    );
+    let sailor = "\
+[opnpc1,_sailor]
+if(map_members = ^true & npc_type = captain_tobias) {
+    return;
+}
+@karamja_sailor_dialogue;
+
+[opnpc1,_ferry]
+if (map_members = ^false | %ferry < 2) { mes(\"No.\"); return; }
+~set_sail;
+";
+    fx.write("scripts/areas/scripts/sailors.rs2", sailor);
+    let guards = MembersGuards::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([
+        members_check_edge(TransportKind::Boat, 378, 1),
+        members_check_edge(TransportKind::Boat, 500, 1),
+    ]);
+    apply_members_guards(&guards, &mut graph);
+    assert!(!graph.edges[0].members_req, "the clue branch is no gate");
+    assert!(graph.edges[1].members_req, "the ferry refuses F2P first");
+    require_members_guards(fx.path(), &graph).expect("both edges match their source");
+
+    // A different read in the pinned handler is no longer the exemption.
+    fx.write(
+        "scripts/areas/scripts/sailors.rs2",
+        &sailor.replace("captain_tobias", "seaman_thresnor"),
+    );
+    let err = require_members_guards(fx.path(), &graph).expect_err("changed read");
+    assert!(err.contains("[opnpc1,_sailor]"), "{err}");
+    fx.write("scripts/areas/scripts/sailors.rs2", sailor);
+
+    graph
+        .edges
+        .push(members_check_edge(TransportKind::Npc, 501, 1));
+    let err = require_members_guards(fx.path(), &graph).expect_err("no handler");
+    assert!(err.contains("has no source handler"), "{err}");
+    graph.edges.pop();
+
+    fx.write(
+        "scripts/skill_magic/configs/magic_spells.dbrow",
+        "[magic_spell_teleport_camelot]\ndata=members,true\ndata=tele_coord,0_43_54_5_62\n",
+    );
+    let mut camelot = members_check_edge(TransportKind::Teleport, 0, 0);
+    camelot.to = WorldTile {
+        x: 2757,
+        z: 3518,
+        level: 0,
+    };
+    graph.teleports.push(camelot);
+    let err = require_members_guards(fx.path(), &graph).expect_err("free members spell");
+    assert!(err.contains("members spell teleport"), "{err}");
+}
+
+/// The engine resolves an op through the type, then the category, then
+/// the global `[<op>,_]` handler (`ScriptProvider.getByTrigger`). An edge
+/// served only by the global handler reads it; a type or category handler
+/// still wins over it; an op with no handler names every key tried.
+#[test]
+fn members_guards_fall_back_to_the_global_handler() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "100=plain_gate\n101=own_gate\n102=cat_gate\n",
+    );
+    fx.write(
+        "scripts/areas/configs/gates.loc",
+        "[plain_gate]\nname=Gate\n\n[own_gate]\nname=Gate\n\n[cat_gate]\nname=Gate\ncategory=free_gate\n",
+    );
+    fx.write(
+        "scripts/areas/scripts/gates.rs2",
+        "\
+[oploc1,_]
+if (map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_gate;
+
+[oploc1,own_gate]
+~open_gate;
+
+[oploc1,_free_gate]
+~open_gate;
+",
+    );
+    let guards = MembersGuards::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([
+        members_check_edge(TransportKind::Door, 100, 1),
+        members_check_edge(TransportKind::Door, 101, 1),
+        members_check_edge(TransportKind::Door, 102, 1),
+    ]);
+    apply_members_guards(&guards, &mut graph);
+    let gated: Vec<bool> = graph.edges.iter().map(|e| e.members_req).collect();
+    assert_eq!(
+        gated,
+        [true, false, false],
+        "global handler gates; type and category handlers win over it"
+    );
+    require_members_guards(fx.path(), &graph).expect("every edge matches its engine handler");
+
+    graph
+        .edges
+        .push(members_check_edge(TransportKind::Door, 100, 2));
+    let err = require_members_guards(fx.path(), &graph).expect_err("no op2 handler");
+    assert!(
+        err.contains(
+            "has no source handler (tried [oploc2,plain_gate], [oploc2,loc_100], [oploc2,_])"
+        ),
+        "{err}"
+    );
+}
+
+/// Only the leading path gates: the handler's first statement, through a
+/// chain of unconditional leading `@label` jumps. A refusal behind a
+/// conditional label, a `@multiN` option or a queue does not stop the
+/// free choice beside it, so the edge stays free and the bake fails until
+/// the read is reviewed; marking that edge members-only fails the bake too.
+#[test]
+fn members_guards_gate_only_the_leading_path() {
+    let fx = Fixture::new();
+    fx.write("pack/npc.pack", "500=ferryman\n501=keeper\n");
+    fx.write(
+        "scripts/areas/scripts/ferry.rs2",
+        "\
+[opnpc1,ferryman]
+~chatnpc(\"<p,neutral>Where would you like to go?\");
+if (%ferry_lore = 1) {
+    @ferry_lore;
+}
+weakqueue(ferry_tale, 0);
+@multi2(\"Tell me about the island.\", ferry_lore, \"Sail, please.\", ferry_sail);
+
+[label,ferry_lore]
+if (map_members = ^false) {
+    mes(\"Only members may hear this tale.\");
+    return;
+}
+~chatnpc(\"<p,neutral>The island is old.\");
+
+[queue,ferry_tale]
+if (map_members = ^false) {
+    return;
+}
+~chatnpc(\"<p,neutral>Mind the waves.\");
+
+[label,ferry_sail]
+p_telejump(0_50_50_10_10);
+
+[opnpc1,keeper] @keeper_greet;
+
+[label,keeper_greet] @keeper_check(1);
+
+[label,keeper_check](int $n)
+if (map_members = ^false | $n = 0) {
+    mes(^mes_members_feature);
+    return;
+}
+p_telejump(0_50_50_20_20);
+",
+    );
+    let guards = MembersGuards::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    graph.edges.extend([
+        members_check_edge(TransportKind::Boat, 500, 1),
+        members_check_edge(TransportKind::Boat, 501, 1),
+    ]);
+    apply_members_guards(&guards, &mut graph);
+    assert!(
+        !graph.edges[0].members_req,
+        "the Sail choice is free on every world"
+    );
+    assert!(
+        graph.edges[1].members_req,
+        "the keeper's leading jump chain refuses F2P"
+    );
+
+    let err = require_members_guards(fx.path(), &graph).expect_err("optional refusal");
+    assert!(err.contains("Boat 500"), "{err}");
+    assert!(err.contains("[label,ferry_lore]"), "{err}");
+    assert!(err.contains("[queue,ferry_tale]"), "{err}");
+    assert!(!err.contains("Boat 501"), "{err}");
+
+    graph.edges[0].members_req = true;
+    let err = require_members_guards(fx.path(), &graph).expect_err("over-gate");
+    assert!(err.contains("Boat 500 op1"), "{err}");
+    assert!(
+        err.contains(
+            "packs members_req=true but the leading path of [opnpc1,ferryman] does not refuse F2P"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("Boat 501"), "{err}");
+}
+
+fn derive_static_routes_for(fx: &Fixture) -> TransportGraph {
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(fx, &defs, &HashSet::new());
+    derive_transports(fx.path(), &defs, &wc)
 }
 
 /// The graph derived from an empty content root: only the explicit route
@@ -4146,6 +4625,15 @@ data=tele_coord,0_45_57_10_31
     assert_eq!(trollheim.item_req, vec![(554, 2), (563, 2)]);
     assert_eq!(trollheim.skill_req, vec![(SKILL_MAGIC, 61)]);
     assert_eq!(trollheim.ticks, SPELL_TELEPORT_TICKS);
+    // `data=members,true` is refused on an F2P world (`check_spell_requirements`).
+    assert!(!varrock.members_req, "Varrock is a free spell");
+    assert!(trollheim.members_req, "Trollheim is a members spell");
+    let mut f2p = crate::world_state::WorldState::empty();
+    f2p.stats.insert(SKILL_MAGIC, 99);
+    f2p.inv.extend([(554, 10), (556, 10), (563, 10)]);
+    assert!(f2p.allows(varrock));
+    assert!(!f2p.allows(trollheim), "F2P cannot cast Trollheim");
+    assert!(f2p.with_map_members(true).allows(trollheim));
 }
 
 #[test]
@@ -7024,7 +7512,7 @@ fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
         graph
             .edges
             .iter()
-            .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, AL_KHARID_TOLL_COINS)]),
+            .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, 10)]),
         "no toll or henge hops without border_gate.loc"
     );
     assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
@@ -7086,7 +7574,7 @@ param=next_loc_stage,loc_1563
             .edges
             .iter()
             .filter(|e| e.loc_id == 2882)
-            .all(|e| { e.item_req == vec![(995, AL_KHARID_TOLL_COINS)] && e.varp_req.is_empty() }),
+            .all(|e| { e.item_req == vec![(995, 10)] && e.varp_req.is_empty() }),
         "a missing waiver script must leave only paid crossings"
     );
     fx.write("pack/varp.pack", "419=princequest\n");
@@ -7308,7 +7796,7 @@ param=next_loc_stage,loc_1564
         assert_eq!(e.option, 1, "Open {e:?}");
         assert_eq!(e.ticks, 1, "{e:?}");
         assert_eq!(e.open_loc_id, Some(1564), "{e:?}");
-        assert_eq!(e.item_req, vec![(995, AL_KHARID_TOLL_COINS)], "{e:?}");
+        assert_eq!(e.item_req, vec![(995, 10)], "{e:?}");
         assert_eq!(e.at, extras[0].at);
         assert!(e.skill_req.is_empty() && e.quest_req.is_empty(), "{e:?}");
     }
@@ -7357,7 +7845,7 @@ param=next_loc_stage,loc_1562
         .cloned()
         .collect();
     assert_eq!(left.len(), 2, "left gate still emits: {left:?}");
-    assert_eq!(left[0].item_req, vec![(995, AL_KHARID_TOLL_COINS)]);
+    assert_eq!(left[0].item_req, vec![(995, 10)]);
     assert_eq!(left[0].dir, Some(DoorDir::W));
     assert_eq!(left[1].dir, Some(DoorDir::E));
     assert!(

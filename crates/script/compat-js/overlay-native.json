@@ -1,0 +1,347 @@
+[
+  {
+    "id": "barrel-runtime-values",
+    "module": "@rs2b0t/api",
+    "selector": "$barrel",
+    "operation": "runtime-values",
+    "reason": "Barrel reexports follow the live module; local unsupported values and calls throw, while policy flags and apiVersion are actual runtime data.",
+    "runtime": "crates/script/src/shim/declared_surface.js:1"
+  },
+  {
+    "id": "clue-native-session",
+    "module": "api/ai/clues/SolveClue.js",
+    "selector": "SolveClue",
+    "reason": "The Rust session exposes host, token, status and hooks; retry returns its native acknowledgement rather than upstream void.",
+    "runtime": "crates/script/src/shim/solve_clue.js:21",
+    "declaration": "export class SolveClue implements Task { host: Partial<SolveClueHost>; token: number | null; status: string; constructor(host?: Partial<SolveClueHost>); ownsEquipment(): boolean; clueStatus(): string; noteDeath(): void; retry(): boolean; enabled(): boolean; hooks(): { enabled(): boolean; log(message: unknown): void; setStatus(message: unknown): void }; validate(): boolean; execute(): Promise<void>; }"
+  },
+  {
+    "id": "duel-handshake-initiator",
+    "module": "api/duel/ClueDuel.js",
+    "selector": "ClueDuelHandshake.initiator",
+    "reason": "The native handshake stores initiator as a public boolean.",
+    "runtime": "crates/script/src/shim/clue_duel.js:21",
+    "declaration": "initiator: boolean;"
+  },
+  {
+    "id": "duel-handshake-log",
+    "module": "api/duel/ClueDuel.js",
+    "selector": "ClueDuelHandshake.log",
+    "reason": "The native handshake exposes its stored callback.",
+    "runtime": "crates/script/src/shim/clue_duel.js:22",
+    "declaration": "log: (message: string) => void;"
+  },
+  {
+    "id": "duel-helper-log",
+    "module": "api/duel/ClueDuel.js",
+    "selector": "ClueDuelHelper.log",
+    "reason": "The native helper exposes its stored callback.",
+    "runtime": "crates/script/src/shim/clue_duel.js:38",
+    "declaration": "log: (message: string) => void;"
+  },
+  {
+    "id": "duel-helper-partner",
+    "module": "api/duel/ClueDuel.js",
+    "selector": "ClueDuelHelper.partner",
+    "add": true,
+    "reason": "The native helper stores its partner directly rather than a private handshake.",
+    "runtime": "crates/script/src/shim/clue_duel.js:37",
+    "declaration": "partner: string;"
+  },
+  {
+    "id": "bank-native-deposit-except",
+    "module": "api/bank/Bank.js",
+    "selector": "Bank.depositAllExcept",
+    "add": true,
+    "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
+    "runtime": "crates/script/src/shim/bank.js:96",
+    "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;"
+  },
+  {
+    "id": "bank-native-nearest-world",
+    "module": "api/bank/Bank.js",
+    "selector": "Bank.openNearestWorld",
+    "add": true,
+    "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
+    "runtime": "crates/script/src/shim/bank.js:152",
+    "declaration": "openNearestWorld(): Promise<boolean>;"
+  },
+  {
+    "id": "banking-native-optional-policy",
+    "module": "api/bank/Banking.js",
+    "selector": "Banking.bankNearest",
+    "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
+    "runtime": "crates/script/src/shim/banking.js:81",
+    "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;"
+  },
+  {
+    "id": "combat-style-native-spell-reexport",
+    "module": "api/combat/CombatStyleLogic.js",
+    "selector": "$add",
+    "reason": "The host additionally reexports its served spell table.",
+    "runtime": "crates/script/src/shim/combat_style_logic.js:34",
+    "declaration": "export { SPELL_DB } from '../../data/spelldb.js';"
+  },
+  {
+    "id": "hunting-native-session",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "$add",
+    "reason": "Native hunt tasks inherit public session fields and run; host-only entry helpers marshal the typed site and callbacks to Rust.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:91",
+    "declaration": "type HuntHooks = Partial<Pick<CombatHost, 'log' | 'vlog' | 'setStatus' | 'eatOnce' | 'armSpecial' | 'countBurial' | 'countKill' | 'setSafespotIndex' | 'pickWeapon' | 'parkFor' | 'countBankTrip' | 'hpFraction' | 'panicHp' | 'retreatHp' | 'hasFood' | 'needEat' | 'style' | 'safespotIndex' | 'buryBones' | 'boneName' | 'shieldReady' | 'leaveByWalk' | 'foodName' | 'foodWithdraw' | 'weaponName' | 'ammoName' | 'spellName' | 'keepExtra'>> & { leave?: () => Promise<boolean>; sustain(): Promise<void>; died(): boolean; parked(): boolean; targetIdx(): number | null; setTarget(index: number | null): void; inArea?: (tile: import('../../../adapter/ClientAdapter.js').WorldTile) => boolean }; declare class HuntTask { family: string; host: CombatHost; site: DragonSite; hooks: HuntHooks; token: number; constructor(family: string, host: CombatHost, site: DragonSite); validate(): boolean; run(): Promise<unknown>; } export class EnterLair extends HuntTask { constructor(host: JiveHost, site: DragonSite); execute(): Promise<boolean>; } export function siteArgs(site: Partial<DragonSite> | null, extra?: Record<string, unknown>): Record<string, unknown>; export function hooksOf(host: Partial<CombatHost> | null, site?: DragonSite | null, leave?: () => Promise<boolean>): HuntHooks; export function cell(host: JiveHost, site: DragonSite): Promise<boolean>; export function leaveLair(host: JiveHost, site: DragonSite): Promise<boolean>; export function bankRoutine(host: JiveHost, site: DragonSite, opts?: import('./supply.js').BankOpts): Promise<boolean>;"
+  },
+  {
+    "id": "hunting-fight-session-base",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "Fight",
+    "operation": "extends",
+    "base": "HuntTask",
+    "reason": "Native Fight inherits the hunt session instead of storing upstream private fight policy.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:110"
+  },
+  {
+    "id": "hunting-retreat-session-base",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "Retreat",
+    "operation": "extends",
+    "base": "HuntTask",
+    "reason": "Native Retreat inherits the hunt session.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:133"
+  },
+  {
+    "id": "hunting-hold-session-base",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "HoldSafespot",
+    "operation": "extends",
+    "base": "HuntTask",
+    "reason": "Native HoldSafespot inherits the hunt session.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:144"
+  },
+  {
+    "id": "hunting-walk-session-base",
+    "module": "api/combat/hunting/combat.js",
+    "selector": "WalkToSpot",
+    "operation": "extends",
+    "base": "HuntTask",
+    "reason": "Native WalkToSpot inherits the hunt session.",
+    "runtime": "crates/script/src/shim/hunting_combat.js:155"
+  },
+  {
+    "id": "firemaking-native-reexports",
+    "module": "api/firemaking/Firemaking.js",
+    "selector": "$add",
+    "reason": "Native facade additionally serves the direction table and reexports its fire lighter.",
+    "runtime": "crates/script/src/shim/firemaking.js:7",
+    "declaration": "export { lightFire } from './LightFire.js';\nexport const BURN_DIRS: readonly BurnDir[];"
+  },
+  {
+    "id": "firemaking-unused-predicates",
+    "module": "api/firemaking/Firemaking.js",
+    "selector": "findBurnLane",
+    "operation": "optional",
+    "parameters": ["want", "walkable", "canStep"],
+    "reason": "Native lane search defaults want and never calls the legacy walkable or canStep predicates.",
+    "runtime": "crates/script/src/shim/firemaking.js:105"
+  },
+  {
+    "id": "game-native-retaliate-alias",
+    "module": "api/game/Game.js",
+    "selector": "Game.autoRetaliate",
+    "add": true,
+    "reason": "Host additionally exposes its posted auto-retaliate reader under this name.",
+    "runtime": "crates/script/src/shim/game.js:63",
+    "declaration": "autoRetaliate(): boolean;"
+  },
+  {
+    "id": "game-current-combat-mode",
+    "module": "api/game/Game.js",
+    "selector": "Game.combatStyleMode",
+    "reason": "Native facade ignores the legacy style argument and returns the current posted varp mode.",
+    "runtime": "crates/script/src/shim/game.js:185",
+    "declaration": "combatStyleMode(style?: MeleeCombatStyle): number;"
+  },
+  {
+    "id": "event-ignored-randoms",
+    "module": "api/execution/EventSignal.js",
+    "selector": "EventSignal.ignoredRandoms",
+    "add": true,
+    "reason": "Host additionally publishes the active bot's ignored random-event names.",
+    "runtime": "crates/script/src/shim/event_signal.js:25",
+    "declaration": "ignoredRandoms(): string[];"
+  },
+  {
+    "id": "continue-dialog-public-callback",
+    "module": "api/tasks/ContinueDialog.js",
+    "selector": "ContinueDialog.onContinue",
+    "reason": "Native task stores the callback in a public field.",
+    "runtime": "crates/script/src/shim/continue_dialog.js:5",
+    "declaration": "onContinue?: () => void;"
+  },
+  {
+    "id": "death-recovery-public-options",
+    "module": "api/tasks/DeathRecovery.js",
+    "selector": "DeathRecovery.opts",
+    "reason": "Native task exposes its stored options rather than upstream private state.",
+    "runtime": "crates/script/src/shim/death_recovery.js:9",
+    "declaration": "opts: DeathRecoveryOptions;"
+  },
+  {
+    "id": "periodic-bank-public-options",
+    "module": "api/tasks/PeriodicBank.js",
+    "selector": "PeriodicBank.opts",
+    "reason": "Native task exposes the options handed to its Rust policy.",
+    "runtime": "crates/script/src/shim/periodic_bank.js:8",
+    "declaration": "opts: PeriodicBankOptions;"
+  },
+  {
+    "id": "cake-native-default-options",
+    "module": "api/thieving/CakeStall.js",
+    "selector": "stealCakes",
+    "operation": "optional",
+    "parameters": ["opts"],
+    "reason": "Native cake task defaults its callback/options bag to an empty object.",
+    "runtime": "crates/script/src/shim/cake_stall.js:36"
+  },
+  {
+    "id": "pickpocket-native-table-reexports",
+    "module": "api/thieving/targets.js",
+    "selector": "$add",
+    "reason": "Host facade additionally reexports its actual served target tables.",
+    "runtime": "crates/script/src/shim/thieving_targets.js:3",
+    "declaration": "export { PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';"
+  },
+  {
+    "id": "traversal-native-default-options",
+    "module": "api/walking/Traversal.js",
+    "selector": "Traversal.walkResilient",
+    "operation": "optional",
+    "parameters": ["opts"],
+    "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
+    "runtime": "crates/script/src/shim/traversal.js:47"
+  },
+  {
+    "id": "cook-native-bound-table",
+    "module": "data/cookLocations.js",
+    "selector": "$add",
+    "reason": "Host data module exposes the native bank/surface table directly.",
+    "runtime": "crates/script/src/shim/cook_locations_data.js:11",
+    "declaration": "export const COOK_LOCATIONS: CookLocation[];"
+  },
+  {
+    "id": "cook-native-bound-build",
+    "module": "data/cookLocations.js",
+    "selector": "buildCookLocations",
+    "operation": "optional",
+    "parameters": ["banks"],
+    "reason": "Host returns its prebuilt table and ignores the legacy banks argument.",
+    "runtime": "crates/script/src/shim/cook_locations_data.js:29"
+  },
+  {
+    "id": "cow-native-ignore-start",
+    "module": "data/cowKillerLocations.js",
+    "selector": "resolveCowLocation",
+    "operation": "optional",
+    "parameters": ["start"],
+    "reason": "Host resolves names only; the legacy start tile is ignored and may be omitted.",
+    "runtime": "crates/script/src/shim/cow_killer_locations.js:28"
+  },
+  {
+    "id": "cow-native-nearest-miss",
+    "module": "data/cowKillerLocations.js",
+    "selector": "nearestCowLocation",
+    "reason": "Host native lookup returns undefined when no location is selected, or null if the selected name cannot be resolved in the posted rows.",
+    "runtime": "crates/script/src/shim/cow_killer_locations.js:33",
+    "declaration": "export function nearestCowLocation(tile: WorldTile): CowLocation | null | undefined;"
+  },
+  {
+    "id": "navigator-native-default-export",
+    "module": "event/webwalk/Navigator.js",
+    "selector": "$add",
+    "reason": "Host additionally exports its Navigator value as default.",
+    "runtime": "crates/script/src/shim/navigator.js:54",
+    "declaration": "export default Navigator;"
+  },
+  {
+    "id": "posted-tile-factory",
+    "module": "geometry/Tile.js",
+    "selector": "$add",
+    "reason": "Host factory validates posted coordinates and returns a real Tile or null, not an arbitrary cast snapshot.",
+    "runtime": "crates/script/src/shim/tile.js:30",
+    "declaration": "export function tileFromPosted(value: unknown): Tile | null;"
+  },
+  {
+    "id": "tracker-public-skills",
+    "module": "paint/jive.js",
+    "selector": "XpTracker.skills",
+    "reason": "Native tracker exposes its normalized skill list.",
+    "runtime": "crates/script/src/shim/jive.js:45",
+    "declaration": "skills: string[];"
+  },
+  {
+    "id": "tracker-public-reader",
+    "module": "paint/jive.js",
+    "selector": "XpTracker.read",
+    "reason": "Native tracker exposes the original typed XP/level reader.",
+    "runtime": "crates/script/src/shim/jive.js:46",
+    "declaration": "read: SkillReader;"
+  },
+  {
+    "id": "tracker-native-session-id",
+    "module": "paint/jive.js",
+    "selector": "XpTracker.id",
+    "add": true,
+    "reason": "Native tracker owns a Rust session id instead of a private JS baseline map.",
+    "runtime": "crates/script/src/shim/jive.js:47",
+    "declaration": "id: number;"
+  },
+  {
+    "id": "settings-public-values",
+    "module": "runtime/Settings.js",
+    "selector": "SettingsBag.values",
+    "reason": "Host settings bag exposes the posted value map.",
+    "runtime": "crates/script/src/shim/settings.js:6",
+    "declaration": "values: Record<string, unknown>;"
+  },
+  {
+    "id": "settings-posted-tile",
+    "module": "runtime/Settings.js",
+    "selector": "SettingsBag.tile",
+    "reason": "Host converts posted coordinates to a real Tile, defaults fallback to null, and returns any supplied fallback unchanged without validation.",
+    "runtime": "crates/script/src/shim/settings.js:29",
+    "declaration": "tile(key: string, fallback?: undefined): Tile | null; tile<F extends import('../adapter/ClientAdapter.js').WorldTile | null>(key: string, fallback: F): Tile | F;"
+  },
+  {
+    "id": "bot-host-unsubscribe-result",
+    "module": "runtime/BotHost.js",
+    "selector": "BotHost.addTickListener",
+    "reason": "Native unsubscribe closure returns the Set.delete boolean acknowledgement.",
+    "runtime": "crates/script/src/shim/bot_host.js:6",
+    "declaration": "addTickListener(cb: () => void): () => boolean;"
+  },
+  {
+    "id": "ranged-native-forwarded-defaults",
+    "module": "api/combat/ranged.js",
+    "selector": "rockCrabRangeLoadout",
+    "operation": "optional",
+    "parameters": ["weapon", "ammo"],
+    "reason": "Host forwards rest arguments to rangeLoadoutOf, whose string bridge defaults missing weapon and ammo to empty names.",
+    "runtime": "crates/script/src/shim/ranged.js:13"
+  },
+  {
+    "id": "shop-posted-stock-name",
+    "module": "api/shop/Shop.js",
+    "selector": "Shop.stock",
+    "reason": "Host stock rows preserve an absent posted name as null.",
+    "runtime": "crates/script/src/shim/shop.js:26",
+    "declaration": "stock(): { name: string | null; count: number; slot: number }[];"
+  },
+  {
+    "id": "shop-posted-player-rows",
+    "module": "api/shop/Shop.js",
+    "selector": "Shop.player",
+    "add": true,
+    "reason": "Host additionally exposes posted player sale rows with the same exact shape as stock rows.",
+    "runtime": "crates/script/src/shim/shop.js:34",
+    "declaration": "player(): { name: string | null; count: number; slot: number }[];"
+  }
+]

@@ -386,6 +386,70 @@ fn a_logout_issued_while_the_spawn_waits_holds_the_new_worker_logged_out() {
     s.play_mut().unwrap().stop_slot("b");
 }
 
+#[test]
+fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
+    let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle");
+    s.load_all(&mut surface);
+
+    s.set_memory_mode("b", false).unwrap();
+    let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
+    assert!(
+        !deferred.profile.settings.lowmem,
+        "the disposable spawn profile follows the toggle"
+    );
+    assert_eq!(
+        deferred.arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
+        Some(false),
+        "the deferred arm agrees with the panel gate before spawn"
+    );
+
+    finish_stopping(&mut s, release);
+    assert_eq!(
+        s.play()
+            .unwrap()
+            .arm("b")
+            .expect("b's replacement worker spawns")
+            .lowmem_handshake(),
+        Some(false),
+        "the spawned profile and arm retain the toggled mode"
+    );
+    s.play_mut().unwrap().stop_slot("b");
+}
+
+#[test]
+fn failed_memory_toggle_resets_a_deferred_profile_and_arm() {
+    let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle-fail");
+    s.load_all(&mut surface);
+    let blocked = block_writes(&vault_path("deferred-memory-toggle-fail"));
+
+    s.set_memory_mode("b", false).unwrap();
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
+    assert!(
+        deferred.profile.settings.lowmem,
+        "a refused toggle restores the disposable spawn profile"
+    );
+    assert_eq!(
+        deferred.arm.as_ref().and_then(|arm| arm.lowmem_handshake()),
+        Some(true),
+        "a refused toggle restores the deferred arm"
+    );
+
+    finish_stopping(&mut s, release);
+    assert_eq!(
+        s.play()
+            .unwrap()
+            .arm("b")
+            .expect("b's replacement worker spawns")
+            .lowmem_handshake(),
+        Some(true),
+        "the replacement worker starts on the restored durable mode"
+    );
+    s.play_mut().unwrap().stop_slot("b");
+}
+
 /// A member removed and loaded again before a poll saw its removal settle
 /// (its worker already gone): the Remove completes when the new lifetime
 /// starts. Pending reports are never evicted, so a Remove left pending by
@@ -909,7 +973,19 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     ));
     let failures = s.take_write_failures();
     assert_eq!(failures.len(), 1);
-    assert!(failures[0].starts_with("random: "), "{failures:?}");
+    assert_eq!(
+        (
+            failures[0].op,
+            failures[0].target.as_str(),
+            failures[0].label
+        ),
+        (op, "alice", "random"),
+        "{failures:?}"
+    );
+    assert!(
+        failures[0].to_string().starts_with("random: "),
+        "the banner text is `label: error`: {failures:?}"
+    );
     assert_eq!(
         s.vault()
             .unwrap()
@@ -1442,4 +1518,706 @@ fn a_0_1_8_1_vault_loads_spawns_and_saves_through_the_core_unchanged() {
     );
     assert_eq!(saved.password, "old-pass");
     assert_eq!(reread.get("bob"), s.vault().unwrap().get("bob"));
+}
+
+// A profile form's saves settle by their write's operation id: a delayed
+// writer lets the form move on (or the write fail) before the result lands.
+
+use crate::{FormNotice, FormSettled, ProfileFormSave};
+
+/// What a form saw settle: `(saved | failed, destination, same form)`.
+fn outcomes(settled: &[FormSettled]) -> Vec<(&'static str, String, bool)> {
+    settled
+        .iter()
+        .map(|s| match s {
+            FormSettled::Saved(s) => ("saved", s.record.destination.clone(), s.same_form),
+            FormSettled::Failed(f) => ("failed", f.record.destination.clone(), f.same_form),
+        })
+        .collect()
+}
+
+/// `alice` with `password`, as a form would submit it.
+fn alice_with(s: &OperatorSession<u32>, password: &str) -> Profile {
+    let mut profile = s.vault().unwrap().get("alice").unwrap().clone();
+    profile.password = password.into();
+    profile
+}
+
+/// Queue a credentials save of alice from `form`.
+fn form_saves_alice(
+    s: &mut OperatorSession<u32>,
+    form: &mut ProfileFormSave,
+    password: &str,
+) -> OperationId {
+    let draft = alice_with(s, password);
+    let op = s
+        .save_profile(draft, ArmMirror::None, "credentials")
+        .unwrap();
+    form.submitted(s, op, Some("alice"), "alice");
+    op
+}
+
+#[test]
+fn a_write_failing_after_it_was_queued_shows_in_the_form_it_came_from() {
+    let mut s = session("form-fail", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let op = form_saves_alice(&mut s, &mut form, "typed");
+    assert!(form.saving(&s), "the form's save has not settled");
+    assert!(form.settle(&mut s).is_empty(), "still queued");
+    assert!(form.notice().is_none());
+
+    let blocked = block_writes(&vault_path("form-fail"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let failures = s.take_write_failures();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+        (failures[0].op, failures[0].target.as_str()),
+        (op, "alice"),
+        "the failure names its operation and profile"
+    );
+    assert_eq!(
+        outcomes(&form.settle(&mut s)),
+        [("failed", "alice".into(), true)]
+    );
+    assert_eq!(
+        form.notice(),
+        Some(&FormNotice::Failed(failures[0].to_string())),
+        "the form shows the banner's text"
+    );
+    assert!(!form.saving(&s), "a failed save can be retried");
+    let staged = s.vault().unwrap().get("alice").unwrap();
+    assert_eq!(staged.password, "pw", "the durable value is back");
+
+    form.edited();
+    assert!(form.notice().is_none(), "the next edit clears the failure");
+}
+
+#[test]
+fn a_write_failing_after_the_form_moved_on_never_shows_in_another_form() {
+    let mut s = session("form-moved", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    // Switched to another target, then closed and reopened.
+    form.form_changed();
+    form.form_changed();
+    assert!(!form.saving(&s), "the new form has no save of its own");
+
+    let blocked = block_writes(&vault_path("form-moved"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    assert_eq!(
+        outcomes(&form.settle(&mut s)),
+        [("failed", "alice".into(), false)]
+    );
+    assert!(form.notice().is_none(), "nothing in the form showing now");
+    assert_eq!(
+        s.take_write_failures().len(),
+        1,
+        "the banner still reports it"
+    );
+}
+
+#[test]
+fn a_failed_save_hands_back_the_draft_that_did_not_land() {
+    let mut s = session("form-record", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let op = form_saves_alice(&mut s, &mut form, "typed");
+    // An unrelated edit staged after the save changes the vault row, not
+    // what the save carried.
+    s.set_auto_login("alice", true).unwrap();
+    assert_eq!(
+        s.saves_in_flight().iter().map(|r| r.op).collect::<Vec<_>>(),
+        [op],
+        "the session's record of the save is all that says it is in flight"
+    );
+    let blocked = block_writes(&vault_path("form-record"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    assert!(s.saves_in_flight().is_empty());
+    let settled = form.settle(&mut s);
+    let [FormSettled::Failed(failed)] = settled.as_slice() else {
+        panic!("one failed save, got {settled:?}");
+    };
+    assert_eq!(failed.record.op, op);
+    assert_eq!(failed.record.source.as_deref(), Some("alice"));
+    assert_eq!(failed.record.destination, "alice");
+    let mut expected = alice_with(&s, "typed");
+    expected.settings.auto_login = false;
+    assert_eq!(
+        failed.record.draft, expected,
+        "the typed draft as submitted, not the restored row or a later edit"
+    );
+    assert_eq!(s.vault().unwrap().get("alice").unwrap().password, "pw");
+    assert!(
+        form.settle(&mut s).is_empty(),
+        "a settled save is seen once"
+    );
+}
+
+fn publish_alice_login(s: &mut OperatorSession<u32>, lowmem: bool) {
+    {
+        let mut rows = s.play().unwrap().statuses.lock().unwrap();
+        if let Some(row) = rows.iter_mut().find(|row| row.username == "alice") {
+            row.connected = true;
+            row.ingame = true;
+            row.scene_state = 2;
+            row.login_latched = false;
+            row.login_lowmem = Some(lowmem);
+        } else {
+            rows.push(SlotStatus {
+                username: "alice".into(),
+                connected: true,
+                ingame: true,
+                scene_state: 2,
+                login_lowmem: Some(lowmem),
+                ..SlotStatus::default()
+            });
+        }
+    }
+    s.poll();
+}
+
+#[test]
+fn memory_toggle_stages_arms_and_settles() {
+    let mut s = session("mem-toggle", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert_eq!(
+        s.memory_status("alice"),
+        None,
+        "a spawn is not a successful login handshake"
+    );
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(true),
+        "the effective spawn mode seeds the arm"
+    );
+    publish_alice_login(&mut s, true);
+    assert!(!s.memory_status("alice").unwrap().differs());
+
+    let op = s.set_memory_mode("alice", false).unwrap();
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(false),
+        "the toggle arms the next handshake at once (parked slots converge)"
+    );
+    let notice = s.memory_status("alice").expect("recorded login");
+    assert!(
+        notice.differs(),
+        "server tabs/sound still follow the login mode"
+    );
+    assert_eq!((notice.login_lowmem, notice.desired_lowmem), (true, false));
+
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(
+        !s.vault().unwrap().get("alice").unwrap().settings.lowmem,
+        "the setting is durable"
+    );
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(false),
+        "settle re-affirms the armed handshake"
+    );
+}
+
+#[test]
+fn a_superseded_save_settles_with_the_commit_it_was_written_in() {
+    for fails in [false, true] {
+        let test = format!("form-superseded-{fails}");
+        let mut s = session(&test, &[("alice", 1, false)]);
+        let mut form = ProfileFormSave::default();
+        form.form_changed();
+        let gate = s.write_gate();
+        let held = gate.lock().unwrap();
+        form_saves_alice(&mut s, &mut form, "first");
+        // The operator discards that form; the next one saves alice again
+        // before the writer got to the first.
+        form.form_changed();
+        let second = form_saves_alice(&mut s, &mut form, "second");
+        let blocked = fails.then(|| block_writes(&vault_path(&test)));
+        drop(held);
+        s.flush_writes();
+        if let Some(blocked) = blocked {
+            unblock_writes(blocked);
+        }
+
+        let settled = outcomes(&form.settle(&mut s));
+        if fails {
+            assert_eq!(
+                settled,
+                [
+                    ("failed", "alice".into(), false),
+                    ("failed", "alice".into(), true),
+                ]
+            );
+            let failures = s.take_write_failures();
+            assert_eq!(
+                failures.iter().map(|f| f.op).collect::<Vec<_>>(),
+                [second],
+                "one report, by the write that owns the row"
+            );
+            assert!(matches!(form.notice(), Some(FormNotice::Failed(_))));
+        } else {
+            assert_eq!(
+                settled,
+                [
+                    ("saved", "alice".into(), false),
+                    ("saved", "alice".into(), true),
+                ],
+                "the superseded save is durable inside the later one's row"
+            );
+            assert_eq!(
+                form.notice(),
+                Some(&FormNotice::Saved("Saved alice.".into()))
+            );
+            let disk = Vault::unlock(&vault_path(&test), "test-passphrase-01").unwrap();
+            assert_eq!(disk.get("alice").unwrap().password, "second");
+        }
+    }
+}
+
+#[test]
+fn a_save_of_a_profile_deleted_before_it_was_written_leaves_nothing_to_show() {
+    let mut s = session("form-deleted", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    s.vault_remove("alice").unwrap().unwrap();
+    drop(held);
+    s.flush_writes();
+
+    assert!(
+        form.settle(&mut s).is_empty(),
+        "the profile is gone: no Saved, and no profile to select"
+    );
+    assert!(form.notice().is_none());
+    assert!(!form.saving(&s));
+    let disk = Vault::unlock(&vault_path("form-deleted"), "test-passphrase-01").unwrap();
+    assert!(disk.get("alice").is_none());
+}
+
+#[test]
+fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile() {
+    let mut s = session("form-delete-fails", &[("alice", 1, false)]);
+    let mut form = ProfileFormSave::default();
+    form.form_changed();
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    form_saves_alice(&mut s, &mut form, "typed");
+    let delete = s.vault_remove("alice").unwrap().unwrap();
+    let blocked = block_writes(&vault_path("form-delete-fails"));
+    drop(held);
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    let failures = s.take_write_failures();
+    assert_eq!(
+        failures
+            .iter()
+            .map(|f| (f.op, f.target.as_str()))
+            .collect::<Vec<_>>(),
+        [(delete, "alice")]
+    );
+    assert_eq!(
+        outcomes(&form.settle(&mut s)),
+        [("failed", "alice".into(), true)]
+    );
+    let restored = s.vault().unwrap().get("alice").expect("alice is back");
+    assert_eq!(restored.password, "pw", "the durable row, not the draft");
+}
+
+#[test]
+fn memory_toggle_before_load_applies_at_spawn_without_notice() {
+    let mut s = session("mem-early", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    s.load("alice", &mut surface);
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
+    assert_eq!(
+        s.memory_status("alice"),
+        None,
+        "intent alone is not a successful handshake"
+    );
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().differs());
+}
+
+#[test]
+fn memory_status_is_none_without_a_recorded_login() {
+    let s = session("mem-none", &[("alice", 1, false)]);
+    assert_eq!(s.memory_status("alice"), None);
+    assert_eq!(s.memory_status("ghost"), None);
+    assert!(!s.memory_relog_warning("alice"));
+}
+
+#[test]
+fn memory_relog_parks_then_logs_back_in_through_the_fifo_path() {
+    let mut s = session("mem-relog", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    push_status(
+        &s,
+        SlotStatus {
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..row("alice")
+        },
+    );
+    s.poll();
+
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    let relog = s.request_memory_relog("alice", &mut surface);
+    assert_eq!(
+        s.operation(relog).unwrap().outcome("alice"),
+        Some(&Outcome::Pending)
+    );
+    assert!(arm(&s, "alice").login_latched(), "logout latches first");
+    assert!(arm(&s, "alice").wants_logout());
+    assert!(
+        s.memory_status("alice").unwrap().relog_pending,
+        "the poll must see the armed relog"
+    );
+
+    // The worker parks on the title after its clean logout.
+    {
+        let mut rows = s.play().unwrap().statuses.lock().unwrap();
+        rows[0].connected = false;
+        rows[0].ingame = false;
+        rows[0].login_latched = true;
+    }
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        alice.wants_login(),
+        "the poll re-arms the login once parked"
+    );
+    assert!(!alice.login_latched());
+    assert!(
+        s.memory_status("alice").unwrap().relog_pending,
+        "the queued state remains visible through the login half"
+    );
+    assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "re-arming cannot claim the login succeeded"
+    );
+    publish_alice_login(&mut s, false);
+    assert!(
+        !s.memory_status("alice").unwrap().relog_pending,
+        "the successful login handshake settles the relog"
+    );
+    assert!(
+        !s.memory_status("alice").unwrap().differs(),
+        "the worker-published successful handshake settles the notice"
+    );
+    let last = s
+        .fleet_view()
+        .row("alice")
+        .expect("member row")
+        .last_op
+        .as_ref()
+        .expect("a reported operation");
+    assert_eq!(last.action, ActionKind::Login);
+    assert_eq!(last.outcome, Outcome::Completed);
+}
+
+#[test]
+fn failed_memory_relog_login_clears_the_queued_state() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-relog-login-failed");
+    s.request_memory_relog("alice", &mut surface);
+    park_alice(&s);
+    s.poll();
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+
+    let alice = arm(&s, "alice");
+    alice.hold_login_on_error_for_test();
+    s.poll();
+
+    assert!(!alice.wants_login(), "the failed login remains held");
+    let notice = s.memory_status("alice").unwrap();
+    assert!(
+        !notice.relog_pending,
+        "a failed login half is no longer queued"
+    );
+    assert!(
+        notice.differs(),
+        "the failed handshake keeps the memory-mode notice"
+    );
+}
+
+#[test]
+fn manual_login_supersedes_a_pending_relog() {
+    let mut s = session("mem-supersede", &[("alice", 1, true)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    publish_alice_login(&mut s, true);
+    s.request_memory_relog("alice", &mut surface);
+    assert!(s.memory_status("alice").unwrap().relog_pending);
+    s.login("alice", &mut surface);
+    assert!(
+        !s.memory_status("alice").unwrap().relog_pending,
+        "an explicit Log in owns the slot again"
+    );
+}
+
+#[test]
+fn a_failed_memory_write_resets_the_armed_handshake() {
+    let mut s = session("mem-write-fail", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    publish_alice_login(&mut s, true);
+    let blocked = block_writes(&vault_path("mem-write-fail"));
+
+    let op = s.set_memory_mode("alice", false).unwrap();
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
+    s.flush_writes();
+    unblock_writes(blocked);
+
+    assert!(matches!(
+        s.operation(op).unwrap().outcome("alice"),
+        Some(Outcome::Failed(_))
+    ));
+    assert!(s
+        .take_write_failures()
+        .iter()
+        .any(|failure| failure.label == "memory"));
+    assert!(
+        s.vault().unwrap().get("alice").unwrap().settings.lowmem,
+        "the staged edit is rolled back to the durable value"
+    );
+    assert_eq!(
+        arm(&s, "alice").lowmem_handshake(),
+        Some(true),
+        "the next handshake sends the restored value, never the refused one"
+    );
+    assert!(
+        !s.memory_status("alice").unwrap().differs(),
+        "no phantom notice survives the rollback"
+    );
+}
+
+#[test]
+fn memory_relog_warns_while_a_script_runs() {
+    let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
+    let mut s = session("mem-warn", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "no script: Relog-now needs no warning"
+    );
+    let (js, shape) = looping_bot(&iso.dir);
+    s.start_script(
+        "alice",
+        ScriptStart::Load {
+            js,
+            shape,
+            bag: None,
+            siblings: Vec::new(),
+        },
+        Some("file:looping".into()),
+    )
+    .unwrap();
+    let settled = settle_start(&mut s);
+    assert!(
+        settled
+            .iter()
+            .any(|st| st.outcome == Some(script::StartOutcome::Ready)),
+        "the looping script runs: {settled:?}"
+    );
+    assert!(
+        s.memory_relog_warning("alice"),
+        "a running script is interrupted by a relog"
+    );
+
+    let stop = s.stop_script("alice");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
+        && Instant::now() < deadline
+    {
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "a stopped script needs no warning"
+    );
+}
+
+fn memory_ingame_toggled(test: &str) -> (OperatorSession<u32>, Recorder) {
+    let mut s = session(test, &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    push_status(
+        &s,
+        SlotStatus {
+            username: "alice".into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            login_lowmem: Some(true),
+            ..SlotStatus::default()
+        },
+    );
+    s.poll();
+    s.set_memory_mode("alice", false).unwrap();
+    s.flush_writes();
+    assert!(s.memory_status("alice").unwrap().differs());
+    (s, surface)
+}
+
+fn park_alice(s: &OperatorSession<u32>) {
+    let mut rows = s.play().unwrap().statuses.lock().unwrap();
+    let row = rows
+        .iter_mut()
+        .find(|row| row.username == "alice")
+        .expect("alice status");
+    row.connected = false;
+    row.ingame = false;
+    row.scene_state = 0;
+    row.login_latched = true;
+}
+
+#[test]
+fn user_logout_cancels_a_pending_memory_relog() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-user-logout");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.logout("alice");
+    park_alice(&s);
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        !alice.wants_login(),
+        "Logout must cancel the relog's login half"
+    );
+    assert!(alice.login_latched(), "the user's logout remains latched");
+    assert!(!s.memory_status("alice").unwrap().relog_pending);
+}
+
+#[test]
+fn user_logout_all_cancels_a_pending_memory_relog() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-user-logout-all");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.logout_all();
+    park_alice(&s);
+    s.poll();
+
+    let alice = arm(&s, "alice");
+    assert!(
+        !alice.wants_login(),
+        "Logout all cancels the relog's login half"
+    );
+    assert!(alice.login_latched(), "the fleet logout remains latched");
+}
+
+#[test]
+fn completed_memory_relog_clears_the_fleet_logout_latch() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-fleet-latch");
+    s.request_memory_relog("alice", &mut surface);
+    park_alice(&s);
+
+    s.poll();
+
+    assert!(!s.fleet().latched("alice"));
+    assert!(s.fleet().should_auto_login("alice", true));
+    assert!(!s.arm_for_profile("alice").unwrap().login_latched());
+}
+
+#[test]
+fn login_all_without_a_handshake_keeps_the_memory_notice() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-login-all-ingame");
+
+    s.login_all(&mut surface);
+    s.poll();
+
+    assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "an in-game Login all cannot claim a handshake changed server mode"
+    );
+}
+
+#[test]
+fn login_that_cancels_a_pending_relog_keeps_the_memory_notice() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-login-cancels-relog");
+    s.request_memory_relog("alice", &mut surface);
+
+    s.login("alice", &mut surface);
+    s.poll();
+
+    assert!(!arm(&s, "alice").wants_logout());
+    assert!(
+        s.memory_status("alice").unwrap().differs(),
+        "no completed handshake means the server still uses the old mode"
+    );
+}
+
+struct MemoryOverrideSurface;
+
+impl SlotSurface for MemoryOverrideSurface {
+    type Io = u32;
+
+    fn attach(
+        &mut self,
+        _name: &str,
+        profile: &mut Profile,
+        retained: Option<u32>,
+    ) -> SlotAttach<u32> {
+        profile.settings.lowmem = false;
+        SlotAttach {
+            io: retained.unwrap_or_default(),
+            input: None,
+            mailbox: None,
+        }
+    }
+
+    fn lifetime_reset(&mut self, _name: &str) {}
+
+    fn released(&mut self, _name: &str) {}
+}
+
+#[test]
+fn session_memory_override_is_the_effective_mode_not_a_permanent_notice() {
+    let mut s = session("mem-session-override", &[("alice", 1, false)]);
+    let mut surface = MemoryOverrideSurface;
+    s.load("alice", &mut surface);
+    s.login("alice", &mut surface);
+    publish_alice_login(&mut s, false);
+
+    let notice = s.memory_status("alice").expect("spawn memory mode");
+    assert!(
+        !notice.differs(),
+        "the session override is both the handshake and desired mode"
+    );
 }

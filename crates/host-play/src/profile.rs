@@ -13,7 +13,7 @@ use client::Transport;
 use nav::canlight;
 use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
-use nav::pack::{decode_canlight_sidecar, decode_reach_sidecar, sha256_hex};
+use nav::pack::sha256_hex;
 use nav::world::NavWorld;
 
 use crate::cache::CacheAvailability;
@@ -301,6 +301,8 @@ pub struct ServerProfile {
     canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
+    #[cfg(feature = "debug-catalog")]
+    debug_engine_dir: PathBuf,
     vault_path: PathBuf,
     catalog_root: Option<PathBuf>,
     world_members: WorldMembersFact,

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "revision": 274,
   "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
   "content_commit": "000c19997e07206131bcb3c884265840efce416d",
@@ -15522,6 +15522,11 @@
       "sha256": "141c5da19bb0d3e6251abe815526a831429addbc9b1307ac9f35533d4618173a"
     },
     {
+      "path": "engine/src/engine/entity/PlayerStat.ts",
+      "bytes": 1649,
+      "sha256": "9dee615c1d2708ba620e2eab448d72922320f59eb4d264919c0f6c653056333a"
+    },
+    {
       "path": "engine/src/io/BZip2.ts",
       "bytes": 131,
       "sha256": "bac68744b37e5e294632e66bac895a5210492ec35fa509d9b5c5315c99791024"
@@ -15540,6 +15545,11 @@
       "path": "engine/src/network/game/client/ClientGameProtCategory.ts",
       "bytes": 713,
       "sha256": "5ce0f59b1a63139f56985c4bb64a2f56d2b9b0771ec5eb8e1f35c0cb013fbea4"
+    },
+    {
+      "path": "engine/src/network/game/client/handler/ClientCheatHandler.ts",
+      "bytes": 27951,
+      "sha256": "d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552e1639b1bdcf00d69"
     },
     {
       "path": "engine/src/network/game/client/model/AnticheatCycleLogic.ts",
@@ -15915,6 +15925,15 @@
       "npc 404 macro_whirlpool_saltfish",
       "npc 405 macro_whirlpool_rarefish",
       "npc 406 macro_whirlpool_memberfish",
+      "npc 444 macro_ent_tree1",
+      "npc 445 macro_ent_tree2",
+      "npc 446 macro_ent_dead_tree1",
+      "npc 447 macro_ent_dead_tree2",
+      "npc 448 macro_ent_oak",
+      "npc 449 macro_ent_willow",
+      "npc 450 macro_ent_yew",
+      "npc 451 macro_ent_maple",
+      "npc 452 macro_ent_magic",
       "npc 800 0_45_152_lavafish",
       "npc 927 0_38_49_freshfish",
       "npc 1174 0_43_47_karambwanji",
@@ -40566,6 +40585,27 @@
           "6140 0 57 52 l2289 3"
         ]
       }
+    ],
+    "hazard_npcs": [
+      403,
+      404,
+      405,
+      406,
+      444,
+      445,
+      446,
+      447,
+      448,
+      449,
+      450,
+      451,
+      452
+    ],
+    "incidental_gem_ids": [
+      1617,
+      1619,
+      1621,
+      1623
     ]
   }
 }

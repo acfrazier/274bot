@@ -8,7 +8,7 @@
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
@@ -1148,6 +1148,7 @@ fn seed_runner(
     scenario: scenario::Scenario,
     name: &str,
     world: Option<Arc<nav::world::NavWorld>>,
+    map_members: bool,
 ) -> Seed {
     let step_names = scenario.steps.iter().map(|step| step.name).collect();
     let deadline = if scenario.name == "duel_arena" {
@@ -1156,6 +1157,7 @@ fn seed_runner(
         Duration::from_secs(1800)
     };
     let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+    runner.set_map_members(map_members);
     runner.set_live_names(&[name.to_owned()]);
     runner.set_deadline(deadline);
     Seed {
@@ -1207,7 +1209,7 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     scenario_name: Option<String>,
-    output: std::fs::File,
+    output: BufWriter<std::fs::File>,
     diagnostics: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
     pub single_renderer: bool,
@@ -1236,6 +1238,7 @@ pub enum SeedNav {
     FromPlay {
         world: Option<Arc<nav::world::NavWorld>>,
         obj_names: Option<Arc<api::obj_names::ObjNames>>,
+        map_members: bool,
     },
 }
 
@@ -1409,6 +1412,9 @@ impl Run {
             .create_new(true)
             .open(&output_path)
             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+        // JSON's Display writes individual tokens. Coalesce those writes,
+        // especially when the samples file lives on a VM's shared volume.
+        let output = BufWriter::new(output);
         let qualification_output = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1471,14 +1477,19 @@ impl Run {
             *SEEDS.lock().unwrap() = Some(HashMap::new());
             return Ok(());
         }
-        let (seed_world, obj_names) = match seed_nav {
+        let (seed_world, obj_names, map_members) = match seed_nav {
             SeedNav::LoadDefault => (
                 nav::world::NavWorld::load_pack(&scenario::default_pack_path())
                     .ok()
                     .map(Arc::new),
                 None,
+                false,
             ),
-            SeedNav::FromPlay { world, obj_names } => (world, obj_names),
+            SeedNav::FromPlay {
+                world,
+                obj_names,
+                map_members,
+            } => (world, obj_names, map_members),
         };
         let mut seeds = HashMap::new();
         let duel_gate = (self.scenario_name.as_deref() == Some("duel_arena"))
@@ -1502,7 +1513,7 @@ impl Run {
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
             qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
             scenario.settings.terminal_shot = None;
-            let mut seed = seed_runner(scenario, name, seed_world.clone());
+            let mut seed = seed_runner(scenario, name, seed_world.clone(), map_members);
             seed.duel = duel_gate.as_ref().map(|gate| DuelSlot {
                 gate: Arc::clone(gate),
                 slot,
@@ -1891,6 +1902,9 @@ impl Run {
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
+            // Frontends finish with process::exit, which skips destructors:
+            // each complete row must be visible before this poll returns.
+            self.output.flush().map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
             }
@@ -1977,7 +1991,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
+        write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
 
     /// The duel fleet's recorded failure, named with its slot's account,
@@ -2015,7 +2029,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        if let Err(write_error) = writeln!(self.qualification_output, "{value}") {
+        if let Err(write_error) = write_row(&mut self.qualification_output, &value) {
             eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
         }
     }
@@ -2033,9 +2047,9 @@ impl Run {
         let row = serde_json::json!({"record":"diagnostics","elapsed_s":self.started.elapsed().as_secs_f64(),"failure":failure,"slots":slots});
         // A separate record type in the diagnostic-only sidecar keeps original
         // Sample consumers and baseline JSONL unchanged.
-        writeln!(
+        write_row(
             self.diagnostic_output.as_mut().expect("diagnostic output"),
-            "{row}"
+            &row,
         )
         .map_err(|e| e.to_string())
     }
@@ -2048,6 +2062,16 @@ impl Run {
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
     }
+}
+
+/// One sidecar row in a single write. JSON's `Display` emits token-sized
+/// writes, which cost a measured frame when a sidecar row lands inside the
+/// observed window; one `write_all` per row also leaves nothing buffered
+/// for `process::exit` to lose.
+fn write_row(file: &mut std::fs::File, value: &serde_json::Value) -> std::io::Result<()> {
+    let mut line = value.to_string();
+    line.push('\n');
+    file.write_all(line.as_bytes())
 }
 
 #[cfg(test)]
@@ -2546,8 +2570,8 @@ mod tests {
             Default::default(),
             vec![],
         ));
-        let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()));
-        let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()));
+        let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()), false);
+        let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()), false);
         assert_eq!(
             Arc::strong_count(&world),
             3,
@@ -2593,6 +2617,7 @@ mod tests {
         run.bind_seed_nav(SeedNav::FromPlay {
             world: Some(world.clone()),
             obj_names: None,
+            map_members: false,
         })
         .expect("bind play world");
         let seeds = SEEDS.lock().unwrap();
@@ -2623,6 +2648,7 @@ mod tests {
         run.bind_seed_nav(SeedNav::FromPlay {
             world: None,
             obj_names: None,
+            map_members: false,
         })
         .expect("bind missing pack");
         let seeds = SEEDS.lock().unwrap();
@@ -2665,6 +2691,7 @@ mod tests {
             SeedNav::FromPlay {
                 world: Some(world.clone()),
                 obj_names: None,
+                map_members: false,
             },
         )
         .expect("prepare with play nav");

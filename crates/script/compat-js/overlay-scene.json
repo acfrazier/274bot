@@ -1,0 +1,140 @@
+[
+  {
+    "id": "scene-row-common-posted-shape",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "$add",
+    "reason": "The V8 SceneEntity writer posts flat x/z/level/actions, the nested tile and common combat fields; it does not expose the FlatBuffer-only shape or angle fields. ClientAdapter returns these posted rows unchanged.",
+    "runtime": "crates/script/src/shim/client_adapter.js:89",
+    "declaration": "interface PostedSceneEntity { index: number; id: number; name: string | null; x: number; z: number; level: number; tile: WorldTile; distance: number; max_health: number; totalHealth: number; in_combat: boolean; animating: boolean; actions: string[]; reachable: boolean; reachable_adj: boolean; combat_level: number; target_kind: number; target_index: number; faceEntity: number; size: number; nx: number; nz: number; }"
+  },
+  {
+    "id": "scene-row-npc",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "NpcSnapshot",
+    "reason": "NPC rows use the posted scene coordinates/actions and NPC-only route fields from the host projection and V8 writer (crates/host-play/src/script_snapshot.rs:544-567; crates/script/src/load/snapshot.rs:1466-1512), not the frozen nested/combat snapshot field names. The wrapper returns health without coercion (crates/script/src/shim/npcs.js:26-28).",
+    "runtime": "crates/script/src/shim/npcs.js:6",
+    "declaration": "export interface NpcSnapshot extends PostedSceneEntity { health: number | null; network_x?: number; network_z?: number; }"
+  },
+  {
+    "id": "scene-row-loc",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "LocSnapshot",
+    "reason": "Loc rows expose flat scene coordinates, actions and combat fields through the common V8 SceneEntity writer, but not the FlatBuffer-only shape or angle. The shim wraps the row and reads x/z/level/actions directly.",
+    "runtime": "crates/script/src/shim/locs.js:6",
+    "declaration": "export interface LocSnapshot extends PostedSceneEntity { health: number; }"
+  },
+  {
+    "id": "scene-row-player",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "PlayerSnapshot",
+    "reason": "Player rows are projected with flat coordinates, combat/target fields, and actions, then emitted by the common SceneEntity writer (crates/host-play/src/script_snapshot.rs:649-672; crates/script/src/load/snapshot.rs:1424-1504); the player wrapper consumes the flat names (crates/script/src/shim/players.js:5-48).",
+    "runtime": "crates/script/src/shim/players.js:6",
+    "declaration": "export interface PlayerSnapshot extends PostedSceneEntity { health: number; }"
+  },
+  {
+    "id": "scene-row-ground-item",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "GroundItemSnapshot",
+    "reason": "Ground-item rows have the shared posted flat scene shape and no count field (crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504); GroundItem reads the flat coordinates/actions and defaults an absent count to one (crates/script/src/shim/grounditems.js:18-32).",
+    "runtime": "crates/script/src/shim/grounditems.js:6",
+    "declaration": "export interface GroundItemSnapshot extends PostedSceneEntity { health: number; }"
+  },
+  {
+    "id": "scene-reader-self-target",
+    "module": "adapter/ClientAdapter.js",
+    "selector": "reader.selfTarget",
+    "add": true,
+    "reason": "The shim normalizes the posted self target to a required numeric kind/index pair, with an explicit none value (crates/script/src/shim/client_adapter.js:170-176).",
+    "runtime": "crates/script/src/shim/client_adapter.js:170",
+    "declaration": "selfTarget(): { kind: number; index: number };"
+  },
+  {
+    "id": "scene-npc-row-field",
+    "module": "api/model/Npc.js",
+    "selector": "$add",
+    "reason": "The runtime stores its input row directly, and flat posted row properties may be absent on an explicitly constructed partial wrapper; this field type preserves the default full posted NpcSnapshot precision while describing such partial instances (crates/script/src/shim/npcs.js:6-8,26-28).",
+    "runtime": "crates/script/src/shim/npcs.js:6",
+    "declaration": "type NpcRowField<S extends object, K extends keyof NpcSnapshot> = K extends keyof S ? S[K] : NpcSnapshot[K] | undefined;"
+  },
+  {
+    "id": "scene-npc-wrapper",
+    "module": "api/model/Npc.js",
+    "selector": "Npc",
+    "reason": "Npc stores any supplied row without validation, reads flat row fields, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc is a runtime re-export of that class (crates/script/src/shim/npcs.js:5-8,26-28,42-50,77-105; crates/script/src/shim/model_npc.js:1).",
+    "runtime": "crates/script/src/shim/npcs.js:6",
+    "declaration": "export declare class Npc<S extends Partial<NpcSnapshot> = NpcSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): NpcRowField<S, 'id'>; get level(): number; get index(): NpcRowField<S, 'index'>; get size(): number; get inCombat(): boolean; get health(): NpcRowField<S, 'health'>; targetsAnotherPlayer(): boolean; targetsMe(): boolean; networkOrigin(): Tile; tile(): Tile; networkTile(): Tile; distance(): number; actions(): string[]; valid(): boolean; interact(action: string): boolean; }"
+  },
+  {
+    "id": "scene-loc-row-field",
+    "module": "api/model/Loc.js",
+    "selector": "$add",
+    "reason": "The Loc wrapper retains its supplied input row and its getter reads the id directly, which can be absent on an explicitly partial wrapper (crates/script/src/shim/locs.js:5-15).",
+    "runtime": "crates/script/src/shim/locs.js:6",
+    "declaration": "type LocRowField<S extends object, K extends keyof LocSnapshot> = K extends keyof S ? S[K] : LocSnapshot[K] | undefined;"
+  },
+  {
+    "id": "scene-loc-wrapper",
+    "module": "api/model/Loc.js",
+    "selector": "Loc",
+    "reason": "Loc stores the flat input row, builds a Tile from x/z/level, and interaction synchronously queues then returns a boolean; the API module reexports this class (crates/script/src/shim/locs.js:5-42; crates/script/src/shim/model_loc.js:1).",
+    "runtime": "crates/script/src/shim/locs.js:5",
+    "declaration": "export declare class Loc<S extends Partial<LocSnapshot> = LocSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): LocRowField<S, 'id'>; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }"
+  },
+  {
+    "id": "scene-player-row-field",
+    "module": "api/model/Player.js",
+    "selector": "$add",
+    "reason": "The Player wrapper stores its input row and reads index directly, so explicitly partial construction can yield an absent index (crates/script/src/shim/players.js:5-16).",
+    "runtime": "crates/script/src/shim/players.js:6",
+    "declaration": "type PlayerRowField<S extends object, K extends keyof PlayerSnapshot> = K extends keyof S ? S[K] : PlayerSnapshot[K] | undefined;"
+  },
+  {
+    "id": "scene-player-wrapper",
+    "module": "api/model/Player.js",
+    "selector": "Player",
+    "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-8,38-58; crates/script/src/shim/model_player.js:1).",
+    "runtime": "crates/script/src/shim/players.js:6",
+    "declaration": "export declare class Player<S extends Partial<PlayerSnapshot> = PlayerSnapshot> implements Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get index(): PlayerRowField<S, 'index'>; get inCombat(): boolean; get combatLevel(): number; targetsMe(): boolean; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }"
+  },
+  {
+    "id": "scene-grounditems-module",
+    "module": "api/grounditems/GroundItems.js",
+    "selector": "$module",
+    "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-55; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
+    "runtime": "crates/script/src/shim/grounditems.js:5",
+    "declaration": "import type { GroundItemSnapshot } from '../../adapter/ClientAdapter.js'; import Tile from '../../geometry/Tile.js'; import EntityQuery from '../query/Query.js'; type GroundItemRowField<S extends object, K extends keyof GroundItemSnapshot> = K extends keyof S ? S[K] : GroundItemSnapshot[K] | undefined; export declare class GroundItem<S extends Partial<GroundItemSnapshot> & { count?: number } = GroundItemSnapshot> { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): GroundItemRowField<S, 'id'>; get count(): number; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; } export declare const GroundItems: { query(): EntityQuery<GroundItem>; };"
+  },
+  {
+    "id": "scene-inventory-item-handle",
+    "module": "api/inventory/Inventory.js",
+    "selector": "InvItem",
+    "reason": "Inventory emits mutable plain handles with name/count/id/slot/noted/cert plus copied actions; they have no snap or constructor, interactions synchronously return booleans, and useOn recognizes Player as well as the frozen targets (crates/script/src/shim/inventory.js:17-24,26-86; crates/script/schema/isolate.fbs:18-30).",
+    "runtime": "crates/script/src/shim/inventory.js:33",
+    "declaration": "export interface InvItem { name: string; count: number; id: number; slot: number; noted: boolean; cert: number; actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }"
+  },
+  {
+    "id": "scene-query-snapshot-row",
+    "module": "api/query/Query.js",
+    "selector": "EntitySnapView",
+    "reason": "The query normalizer consumes raw flat x/z/level/actions rows and creates its own tile/ops view before filtering; those values are the posted SceneEntity fields (crates/script/src/shim/_kernel.js:84-92; crates/script/src/load/snapshot.rs:1424-1481).",
+    "runtime": "crates/script/src/shim/_kernel.js:85",
+    "declaration": "interface EntitySnapView { name: string | null; actions: string[]; x: number; z: number; level: number; distance: number; }"
+  },
+  {
+    "id": "scene-query-class",
+    "module": "api/query/Query.js",
+    "selector": "EntityQuery",
+    "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script/src/shim/query.js:11-20,55-65).",
+    "runtime": "crates/script/src/shim/query.js:11",
+    "declaration": "export default class EntityQuery<E extends QueryableEntity> { supplySnaps: () => readonly EntitySnapView[]; wrap: (s: EntitySnapView) => E; snapFilters: ((s: EntitySnapView & { ops: readonly (string | null)[]; tile: WorldTile }) => boolean)[]; entityFilters: ((e: E) => boolean)[]; constructor(supplySnaps: () => readonly EntitySnapView[], wrap: (s: EntitySnapView) => E); /** @internal Snapshot-first query: common filters run before `wrap`. `S` exposes the raw posted name/actions/x/z/level/distance row. */ static fromSnapshots<S extends EntitySnapView, E extends QueryableEntity>(supply: () => readonly S[], wrap: (s: S) => E): EntityQuery<E>; name(...names: string[]): this; action(action: string): this; within(dist: number): this; /** Chebyshev disk around any tile; planar distance does not require an origin level. */ withinOf(origin: { x: number; z: number; level?: number }, dist: number): this; inside(area: { minX: number; maxX: number; minZ: number; maxZ: number }): this; /** Entity-level predicate (runs after wrap). */ where(pred: (e: E) => boolean): this; results(): E[]; nearest(): E | null; /** Nearest to the player among results. */ nearestPreferLocal(preferRadius: number): E | null; first(): E | null; exists(): boolean; count(): number; /** Every match in supply order; `seen` true stops the walk. */ forEachMatch(seen: (e: E) => boolean): void; }"
+  },
+  {
+    "id": "scene-players-all",
+    "module": "api/players/Players.js",
+    "selector": "Players.all",
+    "add": true,
+    "reason": "Players.all maps each posted flat player row to the exported Player wrapper; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:68-70).",
+    "runtime": "crates/script/src/shim/players.js:68",
+    "declaration": "all(): Player[];"
+  }
+]

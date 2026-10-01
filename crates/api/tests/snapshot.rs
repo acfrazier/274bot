@@ -5065,3 +5065,24 @@ fn logout_clears_scene_without_gen() {
     assert!(!snap.scene().available);
     assert!(snap.scene().collision_flags.is_empty());
 }
+
+#[test]
+fn session_ready_world_uses_current_build_without_waiting_for_world_packet() {
+    let mut client = client_with_npc();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.reset_session(client.gens);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = 3248;
+    client.map_build_base_z = 3240;
+    client.minusedlevel = 1;
+    client.members_account = 1;
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.world().map_base_x, 3248);
+    assert_eq!(snapshot.world().map_base_z, 3240);
+    assert_eq!(snapshot.world().level, 1);
+    assert!(snapshot.world().members);
+    client.map_build_base_x = 3256;
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.world().map_base_x, 3256);
+}

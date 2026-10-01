@@ -11,6 +11,7 @@ pub mod clue_pack;
 pub mod clue_puzzle;
 pub mod content;
 pub mod cook_locations;
+pub mod debug_commands;
 pub mod ent;
 mod family_asset;
 pub mod game_data;

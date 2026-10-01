@@ -12,6 +12,7 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -388,6 +389,9 @@ struct PanelSurface<'a> {
     focus: &'a Mutex<crate::focus::Focus>,
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
+    /// Slots the operator toggled this session: attach leaves their gate
+    /// on the toggled value instead of the spawn profile's.
+    mem_toggled: &'a HashSet<String>,
     frontend_gens: &'a Arc<Mutex<HashMap<String, ClientGens>>>,
     nav_states: &'a Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
     travellers: &'a SlotTravellers,
@@ -422,7 +426,12 @@ impl SlotSurface for PanelSurface<'_> {
             .unwrap()
             .renderer_by
             .insert(name.to_string(), raster != vault::RasterMode::Off);
-        self.audio.set_music(name, !profile.settings.lowmem);
+        // A toggled slot's gate already reflects the operator's choice;
+        // overwriting it from a pre-toggle spawn profile would flap the
+        // live client against the armed handshake value every frame.
+        if !self.mem_toggled.contains(name) {
+            self.audio.set_music(name, !profile.settings.lowmem);
+        }
         SlotAttach {
             input: Some(Arc::clone(&input)),
             mailbox: Some(Arc::clone(&pixels)),
@@ -511,20 +520,36 @@ fn live_or_walk_paint(
     }
 }
 
-/// Per-frame nav-paint mirror: the slot threads read it each observe to
-/// publish the focused drawing slot's scene paint.
-/// [`Session::pump_status`] re-copies it from `Session::nav_overlay` (live)
-/// or `Session::ui.nav` every UI frame.
+/// Shared nav-paint settings and their content generation. Slot threads
+/// clone the `Arc` cheaply; UI pumping advances the generation only when a
+/// setting actually changes.
 #[derive(Clone, Default)]
 struct NavPublishCfg {
-    settings: NavSettings,
+    settings: Arc<NavSettings>,
+    generation: u64,
+}
+
+/// Retire the debug-only producer on arrival or after leaving its route,
+/// even while the slot is unfocused and no paint is being materialized.
+fn retire_client_trail(client: &mut Client, here: Option<WorldTile>) {
+    let Some(here) = here else {
+        return;
+    };
+    let base_x = client.map_build_base_x;
+    let base_z = client.map_build_base_z;
+    let position = client
+        .try_move_path
+        .iter()
+        .position(|&(x, z)| base_x + x == here.x && base_z + z == here.z);
+    if position.is_none() || position.is_some_and(|i| i + 1 == client.try_move_path.len()) {
+        client.try_move_path.clear();
+    }
 }
 
 /// Map the client's last tryMove BFS into world tiles and trim it for
-/// paint. The producer (`try_move_path`) is debug-only: reaching dest or
-/// leaving the path must retire it so a later off-path step or revisit
-/// cannot republish the last click. `here == None` does not retire
-/// (startup / network wait).
+/// paint. The producer (`try_move_path`) is debug-only; retirement runs
+/// independently every frame so an inactive slot cannot retain a stale
+/// trail. `here == None` keeps a pending trail during startup/network wait.
 fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldTile> {
     let base_x = client.map_build_base_x;
     let base_z = client.map_build_base_z;
@@ -544,20 +569,17 @@ fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldT
     trail_world
 }
 
-/// Publish the nav-debug scene paint for the focused drawing slot each
-/// observe. `drawing` is the gate: only the focused slot with its renderer
-/// on publishes; unfocused / skip-paint / renderer-off slots store `None`
-/// so a stale paint never lingers. `world` is the baked pack, `route` the
-/// armed walk route, `here` the player's observed world tile, `trail_world`
-/// the local player's last `tryMove` route buffer (world tiles), `run_on`
-/// the local player's run state (two-tone trail), and `click` the
-/// traveller's current walk aim.
+/// Publish nav-debug scene facts for the focused GPU drawing slot. The
+/// caller demand-gates this function by settings and visible nav facts, so
+/// collision traversal and paint allocation occur only when the retained
+/// view changes. Non-GPU, unfocused, skip-paint and renderer-off slots
+/// publish `None` once when demand drops, preventing stale paint.
 ///
-/// World → scene: `x - map_build_base_x`, `z - map_build_base_z`.
-/// Collision covers every tile of the loaded [`SCENE_TILES`]² region the
-/// `collision_fill` / `nsew_labels` toggles warrant; the path is the
-/// remaining route subsampled to the 3D draw budget (the pack map keeps
-/// the full path).
+/// `world` is the baked pack, `route` the armed walk route, `here` the
+/// player's observed world tile, `trail_world` the local player's last
+/// `tryMove` route buffer, `run_on` its two-tone state, and `click` the
+/// traveller's current walk aim. World-to-scene is
+/// `(x - map_build_base_x, z - map_build_base_z)`.
 // The brief fixes this signature; a param struct would only shuffle names
 // across the one call site.
 #[allow(clippy::too_many_arguments)]
@@ -888,6 +910,11 @@ pub struct Session {
     /// Explicit retarget of an unsaved edit form, awaiting the Discard /
     /// Keep editing prompt. `None` means no switch is waiting.
     pub pending_edit_switch: Option<EditSwitch>,
+    /// A Discard / Keep editing prompt was staged: the Profiles window must
+    /// come to the front (it may be a hidden tab when the leave came from
+    /// another window, or from the tab's own ✕) so the prompt shows. The
+    /// window takes it once.
+    pub focus_profiles: bool,
     /// The edit form's save feedback (its inline refusal, or `Saved <name>.`
     /// once the write is durable) and the credentials Save still being
     /// written: its profile is selected (and spawned) only after the write
@@ -949,6 +976,9 @@ pub struct Session {
     pub nav_settings_open: bool,
     /// Non-modal settings window (renderer / capture / mem).
     pub global_settings_open: bool,
+    pub debug_panel: crate::debug_panel::DebugPanelState,
+    pub debug_panel_open: bool,
+    pub debug_open_teleports: bool,
     /// Usernames we already sent `getvar tutorial` for this session.
     tutorial_getvar_sent: HashSet<String>,
     /// Subset of `tutorial_getvar_sent` whose pending-text box we already
@@ -1092,6 +1122,15 @@ pub struct Session {
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
     audio: Arc<AudioGate<AudioOut>>,
+    /// Mem-popup Relog-now armed for this bot: the first click only arms
+    /// (a running script would be interrupted), the second click relogs.
+    /// Cleared when the relog starts or the button targets another bot.
+    mem_relog_armed: Option<String>,
+    /// Slots the operator memory-toggled this session: their audio gate
+    /// already reflects the choice, so a later spawn (attach) must not
+    /// overwrite it from the pre-toggle profile, and a failed write pulls
+    /// it back with the restored row. Cleared on removal.
+    mem_toggled: HashSet<String>,
     /// Whether focus/multibox writes land on disk prefs. `true` in
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
@@ -1291,6 +1330,7 @@ impl Session {
             chooser_edit: None,
             chooser_form: 0,
             pending_edit_switch: None,
+            focus_profiles: false,
             chooser_save: frontend_core::ProfileFormSave::default(),
             travellers,
             script_nav_paint: Arc::new(Mutex::new(None)),
@@ -1318,6 +1358,9 @@ impl Session {
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
             global_settings_open: false,
+            debug_panel: crate::debug_panel::DebugPanelState::default(),
+            debug_panel_open: false,
+            debug_open_teleports: false,
             tutorial_getvar_sent: HashSet::new(),
             tutorial_getvar_drained: HashSet::new(),
             vault_reset_open: false,
@@ -1386,6 +1429,8 @@ impl Session {
             external_core_enabled: false,
             external_ts: None,
             audio: Arc::new(AudioGate::new()),
+            mem_relog_armed: None,
+            mem_toggled: HashSet::new(),
             persist_ui: true,
             background_ack_open: false,
             fixture_mode: scenario::FixtureMode::Default,
@@ -1871,6 +1916,7 @@ impl Session {
             lowmem: true,
             mainland: false,
         };
+        self.release_debug_catalog();
         self.server_profile = Some(profile);
         self.template = Some(template);
         self.error = None;
@@ -2196,6 +2242,7 @@ impl Session {
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
             world: self.core.play().and_then(|p| p.world()),
             obj_names: self.core.play().map(|p| p.obj_names()),
+            map_members: self.core.play().is_some_and(|p| p.map_members()),
         })?;
         self.set_multibox(true);
         for name in &run.names {
@@ -2650,6 +2697,7 @@ impl Session {
         let paired_core_watch = Arc::clone(&self.paired_core_watch);
         let audio = Arc::clone(&self.audio);
         let nav_publish = Arc::clone(&self.nav_publish);
+        let nav_paint_cache = Arc::new(Mutex::new(crate::nav_paint_cache::Cache::default()));
         // Last failed device-open `(slot, when)`; a machine without an
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
@@ -2672,6 +2720,9 @@ impl Session {
             if session_boundary && focus.lock().unwrap().focused.as_deref() == Some(name) {
                 walk_clear.store(true, Ordering::Relaxed);
             }
+            if session_boundary {
+                nav_paint_cache.lock().unwrap().invalidate(name);
+            }
             // Flat model: every slot is a full Client; draw gates the
             // slot's renderer per the wall policy (focused always,
             // members when only-render-selected is off).
@@ -2685,7 +2736,10 @@ impl Session {
             // stale paint cannot linger. Flags demand is owned solely by
             // the focused slot so a non-drawing peer never loads or drops
             // the shared sidecar out from under the drawer.
-            let layers = nav_publish.lock().unwrap().settings.clone();
+            let (layers, settings_generation) = {
+                let publish = nav_publish.lock().unwrap();
+                (Arc::clone(&publish.settings), publish.generation)
+            };
             let is_focused = focused.as_deref() == Some(name);
             let drawing = is_focused && draw;
             let walk = match travellers.lock().unwrap().get(name).cloned() {
@@ -2715,34 +2769,62 @@ impl Session {
                         z: c.map_build_base_z + lp.route_z[0],
                         level: 0,
                     });
+                    retire_client_trail(c, here);
                     // Run orb (varp 173 / 274 overlay), not the run
                     // animation — the anim is only true while a run
                     // cycle plays.
                     let run_on = c.run_enabled();
-                    // Full tryMove BFS (every scene tile, src→dest),
-                    // not the entity walk buffer (capped at 9) or the
-                    // MOVE waypoint list (capped at 25).
-                    let trail_world = live_client_trail(c, here);
-                    // Focused drawer owns ensure/drop; when focus is None every remaining
-                    // slot may release so a cleared focus cannot leak the sidecar.
-                    let flags_owner = is_focused || focused.is_none();
-                    publish_nav_debug(
-                        c,
-                        &world,
-                        route.as_ref(),
+                    let active = drawing && c.nav_debug_drawable();
+                    let facts = crate::nav_paint_cache::Facts {
+                        settings_generation,
+                        active,
+                        base_x: c.map_build_base_x,
+                        base_z: c.map_build_base_z,
                         here,
-                        &trail_world,
-                        run_on,
+                        route: crate::nav_paint_cache::route_fingerprint(route.as_ref()),
                         click,
-                        &layers,
-                        drawing,
-                        flags_owner,
-                    );
+                        trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                        run_on,
+                    };
+                    let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
+                    if changed {
+                        // Full tryMove BFS (every scene tile, src→dest), not
+                        // the entity walk buffer (capped at 9). Materialize
+                        // it only when an active GPU consumer needs a view.
+                        let trail_world = if active {
+                            live_client_trail(c, here)
+                        } else {
+                            Vec::new()
+                        };
+                        // Focused drawer owns ensure/drop; when focus is None
+                        // any remaining slot may release the shared sidecar.
+                        let flags_owner = is_focused || focused.is_none();
+                        publish_nav_debug(
+                            c,
+                            &world,
+                            route.as_ref(),
+                            here,
+                            &trail_world,
+                            run_on,
+                            click,
+                            &layers,
+                            active,
+                            flags_owner,
+                        );
+                        let recorded = crate::nav_paint_cache::Facts {
+                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                            ..facts
+                        };
+                        nav_paint_cache.lock().unwrap().record(name, recorded);
+                    }
                     if drawing && layers.camera_follow {
                         apply_path_camera(c, route.as_ref(), here);
                     }
                 }
-                None => c.set_nav_debug_paint(None),
+                None => {
+                    nav_paint_cache.lock().unwrap().invalidate(name);
+                    c.set_nav_debug_paint(None);
+                }
             }
             // Focused-slot speaker: at most one cpal speaker, fed by
             // this slot's Client audio state (midi/waves/fade), gated
@@ -3052,10 +3134,30 @@ impl Session {
         }
     }
 
-    /// A durable profile write that failed after its edit was accepted.
+    /// A durable profile write that failed after its edit was accepted: the
+    /// banner shows it, and [`Self::settle_profile_save`] shows a failed
+    /// form save in its form too. Toggled gates follow the restored vault
+    /// rows back, so a refused memory toggle cannot leave the live client
+    /// ahead of the vault.
     fn surface_write_failures(&mut self) {
+        let mut failed = false;
         for failure in self.core.take_write_failures() {
-            self.error = Some(failure);
+            failed = true;
+            self.error = Some(failure.to_string());
+        }
+        if failed {
+            for name in &self.mem_toggled {
+                if let Some(profile) = self.core.vault().and_then(|v| v.get(name)) {
+                    self.audio.set_music(name, !profile.settings.lowmem);
+                }
+            }
+            if let Some(lowmem) = self
+                .focused_name()
+                .and_then(|name| self.core.vault().and_then(|v| v.get(&name)))
+                .map(|profile| profile.settings.lowmem)
+            {
+                self.ui.lowmem = lowmem;
+            }
         }
     }
 
@@ -3077,7 +3179,8 @@ impl Session {
         self.core.play().map(|p| p.map_members()).unwrap_or(false)
     }
 
-    /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
+    /// Queue a host-owned rail cheat on the focused slot. No-op without
+    /// play/focus; these controls are not Debug-tab reply probes.
     pub fn cheat_focused(&self, cmd: &str) {
         let Some(play) = self.core.play() else {
             return;
@@ -3085,7 +3188,103 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        play.cheat(&name, cmd);
+        let _ = play.cheat_internal(&name, cmd);
+    }
+
+    /// Attach the opt-in Debug catalog from the immutable server profile.
+    /// Normal selected game data is deliberately not used as a fallback.
+    pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
+        let profile = self
+            .server_profile
+            .as_ref()
+            .ok_or_else(|| "no bound server profile".to_string())?;
+        profile.debug_catalog()
+    }
+
+    /// Decode and retain the catalog for an open Debug window. A failed
+    /// attachment is retained as exact text until the app releases this
+    /// session's Debug state, so a bad provenance check is not retried every
+    /// frame.
+    pub(crate) fn ensure_debug_catalog(&mut self) -> Result<(), String> {
+        let profile_key = self
+            .server_profile
+            .as_ref()
+            .map(|profile| Arc::as_ptr(profile) as usize);
+        if self.debug_panel.catalog_profile() != profile_key {
+            self.debug_panel.release_catalog();
+            self.debug_panel.set_catalog_profile(profile_key);
+        }
+        if self.debug_panel.catalog().is_some() {
+            return Ok(());
+        }
+        if let Some(error) = self.debug_panel.catalog_error() {
+            return Err(error.to_string());
+        }
+        match self.debug_catalog() {
+            Ok(catalog) => {
+                self.debug_panel.attach_catalog(catalog);
+                Ok(())
+            }
+            Err(error) => {
+                self.debug_panel.set_catalog_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    /// Release the opt-in catalog when the Debug window closes or its bound
+    /// server profile changes.
+    pub(crate) fn release_debug_catalog(&mut self) {
+        self.debug_panel.release_catalog();
+    }
+
+    /// Send one Debug command to the displayed focused bot. Marked sends use
+    /// [`send_debug_command_marked_snapshot`] so every shared mark is counted.
+    /// The host queue and client encoder retain final cheat admission.
+    pub fn send_debug_command(&mut self, cmd: &str) -> Result<(), String> {
+        if !self.debug_ui() {
+            return Err("Debug commands require a Local profile".into());
+        }
+        let name = self.focused_name().ok_or("Pick a focused bot")?;
+        let play = self.core.play().ok_or("No active play session")?;
+        play.cheat(&name, cmd)
+            .map_err(|error| format!("{name}: command refused: {error}"))
+    }
+
+    /// Snapshot every visible profile row with its stable marked-selection
+    /// identity. The owned snapshot keeps a bulk send from retargeting after
+    /// a profile rename/removal or a status poll.
+    pub(crate) fn debug_target_snapshot(&self) -> Vec<(frontend_core::ProfileIdentity, String)> {
+        self.core
+            .profile_names()
+            .into_iter()
+            .map(|name| {
+                let identity = self
+                    .core
+                    .profile_identity(&name)
+                    .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&name));
+                (identity, name)
+            })
+            .collect()
+    }
+
+    /// Admit one formatted command against the supplied marked snapshot
+    /// through the same host admission path used by focused sends. The shared
+    /// selection stays identity-keyed; the adapter reports marks whose row
+    /// disappeared instead of silently dropping them.
+    pub(crate) fn send_debug_command_marked_snapshot(
+        &self,
+        cmd: &str,
+        snapshot: Vec<(frontend_core::ProfileIdentity, String)>,
+    ) -> frontend_core::MarkedCommandReport {
+        let Some(play) = self.core.play() else {
+            return frontend_core::run_marked_command(&self.fleet_selection, snapshot, |_| {
+                Err("no active play session".into())
+            });
+        };
+        frontend_core::run_marked_command(&self.fleet_selection, snapshot, |name| {
+            play.cheat(name, cmd).map_err(|error| error.to_string())
+        })
     }
 
     /// True when the resolved launch profile is Local.
@@ -3170,7 +3369,7 @@ impl Session {
             return;
         }
         if let Some(play) = self.core.play() {
-            play.cheat(&name, "getvar tutorial");
+            let _ = play.cheat_internal(&name, "getvar tutorial");
         }
     }
 
@@ -3360,13 +3559,16 @@ impl Session {
         // mirror the slot threads read. Destination is not a bot: switching
         // focus keeps the pending tile.
         self.core.select(name);
+        let (old, capture) = {
+            let focus = self.focus.lock().unwrap();
+            if focus.focused.as_deref() == Some(name) {
+                return;
+            }
+            (focus.focused.clone(), focus.capture)
+        };
+        self.debug_panel.clear_target_feedback();
         let mut focus = self.focus.lock().unwrap();
-        if focus.focused.as_deref() == Some(name) {
-            return;
-        }
-        let old = focus.focused.clone();
         focus.focused = Some(name.to_string());
-        let capture = focus.capture;
         drop(focus);
         // The overlay follows the focused traveller: switching focus may
         // show a different (or no) route, so force a rebuild.
@@ -3447,13 +3649,16 @@ impl Session {
         }
     }
 
-    /// Mirror the effective nav-paint config onto the slot threads (they
-    /// publish the focused drawing slot's paint every observe). Runs every
-    /// UI frame so a modal edit or live-overlay flip lands within a frame.
+    /// Mirror effective nav settings onto slot threads. Repeated UI frames
+    /// retain the same Arc and generation so they do not invalidate the
+    /// focused slot's materialized nav view.
     fn sync_nav_publish(&self) {
-        *self.nav_publish.lock().unwrap() = NavPublishCfg {
-            settings: self.effective_nav(),
-        };
+        let next = self.effective_nav();
+        let mut publish = self.nav_publish.lock().unwrap();
+        if *publish.settings != next {
+            publish.settings = Arc::new(next);
+            publish.generation = publish.generation.wrapping_add(1);
+        }
     }
 
     /// Live overlay when a scenario armed one, else the operator prefs.
@@ -3570,6 +3775,7 @@ impl Session {
                 focus: &self.focus,
                 audio: &self.audio,
                 memory_override: self.memory_override,
+                mem_toggled: &self.mem_toggled,
                 frontend_gens: &self.frontend_gens,
                 nav_states: &self.nav_states,
                 travellers: &self.travellers,
@@ -3682,7 +3888,6 @@ impl Session {
         };
         if let Some(mut p) = self.core.vault().and_then(|v| v.get(&name)).cloned() {
             p.settings.raster = self.ui.raster;
-            p.settings.lowmem = self.ui.lowmem;
             if let Err(e) =
                 self.core
                     .save_profile(p, frontend_core::ArmMirror::None, "render prefs")
@@ -3715,17 +3920,77 @@ impl Session {
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         self.ui.lowmem = lowmem;
-        self.persist_game_render_prefs();
+        if self.persist_ui {
+            crate::ui_state::save(&self.ui);
+        }
         self.error = None;
         let Some(name) = self.focused_name() else {
             return true;
         };
-        // The audio gate is the slot threads' lowmem channel: each frame
-        // the slot applies `c.set_lowmem(!audio.music_on(name))`, and the
-        // host drops the `Renderer` when `config.lowmem` changes so the
-        // next paint attaches with the new mode. No restart.
-        self.audio.set_music(&name, !lowmem);
+        // The shared frontend-core command persists the vault profile and
+        // arms the next handshake at once. The audio gate stays this
+        // slot's speaker switch and one live lowmem channel (the slot
+        // pump is the other, so the TUI flips without a gate); the host
+        // drops the `Renderer` when `config.lowmem` changes so the next
+        // paint attaches with the new mode. No restart.
+        match self.core.set_memory_mode(&name, lowmem) {
+            Ok(_) => {
+                self.mem_toggled.insert(name.clone());
+                self.audio.set_music(&name, !lowmem);
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
+    }
+
+    /// Login-time vs current memory mode for the focused slot: drives the
+    /// mem notice and the Relog-now button. `None` without a focused slot
+    /// that has both a recorded login and a vault row.
+    pub fn focused_memory_notice(&self) -> Option<frontend_core::MemoryNotice> {
+        let name = self.focused_name()?;
+        self.core.memory_status(&name)
+    }
+
+    /// Whether the focused slot has work a Relog-now would interrupt or
+    /// discard, including a Start still waiting for admission.
+    pub fn focused_memory_relog_warning(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.core.memory_relog_warning(&name) || self.scripts.start_queue_place(&name).is_some()
+    }
+
+    /// Mem-popup Relog-now: log the focused bot out and back in through the
+    /// login FIFO so the toggled mode reaches the server. Returns whether
+    /// a relog started; with running or queued script work the first call
+    /// only arms the warning button and the second starts it.
+    pub fn request_focused_memory_relog(&mut self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        let armed = self.mem_relog_armed.as_deref() == Some(name.as_str());
+        if self.focused_memory_relog_warning() && !armed {
+            self.mem_relog_armed = Some(name);
+            return false;
+        }
+        self.mem_relog_armed = None;
+        self.scripts.cancel_queued_as(&name, "logged out");
+        self.scripts.publish_start_places(&mut self.core);
+        self.apply_script_notice();
+        let (core, mut surface) = self.core_and_surface();
+        let op = core.request_memory_relog(&name, &mut surface);
+        self.report_failure(op);
         true
+    }
+
+    /// Whether the mem-popup Relog-now is armed for the focused bot (a
+    /// running script needs the second confirming click).
+    pub fn mem_relog_armed(&self) -> bool {
+        let focused = self.focused_name();
+        focused.is_some_and(|name| self.mem_relog_armed.as_deref() == Some(name.as_str()))
     }
 
     /// Status-row copy for the focused profile's mem mode.
@@ -3734,6 +3999,23 @@ impl Session {
             "lowmem"
         } else {
             "highmem"
+        }
+    }
+
+    /// Status-row mem cell: the live mode, plus the login mode while the
+    /// server still runs it (Relog-now in the mem picker applies it).
+    pub fn mem_notice_text(
+        lowmem: bool,
+        notice: Option<frontend_core::MemoryNotice>,
+    ) -> Cow<'static, str> {
+        let live = Self::mem_status_text(lowmem);
+        match notice {
+            Some(n) if n.differs() => Cow::Owned(format!(
+                "{} (login {} — tabs + sound at next login)",
+                live,
+                Self::mem_status_text(n.login_lowmem)
+            )),
+            _ => Cow::Borrowed(live),
         }
     }
 
@@ -3868,8 +4150,21 @@ impl Session {
     /// (first on this process opens the chooser) and open the wall draw
     /// policy (`Focus.wall_open`), which stays true for rail **or** grid.
     /// Off: clear the grid and any open chooser and stop extra rasters
-    /// (`wall_open = false`) without logging anyone out.
-    pub fn set_multibox(&mut self, on: bool) {
+    /// (`wall_open = false`) without logging anyone out. Off closes Profiles
+    /// and its form, so while the form's save has not settled it waits: the
+    /// Discard / Keep editing prompt is staged and MultiBox stays on.
+    /// Returns whether the toggle was applied.
+    pub fn set_multibox(&mut self, on: bool) -> bool {
+        if self.multibox && !on && self.form_saving() {
+            self.stage_edit_exit(EditLeave::MultiBoxOff, "", "turn MultiBox off");
+            self.wall.chooser_open = true;
+            return false;
+        }
+        self.apply_multibox(on);
+        true
+    }
+
+    fn apply_multibox(&mut self, on: bool) {
         let turning_off = self.multibox && !on;
         self.multibox = on;
         if on {
@@ -3935,6 +4230,10 @@ impl Session {
         self.scripts.cancel_queued_as(name, "removed");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice();
+        self.mem_toggled.remove(name);
+        if self.mem_relog_armed.as_deref() == Some(name) {
+            self.mem_relog_armed = None;
+        }
         let (core, mut surface) = self.core_and_surface();
         let removal = core.remove(name, now, &mut surface);
         self.sync_wall_focus();
@@ -4821,7 +5120,7 @@ impl Drop for Session {
 }
 
 mod chooser;
-pub use chooser::EditSwitch;
+pub use chooser::{EditLeave, EditSwitch};
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
