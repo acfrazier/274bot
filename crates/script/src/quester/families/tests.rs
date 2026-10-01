@@ -395,7 +395,6 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         recipes: &recipes,
         bank: None,
         bank_items: &[],
-        path_id: &FactKey::new("test"),
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
     let plan = compile_use_on(&serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 }), &compile).unwrap();
@@ -636,7 +635,6 @@ fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
         recipes: &Default::default(),
         bank: None,
         bank_items: &[],
-        path_id: &FactKey::new("test"),
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
 }
@@ -1763,4 +1761,135 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
             ));
         });
     }
+}
+
+#[test]
+fn dialogue_continues_fred_pages_reusing_the_same_root() {
+    assert_reused_dialogue_page_is_acknowledged(
+        "Fred the Farmer",
+        4893,
+        4899,
+        "My sheep are getting mighty woolly. I'd be much obliged if you could shear them.",
+        "Yes, that's it. Bring me 20 balls of wool. And I'm sure I could sort out some sort of payment.",
+    );
+}
+
+#[test]
+fn dialogue_continues_sedridor_pages_reusing_the_same_root() {
+    assert_reused_dialogue_page_is_acknowledged(
+        "Sedridor",
+        4887,
+        4892,
+        "Welcome adventurer, to the world renowned Wizards' Tower.",
+        "Have you delivered the research notes to my friend Aubury yet?",
+    );
+}
+
+fn assert_reused_dialogue_page_is_acknowledged(
+    npc: &str,
+    root: i32,
+    component: i32,
+    first: &str,
+    second: &str,
+) {
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(root, vec![npc.into(), first.into()]);
+    snapshot.seed_chat_options(vec![], component);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<dialogue::Dialogue>(
+                dialogue::DialogueArgs {
+                    id: 0,
+                    npc: Arc::from(npc),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+    ledger.as_mut().unwrap().outbox.clear();
+    // A fresh snapshot of the old page is not an acknowledgement.
+    with_tick(&snapshot, &mut ledger, 3, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    snapshot.seed_chat_modal(root, vec![npc.into(), second.into()]);
+    with_tick(&snapshot, &mut ledger, 4, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    // Preserve the existing one-game-tick quiet period after the real page turn.
+    with_tick(&snapshot, &mut ledger, 5, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
+}
+
+#[test]
+fn dialogue_open_clock_starts_after_approaching_the_npc() {
+    let mut snapshot = ready();
+    snapshot.seed_chat_modal(-1, vec![]);
+    let npc = api::snapshot::NpcView {
+        index: 7,
+        r#type: Some(758),
+        name: Some("Fred the Farmer".into()),
+        actions: vec![Some("Talk-to".into())],
+        tile: tile(3189, 3273),
+        distance: 5,
+        animation: -1,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        health: 1,
+        total_health: 1,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile(3189, 3273),
+        x: 0,
+        z: 0,
+        yaw: 0,
+    };
+    snapshot.seed_npcs(vec![npc.clone()]);
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
+        t.actions
+            .begin::<dialogue::Dialogue>(
+                dialogue::DialogueArgs {
+                    id: 758,
+                    npc: Arc::from("Fred the Farmer"),
+                    prefer: Arc::from([]),
+                    choose: None,
+                },
+                &mut t.cx,
+            )
+            .unwrap()
+    });
+    snapshot.seed_npcs(vec![api::snapshot::NpcView { distance: 1, ..npc }]);
+    with_tick(&snapshot, &mut ledger, 32, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(matches!(emitted(&ledger), InteractReq::Npc { index: Some(7), .. }));
+    // The approach took 18.6 seconds; the new Open window is still eight seconds.
+    with_tick(&snapshot, &mut ledger, 36, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    snapshot.seed_chat_modal(4893, vec!["Fred the Farmer".into(), "Well I need some wool...".into()]);
+    snapshot.seed_chat_options(vec![], 4899);
+    with_tick(&snapshot, &mut ledger, 37, |t| {
+        assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
+    });
+    assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
 }

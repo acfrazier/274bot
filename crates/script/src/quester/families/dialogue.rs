@@ -1,10 +1,11 @@
 //! Native chat-dialogue driver extracted from the isolate `dialog` family.
-//! Page sequencing matches the isolate driver; completion waits on game ticks.
+//! Acknowledgement follows page content as well as roots; completion waits on game ticks.
 
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -42,6 +43,7 @@ pub struct Dialogue {
     steps: u32,
     due_tick: u64,
     ack_modal: i32,
+    ack_page: u64,
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
@@ -59,6 +61,7 @@ impl NativeMachine for Dialogue {
             steps: 0,
             due_tick: 0,
             ack_modal: -1,
+            ack_page: 0,
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
             deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
@@ -113,7 +116,10 @@ impl NativeMachine for Dialogue {
                 Poll::Pending
             }
             Phase::WaitContinueAck => {
-                if obs.modal != self.ack_modal || !obs.r#continue {
+                if obs.modal != self.ack_modal
+                    || !obs.r#continue
+                    || obs.page_fingerprint() != self.ack_page
+                {
                     self.phase = Phase::WaitContinueTick;
                     self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
                     return Poll::Pending;
@@ -124,7 +130,10 @@ impl NativeMachine for Dialogue {
                 Poll::Pending
             }
             Phase::WaitChoiceAck => {
-                if obs.modal != self.ack_modal || obs.r#continue {
+                if obs.modal != self.ack_modal
+                    || obs.r#continue
+                    || obs.page_fingerprint() != self.ack_page
+                {
                     self.phase = Phase::WaitChoiceTicks;
                     self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
                     return Poll::Pending;
@@ -188,6 +197,7 @@ impl Dialogue {
             index: (self.npc_index >= 0).then_some(self.npc_index),
         })?;
         self.phase = Phase::Open;
+        self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS;
         Ok(())
     }
 
@@ -211,6 +221,7 @@ impl Dialogue {
         if obs.r#continue {
             self.steps += 1;
             self.ack_modal = obs.modal;
+            self.ack_page = obs.page_fingerprint();
             self.phase = Phase::WaitContinueAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             return match cx.emit(InteractReq::ContinueDialog) {
@@ -226,6 +237,7 @@ impl Dialogue {
             });
             self.steps += 1;
             self.ack_modal = obs.modal;
+            self.ack_page = obs.page_fingerprint();
             self.phase = Phase::WaitChoiceAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             return match cx.emit(InteractReq::Answer { option }) {
@@ -247,7 +259,23 @@ struct ChatObs<'a> {
     modal: i32,
     tick: u64,
     options: &'a [api::snapshot::ChatOptionView],
+    texts: &'a [String],
     in_combat: bool,
+}
+
+impl ChatObs<'_> {
+    // The server reuses a chat root and Continue component across successive
+    // pages. A newer snapshot/tick alone is not an acknowledgement; the page
+    // must change. Fingerprinting borrowed content avoids copying each page.
+    fn page_fingerprint(&self) -> u64 {
+        let mut hash = DefaultHasher::new();
+        self.texts.hash(&mut hash);
+        for option in self.options {
+            option.component_id.hash(&mut hash);
+            option.text.hash(&mut hash);
+        }
+        hash.finish()
+    }
 }
 
 fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
@@ -262,6 +290,7 @@ fn observe<'a>(cx: &ActionContext<'a>) -> Option<ChatObs<'a>> {
         modal,
         tick: cx.evidence().tick,
         options: chat.value.options,
+        texts: chat.value.texts,
         in_combat: cx
             .snapshot()
             .in_combat()

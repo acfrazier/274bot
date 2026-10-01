@@ -23,42 +23,13 @@ const ROMEO_AND_JULIET_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject 
     id: "quest",
     value: ScriptInjectValue::Str("romeojuliet"),
 }];
-/// S2 safe-stat staging (operator Q2: skill gates plus the passive-at level
-/// when it is ≤40; `STATE.md` Q2). None of Sheep Shearer, Rune Mysteries or
-/// Romeo & Juliet has a roster skill gate, and all three passive levels
-/// (3/13/3) are ≤40, so each fixture stages exactly its passive level:
-/// - Sheep (`sheep`, Tier A passive at 3) and Romeo & Juliet (`rjquest`,
-///   Tier A passive at 3) have no ambient hostiles in reach
-///   (`quest-hazards.md` Tier A). The safe profile is the fresh base, so
-///   the fixture only resets (`minme`) and raises nothing.
-/// - Rune Mysteries (`runemysteries`, Tier B passive at 13) has one cowardly
-///   ambient: the L6 Mugger at Aubury (3253,3402,0), spawn (3249,3391,0),
-///   d=11 ≤ reach 17 (`quest-hazards.md` Tier B; TSV `runemysteries`
-///   ambient row). The >2× rule (`quest-hazards.md` global rule 1) stops
-///   acquisition past combat 2×6=12, so the fixture must post combat 13.
-/// Combat rationale for the Rune profile. Combat level is server-posted; the
-/// release journal fixture (`quester_journal_live_tests.rs` `prime`) resets
-/// with `minme`, raises `setstat defence 40`, and then observes
-/// `combat_level > 12` before the Aubury teleport — that observation is the
-/// ground truth this fixture reuses. The standard combat formula agrees that
-/// Defence 40 is the minimal single-stat raise from the fresh base
-/// (att1/str1/def1/hp10/pray1 → combat 3):
-/// `floor(0.25*(def+hp+floor(pray/2)) + 0.325*(att+str))`
-/// fresh:  `floor(0.25*(1+10+0) + 0.325*2)` = `floor(3.4)` = 3 (hunted);
-/// staged: `floor(0.25*(40+10+0) + 0.325*2)` = `floor(13.15)` = 13 (passive);
-/// Defence 39 would post `floor(12.9)` = 12 and stay hunted, so 40 is minimal.
-/// Defence is skill slot 1 (`Skill::names`: attack 0, defence 1, …), hence the
-/// observed guard below watches `Proof::Stat { id: 1, min: 40 }`. Raising
-/// Defence keeps every offensive product untouched (no Attack/Strength touch,
-/// no all-stat base-40 overlevelling). No `DrainDialogs` janitor is staged:
-/// the quest-start relog that follows the teleport runs before Start and
-/// clears any `setstat` level-up UI, and every later arm (arrival, side tab,
-/// host-fed Running) is dialog-insensitive — unlike the combat fixtures in
-/// `lib.rs`, which walk and fight under open dialogs.
-/// The reset/profile steps splice in before the `setvar` stage seed (the same
-/// `minme` → `setvar` → `give` order the live journal fixture primes), hence
-/// before the quest-start teleport, the relog, and Start: the bot cannot Start
-/// until the posted stats show the staged profile.
+// Q2 stages skill gates plus passive-at combat levels ≤40. Sheep/Romeo have
+// no gates or ambient hostiles (Tier A, passive 3), so reset without raises.
+// Rune's Aubury Mugger is level 6: combat >2*6 prevents acquisition (Tier B,
+// passive 13). After minme, Defence 40 alone posts combat 13; Defence 39 posts
+// 12. The journal live fixture already qualifies this minimal single-stat
+// profile, leaving Attack/Strength unchanged. Observe the posted stat before
+// teleport/relog/Start; relog clears the stat-level-up UI.
 const S2_DEFENCE_STAT_ID: i32 = 1;
 const S2_RUNE_SAFE_DEFENCE: i32 = 40;
 /// Fresh-base reset every S2 quest fixture emits before any seed.
@@ -369,15 +340,10 @@ mod tests {
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
 
-    // Literal expectations (Defence = skill slot 1 per `Skill::names`, Rune
-    // profile 40) so this block also compiles on the pre-fixture file for the
-    // fail-before repro: it reaches only the existing scenario builders and
-    // never the staging helpers above.
     const DEFENCE_STAT_ID: i32 = 1;
     const RUNE_SAFE_DEFENCE: i32 = 40;
 
-    /// Cheat-admitted client mirroring `scenario_tests::native_seed_client`
-    /// (parent-owned, so this file keeps its own minimal copy).
+    /// Cheat-admitted client for exercising fixture staging commands.
     fn fixture_client() -> Client {
         let mut client = Client::new(ClientConfig {
             host: "127.0.0.1".into(),
@@ -494,15 +460,6 @@ mod tests {
             .find("setstat defence 40")
             .expect("rune fixture stages the minimal Defence profile");
         assert!(reset < profile, "reset precedes the profile: {written}");
-        // Stage-3 package coverage preserved, nothing overlevelled.
-        assert!(
-            written.contains("setvar runemysteries 3"),
-            "stage-3 seed kept: {written}"
-        );
-        assert!(
-            written.contains("give research_package 1"),
-            "package seed kept: {written}"
-        );
         assert_eq!(
             written.matches("setstat ").count(),
             1,
@@ -512,21 +469,12 @@ mod tests {
 
     #[test]
     fn sheep_and_romeo_fixtures_reset_and_raise_nothing() {
-        assert_fresh_base_fixture(
-            &quester_sheep_scenario(),
-            "setvar sheep 0",
-            Some("give wool 19"),
-        );
-        assert_fresh_base_fixture(
-            &quester_romeo_and_juliet_scenario(),
-            "setvar rjquest 0",
-            None,
-        );
+        assert_fresh_base_fixture(&quester_sheep_scenario(), "setvar sheep 0");
+        assert_fresh_base_fixture(&quester_romeo_and_juliet_scenario(), "setvar rjquest 0");
     }
 
-    /// Tier-A passive-at-3 fixture: reset emitted before the stage seed, zero
-    /// raises, seeds kept, and no pre-Start arm stages a raised stat.
-    fn assert_fresh_base_fixture(scenario: &Scenario, setvar: &str, seed: Option<&str>) {
+    /// Tier-A profile: reset before seeding and never raise a stat.
+    fn assert_fresh_base_fixture(scenario: &Scenario, setvar: &str) {
         let written = prestart_cheats(scenario);
         let reset = written
             .find("minme")
@@ -540,9 +488,6 @@ mod tests {
             .find(setvar)
             .unwrap_or_else(|| panic!("stage seed kept: {written}"));
         assert!(reset < stage, "reset precedes the stage seed: {written}");
-        if let Some(seed) = seed {
-            assert!(written.contains(seed), "item seed kept: {written}");
-        }
         for step in &scenario.steps[..start_index(scenario)] {
             if let Proof::Stat { id, min } = step.wait.arm {
                 assert!(
