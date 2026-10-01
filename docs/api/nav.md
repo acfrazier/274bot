@@ -267,6 +267,11 @@ and `Err(QuestFamilyMismatch)` for evidence from another quest family. The
 routing searches evaluate gates without allocating; only the failure diagnosis
 collects them.
 
+Strict routing and the diagnosis arms share one inlined predicate for the
+fixed requirements (membership, skills, completed quests and varps).
+Relaxing carry/wear or an `Unknown` stage gate never relaxes those fixed
+requirements; the hot-path inlining changes neither gate order nor routes.
+
 Route selection is not permission to send later. `TravelOptions::quest_evidence`
 borrows the evidence for the active route. The traveller checks a gated
 transport leg at entry and again on each approach poll, including the poll
