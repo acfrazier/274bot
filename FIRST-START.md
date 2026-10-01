@@ -80,8 +80,21 @@ full download or decode. Missing, incomplete or corrupt assets are repaired;
 changed negotiation/version inputs select a new snapshot. Each prepared
 profile uses its own immutable `.runtime-*` copy, removed when its last
 owner is dropped; retained snapshots survive ordinary process exit.
-Dead runtime copies left by crashes or explicit exits are swept on the
-next preparation without deleting a live process's copy.
+Dead runtime copies and interrupted-publication staging folders left by crashes
+or explicit exits are swept on the next preparation without deleting a live
+process's copy.
+
+Only the newest verified snapshot per revision is kept: retaining a new
+namespace prunes older same-revision namespaces with no live owner. A copy a
+live process may still read is never removed; liveness uses a conservative
+PID probe, so an unknown result counts as alive. Snapshots in the old layout
+directly under `unpack-289/<version>/` are neither read nor removed.
+Reusing individual files across negotiation keys is out of scope: a changed
+negotiation key refills from validated entries.
+
+If saving retained assets fails (for example, the destination is read-only),
+startup warns once and continues using the verified private runtime copy.
+Without a saved snapshot, the next launch will need to download the assets again.
 
 The standalone `unpack-cache` layout remains separate: its child folder is
 the first 8 bytes of SHA-256(`versionlist`), encoded as 16 hex characters,

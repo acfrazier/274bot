@@ -89,7 +89,7 @@ git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 ```
 
-Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into the pack cache; later boots reuse disk. Stock Lost City Server uses the **Java default login RSA** for local — no key bake. If you rotated `private.pem`, login reads the public half from `$ENGINE_DIR/data/config/private.pem` (or `LOGIN_RSAN` / `LOGIN_RSAE`).
+Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP and retains the checked JAGs plus the decoded snapshots under the revision unpack root; later boots revalidate and reuse them instead of downloading everything again. See [FIRST-START.md](FIRST-START.md) for the retention layout.
 
 ```bash
 # The vault passphrase is never read from the environment or the command line:
