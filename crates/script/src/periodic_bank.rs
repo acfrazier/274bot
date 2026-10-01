@@ -341,6 +341,7 @@ fn walk_near(tile: Tile, radius: i32) -> InteractReq {
         allow_bank_fetch: true,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 

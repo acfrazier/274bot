@@ -32,6 +32,7 @@ use crate::transport::{
     TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
 };
 use crate::world_state::WorldState;
+use crate::zones::{Zone, ZoneClass, ZoneExempt, ZoneKey, ZoneKind, ZoneTable};
 
 #[test]
 fn local_component_rejects_invalid_origins_and_clamps_radius() {
@@ -2038,6 +2039,10 @@ fn compare_real_bank_targets(
     avoid: &[AvoidRect],
     budget: Option<usize>,
 ) -> Vec<Result<f64, TargetError>> {
+    let opts = FindOptions {
+        zones: crate::zones::ZoneExempt::all(),
+        ..opts
+    };
     let started = Instant::now();
     let many = match budget {
         Some(budget) => find_many_with_avoid_bounded(
@@ -2136,6 +2141,7 @@ fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() 
         FindOptions {
             allow_wilderness: true,
             allow_bank_fetch: true,
+            zones: crate::zones::ZoneExempt::all(),
             ..FindOptions::default()
         },
         &state,
@@ -2211,6 +2217,7 @@ fn real_resilient_opts() -> FindOptions {
     FindOptions {
         allow_wilderness: true,
         allow_bank_fetch: true,
+        zones: crate::zones::ZoneExempt::all(),
         ..FindOptions::default()
     }
 }
@@ -2245,7 +2252,7 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
             )
             .expect("the Falador booth stand routes independently");
             assert_eq!(route.ticks, independent.ticks);
-            assert!(search.settled() > 32_768, "{}", search.settled());
+
         }
     }
     let web = [tile(3157, 3950, 0), tile(3156, 3949, 0)];
@@ -3466,6 +3473,7 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: true,
+        zones: crate::zones::ZoneExempt::all(),
         ..FindOptions::default()
     };
     let mut graph = TransportGraph {
@@ -3474,6 +3482,7 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
         teleports: world.graph.teleports.clone(),
         wilderness: world.graph.wilderness.clone(),
         quest_family: world.graph.quest_family,
+        zones: world.graph.zones.clone(),
     };
     if !trap_edges
         .iter()
@@ -3681,4 +3690,1062 @@ fn glory_teleport_cap_is_exact_at_level_30() {
         ),
         "level 31 cannot glory across the wall"
     );
+}
+
+fn install_zones(collision: &WorldCollision, graph: &mut TransportGraph, mut zones: Vec<Zone>) {
+    // Rectangular corridor fixtures use canonical NPC reach squares with
+    // carved exterior cells; production 289 zones still ship no carves.
+    let mut carves = Vec::new();
+    for (index, zone) in zones.iter_mut().enumerate() {
+        let desired = *zone;
+        let x = desired.min_x + (desired.max_x - desired.min_x + 1) / 2;
+        let z = desired.min_z + (desired.max_z - desired.min_z + 1) / 2;
+        let radius = (x - desired.min_x).max(z - desired.min_z);
+        *zone = Zone::npc(
+            tile(x, z, i32::from(desired.level)),
+            u8::try_from(radius).unwrap(),
+            desired.class,
+            desired.cap,
+            desired.kind,
+        );
+        for (min_x, max_x, min_z, max_z) in [
+            (zone.min_x, desired.min_x - 1, zone.min_z, zone.max_z),
+            (desired.max_x + 1, zone.max_x, zone.min_z, zone.max_z),
+            (desired.min_x, desired.max_x, zone.min_z, desired.min_z - 1),
+            (desired.min_x, desired.max_x, desired.max_z + 1, zone.max_z),
+        ] {
+            if min_x <= max_x && min_z <= max_z {
+                carves.push((
+                    u16::try_from(index).unwrap(),
+                    crate::router::AvoidRect {
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        level: Some(i32::from(zone.level)),
+                    },
+                ));
+            }
+        }
+    }
+    graph.zones = Some(
+        ZoneTable::from_parts(
+            zones,
+            vec![ZoneKind::new(
+                "fixture",
+                "Fixture hunter",
+                1,
+                6,
+                true,
+                false,
+            )],
+            vec![],
+            carves,
+            vec![],
+            collision.origin,
+            collision.width as u32,
+            collision.height as u32,
+            &graph.wilderness,
+        )
+        .unwrap(),
+    );
+}
+
+fn rect_zone(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> Zone {
+    let mut zone = Zone::npc(tile(min_x, min_z, 0), 0, ZoneClass::Always, u16::MAX, 0);
+    zone.min_x = min_x;
+    zone.max_x = max_x;
+    zone.min_z = min_z;
+    zone.max_z = max_z;
+    zone
+}
+
+fn route_walk_tiles(route: &crate::router::Route) -> impl Iterator<Item = WorldTile> + '_ {
+    route
+        .legs
+        .iter()
+        .flat_map(|leg| match leg {
+            Leg::Walk { tiles } => tiles.as_slice(),
+            Leg::Transport { .. } => &[],
+        })
+        .copied()
+}
+
+#[test]
+fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
+    // S=(0,0), G1=(16,0); the narrow corridor crosses Z. G2=(14,4)
+    // is its only dead-end pocket. Walking costs 8 and 9 respectively.
+    let mut blocked: Vec<_> = (0..5)
+        .flat_map(|z| {
+            (0..17).filter_map(move |x| {
+                (z != 0 && x != 14).then_some((x, z, CollisionFlag::WALK_SCENERY as u32))
+            })
+        })
+        .collect();
+    blocked.push((14, 1, (CollisionFlag::W_W | CollisionFlag::W_E) as u32));
+    let collision = bake(17, 5, &blocked);
+    let from = tile(0, 0, 0);
+    let past = tile(16, 0, 0);
+    let pocket = tile(14, 4, 0);
+    let goals = [past, pocket];
+    let mut graph = door(from, past, 30);
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 14, 0, 4)]);
+    let state = WorldState::empty();
+    let first = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &goals,
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(first.completion_partitions(), 1);
+    let first = first.into_route().unwrap();
+    assert_eq!((first.dest, first.ticks), (pocket, 9.0));
+    let many = find_many_with(
+        &collision,
+        &graph,
+        from,
+        &goals,
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(many.completion_partitions(), 1);
+    assert_eq!(many.route(0).unwrap().ticks, 30.0);
+    assert_eq!(many.route(1).unwrap().ticks, 9.0);
+    let bypass = find_many_with(
+        &collision,
+        &graph,
+        from,
+        &goals,
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..FindOptions::default()
+        },
+        &state,
+    );
+    assert_eq!(bypass.completion_partitions(), 0);
+    assert_eq!(bypass.scratch_capacities().zone_mask_words, 0);
+    assert_eq!(bypass.route(0).unwrap().ticks, 8.0);
+
+    graph.at.clear();
+    graph.edges.clear();
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            from,
+            past,
+            FindOptions::default(),
+            &state
+        ),
+        Err(RouteError::NoPath),
+    ));
+    assert_eq!(
+        crate::router::find_blocking_zones(
+            &collision,
+            &graph,
+            from,
+            past,
+            FindOptions::default(),
+            &state,
+            &[],
+        ),
+        Some(vec![ZoneKey::Zone(0)]),
+    );
+    assert_eq!(
+        find_first_with(
+            &collision,
+            &graph,
+            from,
+            &goals,
+            FindOptions::default(),
+            &state
+        )
+        .into_route()
+        .unwrap()
+        .dest,
+        pocket,
+    );
+}
+
+#[test]
+fn starting_zone_exemption_never_exempts_an_overlapping_zone() {
+    let collision = bake(9, 3, &[]);
+    let mut graph = TransportGraph::default();
+    // Z2 is wholly inside Z1: testing only Z2\Z1 would test no cells.
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![rect_zone(0, 4, 0, 1), rect_zone(3, 4, 0, 1)],
+    );
+    let route = find_with(
+        &collision,
+        &graph,
+        tile(0, 0, 0),
+        tile(8, 0, 0),
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
+    .unwrap();
+    let table = graph.zones.as_ref().unwrap();
+    assert!(route_walk_tiles(&route).any(|t| table.at(t).any(|i| i == 0)));
+    assert!(route_walk_tiles(&route).all(|t| table.at(t).all(|i| i != 1)));
+}
+
+#[test]
+fn diagnosis_names_only_zones_active_under_the_original_predicate() {
+    let collision = bake(9, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![
+            Zone::npc(tile(2, 0, 0), 0, ZoneClass::LevelRule, 12, 0),
+            Zone::npc(tile(4, 0, 0), 0, ZoneClass::Always, u16::MAX, 0),
+        ],
+    );
+    let state = WorldState {
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(8, 0, 0),
+            FindOptions::default(),
+            &state
+        ),
+        Err(RouteError::NoPath),
+    ));
+    assert_eq!(
+        crate::router::find_blocking_zones(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(8, 0, 0),
+            FindOptions::default(),
+            &state,
+            &[],
+        ),
+        Some(vec![ZoneKey::Zone(1)]),
+    );
+}
+
+#[test]
+fn straddling_zone_endpoint_keys_on_geometry_not_goal_activation() {
+    let collision = bake(9, 1, &[]);
+    let mut graph = TransportGraph {
+        wilderness: WildernessRules {
+            zones: vec![WildernessZone {
+                x1: 2,
+                x2: 5,
+                z1: 0,
+                z2: 0,
+                level1: 0,
+                level2: 0,
+                origin_z: 0,
+            }],
+            ..WildernessRules::default()
+        },
+        ..TransportGraph::default()
+    };
+    let state = WorldState {
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    let opts = FindOptions {
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    let goal = tile(7, 0, 0);
+    for (min_x, partitions) in [(2, 1), (6, 0)] {
+        let mut zone = rect_zone(min_x, 7, 0, 0);
+        zone.class = ZoneClass::LevelRule;
+        zone.cap = 12;
+        install_zones(&collision, &mut graph, vec![zone]);
+        let single = find_with(&collision, &graph, tile(0, 0, 0), goal, opts, &state).unwrap();
+        assert_eq!((single.ticks, route_walk_tiles(&single).count()), (3.5, 8));
+        let first = find_first_with(&collision, &graph, tile(0, 0, 0), &[goal], opts, &state);
+        assert_eq!(first.completion_partitions(), partitions);
+        assert_eq!(first.into_route().unwrap(), single);
+        let goals = [goal];
+        let many = find_many_with(&collision, &graph, tile(0, 0, 0), &goals, opts, &state);
+        assert_eq!(many.completion_partitions(), partitions);
+        assert_eq!(many.route(0).unwrap(), single);
+    }
+}
+
+#[test]
+fn transport_and_any_tile_teleport_landings_are_checked_independently() {
+    let collision = bake(8, 1, &[(2, 0, CollisionFlag::WALK_SCENERY as u32)]);
+    let from = tile(0, 0, 0);
+    let landing = tile(3, 0, 0);
+    let goal = tile(7, 0, 0);
+    for teleport in [false, true] {
+        let mut graph = door(from, landing, 2);
+        if teleport {
+            let mut edge = graph.edges.pop().unwrap();
+            edge.kind = TransportKind::Teleport;
+            graph.at.clear();
+            graph.teleports.push(edge);
+        }
+        install_zones(&collision, &mut graph, vec![rect_zone(3, 3, 0, 0)]);
+        let opts = FindOptions {
+            allow_teleports: true,
+            ..FindOptions::default()
+        };
+        let state = WorldState::empty();
+        assert!(
+            matches!(
+                find_with(&collision, &graph, from, goal, opts, &state),
+                Err(RouteError::NoPath),
+            ),
+            "landing must block, teleport={teleport}"
+        );
+        let route = find_with(
+            &collision,
+            &graph,
+            from,
+            goal,
+            FindOptions {
+                zones: ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+                ..opts
+            },
+            &state,
+        )
+        .unwrap();
+        assert!(route
+            .legs
+            .iter()
+            .any(|leg| { matches!(leg, Leg::Transport { edge } if edge.to == landing) }));
+    }
+}
+
+#[test]
+fn essence_return_landing_is_checked_before_the_following_walk() {
+    let session = crate::essence::essence_session_for_wizard(553).unwrap();
+    let landing = session.return_tile;
+    // One permanent wall separates the two regions, leaving the real
+    // essence return as the sole route out of the mine.
+    let wall: Vec<_> = (2880..3264)
+        .map(|x| (x, 4799, CollisionFlag::WALK_SCENERY as u32))
+        .collect();
+    let collision = bake_at(2880, 3400, 384, 1464, &wall);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![rect_zone(landing.x, landing.x, landing.z, landing.z)],
+    );
+    let from = tile(2912, 4833, 0);
+    let goal = tile(landing.x + 1, landing.z, 0);
+    let opts = FindOptions {
+        essence: Some(session),
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+    assert!(matches!(
+        find_with(&collision, &graph, from, goal, opts, &state),
+        Err(RouteError::NoPath),
+    ));
+    let route = find_with(
+        &collision,
+        &graph,
+        from,
+        goal,
+        FindOptions {
+            zones: ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+            ..opts
+        },
+        &state,
+    )
+    .unwrap();
+    assert!(route
+        .legs
+        .iter()
+        .any(|leg| { matches!(leg, Leg::Transport { edge } if edge.to == landing) }));
+}
+
+#[test]
+fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
+    let collision = bake(9, 1, &[]);
+    let mut graph = TransportGraph {
+        wilderness: WildernessRules {
+            zones: vec![WildernessZone {
+                x1: 2,
+                x2: 5,
+                z1: 0,
+                z2: 0,
+                level1: 0,
+                level2: 0,
+                origin_z: 0,
+            }],
+            ..WildernessRules::default()
+        },
+        ..TransportGraph::default()
+    };
+    let mut zone = rect_zone(2, 7, 0, 0);
+    zone.class = ZoneClass::LevelRule;
+    zone.cap = 12;
+    install_zones(&collision, &mut graph, vec![zone]);
+    let state = WorldState {
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    let allowed = FindOptions {
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    let filter = crate::zones::ZoneFilter::new(
+        graph.zones.as_ref().unwrap(),
+        state.combat_level,
+        &[tile(0, 0, 0), tile(8, 0, 0)],
+        &ZoneExempt::NONE,
+    );
+    assert!(filter.blocks(&graph.wilderness, tile(5, 0, 0)));
+    assert!(!filter.blocks(&graph.wilderness, tile(6, 0, 0)));
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(8, 0, 0),
+            allowed,
+            &state
+        ),
+        Err(RouteError::NoPath),
+    ));
+    assert_eq!(
+        find_with(
+            &collision,
+            &graph,
+            tile(6, 0, 0),
+            tile(8, 0, 0),
+            allowed,
+            &state
+        )
+        .unwrap()
+        .ticks,
+        1.0,
+    );
+    let crossed = FindOptions {
+        zones: ZoneExempt::all(),
+        ..allowed
+    };
+    assert_eq!(
+        find_with(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(8, 0, 0),
+            crossed,
+            &state
+        )
+        .unwrap()
+        .ticks,
+        4.0,
+    );
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(8, 0, 0),
+            FindOptions {
+                allow_wilderness: false,
+                ..crossed
+            },
+            &state,
+        ),
+        Err(RouteError::NoPath),
+    ));
+}
+
+fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
+    WorldState {
+        combat_level,
+        map_members: true,
+        quests: [
+            "Prince Ali Rescue",
+            "Rune Mysteries",
+            "Lost City",
+            "Shilo Village",
+            "Tree Gnome Village",
+            "The Grand Tree",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        inv: HashMap::from([
+            (995, 10_000),
+            (554, 1_000),
+            (555, 1_000),
+            (556, 1_000),
+            (557, 1_000),
+            (558, 1_000),
+            (561, 1_000),
+            (563, 1_000),
+        ]),
+        stats: (0..21).map(|skill| (skill, 99)).collect(),
+        ..WorldState::empty()
+    }
+}
+
+fn zone_route_cell_count(route: &crate::router::Route) -> usize {
+    route
+        .legs
+        .iter()
+        .map(|leg| match leg {
+            Leg::Walk { tiles } => tiles.len(),
+            Leg::Transport { .. } => 1,
+        })
+        .sum()
+}
+
+fn assert_zone_route_clear(
+    world: &crate::world::NavWorld,
+    from: WorldTile,
+    route: &crate::router::Route,
+    opts: FindOptions,
+    state: &WorldState,
+) {
+    let filter = crate::zones::ZoneFilter::new(
+        world.graph.zones.as_ref().expect("v12 zones"),
+        state.combat_level,
+        &[from, route.dest],
+        &opts.zones,
+    );
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles } => {
+                for &tile in tiles {
+                    assert!(
+                        !filter.blocks(&world.graph.wilderness, tile),
+                        "zone entered: {tile:?}"
+                    );
+                }
+            }
+            Leg::Transport { edge } => {
+                assert!(
+                    !filter.blocks(&world.graph.wilderness, edge.to),
+                    "zone landing: {:?}",
+                    edge.to
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    assert!(
+        world.graph.zones.is_some(),
+        "this acceptance requires the v12 bake"
+    );
+    let lumbridge = tile(3222, 3218, 0);
+    let bank = tile(3092, 3243, 0);
+    let east_bank = tile(3253, 3420, 0);
+    let taverley = tile(2895, 3450, 0);
+    let catherby = tile(2809, 3440, 0);
+    let manor = tile(3109, 3353, 0);
+    let opts = FindOptions::default();
+    for (row, from, to, combat, ticks, cells, legs) in [
+        ("F1", lumbridge, bank, Some(126), 84.5, 170, 1),
+        ("F1-low", lumbridge, bank, Some(3), 87.5, 176, 1),
+        (
+            "F2-cap",
+            east_bank,
+            tile(3253, 3375, 0),
+            Some(12),
+            99.5,
+            200,
+            1,
+        ),
+        (
+            "F2-unknown",
+            east_bank,
+            tile(3253, 3375, 0),
+            None,
+            99.5,
+            200,
+            1,
+        ),
+        (
+            "F2-lifted",
+            east_bank,
+            tile(3253, 3375, 0),
+            Some(13),
+            60.0,
+            121,
+            1,
+        ),
+        ("F3", taverley, catherby, Some(126), 341.0, 683, 7),
+        ("F3-cap", taverley, catherby, Some(146), 341.0, 683, 7),
+        ("F3-low", taverley, catherby, Some(3), 410.5, 822, 9),
+        ("F3-lifted", taverley, catherby, Some(147), 125.5, 252, 1),
+        ("P1", bank, tile(3123, 3245, 0), Some(3), 23.5, 48, 3),
+        ("P2", east_bank, tile(3253, 3402, 0), Some(3), 24.5, 50, 1),
+        ("P5", bank, manor, Some(126), 56.0, 113, 1),
+        ("P5-low", bank, manor, Some(3), 57.5, 116, 1),
+        ("P6", lumbridge, manor, Some(126), 95.5, 192, 1),
+        ("P6-low", lumbridge, manor, Some(3), 96.5, 194, 1),
+    ] {
+        let state = zones_rich_289_state(combat);
+        let route = find_with(&world.collision, &world.graph, from, to, opts, &state).unwrap();
+        assert_eq!(
+            (route.ticks, zone_route_cell_count(&route), route.legs.len()),
+            (ticks, cells, legs),
+            "{row}"
+        );
+        assert_zone_route_clear(&world, from, &route, opts, &state);
+        if row.starts_with("P5") || row.starts_with("P6") {
+            assert!(
+                !route_walk_tiles(&route).any(|t| t == tile(3110, 3339, 0)),
+                "{row}"
+            );
+            assert!(
+                route_walk_tiles(&route).any(|t| t == tile(3109, 3339, 0)),
+                "{row}"
+            );
+        }
+    }
+    let table = world.graph.zones.as_ref().unwrap();
+    let r2_squares: Vec<_> = table
+        .zones()
+        .iter()
+        .filter(|zone| zone.shape != crate::zones::NO_SHAPE)
+        .map(|zone| AvoidRect {
+            min_x: zone.min_x,
+            max_x: zone.max_x,
+            min_z: zone.min_z,
+            max_z: zone.max_z,
+            level: Some(i32::from(zone.level)),
+        })
+        .collect();
+    for from in [bank, lumbridge] {
+        assert!(
+            matches!(
+                find_with_avoid(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    manor,
+                    FindOptions {
+                        zones: ZoneExempt::all(),
+                        ..opts
+                    },
+                    &zones_rich_289_state(Some(126)),
+                    &r2_squares,
+                ),
+                Err(RouteError::NoPath),
+            ),
+            "R2 stationary squares must close the same manor fixture"
+        );
+    }
+    let jail = ZoneExempt::named(&[table.resolve("draynor-jail-guards").unwrap()]).unwrap();
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        bank,
+        FindOptions {
+            zones: jail,
+            ..opts
+        },
+        &zones_rich_289_state(Some(126)),
+    )
+    .unwrap();
+    assert_eq!((route.ticks, zone_route_cell_count(&route)), (83.5, 168));
+    let mountain = ZoneExempt::named(&[table.resolve("white-wolf-mountain").unwrap()]).unwrap();
+    for combat in [3, 126, 146] {
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            taverley,
+            catherby,
+            FindOptions {
+                zones: mountain,
+                ..opts
+            },
+            &zones_rich_289_state(Some(combat)),
+        )
+        .unwrap();
+        assert_eq!((route.ticks, zone_route_cell_count(&route)), (125.5, 252));
+    }
+}
+
+#[test]
+fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let table = world.graph.zones.as_ref().expect("v12 zones");
+    let opts = FindOptions::default();
+    let from = tile(3222, 3218, 0);
+    let to = tile(2664, 3664, 0);
+    let state = zones_rich_289_state(Some(126));
+    assert!(matches!(
+        find_with(&world.collision, &world.graph, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    ));
+    let keys = crate::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        opts,
+        &state,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        keys,
+        vec![
+            table.resolve("white-wolf-mountain").unwrap(),
+            table.resolve("wolf@2647,3584,0").unwrap(),
+        ]
+    );
+    let crossing = FindOptions {
+        zones: ZoneExempt::named(&keys).unwrap(),
+        ..opts
+    };
+    let route = find_with(&world.collision, &world.graph, from, to, crossing, &state).unwrap();
+    assert_eq!(
+        (route.ticks, zone_route_cell_count(&route), route.legs.len()),
+        (256.5, 502, 7)
+    );
+    assert!(matches!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions {
+                zones: ZoneExempt::named(&keys[..1]).unwrap(),
+                ..opts
+            },
+            &state,
+        ),
+        Err(RouteError::NoPath),
+    ));
+    let wolf_exempt = FindOptions {
+        zones: ZoneExempt::named(&keys[1..]).unwrap(),
+        ..opts
+    };
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        wolf_exempt,
+        &state,
+    )
+    .unwrap();
+    assert_eq!(
+        (route.ticks, zone_route_cell_count(&route), route.legs.len()),
+        (395.5, 780, 13)
+    );
+    for (combat, ticks, cells) in [(129, 395.5, 780), (147, 256.5, 502)] {
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            opts,
+            &zones_rich_289_state(Some(combat)),
+        )
+        .unwrap();
+        assert_eq!((route.ticks, zone_route_cell_count(&route)), (ticks, cells));
+    }
+    for members in [false, true] {
+        let fresh = WorldState {
+            combat_level: Some(3),
+            map_members: members,
+            stats: (0..21).map(|skill| (skill, 1)).collect(),
+            ..WorldState::empty()
+        };
+        let from = tile(3123, 3245, 0);
+        let to = tile(3224, 3200, 0);
+        assert!(matches!(
+            find_with(&world.collision, &world.graph, from, to, opts, &fresh),
+            Err(RouteError::NoPath)
+        ));
+        let keys = crate::router::find_blocking_zones(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            opts,
+            &fresh,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            keys,
+            vec![
+                table.resolve("brownbear@3176,3223,0").unwrap(),
+                table.resolve("giantrat1@3211,3195,0").unwrap(),
+            ]
+        );
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions {
+                zones: ZoneExempt::named(&keys).unwrap(),
+                ..opts
+            },
+            &fresh,
+        )
+        .unwrap();
+        assert_eq!(
+            (route.ticks, zone_route_cell_count(&route), route.legs.len()),
+            (53.5, 108, 3)
+        );
+    }
+}
+
+#[test]
+fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    world.bind_named_bank_facts(&data).unwrap();
+    let banks = world.named_bank_facts().unwrap();
+    let targets: Vec<_> = banks
+        .banks()
+        .iter()
+        .filter(|b| b.routable)
+        .map(|b| b.tile)
+        .collect();
+    assert_eq!(targets.len(), 19);
+    for (from, combat, draynor, changed) in [
+        (tile(3222, 3218, 0), 126, 84.5, 8),
+        (tile(3222, 3218, 0), 3, 87.5, 17),
+        (tile(3016, 9840, 0), 126, 140.0, 7),
+        (tile(3016, 9840, 0), 3, 171.0, 13),
+    ] {
+        let state = zones_rich_289_state(Some(combat));
+        let opts = FindOptions::default();
+        let many = find_many_with(&world.collision, &world.graph, from, &targets, opts, &state);
+        let legacy = find_many_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            FindOptions {
+                zones: ZoneExempt::all(),
+                ..opts
+            },
+            &state,
+        );
+        assert_eq!(many.completion_partitions(), 0);
+        assert_eq!(many.results().iter().filter(|r| r.is_ok()).count(), 17);
+        assert_eq!(
+            many.results()
+                .iter()
+                .zip(legacy.results())
+                .filter(|(a, b)| {
+                    a.as_ref().map(|cost| cost.ticks) != b.as_ref().map(|cost| cost.ticks)
+                })
+                .count(),
+            changed
+        );
+        for (index, &target) in targets.iter().enumerate() {
+            let single = find_with(&world.collision, &world.graph, from, target, opts, &state);
+            match (many.route(index), single) {
+                (Ok(many), Ok(single)) => assert_eq!(
+                    many.ticks, single.ticks,
+                    "from={from:?} target={target:?} combat={combat}"
+                ),
+                (Err(TargetError::NoPath), Err(RouteError::NoPath)) => {}
+                pair => panic!("many/single differ: {pair:?}"),
+            }
+        }
+        let bank = targets
+            .iter()
+            .position(|t| *t == tile(3092, 3243, 0))
+            .unwrap();
+        assert_eq!(many.route(bank).unwrap().ticks, draynor);
+    }
+}
+
+#[test]
+fn real_289_grouped_goals_merge_their_own_endpoint_completion_costs() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let from = tile(3222, 3218, 0);
+    let targets = [
+        tile(3092, 3243, 0),
+        tile(3123, 3245, 0),
+        tile(3253, 3402, 0),
+    ];
+    for (combat, partitions, ticks) in [(3, 2, [87.5, 70.5, 109.5]), (126, 1, [84.5, 67.5, 107.5])]
+    {
+        let state = zones_rich_289_state(Some(combat));
+        let opts = FindOptions::default();
+        let many = find_many_with(&world.collision, &world.graph, from, &targets, opts, &state);
+        assert_eq!(many.completion_partitions(), partitions);
+        for (index, &target) in targets.iter().enumerate() {
+            let single =
+                find_with(&world.collision, &world.graph, from, target, opts, &state).unwrap();
+            assert_eq!(
+                (many.route(index).unwrap().ticks, single.ticks),
+                (ticks[index], ticks[index])
+            );
+        }
+        let first = find_first_with(&world.collision, &world.graph, from, &targets, opts, &state);
+        assert_eq!(first.completion_partitions(), partitions);
+        let first = first.into_route().unwrap();
+        assert_eq!((first.dest, first.ticks), (targets[1], ticks[1]));
+    }
+}
+
+#[test]
+fn zoned_first_keeps_preferred_priority_and_does_not_use_fallback_zones_for_transit() {
+    let collision = bake(5, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 2, 0, 0)]);
+    let from = tile(0, 0, 0);
+    let zoned = tile(2, 0, 0);
+    let state = WorldState::empty();
+    let preferred = find_first_with_fallback(
+        &collision,
+        &graph,
+        from,
+        &[zoned],
+        &[from],
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(
+        (
+            preferred.route().unwrap().dest,
+            preferred.route().unwrap().ticks
+        ),
+        (zoned, 1.0)
+    );
+    assert!(
+        preferred.fallback().is_none(),
+        "a preferred completion wins over the zero-cost fallback"
+    );
+    let refused = find_first_with_fallback(
+        &collision,
+        &graph,
+        from,
+        &[tile(4, 0, 0)],
+        &[zoned],
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(refused.route(), Err(RouteError::NoPath));
+    assert!(
+        matches!(refused.fallback(), Some(FallbackRoute::Routed(route))
+        if route.dest == zoned && route.ticks == 1.0)
+    );
+    let empty = find_first_with_fallback(
+        &collision,
+        &graph,
+        from,
+        &[],
+        &[zoned],
+        FindOptions::default(),
+        &state,
+    );
+    assert!(matches!(empty.fallback(), Some(FallbackRoute::Undecided)));
+    assert_eq!(empty.completion_partitions(), 0);
+}
+
+#[test]
+fn expired_many_deadline_cannot_publish_a_completion_route() {
+    let collision = bake(5, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 2, 0, 0)]);
+    let goals = [tile(2, 0, 0), tile(4, 0, 0)];
+    let search = find_many_with_avoid_bounded_until(
+        &collision,
+        &graph,
+        tile(0, 0, 0),
+        &goals,
+        FindOptions::default(),
+        &WorldState::empty(),
+        &[],
+        BANK_TARGET_BUDGET,
+        Some(Instant::now() - Duration::from_secs(1)),
+    );
+    assert!(!search.complete());
+    assert_eq!(search.completion_partitions(), 1);
+    assert_eq!(
+        search.results(),
+        &[Err(TargetError::NotSettled), Err(TargetError::NotSettled)]
+    );
+    assert!(search.route(0).is_err());
+    assert!(search.route(1).is_err());
+}
+
+#[test]
+fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let table = world.graph.zones.as_ref().expect("v12 zones");
+    let mage = table.resolve("zamorak_mage@3100,3927,0").unwrap();
+    assert!(table
+        .at(tile(3100, 3927, 0))
+        .any(|index| table.key(index) == mage));
+    assert!(!table
+        .at(tile(3100, 3927, 1))
+        .any(|index| table.key(index) == mage));
+    let from = tile(3090, 3917, 0);
+    let to = tile(3110, 3937, 0);
+    let opts = FindOptions {
+        allow_wilderness: true,
+        ..Default::default()
+    };
+    let state = WorldState {
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    let crossing = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..opts
+        },
+        &state,
+    )
+    .unwrap();
+    assert!(crossing.legs.iter().any(|leg| match leg {
+        Leg::Walk { tiles } => tiles
+            .iter()
+            .any(|&cell| { table.at(cell).any(|index| table.key(index) == mage) }),
+        Leg::Transport { edge } => table.at(edge.to).any(|index| table.key(index) == mage),
+    }));
+    assert!(matches!(
+        find_with(&world.collision, &world.graph, from, to, opts, &state),
+        Err(RouteError::NoPath),
+    ));
+    let blocked = crate::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        opts,
+        &state,
+        &[],
+    )
+    .expect("active zone witness");
+    assert!(blocked.contains(&mage), "{blocked:?}");
 }

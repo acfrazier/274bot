@@ -2595,6 +2595,7 @@ fn inspect_opts() -> crate::router::FindOptions {
         allow_wilderness: false,
         allow_bank_fetch: false,
         essence: None,
+        zones: crate::zones::ZoneExempt::all(),
     }
 }
 

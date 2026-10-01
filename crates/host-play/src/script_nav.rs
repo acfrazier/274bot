@@ -4,12 +4,14 @@ use std::thread;
 use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
+use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
 };
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
+use nav::zones::{ZoneExempt, ZoneKey};
 use nav::WorldState;
 
 use super::{
@@ -68,6 +70,20 @@ pub(crate) struct MissingCarry {
     pub(crate) count: i32,
 }
 
+/// Exclusions retained with a request so reconnects re-resolve the original
+/// symbolic catalog entries at their new arm-time endpoints.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScriptRouteExclusions {
+    pub(crate) avoid: Vec<AvoidRect>,
+    pub(crate) avoid_wire: Vec<script::shim::InspectAvoidWire>,
+    pub(crate) cross: Vec<Arc<str>>,
+}
+impl ScriptRouteExclusions {
+    fn is_empty(&self) -> bool {
+        self.avoid.is_empty() && self.avoid_wire.is_empty() && self.cross.is_empty()
+    }
+}
+
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route (found off-pump over the shared
 /// [`NavWorld`]); the slot pump polls [`Traveller::follow`] with a clone of
@@ -84,17 +100,17 @@ pub(crate) struct NavBot {
     pub(crate) native_walk: Option<script::native::HostAuthority>,
     pub(crate) native_receipt_seq: u64,
     pub(crate) native_walk_failure: Option<(u64, script::native::WalkEnd)>,
+    pub(crate) native_walk_blocked: Option<(u64, Arc<[ZoneKey]>)>,
     /// A native walk's terminal that no published walk outcome carries: a
     /// host refusal, or a Pause / displacement / abort that ended its follow.
     /// Delivered once to its still-live owner by the next observation.
     pub(crate) native_end: Option<(script::native::HostAuthority, script::native::WalkEnd)>,
     /// Evidence retained with the published route, not a newer pending retarget.
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
-    /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
-    pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool)>,
-    /// The avoid rectangles `requested_route` was queued with, so a
-    /// reconnect carries the same walk ([`hold_script_nav`]).
-    pub(crate) requested_avoid: Vec<AvoidRect>,
+    /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
+    pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
+    /// Request exclusions retained for reconnect carry and retransmission gates.
+    pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
     pub(crate) route: Option<Route>,
     /// The walk request id `publish_route` installed `route` for. A retarget
@@ -132,6 +148,7 @@ pub(crate) struct NavBot {
     /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
     /// is, so a list can never outlive the failure it belongs to.
     pub(crate) walk_missing_carry: Vec<MissingCarry>,
+    pub(crate) walk_outcome_detail: Option<Arc<str>>,
     pub(crate) inspect: route_inspect::InspectNav,
     pub(crate) bank_pick: super::bank::BankPickState,
     /// The game requests this slot's script sent, as dispatched here. Host
@@ -140,7 +157,8 @@ pub(crate) struct NavBot {
     /// The script walk a reconnect or an operator Pause interrupted, re-sent
     /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
     /// [`take_carried_walk`]).
-    pub(crate) carried_walk: Option<CarriedWalk>,
+    /// Boxed only while held; idle slots do not retain the full wire payload.
+    pub(crate) carried_walk: Option<Box<CarriedWalk>>,
 }
 
 /// A script walk held across a reconnect or an operator Pause.
@@ -200,6 +218,162 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
+fn format_zone_witness(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+    keys.iter()
+        .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+    format!(
+        "blocked by danger zones: {}",
+        format_zone_witness(table, keys)
+    )
+}
+
+pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+    let names = keys
+        .iter()
+        .map(|&key| format!("{:?}", table.name(key)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "no route: {} — pass crossZones: [{names}] to cross",
+        blocked_zone_detail(table, keys)
+    )
+}
+
+const WHITE_WOLF_MOUNTAIN_AVOID: AvoidRect = AvoidRect {
+    min_x: 2828,
+    max_x: 2878,
+    min_z: 3468,
+    max_z: 3538,
+    level: None,
+};
+const DRAYNOR_JAIL_GUARD_AVOIDS: [AvoidRect; 4] = [
+    AvoidRect {
+        min_x: 3096,
+        max_x: 3122,
+        min_z: 3224,
+        max_z: 3250,
+        level: Some(0),
+    },
+    AvoidRect {
+        min_x: 3107,
+        max_x: 3133,
+        min_z: 3225,
+        max_z: 3251,
+        level: Some(0),
+    },
+    AvoidRect {
+        min_x: 3108,
+        max_x: 3134,
+        min_z: 3236,
+        max_z: 3262,
+        level: Some(0),
+    },
+    AvoidRect {
+        min_x: 3114,
+        max_x: 3140,
+        min_z: 3235,
+        max_z: 3261,
+        level: Some(0),
+    },
+];
+
+pub(crate) fn resolve_route_exclusions(
+    mut opts: FindOptions,
+    world: &NavWorld,
+    from: WorldTile,
+    to: WorldTile,
+    state: &WorldState,
+    mut exclusions: ScriptRouteExclusions,
+) -> Result<(FindOptions, ScriptRouteExclusions), String> {
+    if exclusions.avoid_wire.len() > route_inspect::MAX_AVOID {
+        return Err("avoidZones: more than 16 entries".to_string());
+    }
+    let zones = world.graph.zones.as_ref();
+    for entry in &exclusions.avoid_wire {
+        match entry {
+            script::shim::InspectAvoidWire::Rect {
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                level,
+            } => exclusions.avoid.push(AvoidRect {
+                min_x: *min_x,
+                max_x: *max_x,
+                min_z: *min_z,
+                max_z: *max_z,
+                level: *level,
+            }),
+            script::shim::InspectAvoidWire::Catalog(id) => {
+                let Some(table) = zones else {
+                    return Err(format!(
+                        "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
+                    ));
+                };
+                if !matches!(id.as_str(), "white-wolf-mountain" | "draynor-jail-guards")
+                    || table.resolve(id).is_none()
+                {
+                    return Err(format!("avoidZones: unknown zone {id:?}"));
+                }
+                match id.as_str() {
+                    "white-wolf-mountain" => exclusions.avoid.push(WHITE_WOLF_MOUNTAIN_AVOID),
+                    "draynor-jail-guards" => {
+                        let endpoint_inside = DRAYNOR_JAIL_GUARD_AVOIDS
+                            .iter()
+                            .any(|rect| rect.contains(from) || rect.contains(to));
+                        let combat_high = state.combat_level.is_some_and(|level| level > 50);
+                        if !endpoint_inside && !combat_high {
+                            exclusions.avoid.extend(DRAYNOR_JAIL_GUARD_AVOIDS);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            script::shim::InspectAvoidWire::Unsupported => {
+                return Err(
+                    "avoidZones: expected a rectangle or a known catalog zone id".to_string(),
+                );
+            }
+        }
+    }
+    if exclusions.avoid.len() > route_inspect::MAX_AVOID {
+        return Err("avoidZones: more than 16 entries".to_string());
+    }
+    if exclusions.avoid.iter().any(|rect| {
+        rect.min_x > rect.max_x
+            || rect.min_z > rect.max_z
+            || rect.level.is_some_and(|level| !(0..=3).contains(&level))
+    }) {
+        return Err("avoidZones: a rectangle with inverted bounds or a level off 0-3".to_string());
+    }
+    if exclusions.cross.len() > 8 {
+        return Err("crossZones: more than 8 zone names".to_string());
+    }
+    let mut keys = Vec::with_capacity(exclusions.cross.len());
+    for name in &exclusions.cross {
+        let Some(table) = zones else {
+            return Err(format!(
+                "crossZones: zone catalog unavailable (legacy grid pack); cannot resolve {name:?}"
+            ));
+        };
+        let Some(key) = table.resolve(name) else {
+            return Err(format!("crossZones: unknown zone {name:?}"));
+        };
+        keys.push(key);
+    }
+    let named = ZoneExempt::named(&keys)
+        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
+    opts.zones = opts
+        .zones
+        .union(named)
+        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
+    Ok((opts, exclusions))
+}
 
 impl ScriptWalkArm {
     pub(crate) fn queue_native_route(
@@ -229,6 +403,10 @@ impl ScriptWalkArm {
                 request.required_after,
             ));
         }
+        let exclusions = ScriptRouteExclusions {
+            cross: request.cross.to_vec(),
+            ..Default::default()
+        };
         self.queue_route_impl(
             request.target.x,
             request.target.z,
@@ -244,7 +422,7 @@ impl ScriptWalkArm {
             authority.request_id().get(),
             Some(snapshot),
             RouteCompletion::default(),
-            Vec::new(),
+            exclusions,
             Some(authority),
         )
     }
@@ -286,10 +464,29 @@ impl ScriptWalkArm {
     /// It never publishes through the Load walk outcome: that refusal guard
     /// is released only by an isolate snapshot a compiled slot never posts.
     fn refuse_native(&self, authority: script::native::HostAuthority) {
+        self.refuse_native_with_detail(authority, None);
+    }
+
+    fn refuse_native_with_detail(
+        &self,
+        authority: script::native::HostAuthority,
+        detail: Option<Arc<str>>,
+    ) {
+        if !authority.live() {
+            return;
+        }
+        let request_id = authority.request_id().get();
         let mut navs = self.navs.lock().unwrap();
-        navs.entry(self.name.clone())
-            .or_default()
-            .refuse_native(authority);
+        let bot = navs.entry(self.name.clone()).or_default();
+        bot.refuse_native(authority);
+        if bot
+            .native_end
+            .as_ref()
+            .is_some_and(|(owner, _)| owner.request_id().get() == request_id)
+        {
+            bot.walk_outcome_request_id = request_id;
+            bot.walk_outcome_detail = detail;
+        }
     }
 
     fn refuse(
@@ -328,7 +525,7 @@ impl ScriptWalkArm {
             request_id,
             None,
             RouteCompletion::default(),
-            Vec::new(),
+            ScriptRouteExclusions::default(),
             None,
         )
     }
@@ -363,13 +560,13 @@ impl ScriptWalkArm {
             request_id,
             Some(snapshot),
             RouteCompletion::default(),
-            Vec::new(),
+            ScriptRouteExclusions::default(),
             None,
         )
     }
 
-    /// Queue a walk that keeps out of `avoid` (frozen `WalkOptions.avoidZones`).
-    #[allow(clippy::too_many_arguments)] // route queue plus the walk's avoid rects
+    /// Queue a walk with the request's frozen avoid rectangles and zone names.
+    #[allow(clippy::too_many_arguments)] // route queue plus the walk's exclusions
     pub(crate) fn queue_route_avoiding(
         &self,
         x: i32,
@@ -377,7 +574,7 @@ impl ScriptWalkArm {
         level: i32,
         opts: FindOptions,
         request_id: u64,
-        avoid: Vec<AvoidRect>,
+        exclusions: ScriptRouteExclusions,
     ) -> bool {
         self.queue_route_impl(
             x,
@@ -389,13 +586,13 @@ impl ScriptWalkArm {
             request_id,
             None,
             RouteCompletion::default(),
-            avoid,
+            exclusions,
             None,
         )
     }
 
-    /// [`Self::queue_route_in_snapshot`] for a walk that keeps out of `avoid`.
-    #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene and avoid rects
+    /// [`Self::queue_route_in_snapshot`] for a walk with request exclusions.
+    #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene and exclusions
     pub(crate) fn queue_route_in_snapshot_avoiding(
         &self,
         snapshot: &GameSnapshot,
@@ -405,7 +602,7 @@ impl ScriptWalkArm {
         opts: FindOptions,
         radius: i32,
         request_id: u64,
-        avoid: Vec<AvoidRect>,
+        exclusions: ScriptRouteExclusions,
     ) -> bool {
         self.queue_route_impl(
             x,
@@ -417,7 +614,7 @@ impl ScriptWalkArm {
             request_id,
             Some(snapshot),
             RouteCompletion::default(),
-            avoid,
+            exclusions,
             None,
         )
     }
@@ -446,7 +643,7 @@ impl ScriptWalkArm {
             request_id,
             Some(snapshot),
             completion,
-            Vec::new(),
+            ScriptRouteExclusions::default(),
             None,
         )
         .then_some(receiver)
@@ -458,7 +655,8 @@ impl ScriptWalkArm {
         bot: &mut NavBot,
         to: WorldTile,
         radius: i32,
-        key: (WorldTile, i32, bool, bool, bool),
+        key: (WorldTile, i32, bool, bool, bool, ZoneExempt),
+        exclusions: &Option<Arc<ScriptRouteExclusions>>,
         retarget: bool,
         request_id: u64,
         native: Option<&script::native::HostAuthority>,
@@ -488,6 +686,7 @@ impl ScriptWalkArm {
             return Some(false);
         }
         if bot.requested_route == Some(key)
+            && bot.requested_exclusions.as_deref() == exclusions.as_deref()
             && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
@@ -522,13 +721,13 @@ impl ScriptWalkArm {
         x: i32,
         z: i32,
         level: i32,
-        mut opts: FindOptions,
+        opts: FindOptions,
         radius: i32,
         retarget: bool,
         request_id: u64,
         snapshot: Option<&GameSnapshot>,
         completion: RouteCompletion,
-        avoid: Vec<AvoidRect>,
+        exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
@@ -570,12 +769,38 @@ impl ScriptWalkArm {
             z: hz,
             level: hl,
         };
+        let empty = WorldState::empty();
+        let route_state = self.state.as_ref().unwrap_or(&empty);
+        let (mut opts, exclusions) =
+            match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
+                Ok(resolved) => resolved,
+                Err(reason) => {
+                    log_walk_arm(&self.name, || {
+                        format!("queue_route refused {reason} dest={to:?} request_id={request_id}")
+                    });
+                    if let Some(authority) = authority.as_ref() {
+                        self.refuse_native_with_detail(
+                            authority.clone(),
+                            Some(Arc::from(reason.as_str())),
+                        );
+                    } else {
+                        self.publish_refusal(to, radius, opts.allow_teleports, request_id);
+                    }
+                    return false;
+                }
+            };
+        let exclusions = if exclusions.is_empty() {
+            None
+        } else {
+            Some(Arc::new(exclusions))
+        };
         let key = (
             to,
             radius,
             opts.allow_teleports,
             opts.allow_wilderness,
             opts.allow_bank_fetch,
+            opts.zones,
         );
         {
             let mut navs = self.navs.lock().unwrap();
@@ -585,6 +810,7 @@ impl ScriptWalkArm {
                 to,
                 radius,
                 key,
+                &exclusions,
                 retarget,
                 request_id,
                 authority.as_ref(),
@@ -608,6 +834,7 @@ impl ScriptWalkArm {
                 to,
                 radius,
                 key,
+                &exclusions,
                 retarget,
                 request_id,
                 authority.as_ref(),
@@ -622,10 +849,12 @@ impl ScriptWalkArm {
             // A host or legacy walk displacing a live native walk ends it
             // visibly; the same owner's replaced walk is already revoked.
             bot.end_native_walk(script::native::WalkEnd::Cancelled);
+            bot.native_walk_blocked = None;
+            bot.walk_outcome_detail = None;
+            bot.requested_route = Some(key);
+            bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
             bot.native_walk_failure = None;
-            bot.requested_route = Some(key);
-            bot.requested_avoid.clone_from(&avoid);
             bot.pending_route = Some(ScriptRouteRequest {
                 generation: bot.route_generation,
                 request_id,
@@ -637,15 +866,20 @@ impl ScriptWalkArm {
                 state: self.state.clone(),
                 bank: self.bank.clone(),
                 live_candidates,
-                avoid,
+                exclusions,
                 completion,
             });
             if bot.route_worker.is_some() {
                 log_walk_arm(&self.name, || {
                     format!(
                         "queue_route handed-pending dest={to:?} r={radius} request_id={request_id} \
-                         generation={} from={from:?}",
-                        bot.route_generation
+                         generation={} from={from:?}{}",
+                        bot.route_generation,
+                        if world.graph.zones.is_none() {
+                            " zones: unavailable (legacy grid pack)"
+                        } else {
+                            ""
+                        }
                     )
                 });
                 return true;
@@ -660,8 +894,15 @@ impl ScriptWalkArm {
         log_walk_arm(&self.name, || {
             format!(
                 "queue_route spawned dest={to:?} r={radius} request_id={request_id} from={from:?} \
-                 allow_teleports={} allow_wilderness={} allow_bank_fetch={}",
-                opts.allow_teleports, opts.allow_wilderness, opts.allow_bank_fetch
+                 allow_teleports={} allow_wilderness={} allow_bank_fetch={}{}",
+                opts.allow_teleports,
+                opts.allow_wilderness,
+                opts.allow_bank_fetch,
+                if world.graph.zones.is_none() {
+                    " zones: unavailable (legacy grid pack)"
+                } else {
+                    ""
+                }
             )
         });
         let spawned = thread::Builder::new()
@@ -721,9 +962,41 @@ impl ScriptWalkArm {
                         )
                     });
                 }
-                let native_failure = authority
+                let blocked = request
+                    .blocking_zones(&outcome)
+                    .filter(|keys| !keys.is_empty());
+                let route_detail = blocked
                     .as_ref()
-                    .and_then(|_| request.native_failure(&outcome));
+                    .and_then(|keys| {
+                        request
+                            .world
+                            .graph
+                            .zones
+                            .as_ref()
+                            .map(|table| blocked_zone_detail(table, keys))
+                    })
+                    .or_else(|| {
+                        request
+                            .world
+                            .graph
+                            .zones
+                            .is_none()
+                            .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
+                    });
+                if let (Some(keys), Some(table)) =
+                    (blocked.as_ref(), request.world.graph.zones.as_ref())
+                {
+                    api::host_log!(
+                        api::hostlog::Category::NavTrace,
+                        api::hostlog::Level::Warn,
+                        slot = &name,
+                        "{}",
+                        compat_zone_no_route_line(table, keys)
+                    );
+                }
+                let native_failure = request.native_failure(&outcome, blocked.as_deref());
+                let native_refused =
+                    native_failure == Some(script::native::WalkEnd::Refused);
                 let mut all = navs.lock().unwrap();
                 let Some(bot) = all.get_mut(&name) else {
                     log_walk_arm(&name, || "worker exit bot-gone after calculate".to_string());
@@ -775,6 +1048,12 @@ impl ScriptWalkArm {
                 {
                     bot.native_walk_failure =
                         native_failure.map(|end| (request.request_id, end));
+                    bot.walk_outcome_detail = route_detail.map(Arc::from);
+                    bot.native_walk_blocked = if native_refused {
+                        blocked.map(|keys| (request.request_id, Arc::<[ZoneKey]>::from(keys)))
+                    } else {
+                        None
+                    };
                 }
                 request.completion.signal();
             })
@@ -929,15 +1208,143 @@ pub(crate) struct ScriptRouteRequest {
     /// `None` keeps the sequential radius policy; with `Some`, the radius
     /// goal set is the fallback when no stand routes.
     pub(crate) live_candidates: Option<LiveCandidates>,
-    /// Frozen `WalkOptions.avoidZones` rectangles: every search of this
-    /// walk keeps out of them.
-    pub(crate) avoid: Vec<AvoidRect>,
+    /// Frozen request exclusions: every search keeps out of rects and carries
+    /// the original wire entries across a resume for arm-time re-resolution.
+    pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
-    fn native_failure(&self, outcome: &RouteOutcome) -> Option<script::native::WalkEnd> {
+    fn avoid(&self) -> &[AvoidRect] {
+        self.exclusions
+            .as_deref()
+            .map_or(&[][..], |exclusions| exclusions.avoid.as_slice())
+    }
+    fn blocking_zones(&self, outcome: &RouteOutcome) -> Option<Vec<ZoneKey>> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
+        }
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        let mut targets = Vec::new();
+        if self.radius <= 0 {
+            targets.push(self.to);
+        } else {
+            if let Some(stands) = &self.live_candidates {
+                targets.extend_from_slice(stands.as_slice());
+            }
+            targets.extend(approach_tiles(&self.world, self.from, self.to, self.radius));
+        }
+        let bank_targets = if self.radius <= 0 {
+            targets.as_slice()
+        } else {
+            self.live_candidates
+                .as_ref()
+                .map_or(&[][..], |stands| stands.as_slice())
+        };
+        let direct = if self.radius <= 0 {
+            nav::router::find_blocking_zones(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                self.to,
+                self.opts,
+                state,
+                self.avoid(),
+            )
+        } else {
+            nav::router::find_first_blocking_zones(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                &targets,
+                self.opts,
+                state,
+                self.avoid(),
+            )
+        }
+        .filter(|keys| !keys.is_empty());
+        if direct.is_some() {
+            return direct;
+        }
+        if !self.opts.allow_bank_fetch {
+            return None;
+        }
+        let strict_opts = FindOptions {
+            allow_bank_fetch: false,
+            ..self.opts
+        };
+        for &target in bank_targets {
+            let Some(missing) = find_missing_item_reqs_with_avoid(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                target,
+                self.opts,
+                state,
+                self.avoid(),
+            ) else {
+                continue;
+            };
+            let Some(plan) = plan_bank_fetch(
+                &missing,
+                state,
+                &self.bank,
+                self.world.banks(),
+                self.from,
+                &self.world.collision,
+            ) else {
+                continue;
+            };
+            let access = plan.steps.iter().find_map(|step| match step {
+                BankStep::Walk { x, z, level } => Some(WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                }),
+                _ => None,
+            });
+            if let Some(access) = access {
+                if let Some(keys) = nav::router::find_blocking_zones(
+                    &self.world.collision,
+                    &self.world.graph,
+                    self.from,
+                    access,
+                    strict_opts,
+                    state,
+                    self.avoid(),
+                )
+                .filter(|keys| !keys.is_empty())
+                {
+                    return Some(keys);
+                }
+            }
+            if let Some(keys) = nav::router::find_blocking_zones(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                target,
+                strict_opts,
+                &plan.state,
+                self.avoid(),
+            )
+            .filter(|keys| !keys.is_empty())
+            {
+                return Some(keys);
+            }
+        }
+        None
+    }
+
+    fn native_failure(
+        &self,
+        outcome: &RouteOutcome,
+        blocked: Option<&[ZoneKey]>,
+    ) -> Option<script::native::WalkEnd> {
+        if !matches!(outcome, RouteOutcome::NoPath) {
+            return None;
+        }
+        if blocked.is_some_and(|keys| !keys.is_empty()) {
+            return Some(script::native::WalkEnd::Refused);
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
@@ -957,7 +1364,7 @@ impl ScriptRouteRequest {
                 &targets,
                 self.opts,
                 state,
-                &self.avoid,
+                self.avoid(),
             ) {
                 Ok(Some(gates)) => script::native::WalkEnd::NeedsEvidence(gates),
                 Ok(None) => script::native::WalkEnd::Failed,
@@ -965,7 +1372,8 @@ impl ScriptRouteRequest {
             },
         )
     }
-
+}
+impl ScriptRouteRequest {
     /// The navigator-named gate shorts of a failed walk: the strict find's own
     /// diagnosis, re-run with only the `item_req`/`worn_req` gates ignored.
     /// A routed outcome names none, and neither does a failure the relaxed
@@ -986,7 +1394,7 @@ impl ScriptRouteRequest {
             self.to,
             self.opts,
             state,
-            &self.avoid,
+            self.avoid(),
         ) else {
             return Vec::new();
         };
@@ -1029,7 +1437,7 @@ impl ScriptRouteRequest {
             tiles,
             self.opts,
             state,
-            &self.avoid,
+            self.avoid(),
         );
         if debug {
             let elapsed_ms = started.unwrap().elapsed().as_millis();
@@ -1082,7 +1490,7 @@ impl ScriptRouteRequest {
                 state,
                 fetchable,
                 &self.bank,
-                &self.avoid,
+                self.avoid(),
             ) {
                 StandFetch::Outcome(outcome) => return outcome,
                 StandFetch::Tiles(known) => fetch_tiles = known,
@@ -1098,7 +1506,7 @@ impl ScriptRouteRequest {
                 tiles,
                 self.opts,
                 state,
-                &self.avoid,
+                self.avoid(),
             )
             .into_route()
             .ok(),
@@ -1118,7 +1526,7 @@ impl ScriptRouteRequest {
                 state,
                 fetchable,
                 &self.bank,
-                &self.avoid,
+                self.avoid(),
             ),
             None => RouteOutcome::NoPath,
         };
@@ -1160,7 +1568,7 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 &self.bank,
-                &self.avoid,
+                self.avoid(),
             );
             if debug {
                 let elapsed_ms = started.unwrap().elapsed().as_millis();
@@ -1189,7 +1597,7 @@ impl ScriptRouteRequest {
                 self.opts,
                 state,
                 &self.bank,
-                &self.avoid,
+                self.avoid(),
             );
         }
 
@@ -1229,6 +1637,8 @@ impl NavBot {
     pub(crate) fn end_native_walk(&mut self, end: script::native::WalkEnd) {
         if let Some(owner) = self.native_walk.take() {
             self.native_walk_failure = None;
+            self.native_walk_blocked = None;
+            self.walk_outcome_detail = None;
             if owner.live() {
                 self.native_end = Some((owner, end));
             }
@@ -1237,6 +1647,8 @@ impl NavBot {
 
     /// A native walk the host refused to arm: nothing was routed for it.
     pub(crate) fn refuse_native(&mut self, owner: script::native::HostAuthority) {
+        self.native_walk_blocked = None;
+        self.walk_outcome_detail = None;
         if owner.live() {
             self.native_end = Some((owner, script::native::WalkEnd::Refused));
         }
@@ -1278,6 +1690,10 @@ impl NavBot {
     pub(crate) fn mark_walk_outcome_posted(&mut self, posted_seq: u64) {
         if self.walk_outcome_seq == posted_seq {
             self.walk_live_refusal_id = 0;
+            if self.native_walk.is_none() {
+                self.native_walk_blocked = None;
+                self.walk_outcome_detail = None;
+            }
         }
     }
 
@@ -1321,6 +1737,8 @@ impl NavBot {
         self.walk_outcome_allow_teleports = allow_teleports;
         // A failure raised here names no short: only the strict find's own
         // diagnosis attaches a shopping list, and it lands after this.
+        self.native_walk_blocked = None;
+        self.walk_outcome_detail = None;
         self.walk_missing_carry.clear();
         if request_id != 0 && request_id != self.walk_request_id {
             self.walk_live_refusal_id = request_id;
@@ -1361,6 +1779,8 @@ impl NavBot {
         self.walk_outcome_level = to.level;
         self.walk_outcome_radius = radius;
         self.walk_outcome_allow_teleports = allow_teleports;
+        self.native_walk_blocked = None;
+        self.walk_outcome_detail = None;
         self.walk_missing_carry.clear();
         self.walk_live_refusal_id = 0;
     }
@@ -1376,6 +1796,8 @@ impl NavBot {
         self.walk_outcome_level = 0;
         self.walk_outcome_radius = 0;
         self.walk_outcome_allow_teleports = false;
+        self.native_walk_blocked = None;
+        self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
@@ -1500,20 +1922,6 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
     }
 }
 
-/// The walk request's avoid entries for a carried re-dispatch.
-fn carried_avoid(avoid: &[AvoidRect]) -> Vec<script::shim::InspectAvoidWire> {
-    avoid
-        .iter()
-        .map(|rect| script::shim::InspectAvoidWire::Rect {
-            min_x: rect.min_x,
-            max_x: rect.max_x,
-            min_z: rect.min_z,
-            max_z: rect.max_z,
-            level: rect.level,
-        })
-        .collect()
-}
-
 /// A reconnect the slot relogs through with its Load script's work held
 /// (`SlotScript::reconnect_session_work`). The connection's route follow
 /// ends as in [`reset_script_nav`]; what the held script still waits on
@@ -1544,15 +1952,28 @@ pub(crate) fn hold_script_nav(
         let picking = nav.bank_pick.walking(nav.route_generation);
         if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
             // A nearest-bank walk still choosing its bank: re-ask for it.
-            nav.carried_walk = Some(CarriedWalk {
+            nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
-            });
+            }));
         } else if let (Some(runtime_generation), true, Some(requested), None) =
             (carry, armed, nav.requested_route, &nav.native_walk)
         {
-            let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) = requested;
+            let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _) = requested;
             let request_id = nav.walk_request_id;
+            let (avoid, cross) = nav.requested_exclusions.as_deref().map_or_else(
+                || (Vec::new(), Vec::new()),
+                |exclusions| {
+                    (
+                        exclusions.avoid_wire.clone(),
+                        exclusions
+                            .cross
+                            .iter()
+                            .map(|name| name.to_string())
+                            .collect(),
+                    )
+                },
+            );
             let request = if radius > 0 {
                 script::shim::InteractReq::WalkNear {
                     x: to.x,
@@ -1563,7 +1984,8 @@ pub(crate) fn hold_script_nav(
                     allow_wilderness,
                     allow_bank_fetch,
                     request_id,
-                    avoid: carried_avoid(&nav.requested_avoid),
+                    avoid,
+                    cross,
                 }
             } else {
                 script::shim::InteractReq::Walk {
@@ -1574,13 +1996,14 @@ pub(crate) fn hold_script_nav(
                     allow_wilderness,
                     allow_bank_fetch,
                     request_id,
-                    avoid: carried_avoid(&nav.requested_avoid),
+                    avoid,
+                    cross,
                 }
             };
-            nav.carried_walk = Some(CarriedWalk {
+            nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
                 request,
-            });
+            }));
         }
         end_route_follow(nav);
     }

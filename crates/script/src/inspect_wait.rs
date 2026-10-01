@@ -19,6 +19,7 @@
 use crate::isolate_fb::{InspectHop as InspectHopTable, Snapshot};
 use crate::shim::{InspectAvoidWire, InteractReq};
 use crate::task_clock::InstantTaskClock;
+use crate::walk::avoid_refusal;
 use crate::walk_wait;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -141,7 +142,7 @@ struct RouteSpec {
     allow_teleports: bool,
     allow_wilderness: bool,
     allow_bank_fetch: bool,
-    avoid: Vec<(i32, i32, i32, i32, Option<i32>)>,
+    avoid: Vec<InspectAvoidWire>,
 }
 
 impl RouteSpec {
@@ -200,19 +201,7 @@ impl RouteSpec {
             allow_teleports: *allow_teleports,
             allow_wilderness: *allow_wilderness,
             allow_bank_fetch: *allow_bank_fetch,
-            avoid: avoid
-                .iter()
-                .map(|zone| match zone {
-                    InspectAvoidWire::Rect {
-                        min_x,
-                        max_x,
-                        min_z,
-                        max_z,
-                        level,
-                    } => (*min_x, *max_x, *min_z, *max_z, *level),
-                    InspectAvoidWire::Unsupported => (1, 0, 0, 0, None),
-                })
-                .collect(),
+            avoid: avoid.clone(),
         })
     }
 }
@@ -672,36 +661,12 @@ fn begin_invalid(input: &Value) -> bool {
             return true;
         }
     }
-    let zones = opts
-        .get("avoidZones")
-        .or_else(|| input.get("avoid"))
-        .and_then(Value::as_array);
-    if let Some(zones) = zones {
-        if zones.len() > 16 {
+    if let Some(value) = opts.get("avoidZones").or_else(|| input.get("avoid")) {
+        let Ok(avoid) = serde_json::from_value::<Vec<InspectAvoidWire>>(value.clone()) else {
             return true;
-        }
-        for zone in zones {
-            if zone.as_str().is_some() {
-                return true;
-            }
-            if !zone.is_object() {
-                return true;
-            }
-            let min_x = json_i32(zone.get("minX").or_else(|| zone.get("min_x")));
-            let max_x = json_i32(zone.get("maxX").or_else(|| zone.get("max_x")));
-            let min_z = json_i32(zone.get("minZ").or_else(|| zone.get("min_z")));
-            let max_z = json_i32(zone.get("maxZ").or_else(|| zone.get("max_z")));
-            if min_x > max_x || min_z > max_z {
-                return true;
-            }
-            if let Some(level) = zone.get("level") {
-                if !level.is_null() {
-                    let level = json_i32(Some(level));
-                    if !(0..=3).contains(&level) {
-                        return true;
-                    }
-                }
-            }
+        };
+        if avoid_refusal(&avoid).is_some() {
+            return true;
         }
     }
     if let Some(from) = input.get("from") {
@@ -755,27 +720,10 @@ fn tile_xyz(tile: Option<&Value>) -> (i32, i32, i32) {
     )
 }
 
-fn avoid_spec(value: Option<&Value>) -> Vec<(i32, i32, i32, i32, Option<i32>)> {
-    let Some(zones) = value.and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    zones
-        .iter()
-        .map(|zone| {
-            let min_x = json_i32(zone.get("minX").or_else(|| zone.get("min_x")));
-            let max_x = json_i32(zone.get("maxX").or_else(|| zone.get("max_x")));
-            let min_z = json_i32(zone.get("minZ").or_else(|| zone.get("min_z")));
-            let max_z = json_i32(zone.get("maxZ").or_else(|| zone.get("max_z")));
-            let level = zone.get("level").and_then(|level| {
-                if level.is_null() {
-                    None
-                } else {
-                    Some(json_i32(Some(level)))
-                }
-            });
-            (min_x, max_x, min_z, max_z, level)
-        })
-        .collect()
+fn avoid_spec(value: Option<&Value>) -> Vec<InspectAvoidWire> {
+    value
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
 }
 
 fn route_args_invalid(req: &InteractReq) -> bool {
@@ -788,34 +736,7 @@ fn route_args_invalid(req: &InteractReq) -> bool {
     else {
         return false;
     };
-    if !(0..=3).contains(from_level) || !(0..=3).contains(level) {
-        return true;
-    }
-    if avoid.len() > 16 {
-        return true;
-    }
-    for zone in avoid {
-        match zone {
-            InspectAvoidWire::Unsupported => return true,
-            InspectAvoidWire::Rect {
-                min_x,
-                max_x,
-                min_z,
-                max_z,
-                level,
-            } => {
-                if min_x > max_x || min_z > max_z {
-                    return true;
-                }
-                if let Some(level) = level {
-                    if !(0..=3).contains(level) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+    !(0..=3).contains(from_level) || !(0..=3).contains(level) || avoid_refusal(avoid).is_some()
 }
 
 /// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the

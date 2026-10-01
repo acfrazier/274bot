@@ -49,10 +49,12 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
-        /// Frozen `WalkOptions.avoidZones` rectangles the route keeps out
-        /// of. Empty on old callers and buffers.
+        /// Frozen rectangle and catalog avoid entries. Empty on old callers.
         #[serde(default)]
         avoid: Vec<InspectAvoidWire>,
+        /// Per-walk named danger-zone exemptions. Empty on old callers.
+        #[serde(default)]
+        cross: Vec<String>,
     },
     /// Packed navigation to a reachable tile within the requested radius.
     #[serde(rename = "walk-near")]
@@ -70,10 +72,12 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
-        /// Frozen `WalkOptions.avoidZones` rectangles the route keeps out
-        /// of. Empty on old callers and buffers.
+        /// Frozen rectangle and catalog avoid entries. Empty on old callers.
         #[serde(default)]
         avoid: Vec<InspectAvoidWire>,
+        /// Per-walk named danger-zone exemptions. Empty on old callers.
+        #[serde(default)]
+        cross: Vec<String>,
     },
     /// Read-only, bounded native bank selection; never arms movement.
     #[serde(rename = "select-bank")]
@@ -396,9 +400,8 @@ pub enum InteractReq {
     },
 }
 
-/// One avoid entry of an inspect route or a walk. Typed rects keep their
-/// bounds; anything else (a catalog zone id) is `Unsupported` so Rust can
-/// refuse `invalid-args` instead of dropping the request.
+/// One avoid entry of an inspect route or a walk. Catalog ids stay symbolic
+/// until the host knows the arm-time endpoints and combat level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectAvoidWire {
     Rect {
@@ -408,12 +411,16 @@ pub enum InspectAvoidWire {
         max_z: i32,
         level: Option<i32>,
     },
+    Catalog(String),
     Unsupported,
 }
 
 impl<'de> serde::Deserialize<'de> for InspectAvoidWire {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(d)?;
+        if let Some(id) = value.as_str() {
+            return Ok(Self::Catalog(id.to_string()));
+        }
         let Some(obj) = value.as_object() else {
             return Ok(Self::Unsupported);
         };

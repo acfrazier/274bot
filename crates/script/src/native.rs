@@ -357,6 +357,7 @@ pub struct WalkRequest {
     pub options: FindOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
+    pub cross: Box<[Arc<str>]>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
@@ -373,6 +374,8 @@ pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
     pub end: WalkEnd,
+    pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
+    pub detail: Option<Arc<str>>,
 }
 
 /// Result of the host's dispatch attempt, not proof of a server-side change.

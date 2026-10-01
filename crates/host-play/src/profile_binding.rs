@@ -801,6 +801,10 @@ impl ProfileSelection {
         }
         let world_result =
             decode_nav_world(&mut reader, length, pack_path, observer, &mut counters);
+        let decoded_zone_counts = world_result
+            .as_ref()
+            .ok()
+            .map(|world| nav_zone_counts(world));
         let identity = match origin {
             NavOrigin::Bundled { identity, .. } => NavManifest {
                 revision: identity.revision,
@@ -812,6 +816,8 @@ impl ProfileSelection {
                 pois_sha256: identity.pois_sha256.clone(),
                 content_id: identity.content_id.clone(),
                 source_sha256: identity.source_sha256.clone(),
+                zone_count: decoded_zone_counts.unwrap_or((0, 0)).0,
+                zone_npc_count: decoded_zone_counts.unwrap_or((0, 0)).1,
             },
             NavOrigin::External { .. } => {
                 let nav_hash = finish_nav_hash(reader)
@@ -821,6 +827,7 @@ impl ProfileSelection {
                 if !manifest_path.exists() {
                     if self.revision() == ClientRevision::R274 && content_id.is_none() {
                         let world = world_result?;
+                        let (zone_count, zone_npc_count) = nav_zone_counts(&world);
                         let identity = NavManifest {
                             revision,
                             cache_id: cache.identity(),
@@ -831,6 +838,8 @@ impl ProfileSelection {
                             pois_sha256: None,
                             content_id: None,
                             source_sha256: None,
+                            zone_count,
+                            zone_npc_count,
                         };
                         return Ok(LoadedNav {
                             availability: NavAvailability::Legacy274,
@@ -851,6 +860,16 @@ impl ProfileSelection {
                 let manifest: NavManifest = serde_json::from_slice(&manifest_bytes)
                     .map_err(|e| format!("nav manifest: {e}"))?;
                 manifest.verify_pack(revision, cache, &nav_hash, content_id)?;
+                if let Some((zone_count, zone_npc_count)) = decoded_zone_counts {
+                    if manifest.zone_count != zone_count
+                        || manifest.zone_npc_count != zone_npc_count
+                    {
+                        return Err(
+                            "navigation/profile mismatch: zone counts differ from decoded zone table"
+                                .into(),
+                        );
+                    }
+                }
                 manifest
             }
         };
@@ -897,6 +916,19 @@ impl ProfileSelection {
         })
     }
 }
+fn nav_zone_counts(world: &NavWorld) -> (u32, u32) {
+    world.graph.zones.as_ref().map_or((0, 0), |table| {
+        (
+            table.zones().len() as u32,
+            table
+                .zones()
+                .iter()
+                .filter(|zone| table.kinds()[usize::from(zone.kind)].npc_id >= 0)
+                .count() as u32,
+        )
+    })
+}
+
 /// Paint-only data: verify at preparation without retaining words, then decode
 /// once when a panel or TUI paint consumer requests it. Routing never requests it.
 #[derive(Debug)]

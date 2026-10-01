@@ -720,6 +720,7 @@ impl<K: Kind> Hunt<K> {
                 allow_bank_fetch: world,
                 request_id: token,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             }
         } else {
             InteractReq::WalkNear {
@@ -732,6 +733,7 @@ impl<K: Kind> Hunt<K> {
                 allow_bank_fetch: world,
                 request_id: token,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             }
         });
         self.reply = Some(json!({ "queued": true, "walkToken": token }));

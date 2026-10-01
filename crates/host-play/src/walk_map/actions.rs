@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use api::snapshot::WorldTile;
+use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::map::identity::Digest;
 use nav::map::spatial::{snap_walkable, GameTile};
 use nav::router::{FindOptions, Leg, Route};
@@ -12,6 +13,7 @@ use nav::WorldState;
 use super::catalogue::{safe_standable, tile, world_tile};
 use super::Catalogue;
 use crate::{Play, SlotArm, WalkArms};
+pub(crate) const LEGACY_ZONES_DETAIL: &str = "zones: unavailable (legacy grid pack)";
 
 /// Process-unique slot lifetime plus the operator-selected world epoch. A uid
 /// or a reused username alone is not a lifetime. No bot/map state is retained.
@@ -63,6 +65,7 @@ pub enum ActionError {
     Stale,
     NoNavigation,
     NoPath,
+    BlockedByZones,
     MembersOnly,
     Unauthorized,
     WrongAction,
@@ -80,6 +83,9 @@ impl fmt::Display for ActionError {
             Self::Stale => "Map selection expired: nav identity or map binding changed",
             Self::NoNavigation => "Navigation unavailable",
             Self::NoPath => "No path to the selected destination with these routing options",
+            Self::BlockedByZones => {
+                "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
+            },
             Self::MembersOnly => "This route requires a members' world",
             Self::Unauthorized => "Debug Teleport requires a local loopback engine target",
             Self::WrongAction => "Map confirmation has a different action",
@@ -101,6 +107,7 @@ impl ActionError {
             Self::Stale => "stale",
             Self::NoNavigation => "navigation unavailable",
             Self::NoPath => "no path",
+            Self::BlockedByZones => "blocked by danger zones",
             Self::MembersOnly => "members-only path",
             Self::Unauthorized => "not authorised",
             Self::WrongAction => "wrong action",
@@ -264,6 +271,7 @@ pub(crate) fn emit_walk_terminal(
     outcome: &nav::traveller::TravelOutcome,
     leg: Option<usize>,
     route: &Route,
+    legacy_zones_unavailable: bool,
 ) {
     if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
         return;
@@ -276,13 +284,18 @@ pub(crate) fn emit_walk_terminal(
             always_stderr: false,
         },
         format_args!(
-            "WalkTo outcome={} destination={} at={} reason={} leg={} transport={}",
+            "WalkTo outcome={} destination={} at={} reason={} leg={} transport={}{}",
             TerminalStatus(outcome),
             WorldWalkTile(Some(destination)),
             WorldWalkTile(Some(terminal_at(outcome))),
             TerminalReason(outcome),
             LegNumber(leg),
             TerminalTransport { route, leg },
+            if legacy_zones_unavailable {
+                " zones: unavailable (legacy grid pack)"
+            } else {
+                ""
+            },
         ),
     );
 }
@@ -319,7 +332,8 @@ pub(crate) fn emit_walk_aborted(
     slot: Option<&str>,
     destination: WorldTile,
     at: Option<WorldTile>,
-    reason: &'static str,
+    reason: &str,
+    legacy_zones_unavailable: bool,
 ) {
     if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
         return;
@@ -332,10 +346,15 @@ pub(crate) fn emit_walk_aborted(
             always_stderr: false,
         },
         format_args!(
-            "WalkTo outcome=aborted destination={} at={} reason={} leg=- transport=-",
+            "WalkTo outcome=aborted destination={} at={} reason={} leg=- transport=-{}",
             WorldWalkTile(Some(destination)),
             WorldWalkTile(at),
             reason,
+            if legacy_zones_unavailable {
+                " zones: unavailable (legacy grid pack)"
+            } else {
+                ""
+            },
         ),
     );
 }
@@ -555,6 +574,7 @@ impl WalkSlotOutcomeKind {
 pub struct WalkSlotOutcome {
     pub name: String,
     pub kind: WalkSlotOutcomeKind,
+    pub detail: Option<String>,
 }
 
 /// Per-bot Walk results, in request order. Front ends fold them into their
@@ -562,6 +582,8 @@ pub struct WalkSlotOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GroupWalkReport {
     pub outcomes: Vec<WalkSlotOutcome>,
+    /// The selected world is a legacy grid pack without a zone catalog.
+    pub legacy_zones_unavailable: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -825,6 +847,70 @@ pub struct MapCommand {
     options: FindOptions,
     slot: String,
 }
+fn blocking_zones_for_walk(
+    world: &NavWorld,
+    origin: Tile,
+    destination: Tile,
+    mut options: FindOptions,
+    slot: &WalkSlotRequest<'_>,
+    arms: &WalkArms,
+) -> Option<Vec<nav::zones::ZoneKey>> {
+    options.essence = arms
+        .lock()
+        .unwrap()
+        .get(slot.name)
+        .and_then(|arm| arm.lock().unwrap().traveller.essence());
+    let from = world_tile(origin);
+    let destination = world_tile(destination);
+    let direct = nav::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        destination,
+        options,
+        slot.state,
+        &[],
+    )
+    .filter(|keys| !keys.is_empty());
+    if direct.is_some() || !options.allow_bank_fetch {
+        return direct;
+    }
+    let missing = nav::router::find_missing_item_reqs_with_avoid(
+        &world.collision,
+        &world.graph,
+        from,
+        destination,
+        options,
+        slot.state,
+        &[],
+    )?;
+    let plan = plan_bank_fetch(
+        &missing,
+        slot.state,
+        slot.bank,
+        world.banks(),
+        from,
+        &world.collision,
+    )?;
+    let access = plan.steps.iter().find_map(|step| match step {
+        BankStep::Walk { x, z, level } => Some(WorldTile {
+            x: *x,
+            z: *z,
+            level: *level,
+        }),
+        _ => None,
+    })?;
+    nav::router::find_blocking_zones(
+        &world.collision,
+        &world.graph,
+        from,
+        access,
+        options,
+        slot.state,
+        &[],
+    )
+    .filter(|keys| !keys.is_empty())
+}
 impl MapCommand {
     pub fn destination(&self) -> Tile {
         self.destination
@@ -882,6 +968,28 @@ impl MapCommand {
             arms,
             Some(name),
         );
+        if result.is_err() {
+            if let Some(keys) = blocking_zones_for_walk(
+                world,
+                self.origin,
+                self.destination,
+                self.options,
+                &WalkSlotRequest { name, state, bank },
+                arms,
+            ) {
+                if let Some(table) = world.graph.zones.as_ref() {
+                    let detail = crate::blocked_zone_detail(table, &keys);
+                    crate::walk_map::emit_walk_aborted(
+                        Some(name),
+                        world_tile(self.destination),
+                        Some(world_tile(self.origin)),
+                        &detail,
+                        false,
+                    );
+                }
+                return Err(ActionError::BlockedByZones);
+            }
+        }
         match result {
             Ok(route) => Ok(route),
             Err(_) if !state.map_members => {
@@ -1008,6 +1116,10 @@ impl Play {
         arms: &WalkArms,
     ) -> GroupWalkReport {
         let mut outcomes = Vec::with_capacity(slots.len());
+        let legacy_zones_unavailable = self
+            .world
+            .as_deref()
+            .is_some_and(|world| world.graph.zones.is_none());
         let profile = self.server_profile();
         for req in slots {
             let status = self.walk_eligibility(req.name);
@@ -1046,6 +1158,29 @@ impl Play {
                 };
                 self.map_walk(command, &current, req.state, req.bank, arms)
             });
+            let detail = match &result {
+                Err(ActionError::BlockedByZones) => match (status, origin, self.world.as_deref()) {
+                    (WalkSlotStatus::Eligible(_), Some(origin), Some(world)) => {
+                        blocking_zones_for_walk(
+                            world,
+                            origin,
+                            plan.destination,
+                            plan.options,
+                            req,
+                            arms,
+                        )
+                        .and_then(|keys| {
+                            world
+                                .graph
+                                .zones
+                                .as_ref()
+                                .map(|table| crate::blocked_zone_detail(table, &keys))
+                        })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
             let kind = match (status, result) {
                 (WalkSlotStatus::Excluded(reason), _) => WalkSlotOutcomeKind::Excluded(reason),
                 (_, Ok(_)) => WalkSlotOutcomeKind::Walking,
@@ -1054,9 +1189,13 @@ impl Play {
             outcomes.push(WalkSlotOutcome {
                 name: req.name.to_string(),
                 kind,
+                detail,
             });
         }
-        GroupWalkReport { outcomes }
+        GroupWalkReport {
+            outcomes,
+            legacy_zones_unavailable,
+        }
     }
 
     /// Same Local+loopback rule as [`crate::walk_map::debug_teleport_authorized`].
