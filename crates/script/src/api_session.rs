@@ -2,7 +2,7 @@
 //!
 //! The `GatherSession` row owns the isolate-local admission record. Its Drop
 //! clears Busy on every terminal and abort path, including ordinary Done.
-use crate::api_gather::GatherEnd;
+use crate::api_progress::ProgressPage;
 use crate::gatherer::GathererSettings;
 use crate::machine::{Begin, Cx, Family, Step};
 use crate::native::SettingsBag;
@@ -210,6 +210,77 @@ impl Family for GatherStop {
     }
 
     fn step(&mut self, _: &mut Cx<'_>) -> Step<Self::Output> {
+        Step::Wait
+    }
+}
+
+/// One awaited read of a released quest Path's resolved progress.
+#[derive(Deserialize)]
+pub(crate) struct ProgressQueryArgs {
+    #[serde(default)]
+    quest: String,
+}
+
+/// Requests one fresh host-side progress read. The query is exclusive so a
+/// newer read supersedes it; the host owns any open journal lifecycle.
+pub(crate) struct ProgressQuery {
+    token: u64,
+    quest: String,
+    emitted_epoch: u64,
+    acknowledged: bool,
+}
+
+impl Family for ProgressQuery {
+    const NAME: &'static str = "quest-progress";
+    const EXCLUSIVE: bool = true;
+    type Args = ProgressQueryArgs;
+    type Output = ProgressPage;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        if args.quest.trim().is_empty() {
+            return Begin::Refuse("invalid-args".into());
+        }
+        let Some(token) = allocate_token(&NEXT_TOKEN) else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        let emitted_epoch = observed::with(observed::Scene::epoch);
+        cx.emit(InteractReq::ProgressRead {
+            request_id: token,
+            name: args.quest.clone(),
+        });
+        Begin::Run(Self {
+            token,
+            quest: args.quest,
+            emitted_epoch,
+            acknowledged: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let (epoch, page) = observed::with(|scene| {
+            let page = scene
+                .since_login()
+                .api_progress()
+                .filter(|page| page.token() == self.token)
+                .cloned();
+            (scene.epoch(), page)
+        });
+
+        match page {
+            Some(ProgressPage::Reading { .. }) => self.acknowledged = true,
+            Some(page @ (ProgressPage::Done { .. } | ProgressPage::Refused { .. })) => {
+                return Step::Done(page);
+            }
+            None => {}
+        }
+
+        if !self.acknowledged && epoch != self.emitted_epoch {
+            cx.emit(InteractReq::ProgressRead {
+                request_id: self.token,
+                name: self.quest.clone(),
+            });
+            self.emitted_epoch = epoch;
+        }
         Step::Wait
     }
 }
