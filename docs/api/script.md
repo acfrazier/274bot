@@ -100,8 +100,10 @@ bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
 identity. Depleted resources are not clicked: a live lower-tier resource can
 be selected while the higher tier respawns. Wait deadlines use the observed
 group's respawn bound, capped at eight minutes since gameplay progress, and do
-not slide on unchanged observations or Pause/Resume. A recreated card starts
-with a fresh wait baseline rather than immediately treating the wait as expired.
+not slide on unchanged observations or Pause/Resume. Auto widening shares that
+gameplay cap across depleted groups rather than restarting it at each group.
+A recreated card starts with a fresh wait baseline rather than immediately
+treating the wait as expired.
 
 Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
 anchor, and temporarily skips exhausted groups until their respawn bound.

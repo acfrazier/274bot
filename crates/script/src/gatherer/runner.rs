@@ -109,6 +109,7 @@ pub struct Gatherer {
     failure: Option<ScriptFailure>,
     paused: bool,
     needs_validate: bool,
+    rebaseline_gameplay: bool,
     dirty: bool,
     yielded: u32,
     dropped: u32,
@@ -153,6 +154,7 @@ impl Gatherer {
             failure: None,
             paused: false,
             needs_validate: true,
+            rebaseline_gameplay: true,
             dirty: true,
             yielded: retained.yielded,
             dropped: retained.dropped,
@@ -289,9 +291,13 @@ impl Gatherer {
             }
         }
 
-        // Recreated instances retain their Start tile, but need a fresh
-        // gameplay baseline. An existing wait deadline remains fixed.
-        self.last_gameplay_tick = cx.evidence().tick;
+        // Only watchdog-restamping admissions get a fresh gameplay baseline.
+        // Widening and other revalidation must preserve the idle wait cap.
+        // An existing wait deadline remains fixed, including across Resume.
+        if self.rebaseline_gameplay {
+            self.last_gameplay_tick = cx.evidence().tick;
+            self.rebaseline_gameplay = false;
+        }
         if self.retained.start_tile.is_none() {
             self.retained.start_tile = Some(here.value);
             self.sync_retained_from_context(cx);
@@ -1155,6 +1161,7 @@ impl Script for Gatherer {
             self.observed_progress = None;
             self.cancel_active();
             self.needs_validate = true;
+            self.rebaseline_gameplay = true;
             self.death = crate::quester::death::DeathLatch::from_watermark(self.retained.death_seq);
             self.set_event("run key changed; revalidating");
         }
@@ -1251,6 +1258,7 @@ impl Script for Gatherer {
         self.clear_failure();
         self.wait_until = None;
         self.needs_validate = true;
+        self.rebaseline_gameplay = true;
         self.dirty = true;
         Ok(())
     }
@@ -1265,6 +1273,7 @@ impl Script for Gatherer {
             Interrupt::Resume | Interrupt::Hold(false) | Interrupt::SessionReady => {
                 self.paused = false;
                 self.needs_validate = true;
+                self.rebaseline_gameplay = true;
                 self.dirty = true;
             }
         }

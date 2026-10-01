@@ -349,6 +349,120 @@ fn runite_resource_wait_ends_at_eight_minutes_before_watchdog_wedge() {
 }
 
 #[test]
+fn depleted_auto_groups_share_the_original_gameplay_wait_cap() {
+    use api::gather_methods::SceneRegionInput;
+    let selected = selected();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["mithril"]));
+    bag.insert("location".into(), serde_json::json!("Auto"));
+    let mut slot = started_with(4267, &selected, bag);
+    let mut frame = mining_snapshot(&selected, "mining.mithril", true);
+    let here = WorldTile {
+        x: 3035,
+        z: 9771,
+        level: 0,
+    };
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = here;
+    frame.seed_local_player(player);
+    frame.seed_world(WorldStateView {
+        map_base_x: here.x - 52,
+        map_base_z: here.z - 52,
+        members: true,
+        ..WorldStateView::default()
+    });
+    let catalog = api::gather_methods::cached(&selected).unwrap();
+    let method = catalog.method("mining.mithril").unwrap();
+    let region = SceneRegionInput {
+        min_x: here.x - 45,
+        min_z: here.z - 45,
+        max_x: here.x + 45,
+        max_z: here.z + 45,
+        level: 0,
+    };
+    let template = frame.locs()[0].clone();
+    let locs: Vec<_> = catalog
+        .spots(method, &region)
+        .unwrap()
+        .map(|spot| {
+            let mut loc = template.clone();
+            loc.tile = spot.origin;
+            loc
+        })
+        .collect();
+    for (x, z) in [(3036, 9772), (3049, 9736)] {
+        assert!(locs
+            .iter()
+            .any(|loc| { loc.tile.x.abs_diff(x).max(loc.tile.z.abs_diff(z)) <= 12 }));
+    }
+    frame.seed_locs(locs);
+
+    let admission = 10_000;
+    let mut first_exhausted = None;
+    let mut first_deadline = None;
+    let mut saw_second_wait = false;
+    for now in admission..admission + 800 {
+        tick(&mut slot, &frame, now);
+        assert!(!slot.has_native_actions(), "both groups are loaded");
+        if slot.native_status().unwrap().phase == NativePhase::Waiting {
+            let first = *first_exhausted.get_or_insert(now);
+            let deadline = wait_until(&slot);
+            let original = *first_deadline.get_or_insert(deadline);
+            if deadline != original {
+                saw_second_wait = true;
+                assert!(
+                    deadline <= first + 800,
+                    "widening must not restart the gameplay wait cap"
+                );
+            }
+        }
+    }
+    assert!(
+        saw_second_wait,
+        "the runner must exhaust both loaded groups"
+    );
+    tick(&mut slot, &frame, admission + 800);
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    let mut left_depleted_groups = false;
+    for now in admission + 801..admission + 900 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            let HostEffect::Walk(request) = action.effect else {
+                panic!("depleted groups must not emit gathering interactions");
+            };
+            assert!(
+                request
+                    .target
+                    .x
+                    .abs_diff(here.x)
+                    .max(request.target.z.abs_diff(here.z))
+                    > 45,
+                "widening must approach a third group"
+            );
+            left_depleted_groups = true;
+        }
+        let status = slot.native_status().unwrap();
+        if status.phase == NativePhase::Blocked {
+            assert_eq!(
+                status.failure.as_ref().unwrap().code.as_ref(),
+                "resource-unavailable"
+            );
+            left_depleted_groups = true;
+        }
+        if left_depleted_groups {
+            break;
+        }
+        assert_ne!(status.phase, NativePhase::Waiting);
+    }
+    assert!(
+        left_depleted_groups,
+        "the capped wait must leave in-place alternation"
+    );
+    slot.stop();
+}
+
+#[test]
 fn recreated_gatherer_keeps_resource_wait_fresh_at_large_native_tick() {
     let selected = selected();
     let mut bag = SettingsBag::new();
