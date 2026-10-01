@@ -511,6 +511,8 @@ fn non_straight_wall_door_keeps_the_approach_walk_and_propagates_failure() {
             sequence: 3,
         },
         end: crate::native::WalkEnd::Failed,
+        blocked: None,
+        detail: None,
     });
     assert!(matches!(
         with_tick_reach(&s, &reach, &mut ledger, 3, |t| t

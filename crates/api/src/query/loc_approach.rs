@@ -196,7 +196,7 @@ pub fn arrived_at(
 ) -> Option<bool> {
     let scene = snapshot.scene();
     let query = super::SceneQuery::new(scene, None);
-    if !query.contains(to) || query.walkable(to) {
+    if !query.contains(to) {
         return None;
     }
     let mut modeled = false;

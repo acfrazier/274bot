@@ -20794,7 +20794,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
         &snapshot,
         &navs,
         &statuses,
-        world.as_deref(),
+        world.as_ref(),
         false,
         false,
         no_reach,
@@ -21289,6 +21289,49 @@ fn modeled_two_by_two_loc_routes_to_a_full_footprint_arrival_stand() {
         api::query::loc_approach::arrived_at(&snapshot, route.dest, target, 1),
         Some(true),
         "the endpoint must be a real operable footprint stand inside the radius"
+    );
+}
+
+#[test]
+fn walkable_loc_arrival_uses_footprint_distance_but_plain_tiles_keep_anchor_radius() {
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 13,
+        z: 11,
+        ..target
+    };
+    let mut client = nav_client();
+    plant_nav_footprint_loc(&mut client, target.x, target.z, 3, 3);
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.actor.tile = from;
+    snapshot.seed_local_player(player);
+    assert!(api::query::SceneQuery::new(snapshot.scene(), None).walkable(target));
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let view = api::snapshot::SnapshotView::new(Some(&snapshot), stamp);
+    assert!(view.walk_arrived(from, target, 1));
+    assert!(
+        !view.walk_arrived(from, target, 0),
+        "a perimeter stand still has to fit the requested footprint margin"
+    );
+    snapshot.seed_locs(Vec::new());
+    let view = api::snapshot::SnapshotView::new(Some(&snapshot), stamp);
+    assert!(
+        !view.walk_arrived(from, target, 1),
+        "a plain tile three tiles away must keep its anchor-based radius"
     );
 }
 

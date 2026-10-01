@@ -80,7 +80,7 @@ impl<'a> SnapshotView<'a> {
     /// Whether the current walk may settle at `from` for `to`.
     ///
     /// A destination outside this live scene is only an estimate, not proof
-    /// of arrival. Known solid locs use the shared full-footprint rule;
+    /// of arrival. Modeled locs use the shared full-footprint rule;
     /// ordinary in-scene destinations retain the reach-aware walk rule.
     pub fn walk_arrived(&self, from: super::WorldTile, to: super::WorldTile, radius: i32) -> bool {
         let Some(snapshot) = self.scene_ready() else {
