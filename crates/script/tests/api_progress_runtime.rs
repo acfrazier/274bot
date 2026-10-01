@@ -194,7 +194,7 @@ fn done_page(token: u64) -> ProgressPage {
 }
 
 #[test]
-fn quest_paths_is_synchronous_and_lists_only_the_released_cook_path() {
+fn quest_paths_is_synchronous_and_lists_every_released_path() {
     let iso = isolate();
     assert_eq!(
         iso.probe("__api.questPaths() instanceof Promise").unwrap(),
@@ -210,6 +210,23 @@ fn quest_paths_is_synchronous_and_lists_only_the_released_cook_path() {
                     "display": "Cook's Assistant",
                     "journal": false,
                     "stages": ["cook:0", "cook:1", "cook:2"]
+                }, {
+                    "id": "sheep",
+                    "display": "Sheep Shearer",
+                    "journal": true,
+                    "stages": ["sheep:0", "sheep:1", "sheep:2"]
+                }, {
+                    "id": "runemysteries",
+                    "display": "Rune Mysteries",
+                    "journal": true,
+                    "stages": ["runemysteries:0", "runemysteries:1", "runemysteries:2"]
+                }, {
+                    "id": "romeojuliet",
+                    "display": "Romeo & Juliet",
+                    "journal": true,
+                    "stages": ["romeojuliet:0", "romeojuliet:10", "romeojuliet:100",
+                               "romeojuliet:20", "romeojuliet:30", "romeojuliet:40",
+                               "romeojuliet:50", "romeojuliet:60"]
                 }]
             }
         })

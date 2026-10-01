@@ -254,6 +254,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => {
             assert_ne!(*request_id, 0);
             *request_id

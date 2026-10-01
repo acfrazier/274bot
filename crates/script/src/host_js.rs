@@ -806,7 +806,7 @@ fn render_native_v2(out: &mut String) {
 /// and one owned progress read (design section 2, slice B).
 fn render_quest_progress(out: &mut String) {
     out.push_str(
-        "/** One released quest path of the release index. The release index is Cook only. */\n",
+        "/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */\n",
     );
     out.push_str("export interface QuestPathRow {\n");
     out.push_str("  id: string;\n");

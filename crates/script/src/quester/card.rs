@@ -1,5 +1,5 @@
 //! Compiled card `Quester`: prepare validates settings + release index only.
-use super::compile::{compile_path, cook_bytes, INDEX_JSON};
+use super::compile::{compile_path, path_bytes, INDEX_JSON};
 use super::runner::Quester;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
@@ -42,52 +42,66 @@ struct ReleasePath {
     id: String,
     file: String,
 }
-fn cook_released(index_json: &str) -> bool {
-    serde_json::from_str::<ReleaseIndex>(index_json).is_ok_and(|index| {
-        index.schema == 1
-            && index
-                .paths
-                .iter()
-                .any(|path| path.id == "cook" && path.file == "cook.json")
-    })
+static RELEASE_INDEX: std::sync::LazyLock<ReleaseIndex> =
+    std::sync::LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
+
+fn released(index: &ReleaseIndex, id: &str) -> bool {
+    let Some(expected) = (match id {
+        "cook" => Some("cook.json"),
+        "sheep" => Some("sheep.json"),
+        "runemysteries" => Some("runemysteries.json"),
+        "romeojuliet" => Some("romeojuliet.json"),
+        _ => None,
+    }) else {
+        return false;
+    };
+    index.schema == 1
+        && index
+            .paths
+            .iter()
+            .any(|path| path.id == id && path.file == expected)
 }
-static COOK_RELEASED: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| cook_released(INDEX_JSON));
 
 /// The released document gate shared by the card and script progress API.
 pub fn released_path(id: &str) -> Option<&'static [u8]> {
-    (id == "cook" && *COOK_RELEASED).then(cook_bytes)
+    released(&RELEASE_INDEX, id)
+        .then(|| path_bytes(id))
+        .flatten()
 }
 
 #[cfg(feature = "load")]
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: std::sync::LazyLock<Vec<crate::api_progress::QuestPathRow>> =
         std::sync::LazyLock::new(|| {
-            let Some(bytes) = released_path("cook") else {
-                return Vec::new();
-            };
-            let document: super::path::PathDocument =
-                serde_json::from_slice(bytes).expect("released Cook Path document");
-            let progress = document.roles[0]
-                .progress
-                .as_ref()
-                .expect("released Cook progress");
-            vec![crate::api_progress::QuestPathRow {
-                id: Arc::clone(&document.id.0),
-                display: document.display_name.into(),
-                journal: !progress.rules.is_empty(),
-                stages: [
-                    &progress.colour.not_started,
-                    &progress.colour.in_progress,
-                    &progress.colour.complete,
-                ]
-                .into_iter()
-                .chain(progress.rules.iter().map(|rule| &rule.stage))
-                .map(|stage| Arc::clone(&stage.0))
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect(),
-            }]
+            RELEASE_INDEX
+                .paths
+                .iter()
+                .filter_map(|entry| released_path(&entry.id))
+                .map(|bytes| {
+                    let document: super::path::PathDocument =
+                        serde_json::from_slice(bytes).expect("released Path document");
+                    let progress = document.roles[0]
+                        .progress
+                        .as_ref()
+                        .expect("released Path progress");
+                    crate::api_progress::QuestPathRow {
+                        id: Arc::clone(&document.id.0),
+                        display: document.display_name.into(),
+                        journal: !progress.rules.is_empty(),
+                        stages: [
+                            &progress.colour.not_started,
+                            &progress.colour.in_progress,
+                            &progress.colour.complete,
+                        ]
+                        .into_iter()
+                        .chain(progress.rules.iter().map(|rule| &rule.stage))
+                        .map(|stage| Arc::clone(&stage.0))
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                    }
+                })
+                .collect()
         });
     &ROWS
 }
@@ -95,7 +109,7 @@ pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
 struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
-    _quest: String,
+    quest: String,
 }
 
 fn prepare(
@@ -121,15 +135,12 @@ fn prepare(
         bag.iter().map(|(key, value)| (key.as_str(), value)),
     ))
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
-    if released_path("cook").is_none() {
-        return Err(StartError::Unavailable("release index missing cook".into()));
-    }
     let quest = settings.quest.unwrap_or_else(|| "cook".into());
     if released_path(&quest).is_none() {
         return Err(StartError::Config(ConfigError::new(
             "quest",
             "unknown-path",
-            "S1 ships Cook's Assistant only",
+            "choose cook, sheep, runemysteries, or romeojuliet",
         )));
     }
     let quests =
@@ -137,7 +148,7 @@ fn prepare(
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
-        _quest: quest,
+        quest,
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -156,13 +167,20 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let path = compile_path(
-        released_path(&prepared._quest)
-            .ok_or_else(|| StartError::Unavailable("release Path unavailable".into()))?,
-        &prepared.selected,
-        &prepared.quests,
-    )
-    .map_err(|err| StartError::Unavailable(Arc::from(format!("compile: {}", err.code))))?;
+    let bytes = released_path(&prepared.quest).ok_or_else(|| {
+        StartError::Config(ConfigError::new(
+            "quest",
+            "unknown-path",
+            "Path is not released",
+        ))
+    })?;
+    let path = compile_path(bytes, &prepared.selected, &prepared.quests).map_err(|err| {
+        let message = match err.detail.as_deref() {
+            Some(detail) => format!("compile: {}: {detail}", err.code),
+            None => format!("compile: {}", err.code),
+        };
+        StartError::Unavailable(Arc::from(message))
+    })?;
     Ok(Box::new(Quester::new(
         run,
         path,
@@ -174,6 +192,11 @@ fn create(
 mod tests {
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
+
+    fn released(index_json: &str, id: &str) -> bool {
+        serde_json::from_str::<ReleaseIndex>(index_json)
+            .is_ok_and(|index| super::released(&index, id))
+    }
 
     #[test]
     fn prepare_on_274_reports_289_only_without_creating_a_run() {
@@ -199,10 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn release_index_requires_schema_and_exact_cook_identity() {
-        assert!(cook_released(INDEX_JSON));
-        assert!(cook_released(
-            r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#
+    fn release_index_requires_schema_and_exact_path_identity() {
+        for id in ["cook", "sheep", "runemysteries", "romeojuliet"] {
+            assert!(released(INDEX_JSON, id), "{id} missing from release index");
+        }
+        assert!(released(
+            r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#,
+            "cook"
         ));
         for rejected in [
             r#"{"schema":2,"paths":[{"id":"cook","file":"cook.json"}]}"#,
@@ -214,7 +240,7 @@ mod tests {
             r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"}],"unknown":true}"#,
             "not json",
         ] {
-            assert!(!cook_released(rejected), "accepted {rejected}");
+            assert!(!released(rejected, "cook"), "accepted {rejected}");
         }
     }
 }

@@ -131,6 +131,7 @@ fn ack(slot: &mut SlotScript, tick: u64) -> HostEffect {
                 sequence: tick,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
     action.effect
@@ -188,22 +189,46 @@ fn unknown_path_refuses_without_preparation_and_duplicate_is_inert() {
     slot.stop();
 }
 #[test]
-fn complete_colour_read_resolves_without_quiet_lease() {
+fn every_released_path_resolves_complete_colour_without_quiet_lease() {
     let mut slot = load();
-    read(&mut slot, 2, "cook");
-    settle_read(&mut slot, &snapshot(0x00f800));
-    let Some(ProgressPage::Done { token: 2, row }) = &slot.api.as_ref().unwrap().progress_page
-    else {
-        panic!("missing done");
-    };
-    assert!(matches!(&row.stage, Knowledge::Known(stage) if stage.as_ref() == "cook:2"));
-    assert_eq!(row.complete, Truth::True);
-    assert!(!row.journal_read);
-    assert_eq!(row.evidence.run.slot, 400);
-    assert!(
-        slot.native_runtime.ledger.is_none(),
-        "colour-only never acquires a lease"
-    );
+    for (index, (quest, display, stage)) in [
+        ("cook", "Cook's Assistant", "cook:2"),
+        ("sheep", "Sheep Shearer", "sheep:2"),
+        ("runemysteries", "Rune Mysteries Quest", "runemysteries:2"),
+        ("romeojuliet", "Romeo & Juliet", "romeojuliet:100"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let token = index as u64 + 2;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: display.into(),
+                component_id: 42,
+                colour: 0x00f800,
+            }],
+            true,
+        );
+        read(&mut slot, token, quest);
+        settle_read(&mut slot, &snapshot);
+        let Some(ProgressPage::Done { token: actual, row }) =
+            &slot.api.as_ref().unwrap().progress_page
+        else {
+            panic!("missing done for {quest}");
+        };
+        assert_eq!(*actual, token);
+        assert_eq!(row.quest.as_ref(), quest);
+        assert!(matches!(&row.stage, Knowledge::Known(value) if value.as_ref() == stage));
+        assert_eq!(row.complete, Truth::True);
+        assert!(!row.journal_read);
+        assert_eq!(row.evidence.run.slot, 400);
+        assert!(
+            slot.native_runtime.ledger.is_none(),
+            "complete-colour reads never acquire a lease"
+        );
+    }
     slot.stop();
 }
 #[test]

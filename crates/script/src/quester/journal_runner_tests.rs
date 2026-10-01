@@ -99,6 +99,7 @@ fn ack(ledger: &mut Ledger, tick: u64) -> HostEffect {
                 sequence: tick,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
     action.effect
@@ -599,4 +600,171 @@ fn named_chat_at_read_start_waits_then_recovers_or_names_the_timeout() {
         .last_error
         .as_ref()
         .is_some_and(|reason| reason.contains("4882") && reason.contains("Aubury")));
+}
+
+#[test]
+fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
+    use crate::quester::families::tests::{def, seed_dialogue_combat};
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, WorldTile};
+
+    fn finish_rune_read(
+        script: &mut Quester,
+        snapshot: &mut GameSnapshot,
+        ledger: &mut Ledger,
+        tick: u64,
+        body: &str,
+    ) {
+        drive(script, snapshot, ledger, tick);
+        assert!(
+            matches!(
+                ledger
+                    .as_ref()
+                    .and_then(|ledger| ledger.outbox.first())
+                    .map(|action| &action.effect),
+                Some(HostEffect::Interaction(
+                    crate::shim::InteractReq::IfButton { .. }
+                ))
+            ),
+            "a quest-changing handoff must query fresh journal progress before recovery"
+        );
+        ack(ledger, tick);
+        snapshot.seed_main_modal(
+            8134,
+            vec![
+                crate::quest_journal::test_widget(8144, "@dre@Rune Mysteries"),
+                crate::quest_journal::test_widget(8145, body),
+            ],
+        );
+        drive(script, snapshot, ledger, tick + 1);
+        drive(script, snapshot, ledger, tick + 2);
+        assert!(matches!(
+            ack(ledger, tick + 2),
+            HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+        ));
+        snapshot.seed_main_modal(-1, vec![]);
+        drive(script, snapshot, ledger, tick + 3);
+    }
+
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let document = serde_json::from_str(super::super::compile::RUNE_MYSTERIES_JSON).unwrap();
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    let spoken = "@str@I spoke to Duke Horacio";
+    let talisman_pending =
+        format!("{spoken}|I need to find the head wizard and give him the talisman");
+    let package_pending =
+        format!("{spoken}|I should take this Research Package to Aubury in Varrock");
+    let package_delivered =
+        format!("{spoken}|I took the research package to Varrock and delivered it.");
+    let notes_received = format!("{package_delivered}|I should take the notes to Sedridor");
+    let held = |alias: Option<&str>| {
+        alias
+            .map(|alias| ItemView {
+                def: def(data.item_by_alias(alias).unwrap().id, alias),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            })
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    for (step, input, output, before, after, next, here) in [
+        (
+            "deliver-talisman",
+            Some("air_talisman"),
+            Some("research_package"),
+            talisman_pending.as_str(),
+            package_pending.as_str(),
+            "deliver-package",
+            WorldTile {
+                x: 3108,
+                z: 9572,
+                level: 0,
+            },
+        ),
+        (
+            "deliver-package",
+            Some("research_package"),
+            None,
+            package_pending.as_str(),
+            package_delivered.as_str(),
+            "collect-notes",
+            WorldTile {
+                x: 3253,
+                z: 3402,
+                level: 0,
+            },
+        ),
+        (
+            "collect-notes",
+            None,
+            Some("research_notes"),
+            package_delivered.as_str(),
+            notes_received.as_str(),
+            "deliver-notes",
+            WorldTile {
+                x: 3253,
+                z: 3402,
+                level: 0,
+            },
+        ),
+    ] {
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            Arc::clone(&path),
+            Arc::clone(&quests),
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        seed_dialogue_combat(&mut snapshot, false);
+        let mut player = snapshot.local_player().unwrap().clone();
+        player.player.actor.tile = here;
+        snapshot.seed_local_player(player);
+        snapshot.seed_inventory(held(input), 28);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: quests.quest("runemysteries").unwrap().display.to_string(),
+                component_id: 42,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        drive(&mut script, &snapshot, &mut ledger, 1);
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 2, before);
+        assert_eq!(script.current_step().unwrap().id.0.as_ref(), step);
+        drive(&mut script, &snapshot, &mut ledger, 6);
+        assert!(matches!(
+            ack(&mut ledger, 6),
+            HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
+        ));
+        snapshot.seed_chat_modal(4893, vec!["A handoff page".into()]);
+        snapshot.seed_chat_options(vec![], 4899);
+        drive(&mut script, &snapshot, &mut ledger, 7);
+        assert!(matches!(
+            ack(&mut ledger, 7),
+            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog)
+        ));
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        snapshot.seed_inventory(held(output), 28);
+        for tick in 8..=13 {
+            drive(&mut script, &snapshot, &mut ledger, tick);
+        }
+        drive(&mut script, &snapshot, &mut ledger, 14);
+        finish_rune_read(&mut script, &mut snapshot, &mut ledger, 15, after);
+        drive(&mut script, &snapshot, &mut ledger, 19);
+        assert_eq!(
+            script.current_step().unwrap().id.0.as_ref(),
+            next,
+            "{step} must continue with fresh quest progress, not bank or Duke recovery"
+        );
+    }
 }

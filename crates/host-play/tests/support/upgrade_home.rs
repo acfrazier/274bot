@@ -73,6 +73,8 @@ impl UpgradeHome {
                 reach_sha256: None,
                 canlight_sha256: None,
                 pois_sha256: None,
+                zone_count: 0,
+                zone_npc_count: 0,
             })
             .unwrap(),
         )

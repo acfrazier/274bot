@@ -16,7 +16,7 @@ use super::{
     reset_route_cache, right_align_x, route_flatten_count, set_navflags_binding, set_pack,
     set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
     walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
-    FlagsSidecarState, WalktoCaption,
+    FlagsSidecarState, WalktoCaption, ROUTE_THROUGH_ZONES_TOOLTIP,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -369,6 +369,59 @@ fn picker_map_window_builds_headless() {
     picker_map_window(ui, &mut s, &open_world(3, 3), &mut open, None, &mut map);
     ctx.render();
     assert!(open, "the window must stay open until Walk is confirmed");
+}
+#[test]
+fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
+    let _guard = crate::test_support::imgui_context_guard();
+    assert_eq!(
+        ROUTE_THROUGH_ZONES_TOOLTIP,
+        "Allows routes past monsters that may kill your bot."
+    );
+    let mut ctx = dear_imgui_rs::Context::create();
+    let world = open_world(3, 3);
+
+    for marked in [false, true] {
+        super::note_closed();
+        let mut session = Session::new();
+        session.route_through_zones = true;
+        if marked {
+            session.open_walkto_for_marked();
+        } else {
+            session.walkto_open = true;
+        }
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert!(
+            !session.route_through_zones,
+            "opening from {} starts with zones avoided",
+            if marked { "marked Fleet" } else { "chrome" }
+        );
+
+        let rect = super::last_picker_layout().route_zones_rect;
+        let checkbox = [
+            (rect[0][0] + rect[1][0]) * 0.5,
+            (rect[0][1] + rect[1][1]) * 0.5,
+        ];
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+        assert!(
+            session.route_through_zones,
+            "clicking the checkbox opts this WalkTo into zone crossing"
+        );
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+        assert!(
+            session.route_through_zones,
+            "the selection lasts for the current open picker"
+        );
+
+        super::note_closed();
+        session.route_through_zones = true;
+        session.walkto_open = true;
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert!(
+            !session.route_through_zones,
+            "the next open resets the per-WalkTo choice"
+        );
+    }
 }
 
 fn picker_click_frame(

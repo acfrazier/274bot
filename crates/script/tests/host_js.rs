@@ -479,8 +479,10 @@ async function progress(quest: string): Promise<QuestProgressRow | null> {
   return null;
 }
 
-void paths;
-void progress;
+void paths();
+for (const quest of ['cook', 'sheep', 'runemysteries', 'romeojuliet']) {
+  void progress(quest);
+}
 
 // @ts-expect-error questProgress takes an object, not a bare string
 void api.questProgress('cook');
