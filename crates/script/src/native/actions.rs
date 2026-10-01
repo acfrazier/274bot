@@ -183,31 +183,19 @@ impl ActionContext<'_> {
 
 /// Whether `emit` may queue `request`: a game interaction the host dispatches
 /// once, not a route (the typed walk owns those), broker channel, script
-/// mouse, host run policy or isolate lifecycle marker.
+/// mouse, inspect request/ack, SetCameraYaw, host run policy, GatherRun,
+/// GatherStop, ProgressRead or isolate lifecycle marker.
 fn native_interaction(request: &InteractReq) -> bool {
-    !matches!(
-        request,
-        InteractReq::Walk { .. }
-            | InteractReq::WalkNear { .. }
-            | InteractReq::WalkNearestBank
-            | InteractReq::SelectBank { .. }
-            | InteractReq::AbortWalk { .. }
-            | InteractReq::InspectRoute { .. }
-            | InteractReq::InspectAck { .. }
-            | InteractReq::ChannelOpen { .. }
-            | InteractReq::ChannelPost { .. }
-            | InteractReq::ChannelClose { .. }
-            | InteractReq::ChannelMessage { .. }
-            | InteractReq::ChannelStatus { .. }
-            | InteractReq::Mouse { .. }
-            | InteractReq::RunPolicyOverride { .. }
-            | InteractReq::NoteProgress
-            | InteractReq::LoopSettled
-            | InteractReq::WaitEnqueued
-            | InteractReq::WaitSettled
-            | InteractReq::RecoveryAnchor { .. }
-            | InteractReq::RecoveryAnchorNone
-    )
+    request.is_game()
+        && !matches!(
+            request,
+            InteractReq::Walk { .. }
+                | InteractReq::WalkNear { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::SelectBank { .. }
+                | InteractReq::AbortWalk { .. }
+                | InteractReq::Mouse { .. }
+        )
 }
 
 fn not_an_interaction() -> ActionError {

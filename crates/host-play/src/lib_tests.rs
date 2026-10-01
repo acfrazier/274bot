@@ -13662,7 +13662,7 @@ export default class T extends LoopingBot {
         slot.observe_lifecycle();
         assert_eq!(slot.state(), script::RunState::Running);
         let old_generation = slot.runtime_generation();
-        let (update, _interacts) = drain_observed_host_interacts(&mut slot);
+        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot);
         slot.restart_from_identity(Instant::now())
             .expect("watchdog-style runtime replacement starts");
         (
