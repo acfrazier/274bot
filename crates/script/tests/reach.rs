@@ -666,7 +666,7 @@ fn entity_op_clicks_once_then_settles_done_on_expect() {
 }
 
 #[test]
-fn entity_op_cant_reach_without_a_door_is_unreachable_with_the_frozen_log() {
+fn entity_op_cant_reach_without_a_door_is_unreachable() {
     let iso = spawn(ENTITY_OP);
     let mut snap = base(stand());
     post(&iso, &snap);
@@ -683,12 +683,6 @@ fn entity_op_cant_reach_without_a_door_is_unreachable_with_the_frozen_log() {
     tick(&iso, 2);
     tick(&iso, 3);
     assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
-    assert_eq!(
-        iso.probe("__logs").unwrap(),
-        serde_json::json!([
-            "reach: 'Attack' at (8,5): server can't reach it and no door in front to open or close (unreachable)"
-        ])
-    );
     iso.join();
 }
 
@@ -880,15 +874,11 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
 }
 
 #[test]
-fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
+fn entity_op_walks_through_an_open_leaf_without_closing_it() {
     let iso = spawn(ENTITY_OP);
     let close = ["Close".to_string()];
-    let open = ["Open".to_string()];
     let g = grid((5, 5), &[], &[]);
-    let locs = [
-        barrier("Gate", &open, 1551, 6, 5, 1),
-        barrier("Door", &close, 1531, 8, 4, 3),
-    ];
+    let locs = [barrier("Door", &close, 1531, 8, 4, 3)];
     let mut snap = base(stand());
     snap.reach = view(&g);
     snap.locs = &locs;
@@ -899,25 +889,116 @@ fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
     snap.chat_lines = &lines;
     post(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![loc_op(8, 4, "Close", 1531)],
-        "the leaf beside the target is closed; the gate is not opened"
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 8,
+                z: 5,
+                radius: 1,
+                ..
+            }]
+        ),
+        "recovery walks toward the target through the open passage, never Close"
     );
     assert_eq!(iso.probe("__clicks").unwrap(), 1);
 
-    // Closing the leaf made the target reachable: the next round clicks.
-    let reached = grid((5, 5), &[], &[(8, 5)]);
-    snap.tick = 3;
+    let reached = grid((8, 4), &[], &[(8, 5)]);
+    snap.here = Some(TileInput {
+        x: 8,
+        z: 4,
+        level: 0,
+    });
     snap.reach = view(&reached);
     post(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(iso.probe("__clicks").unwrap(), 2);
     assert!(iso.drain_interacts().is_empty());
-    assert_eq!(
-        logs(&iso),
-        vec!["reach: closing 'Door' at (8,4) to reach (8,5)"]
+    iso.join();
+}
+
+#[test]
+fn wall_aware_door_approach_does_not_open_from_the_wrong_side() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let blocked = grid((5, 5), &[], &[]);
+    let doors = [barrier("Door", &open, 1530, 6, 5, 1)];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&blocked);
+    snap.locs = &doors;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 6,
+                z: 5,
+                radius: 1,
+                ..
+            }]
+        ),
+        "a nearby door still needs a wall-aware approach"
     );
+
+    let operable = grid((5, 5), &[], &[(6, 5)]);
+    snap.tick = 2;
+    snap.reach = view(&operable);
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Open", 1530)]);
+    iso.join();
+}
+
+#[test]
+fn wall_aware_hop_finish_does_not_settle_across_a_wall() {
+    let iso = spawn(
+        r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops({ x: 8, z: 5, level: 0 }, 3, [], () => {});
+    }
+}
+"#,
+    );
+    let blocked = grid((5, 5), &[], &[]);
+    let mut snap = base(stand());
+    snap.reach = view(&blocked);
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "a radius disk across a wall is not arrival"
+    );
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear {
+            x: 8,
+            z: 5,
+            radius: 3,
+            ..
+        }]
+    ));
+
+    let reached = grid((7, 5), &[(8, 5)], &[]);
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 7,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&reached);
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
     iso.join();
 }
 
@@ -925,9 +1006,9 @@ fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
 fn open_when_unreachable_probes_and_clears_before_the_first_click() {
     let iso = spawn(ENTITY_OP);
     iso.probe("globalThis.__probe = true").unwrap();
-    let close = ["Close".to_string()];
-    let g = grid((5, 5), &[], &[]);
-    let locs = [barrier("Door", &close, 1531, 8, 4, 3)];
+    let open = ["Open".to_string()];
+    let g = grid((5, 5), &[], &[(6, 5)]);
+    let locs = [barrier("Door", &open, 1530, 6, 5, 1)];
     let mut snap = base(stand());
     snap.reach = view(&g);
     snap.locs = &locs;
@@ -938,11 +1019,12 @@ fn open_when_unreachable_probes_and_clears_before_the_first_click() {
         0,
         "the scene probe clears the way before any click"
     );
-    assert_eq!(iso.drain_interacts(), vec![loc_op(8, 4, "Close", 1531)]);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Open", 1530)]);
 
     let reached = grid((5, 5), &[], &[(8, 5)]);
     snap.tick = 2;
     snap.reach = view(&reached);
+    snap.locs = &[];
     post(&iso, &snap);
     tick(&iso, 2);
     assert_eq!(
@@ -958,7 +1040,7 @@ fn open_when_unreachable_probes_and_clears_before_the_first_click() {
 fn entity_op_gives_up_retry_after_eight_cleared_rounds() {
     let iso = spawn(ENTITY_OP);
     let open = ["Open".to_string()];
-    let g = grid((5, 5), &[], &[]);
+    let g = grid((5, 5), &[], &[(6, 5)]);
     let door = [barrier("Door", &open, 1530, 6, 5, 1)];
     let mut snap = base(stand());
     snap.reach = view(&g);

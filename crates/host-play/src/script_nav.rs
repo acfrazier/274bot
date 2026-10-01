@@ -900,9 +900,34 @@ pub(crate) fn approach_tiles(
             }
         }
     }
-    if world.collision.standable(to) {
-        let connected = nav::router::local_step_component(&world.collision, to, r);
-        tiles.retain(|tile| connected.contains(tile));
+    if r > 0 {
+        if world.collision.standable(to) {
+            let connected = nav::router::local_step_component(&world.collision, to, r);
+            tiles.retain(|tile| connected.contains(tile));
+        } else {
+            let mut stands = api::query::arrival_stands(
+                to,
+                |tile| world.collision.standable(tile),
+                |tile| Some(world.collision.walkable_word(tile.x, tile.z, tile.level) as i32),
+            );
+            if let Some(seed) = stands.next() {
+                let component_radius = r + 1;
+                let mut connected =
+                    nav::router::local_step_component(&world.collision, seed, component_radius);
+                for seed in stands {
+                    if !connected.contains(&seed) {
+                        connected.extend(nav::router::local_step_component(
+                            &world.collision,
+                            seed,
+                            component_radius,
+                        ));
+                    }
+                }
+                tiles.retain(|tile| connected.contains(tile));
+            } else {
+                tiles.clear();
+            }
+        }
     }
     tiles.sort_by_key(|t| {
         (

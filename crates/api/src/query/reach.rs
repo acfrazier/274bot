@@ -245,19 +245,11 @@ impl<'a> SceneQuery<'a> {
     /// as an `adjacent_ok` reach probe, exposed as a zero-allocation
     /// iterator for route-goal selection.
     pub fn arrival_stands(&self, destination: WorldTile) -> impl Iterator<Item = WorldTile> + '_ {
-        let destination_local = self.to_local(destination);
-        ORTHO.into_iter().filter_map(move |(stand_dx, stand_dz)| {
-            let to = destination_local?;
-            let stand = WorldTile {
-                x: destination.x + stand_dx,
-                z: destination.z + stand_dz,
-                level: destination.level,
-            };
-            let flags = |lx: i32, lz: i32| self.collision_at_local(LocalTile { lx, lz });
-            (self.walkable(stand)
-                && can_reach_adjacent_tile(&flags, to.lx, to.lz, -stand_dx, -stand_dz))
-            .then_some(stand)
-        })
+        arrival_stands(
+            destination,
+            |stand| self.walkable(stand),
+            |tile| self.collision_at(tile),
+        )
     }
 
     /// Whether one adjacent step from `from` to `to` is clear (level and
@@ -661,6 +653,40 @@ impl ReachQueryView {
         (lx >= 0 && lz >= 0 && lx < self.width && lz < self.height)
             .then(|| (lx as usize) * (self.height as usize) + (lz as usize))
     }
+}
+
+/// Legal cardinal approach stands, shared by live scenes and packed route goals.
+/// A solid target is approachable only across an open wall edge; proximity on
+/// the other side of a wall is not an interaction stand.
+pub fn arrival_stands(
+    destination: WorldTile,
+    walkable: impl Fn(WorldTile) -> bool,
+    collision_at: impl Fn(WorldTile) -> Option<i32>,
+) -> impl Iterator<Item = WorldTile> {
+    ORTHO.into_iter().filter_map(move |(dx, dz)| {
+        let stand = WorldTile {
+            x: destination.x + dx,
+            z: destination.z + dz,
+            level: destination.level,
+        };
+        let flags = |x, z| {
+            collision_at(WorldTile {
+                x,
+                z,
+                level: destination.level,
+            })
+        };
+        (walkable(stand) && can_reach_adjacent_tile(&flags, destination.x, destination.z, -dx, -dz))
+            .then_some(stand)
+    })
+}
+
+/// A live door leaf offering Close is already open. Recovery may walk through
+/// its passage but must never dispatch that operation to clear a route.
+pub fn door_is_open<'a>(actions: impl IntoIterator<Item = &'a str>) -> bool {
+    actions
+        .into_iter()
+        .any(|action| action.trim().eq_ignore_ascii_case("close"))
 }
 
 /// Walk arrival, the one rule the isolate walk wait and the host follow

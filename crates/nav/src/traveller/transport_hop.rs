@@ -165,11 +165,7 @@ pub(super) fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bo
     }
     snapshot.locs().iter().any(|loc| {
         loc.tile == edge.at
-            && loc
-                .actions
-                .iter()
-                .flatten()
-                .any(|action| action.trim().eq_ignore_ascii_case("close"))
+            && api::query::door_is_open(loc.actions.iter().flatten().map(String::as_str))
     })
 }
 
