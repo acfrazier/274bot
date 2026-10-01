@@ -550,12 +550,12 @@ fn live_name_prefix_override_replaces_live_within_the_name_budget() {
 }
 
 #[test]
-fn live_name_prefix_accepts_only_short_lowercase_letters() {
+fn live_name_prefix_is_capped_at_the_default_length() {
     use crate::play_bootstrap::parse_live_name_prefix;
     assert_eq!(parse_live_name_prefix(None), Ok("live"));
-    assert_eq!(parse_live_name_prefix(Some("tm")), Ok("tm"));
+    assert_eq!(parse_live_name_prefix(Some("g3")), Ok("g3"));
     assert_eq!(parse_live_name_prefix(Some("abcd")), Ok("abcd"));
-    for bad in ["", "abcde", "Tm", "t1", "t_", "tm "] {
+    for bad in ["", "abcde"] {
         let err = parse_live_name_prefix(Some(bad)).unwrap_err();
         assert!(err.contains("BOT_LIVE_NAME_PREFIX"), "{bad:?}: {err}");
     }
