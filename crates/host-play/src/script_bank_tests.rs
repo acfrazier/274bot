@@ -516,7 +516,7 @@ fn bank_pick_walk_reuses_the_winning_route_and_hold_keeps_it_without_sends() {
         &GameSnapshot::new(),
         &navs,
         &Arc::new(Mutex::new(vec![])),
-        world.as_deref(),
+        world.as_ref(),
         true,
         false,
         || panic!("a held slot must not enter the reach/follow path"),

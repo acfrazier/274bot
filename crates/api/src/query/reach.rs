@@ -663,6 +663,11 @@ pub fn arrival_stands(
     walkable: impl Fn(WorldTile) -> bool,
     collision_at: impl Fn(WorldTile) -> Option<i32>,
 ) -> impl Iterator<Item = WorldTile> {
+    let approach = super::loc_approach::LocApproach {
+        width: 1,
+        length: 1,
+        blocked_sides: 0,
+    };
     ORTHO.into_iter().filter_map(move |(dx, dz)| {
         let stand = WorldTile {
             x: destination.x + dx,
@@ -676,9 +681,54 @@ pub fn arrival_stands(
                 level: destination.level,
             })
         };
-        (walkable(stand) && can_reach_adjacent_tile(&flags, destination.x, destination.z, -dx, -dz))
-            .then_some(stand)
+        let stand_flags = collision_at(stand).unwrap_or(CollisionFlag::SQ_BLOCKED);
+        (walkable(stand)
+            && can_reach_adjacent_tile(&flags, destination.x, destination.z, -dx, -dz)
+            && approach.can_operate(destination, stand, stand_flags))
+        .then_some(stand)
     })
+}
+
+/// Engine `ReachStrategy.reachWall1` for `WALL_STRAIGHT`: its angle-facing
+/// side is reachable across the wall; along-wall neighbours require an open
+/// step into the loc tile, matching `CollisionMap.test_wall`.
+pub fn straight_wall_reachable(
+    from: WorldTile,
+    destination: WorldTile,
+    shape: u8,
+    angle: u8,
+    can_step: impl Fn(WorldTile, WorldTile) -> bool,
+) -> bool {
+    const WALL_STRAIGHT: u8 = 0;
+    const WEST: u8 = 0;
+    const NORTH: u8 = 1;
+    const EAST: u8 = 2;
+    const SOUTH: u8 = 3;
+
+    if from.level != destination.level {
+        return false;
+    }
+    if from == destination {
+        return true;
+    }
+    if shape != WALL_STRAIGHT {
+        return false;
+    }
+    let at_offset = |dx: i32, dz: i32| {
+        destination.x.checked_add(dx) == Some(from.x)
+            && destination.z.checked_add(dz) == Some(from.z)
+    };
+    let (facing_side, along_wall_a, along_wall_b) = match angle {
+        WEST => ((-1, 0), (0, 1), (0, -1)),
+        NORTH => ((0, 1), (-1, 0), (1, 0)),
+        EAST => ((1, 0), (0, 1), (0, -1)),
+        SOUTH => ((0, -1), (-1, 0), (1, 0)),
+        _ => return false,
+    };
+    at_offset(facing_side.0, facing_side.1)
+        || ((at_offset(along_wall_a.0, along_wall_a.1)
+            || at_offset(along_wall_b.0, along_wall_b.1))
+            && can_step(from, destination))
 }
 
 /// A live door leaf offering Close is already open. Recovery may walk through

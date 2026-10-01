@@ -71,6 +71,31 @@ impl<'a> SnapshotView<'a> {
             stamp: self.stamp,
         })
     }
+    /// Whether the current walk may settle at `from` for `to`.
+    ///
+    /// A destination outside this live scene is only an estimate, not proof
+    /// of arrival. Known solid locs use the shared full-footprint rule;
+    /// ordinary in-scene destinations retain the reach-aware walk rule.
+    pub fn walk_arrived(&self, from: super::WorldTile, to: super::WorldTile, radius: i32) -> bool {
+        let Some(snapshot) = self.scene_ready() else {
+            return false;
+        };
+        if from == to {
+            return radius >= 0;
+        }
+        let reach = self.reach();
+        let query = crate::query::SceneQuery::new(snapshot.scene(), None);
+        if !query.contains(to) && !reach.is_some_and(|observed| observed.value.probeable(to)) {
+            return false;
+        }
+        if let Some(arrived) = crate::query::loc_approach::arrived_at(snapshot, from, to, radius) {
+            return arrived;
+        }
+        let unavailable = crate::query::ReachQueryView::unavailable();
+        crate::query::is_arrived(from, to, radius, || {
+            reach.map_or(&unavailable, |observed| observed.value)
+        })
+    }
 
     /// The local player once the player family has posted its first row.
     /// Disconnect or a pre-player frame is not an observed empty player.

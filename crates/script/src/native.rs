@@ -353,6 +353,11 @@ pub struct QuietReadLease {
 
 pub struct WalkRequest {
     pub target: WorldTile,
+    /// Chebyshev arrival margin. Plain tile goals measure from `target`;
+    /// loc-backed goals measure from the full rotated footprint rectangle.
+    /// A loc stand must also pass the shared live wall/force-approach rule.
+    /// Perimeter stands are admitted only when their footprint distance is
+    /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     pub options: FindOptions,
     pub required_after: EvidenceStamp,

@@ -350,6 +350,16 @@ than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
 distant tile, or the old plane. Other transport arrival rules are unchanged.
 
+Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
+centered on the requested tile. For a loc-backed goal, distance is measured
+to its full rotated footprint rectangle, not its south-west anchor; a legal
+perimeter stand is included only when that distance is within the requested
+margin. Arrival also requires the shared live loc-operability rule, including
+wall flags, force-approach sides, and a walkable stand. Off-scene packed
+footprints only estimate an approach: the host revalidates and, when necessary,
+rederives the same owned walk against the observed loc before publishing
+`Arrived`. Exact tile walks are unchanged.
+
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:

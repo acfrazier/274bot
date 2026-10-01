@@ -18,6 +18,16 @@ use super::{
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
 
+struct LiveRouteRefresh {
+    to: WorldTile,
+    radius: i32,
+    options: FindOptions,
+    request_id: u64,
+    avoid: Vec<nav::router::AvoidRect>,
+    authority: Option<script::native::HostAuthority>,
+    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+}
+
 pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
         abort_walk_on_bot(bot);
@@ -269,24 +279,17 @@ pub(crate) fn apply_nav_follow_outcome(
 }
 
 /// One pump step of a uid's nav bot: advance a pending BankBudget session
-/// first (Wear / deposit / withdraw), then poll the armed route through
-/// [`Traveller::follow`] one step against `snapshot`. `here` is the
-/// player's world tile when the body decoded one (else the bot stands
-/// still). `world` is the shared nav world, `None` when no pack loaded —
-/// its packed any-tile teleport list rides into the follow so a jewellery
-/// rub hop answers the destination dialog's choice for its landing (the
-/// same pass-through the panel and scenario follow make). Mirrors the
-/// armed route's dest into the status row's `walk_*` fields (`-1` when
-/// idle); any terminal outcome clears the route — arrival and stall alike
-/// — so the status flips back to idle and a script may arm a fresh walk.
-/// Mid-follow Stall / Refused / Blocked / GaveUp publish the armed walk's
-/// isolate request id as a failed outcome. Arrival still settles from `here`,
-/// and the same arrival ends the follow: once [`api::query::is_arrived`]
-/// (frozen `isArrived`, the rule `walk_wait` settles on) holds for the
-/// requested dest and radius, the route clears without another hop, even
-/// short of the approach tile the route aimed at. `reach` yields the slot's
-/// cached reach view for `here`; it is asked only when that rule needs a
-/// probe (`0 < dist <= radius` on the dest's level).
+/// first, then poll the armed route through [`Traveller::follow`] one step
+/// against `snapshot`. `here` is the player's world tile when the body
+/// decoded one (else the bot stands still). `world` is the shared, owned
+/// nav-world handle so a stale offscene endpoint can be re-queued on the
+/// existing background route worker without retaining a per-bot world copy.
+/// Mirrors the armed route's dest into the status row's `walk_*` fields
+/// (`-1` when idle). A live modeled loc's full-footprint arrival gates both
+/// early settlement and route-end receipts; an estimated endpoint is
+/// refreshed off-pump when the target enters scene. `reach` yields the slot's
+/// cached reach view for ordinary destinations and is asked only when that
+/// rule needs a probe (`0 < dist <= radius` on the dest's level).
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn step_nav_bot<D: Driver>(
@@ -296,7 +299,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     snapshot: &GameSnapshot,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
-    world: Option<&NavWorld>,
+    world: Option<&Arc<NavWorld>>,
     hold: bool,
     map_members: bool,
     reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
@@ -318,6 +321,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         }
         return;
     }
+    let borrowed_world = world.map(Arc::as_ref);
     {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
@@ -325,7 +329,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 abort_walk_on_bot(bot);
             }
             if bot.bank_fetch.is_some() {
-                step_bank_fetch_on_bot(driver, snapshot, bot, world, here, map_members);
+                step_bank_fetch_on_bot(driver, snapshot, bot, borrowed_world, here, map_members);
                 // Freeze follow for Open / Deposit / Withdraw / Wear /
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
@@ -354,17 +358,124 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     // Resolve arrival before the follow lock: the reach view lives behind
     // the script slot, and the slot locks before navs, never after.
-    let armed = {
+    let (armed, endpoint) = {
         let all = navs.lock().unwrap();
         all.get(name)
             .filter(|bot| bot.route.is_some() && bot.bank_fetch.is_none())
-            .and_then(|bot| bot.requested_route)
+            .map(|bot| {
+                (
+                    bot.requested_route,
+                    bot.route.as_ref().map(|route| route.dest),
+                )
+            })
+            .unwrap_or((None, None))
     };
+    let endpoint_arrival = armed.zip(endpoint).map(|((to, radius, ..), from)| {
+        api::query::loc_approach::arrived_at(snapshot, from, to, radius)
+    });
+    let offscene_solid = armed.is_some_and(|(to, radius, ..)| {
+        radius > 0
+            && !api::query::SceneQuery::new(snapshot.scene(), None).contains(to)
+            && world.is_some_and(|world| !world.collision.standable(to))
+    });
+    let estimated_endpoint = endpoint_arrival == Some(None) && offscene_solid;
     let arrived = here
         .zip(armed)
         .is_some_and(|((x, z, level), (to, radius, ..))| {
-            api::query::is_arrived(WorldTile { x, z, level }, to, radius, reach)
+            let from = WorldTile { x, z, level };
+            match api::query::loc_approach::arrived_at(snapshot, from, to, radius) {
+                Some(arrived) => arrived,
+                None if offscene_solid => false,
+                None => api::query::is_arrived(from, to, radius, reach),
+            }
         });
+    let reached_estimate = estimated_endpoint
+        && here.is_some_and(|(x, z, level)| {
+            let from = WorldTile { x, z, level };
+            endpoint == Some(from)
+                && api::query::SceneQuery::new(snapshot.scene(), None).contains(from)
+                && armed
+                    .is_some_and(|(to, ..)| from.x.abs_diff(to.x).max(from.z.abs_diff(to.z)) > 1)
+        });
+    let outside_plain_radius = endpoint_arrival == Some(None)
+        && !offscene_solid
+        && armed.zip(endpoint).is_some_and(|((to, radius, ..), from)| {
+            u32::try_from(radius)
+                .is_ok_and(|radius| from.x.abs_diff(to.x).max(from.z.abs_diff(to.z)) > radius)
+        });
+    let invalid_endpoint = !arrived
+        && (endpoint_arrival == Some(Some(false)) || reached_estimate || outside_plain_radius);
+    let (refresh, suppress_follow) = if invalid_endpoint {
+        let mut all = navs.lock().unwrap();
+        let Some(bot) = all.get_mut(name) else {
+            return;
+        };
+        if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
+            abort_walk_on_bot(bot);
+        }
+        let still_owns_endpoint = bot.route_request_id == bot.walk_request_id
+            && bot.requested_route == armed
+            && bot.route.as_ref().map(|route| route.dest) == endpoint
+            && bot.bank_fetch.is_none();
+        if !still_owns_endpoint {
+            (None, false)
+        } else if bot.route_worker.is_some() || bot.pending_route.is_some() || world.is_none() {
+            // A stale route cannot settle while an existing worker is
+            // calculating, or before a world is available to refresh it.
+            (None, true)
+        } else {
+            let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) =
+                armed.expect("invalid endpoint has an armed request");
+            let refresh = LiveRouteRefresh {
+                to,
+                radius,
+                options: FindOptions {
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                    ..FindOptions::default()
+                },
+                request_id: bot.walk_request_id,
+                avoid: bot.requested_avoid.clone(),
+                authority: bot.native_walk.clone(),
+                quest_evidence: bot.route_quest_evidence.clone(),
+            };
+            // Keep the live owner and request correlation; only the old
+            // endpoint and its Traveller run are replaced by the worker.
+            bot.traveller.clear();
+            bot.route = None;
+            (Some(refresh), true)
+        }
+    } else {
+        (None, false)
+    };
+    if let Some(refresh) = refresh {
+        let mut state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
+        state.quest_evidence = refresh.quest_evidence;
+        let bank = snapshot
+            .bank()
+            .iter()
+            .map(|item| (item.def.id, item.count))
+            .collect();
+        ScriptWalkArm {
+            here,
+            world: world.cloned(),
+            navs: Arc::clone(navs),
+            name: name.to_string(),
+            state: Some(state),
+            bank,
+        }
+        .refresh_route_in_snapshot(
+            snapshot,
+            refresh.to,
+            refresh.radius,
+            refresh.options,
+            refresh.request_id,
+            refresh.avoid,
+            refresh.authority,
+        );
+    }
+    let defer_estimated_end = estimated_endpoint;
     let queued = {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
@@ -373,40 +484,45 @@ pub(crate) fn step_nav_bot<D: Driver>(
         if bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             abort_walk_on_bot(bot);
         }
-        if bot.route.is_none() {
-            return;
+        if bot.route.is_some() {
+            // `requested_route == armed`: the arrival above is for this walk.
+            if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
+                bot.traveller.clear();
+                bot.route = None;
+            } else if !suppress_follow {
+                if let Some(route) = bot.route.clone() {
+                    let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
+                        matches!(
+                            p.steps.front(),
+                            Some(BankStep::Walk { x, z, level })
+                                if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+                        )
+                    });
+                    let follow_outcome = {
+                        let mut options = TravelOptions {
+                            // Exact arrival matches the armed walk's destination.
+                            close_enough: 0,
+                            teleports: borrowed_world.map(|world| world.graph.teleports.as_slice()),
+                            edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
+                            quest_evidence: bot.route_quest_evidence.as_ref(),
+                            ..TravelOptions::default()
+                        };
+                        bot.traveller.follow(driver, snapshot, route, &mut options)
+                    };
+                    let owned_estimated_end = defer_estimated_end
+                        && bot.requested_route == armed
+                        && bot.route_request_id == bot.walk_request_id
+                        && bot.bank_fetch.is_none();
+                    let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
+                        matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
+                    });
+                    if !owned_estimated_end || !reached_endpoint {
+                        apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
+                    }
+                }
+            }
         }
-        // `requested_route == armed`: the arrival above is for this walk.
-        if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
-            // The isolate settles the walk wait on this same arrival rule
-            // (walk_wait.rs), so the card has already moved on. Every
-            // further hop would be a click the card never sent; a stall
-            // re-send walks the player out of the fight the card started at
-            // the edge of the radius.
-            bot.traveller.clear();
-            bot.route = None;
-        } else if let Some(route) = bot.route.clone() {
-            let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
-                matches!(
-                    p.steps.front(),
-                    Some(BankStep::Walk { x, z, level })
-                        if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
-                )
-            });
-            let follow_outcome = {
-                let mut options = TravelOptions {
-                    // Exact arrival matches the armed walk's destination.
-                    close_enough: 0,
-                    teleports: world.map(|w| w.graph.teleports.as_slice()),
-                    edges: world.map(|w| w.graph.edges.as_slice()),
-                    quest_evidence: bot.route_quest_evidence.as_ref(),
-                    ..TravelOptions::default()
-                };
-                bot.traveller.follow(driver, snapshot, route, &mut options)
-            };
-            apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
-        }
-        bot.route.as_ref().map(|r| r.dest)
+        bot.route.as_ref().map(|route| route.dest)
     };
     let mut rows = lock_statuses(statuses);
     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
