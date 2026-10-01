@@ -930,7 +930,6 @@ fn live_options(home: &Path) -> ProfileOptions {
     }
 }
 
-
 fn profile(name: &str) -> Profile {
     Profile {
         username: name.to_string(),
