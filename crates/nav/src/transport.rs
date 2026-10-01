@@ -489,22 +489,15 @@ fn derive_transports_with_audit(
                     && matches!(loc.shape, 10 | 11 | 22)
             })?;
             let def = loc_defs.loc(edge.loc_id)?;
-            let (width, length) = if placement.angle & 1 == 0 {
-                (def.width, def.length)
-            } else {
-                (def.length, def.width)
-            };
-            let angle = placement.angle;
-            let sides = if angle == 0 {
-                def.force_approach
-            } else {
-                ((def.force_approach << angle) & 0xf) | (def.force_approach >> (4 - angle))
-            };
-            Some(api::query::loc_approach::LocApproach {
-                width: u8::try_from(width).expect("cache footprint width is a byte"),
-                length: u8::try_from(length).expect("cache footprint length is a byte"),
-                blocked_sides: sides as u8,
-            })
+            Some(
+                api::query::loc_approach::LocApproach::from_loc_def(
+                    def.width,
+                    def.length,
+                    placement.angle,
+                    def.force_approach,
+                )
+                .expect("cache footprint dimensions fit in a byte"),
+            )
         })
         .collect();
     graph.rebuild_index(collision);

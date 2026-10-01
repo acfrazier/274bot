@@ -794,7 +794,7 @@ impl FollowRun {
                                     at: here,
                                     leg: self.leg_index,
                                     detail: format!(
-                                        "no standable tile within 1 of transport {} {} at ({}, {}, {}) in the loaded scene",
+                                        "no flood-reachable operable stand for transport {} {} at ({}, {}, {}) in the loaded scene",
                                         target_word(edge),
                                         edge.loc_id,
                                         edge.at.x,

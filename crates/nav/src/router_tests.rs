@@ -4279,6 +4279,10 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
     let catherby = tile(2809, 3440, 0);
     let manor = tile(3109, 3353, 0);
     let opts = FindOptions::default();
+    let mut f2_cap_ticks = None;
+    let mut f2_lifted_ticks = None;
+    let mut f3_cap_ticks = None;
+    let mut f3_lifted_ticks = None;
     for (row, from, to, combat) in [
         ("F1", lumbridge, bank, Some(126)),
         ("F1-low", lumbridge, bank, Some(3)),
@@ -4299,6 +4303,13 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
         let state = zones_rich_289_state(combat);
         let route = find_with(&world.collision, &world.graph, from, to, opts, &state).unwrap();
         assert_zone_route_clear(&world, from, &route, opts, &state);
+        match row {
+            "F2-cap" => f2_cap_ticks = Some(route.ticks),
+            "F2-lifted" => f2_lifted_ticks = Some(route.ticks),
+            "F3-cap" => f3_cap_ticks = Some(route.ticks),
+            "F3-lifted" => f3_lifted_ticks = Some(route.ticks),
+            _ => {}
+        }
         if row.starts_with("P5") || row.starts_with("P6") {
             assert!(
                 !route_walk_tiles(&route).any(|t| t == tile(3110, 3339, 0)),
@@ -4310,6 +4321,14 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
             );
         }
     }
+    assert!(
+        f2_lifted_ticks.expect("F2 combat 13 route") < f2_cap_ticks.expect("F2 combat 12 route"),
+        "combat 13 should lift F2 and shorten the route compared with combat 12"
+    );
+    assert!(
+        f3_lifted_ticks.expect("F3 combat 147 route") < f3_cap_ticks.expect("F3 combat 146 route"),
+        "combat 147 should lift F3 and shorten the route compared with combat 146"
+    );
     let table = world.graph.zones.as_ref().unwrap();
     let r2_squares: Vec<_> = table
         .zones()
@@ -4484,6 +4503,8 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
     )
     .unwrap();
     assert_zone_route_clear(&world, from, &route, wolf_exempt, &state);
+    let mut combat_129_ticks = None;
+    let mut combat_147_ticks = None;
     for combat in [129, 147] {
         let route = find_with(
             &world.collision,
@@ -4501,7 +4522,16 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
             opts,
             &zones_rich_289_state(Some(combat)),
         );
+        match combat {
+            129 => combat_129_ticks = Some(route.ticks),
+            147 => combat_147_ticks = Some(route.ticks),
+            _ => unreachable!("only the reviewed combat levels are checked"),
+        }
     }
+    assert!(
+        combat_147_ticks.expect("combat 147 route") < combat_129_ticks.expect("combat 129 route"),
+        "combat 147 should lift zones and shorten the refusal route compared with combat 129"
+    );
     for members in [false, true] {
         let fresh = WorldState {
             combat_level: Some(3),
