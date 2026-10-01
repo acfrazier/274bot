@@ -846,6 +846,117 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
 }
 
 #[test]
+fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
+    use api::snapshot::ChatLineView;
+
+    compile_context_test(|cx| {
+        let row = cx.selected.npc_by_config("sheepunsheered").unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_npcs(vec![api::snapshot::NpcView {
+            index: 42,
+            r#type: Some(row.id as usize),
+            name: row.display.clone(),
+            actions: vec![Some("Shear".into())],
+            tile: tile(3200, 3276),
+            distance: 1,
+            animation: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 1,
+            total_health: 1,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network: tile(3200, 3276),
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }]);
+        let shears = resolve_obj(cx, "shears").unwrap();
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(shears, "Shears"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 7,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        let message = |sequence, type_, username| ChatLineView {
+            sequence,
+            type_,
+            username,
+            text: "The sheep manages to get away from you!".into(),
+        };
+        snapshot.seed_chat_lines(vec![message(5, 0, None)]);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears",
+                "target": {"npc": "sheepunsheered"},
+                "radius": 8,
+                "until": {"obj": "wool", "qty": 1},
+                "settle_ms": 240_000
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |t| {
+            with_step(t, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+        ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                accepted: true,
+            },
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |t| {
+                with_step(t, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "old server feedback must not fail a new attempt"
+        );
+        snapshot.seed_chat_lines(vec![message(6, 2, Some("other player".into()))]);
+        assert!(
+            with_tick(&snapshot, &mut ledger, 4, |t| {
+                with_step(t, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "player chat is not authoritative action feedback"
+        );
+        snapshot.seed_chat_lines(vec![message(7, 0, None)]);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |t| {
+                with_step(t, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(ActionError::Failed(_)))
+        ));
+    });
+}
+
+#[test]
 fn make_selects_the_input_menu_row_and_settles_on_the_output() {
     use crate::native_production::{MakeMachine, MakeRequest};
     use client::client::{Client, ClientConfig};

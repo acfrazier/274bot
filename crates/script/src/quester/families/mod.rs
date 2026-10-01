@@ -1565,6 +1565,7 @@ impl StepPlan for UseOnPlan {
             interaction: None,
             round_before: None,
             accepted: false,
+            chat_since: 0,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -1588,6 +1589,7 @@ struct UseOnRun {
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
     round_before: Option<i32>,
+    chat_since: i32,
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -1705,6 +1707,7 @@ impl StepRun for UseOnRun {
                 target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
                 target_item_slot,
             };
+            self.chat_since = reach::last_chat_seq(&cx.tick.cx);
             self.interaction = Some(
                 cx.tick
                     .actions
@@ -1718,6 +1721,16 @@ impl StepRun for UseOnRun {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(())) => self.accepted = true,
             }
+        }
+        if reach::saw_game_message(
+            &cx.tick.cx,
+            self.chat_since,
+            "The sheep manages to get away from you!",
+        ) {
+            // The game completed this attempt without a product. Report the
+            // observed failure instead of waiting for impossible inventory
+            // growth; the quest's existing failure policy owns the next step.
+            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
         }
         let held = |id| {
             cx.tick.cx.snapshot().inventory().map(|inv| {
