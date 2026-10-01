@@ -567,9 +567,9 @@ fn draw_command_category(
         ui.same_line();
         let favorite = session.ui.debug_panel.is_favorite(&command.name);
         let star_label = if favorite {
-            "★##favorite"
+            "\u{f005}##favorite"
         } else {
-            "☆##favorite"
+            "\u{f006}##favorite"
         };
         if ui.small_button(star_label) {
             action = Some(CommandAction::ToggleFavorite(command.name.clone()));

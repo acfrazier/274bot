@@ -809,13 +809,12 @@ impl AppWindow {
             cb(&mut context);
         }
 
-        // The rail draws U+2059 (⁙) and U+2717 (✗) as text, which the
-        // default Latin-1 font cannot render: merge an embedded DejaVu
-        // Sans so they rasterize. Fail loudly rather than draw '?' again.
-        let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut context);
+        // Keep one bundled base font at its logical 14 px size (`PANEL_FONT_SIZE`).
+        // Dear ImGui 1.92 applies display density when baking it; do not multiply here.
+        let glyphs_present = add_panel_font(&mut context);
         assert!(
-            quincunx && ballot_x && folds && fa,
-            "merged glyph font must cover rail DejaVu and file-dialog FA codepoints"
+            glyphs_present,
+            "embedded 3270 font must cover the panel's drawn glyphs"
         );
 
         let mut platform = imgui_winit::WinitPlatform::new(&mut context);
@@ -1390,82 +1389,38 @@ fn align_up(n: u32, align: u32) -> u32 {
     n.div_ceil(align) * align
 }
 
-/// DejaVu Sans 2.37 (SIL OFL), embedded so the rail's non-Latin-1 glyphs
-/// render. The default atlas font (ProggyClean) covers Latin-1 only;
-/// `U+2059` (⁙) and `U+2717` (✗) need a second font source.
-const GLYPH_FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+/// Subset of 3270 Nerd Font Regular: panel text, rail controls and Nerd
+/// Fonts' Font Awesome icons. Recreate the asset with this exact command:
+/// `python3 -m fontTools.subset /Volumes/dev-scratch/274bot-evidence/PANEL-FONT-3270-1/nf-3270NerdFont-Regular.ttf --output-file=/Volumes/dev-scratch/274bot-worktrees/panel-font-3270/crates/panel/assets/3270NerdFont-Regular-subset.ttf '--unicodes=U+0020-007E,U+00A0-00FF,U+2013-2014,U+2026,U+2192,U+2194,U+2212,U+2264,U+2265,U+2582-2585,U+2605,U+2715,U+2717,U+F005,U+F006,U+F015,U+F019,U+F054,U+F07B,U+F108,U+F15B,U+F15C' --no-ignore-missing-unicodes`
+const PANEL_FONT_BYTES: &[u8] = include_bytes!("../assets/3270NerdFont-Regular-subset.ttf");
 
-/// Font Awesome 6 Free Solid (SIL OFL). File-dialog chrome only; rail
-/// glyphs stay on DejaVu. Same `merge_mode` path as [`GLYPH_FONT_BYTES`].
-const FA_FONT_BYTES: &[u8] = include_bytes!("../assets/fa-solid-900.ttf");
-
-/// The two codepoints the rail draws beyond the default font's Latin-1,
-/// as a Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx)
-/// and `U+2717` (remove), NUL-terminated.
-const GLYPH_FONT_RANGES: [u32; 7] = [0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2717, 0];
-
-/// FA PUA for Scripts file-dialog buttons (home, download, chevron,
-/// folder, file/file-lines, desktop). Tiny pairs, NUL-terminated.
-const FA_FONT_RANGES: [u32; 13] = [
-    0xf015, 0xf015, 0xf019, 0xf019, 0xf054, 0xf054, 0xf07b, 0xf07b, 0xf15b, 0xf15c, 0xf390, 0xf390,
-    0,
+/// Non-ASCII codepoints the panel renders as text (status is drawn geometry).
+const PANEL_REQUIRED_GLYPHS: &[char] = &[
+    '\u{2013}', '\u{2014}', '\u{2026}', '\u{2192}', '\u{2194}', '\u{2212}', '\u{2264}', '\u{2265}',
+    '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2605}', '\u{2715}', '\u{2717}', '\u{f005}',
+    '\u{f006}', '\u{f015}', '\u{f019}', '\u{f054}', '\u{f07b}', '\u{f108}', '\u{f15b}', '\u{f15c}',
 ];
 
-/// Merge the embedded DejaVu Sans into the atlas's default font so the
-/// rail's `U+2059` and `U+2717` glyphs rasterize (they render as `?` in
-/// the Latin-1 default font). `merge_mode` keeps Latin-1 on the default
-/// font — only the ranged codepoints fall through to DejaVu, at the
-/// default font's reference size (`size_pixels: 0.0`; an explicit size
-/// would trip imgui's merge/implicit-reference-size assert). Returns the
-/// two codepoints' presence in the merged font; the unit test pins it.
-fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool) {
-    let mut fonts = ctx.fonts();
-    fonts.add_font_default(None);
-    let _dejavu = fonts
-        .add_font_from_memory_ttf(
-            GLYPH_FONT_BYTES,
-            0.0,
-            Some(
-                &imgui::FontConfig::new()
-                    .merge_mode(true)
-                    .name("dejavu-sans (status/remove glyphs)"),
-            ),
-            Some(&GLYPH_FONT_RANGES),
-        )
-        .expect("embedded DejaVu Sans is a valid TTF");
-    let merged = fonts
-        .add_font_from_memory_ttf(
-            FA_FONT_BYTES,
-            0.0,
-            Some(
-                &imgui::FontConfig::new()
-                    .merge_mode(true)
-                    .name("fa-solid (file-dialog glyphs)"),
-            ),
-            Some(&FA_FONT_RANGES),
-        )
-        .expect("embedded Font Awesome Free Solid is a valid TTF");
-    let fa = fa_dialog_glyphs_in(merged);
-    (
-        merged.is_glyph_in_font('\u{2059}'),
-        merged.is_glyph_in_font('\u{2717}'),
-        merged.is_glyph_in_font('\u{2582}') && merged.is_glyph_in_font('\u{2585}'),
-        fa,
-    )
-}
+/// Base UI font size. ImGui sizes a font by its ascent-to-descent height,
+/// not its em. The Regular face measures about 6.94 px per cell at 14 px,
+/// matching ProggyClean's 7 px grid at 13 px without glyph padding.
+const PANEL_FONT_SIZE: f32 = 14.0;
 
-fn fa_dialog_glyphs_in(font: &imgui::Font) -> bool {
-    [
-        crate::script_picker::GLYPH_HOME,
-        crate::script_picker::GLYPH_DESKTOP,
-        crate::script_picker::GLYPH_DOCUMENTS,
-        crate::script_picker::GLYPH_DOWNLOADS,
-        crate::script_picker::GLYPH_FOLDER,
-        crate::script_picker::GLYPH_FILE,
-        crate::script_picker::GLYPH_CHEVRON,
-    ]
-    .into_iter()
-    .all(|s| s.chars().all(|c| font.is_glyph_in_font(c)))
+/// Add the 3270 subset as the atlas's only, base font at [`PANEL_FONT_SIZE`].
+/// Dear ImGui 1.92 owns density scaling; the input size stays fixed.
+fn add_panel_font(ctx: &mut imgui::Context) -> bool {
+    let mut fonts = ctx.fonts();
+    let font = fonts
+        .add_font_from_memory_ttf(
+            PANEL_FONT_BYTES,
+            PANEL_FONT_SIZE,
+            Some(&imgui::FontConfig::new().name("3270 Nerd Font Regular")),
+            None,
+        )
+        .expect("embedded 3270 Nerd Font Regular subset is a valid TTF");
+    PANEL_REQUIRED_GLYPHS
+        .iter()
+        .all(|&glyph| font.is_glyph_in_font(glyph))
 }
 
 /// Lifecycle callbacks: style tweak after the theme, and the GPU-init hook
