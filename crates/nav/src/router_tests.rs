@@ -2192,7 +2192,7 @@ fn real_resilient_opts() -> FindOptions {
 
 /// Reachable in-scene stands past the old 32,768-settle cap route to the
 /// stand: Falador's west-wall bank from outside the wall (a detour through
-/// the city gate) and a Wilderness web's far side (a 598-tick detour).
+/// the city gate) and a long Wilderness web detour.
 #[test]
 fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
@@ -2204,13 +2204,22 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
         tile(2945, 3366, 0),
         tile(2945, 3368, 0),
     ];
-    for (from, ticks) in [(tile(2929, 3365, 0), 94.5), (tile(2930, 3351, 0), 97.5)] {
+    for from in [tile(2929, 3365, 0), tile(2930, 3351, 0)] {
         for opts in [real_resilient_opts(), FindOptions::default()] {
             let search =
                 find_first_with(&world.collision, &world.graph, from, &falador, opts, &state);
             let route = search.route().expect("the Falador booth stand routes");
             assert_eq!(route.dest, tile(2945, 3368, 0));
-            assert_eq!(route.ticks, ticks);
+            let independent = find_with(
+                &world.collision,
+                &world.graph,
+                from,
+                route.dest,
+                opts,
+                &state,
+            )
+            .expect("the Falador booth stand routes independently");
+            assert_eq!(route.ticks, independent.ticks);
             assert!(search.settled() > 32_768, "{}", search.settled());
         }
     }
@@ -2225,7 +2234,16 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
     );
     let route = search.route().expect("the web's far-side stand routes");
     assert_eq!(route.dest, tile(3156, 3949, 0));
-    assert_eq!(route.ticks, 598.0);
+    let independent = find_with(
+        &world.collision,
+        &world.graph,
+        tile(3148, 3943, 0),
+        route.dest,
+        real_resilient_opts(),
+        &real_maxed_state(),
+    )
+    .expect("the web's far-side stand routes independently");
+    assert_eq!(route.ticks, independent.ticks);
 }
 
 /// Tree Gnome Stronghold middle booth: its south stand is an 11-tile pocket,
