@@ -2,11 +2,12 @@ use super::settings::{GathererSettings, Location};
 use api::gather_methods::SceneRegionInput;
 use api::snapshot::WorldTile;
 
-/// The two location modes offered by G1. Auto is intentionally a later slice.
+/// A retained work area; Auto resolves its anchor through the sliced search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AreaMode {
     Start,
     Custom,
+    Auto,
 }
 
 impl AreaMode {
@@ -15,6 +16,8 @@ impl AreaMode {
             Some(Self::Start)
         } else if value.eq_ignore_ascii_case("custom") {
             Some(Self::Custom)
+        } else if value.eq_ignore_ascii_case("auto") {
+            Some(Self::Auto)
         } else {
             None
         }
@@ -24,6 +27,7 @@ impl AreaMode {
         match self {
             Self::Start => "start",
             Self::Custom => "custom",
+            Self::Auto => "auto",
         }
     }
 }
@@ -47,6 +51,7 @@ impl WorkArea {
         let anchor = match mode {
             AreaMode::Start => retained_anchor.or(here).ok_or(AreaError::NotReady)?,
             AreaMode::Custom => settings.custom_tile.ok_or(AreaError::Invalid)?,
+            AreaMode::Auto => retained_anchor.ok_or(AreaError::NotReady)?,
         };
         Ok(Self {
             mode,
@@ -98,6 +103,7 @@ impl From<Location> for AreaMode {
         match value {
             Location::Start => Self::Start,
             Location::Custom => Self::Custom,
+            Location::Auto => Self::Auto,
         }
     }
 }

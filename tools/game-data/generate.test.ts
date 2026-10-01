@@ -6,6 +6,7 @@ import path from 'node:path';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
 import { extractGatheringFamily, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
+import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
@@ -2286,6 +2287,71 @@ assert.equal(family289Rows(baseline, 'mining.copper'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
+
+const sourceNpcPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/npc.pack'), 'utf8'));
+const sourceObjPack = parsePack(fs.readFileSync(path.join(realGathering, 'pack/obj.pack'), 'utf8'));
+const treeRows = parseDbRows('scripts/skill_woodcutting/configs/trees.dbrow', fs.readFileSync(path.join(realGathering, 'scripts/skill_woodcutting/configs/trees.dbrow'), 'utf8'))
+    .filter((row) => row.table === 'woodcutting_trees');
+const treeAliases = new Set(treeRows.flatMap((row) => (row.data.get('tree') ?? []).map((data) => data.values[0])));
+const treeConfigFiles = listContentFiles(realGathering, 'scripts/skill_woodcutting/configs/trees', '.loc');
+const treeSections = treeConfigFiles.flatMap((file) => parseSections(file, fs.readFileSync(path.join(realGathering, file), 'utf8')));
+const treeEntSections = treeSections.filter((section) => treeAliases.has(section.name) && section.params.has('ent') && section.params.get('ent')?.[0] !== 'null');
+const treeEntSection = treeEntSections[0];
+assert.ok(treeEntSection, 'a selected tree loc publishes its content ent param');
+const treeEntAlias = treeEntSection.params.get('ent')![0];
+const treeEntId = sourceNpcPack.get(treeEntAlias);
+assert.ok(treeEntId !== undefined, 'tree ent aliases join through npc.pack');
+assert.ok(baseline.payload.hazard_npcs.includes(treeEntId), 'tree ent ids are in the family hazard row');
+const baselineHazardIds = new Set(baseline.payload.hazard_npcs);
+const replacementNpc = [...sourceNpcPack].find(([, id]) => !baselineHazardIds.has(id));
+assert.ok(replacementNpc, 'the source pack has an NPC type not already classified as a hazard');
+const changedTreeEnt = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const lines = fs.readFileSync(path.join(rootDir, treeEntSection.span.file), 'utf8').split(/\r?\n/);
+    const at = lines.findIndex((line, index) => index >= treeEntSection.span.first - 1 && index < treeEntSection.span.last && line.startsWith('param=ent,'));
+    assert.ok(at >= 0, 'the selected tree section still has its ent param');
+    lines[at] = `param=ent,${replacementNpc[0]}`;
+    fs.writeFileSync(path.join(rootDir, treeEntSection.span.file), lines.join('\n'));
+}));
+assert.ok(changedTreeEnt.payload.hazard_npcs.includes(replacementNpc[1]), 'changing a tree ent param changes the published NPC ids');
+
+const treeEntAliases = new Set(treeEntSections.map((section) => section.params.get('ent')![0]));
+const fishingNpcSections = parseSections('scripts/skill_fishing/configs/fishing.npc', fs.readFileSync(path.join(realGathering, 'scripts/skill_fishing/configs/fishing.npc'), 'utf8'));
+const whirlpoolLinks = new Set(fishingNpcSections.flatMap((section) => section.params.get('whirlpool') ?? []));
+const whirlpoolConfig = listContentFiles(realGathering, 'scripts', '.npc')
+    .flatMap((file) => parseSections(file, fs.readFileSync(path.join(realGathering, file), 'utf8')))
+    .find((section) => whirlpoolLinks.has(section.name) && section.params.get('is_whirlpool')?.[0] === '^true' && !treeEntAliases.has(section.name));
+assert.ok(whirlpoolConfig, 'a fishing spot links to an NPC carrying is_whirlpool');
+const whirlpoolId = sourceNpcPack.get(whirlpoolConfig.name);
+assert.ok(whirlpoolId !== undefined && baseline.payload.hazard_npcs.includes(whirlpoolId), 'the linked whirlpool NPC is published');
+const noWhirlpool = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const lines = fs.readFileSync(path.join(rootDir, whirlpoolConfig.span.file), 'utf8').split(/\r?\n/);
+    const at = lines.findIndex((line, index) => index >= whirlpoolConfig.span.first - 1 && index < whirlpoolConfig.span.last && line === 'param=is_whirlpool,^true');
+    assert.ok(at >= 0, 'the linked NPC still carries its whirlpool flag');
+    lines[at] = 'param=is_whirlpool,^false';
+    fs.writeFileSync(path.join(rootDir, whirlpoolConfig.span.file), lines.join('\n'));
+}));
+assert.equal(noWhirlpool.payload.hazard_npcs.includes(whirlpoolId), false, 'a fishing NPC without is_whirlpool is not a hazard');
+
+const baselineGemIds = baseline.payload.incidental_gem_ids;
+assert.ok(baselineGemIds.length > 0, 'the mining gem table has named item outputs');
+assert.deepEqual(baselineGemIds, [...new Set(baselineGemIds)].sort((a, b) => a - b), 'gem ids are sorted and unique');
+const gemScript = fs.readFileSync(path.join(realGathering, mineScript), 'utf8');
+const gemProcAt = gemScript.indexOf('[proc,mining_gem_table]');
+assert.ok(gemProcAt >= 0, 'the mining gem proc is present');
+const gemProc = gemScript.slice(gemProcAt);
+const firstGemOutput = /\breturn\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*;/.exec(gemProc);
+assert.ok(firstGemOutput, 'the mining gem proc returns a named item');
+const replacementItem = [...sourceObjPack].find(([, id]) => !baselineGemIds.includes(id));
+assert.ok(replacementItem, 'the source pack has an object id not already in the gem table');
+const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
+    const file = path.join(rootDir, mineScript);
+    const source = fs.readFileSync(file, 'utf8');
+    const start = source.indexOf('[proc,mining_gem_table]');
+    const changedProc = source.slice(start).replace(firstGemOutput[0], firstGemOutput[0].replace(firstGemOutput[1], replacementItem[0]));
+    assert.notEqual(changedProc, source.slice(start), 'the gem table return mutation applies');
+    fs.writeFileSync(file, source.slice(0, start) + changedProc);
+}));
+assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
 
 // A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
 const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));

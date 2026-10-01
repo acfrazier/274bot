@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "revision": 289,
   "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
   "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
@@ -17062,6 +17062,15 @@
       "npc 404 macro_whirlpool_saltfish",
       "npc 405 macro_whirlpool_rarefish",
       "npc 406 macro_whirlpool_memberfish",
+      "npc 444 macro_ent_tree1",
+      "npc 445 macro_ent_tree2",
+      "npc 446 macro_ent_dead_tree1",
+      "npc 447 macro_ent_dead_tree2",
+      "npc 448 macro_ent_oak",
+      "npc 449 macro_ent_willow",
+      "npc 450 macro_ent_yew",
+      "npc 451 macro_ent_maple",
+      "npc 452 macro_ent_magic",
       "npc 800 0_45_152_lavafish",
       "npc 927 0_38_49_freshfish",
       "npc 1174 0_43_47_karambwanji",
@@ -42382,6 +42391,27 @@
           "6140 0 57 52 l2289 3"
         ]
       }
+    ],
+    "hazard_npcs": [
+      403,
+      404,
+      405,
+      406,
+      444,
+      445,
+      446,
+      447,
+      448,
+      449,
+      450,
+      451,
+      452
+    ],
+    "incidental_gem_ids": [
+      1617,
+      1619,
+      1621,
+      1623
     ]
   }
 }
