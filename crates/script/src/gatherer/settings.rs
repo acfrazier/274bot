@@ -13,6 +13,7 @@ const ACCEPTED_PRODUCT_GAPS: &[&str] = &["incidental-gem-roll"];
 pub enum Skill {
     Woodcutting,
     Mining,
+    Fishing,
 }
 
 impl Skill {
@@ -21,6 +22,8 @@ impl Skill {
             Some(Self::Woodcutting)
         } else if value.eq_ignore_ascii_case("mining") {
             Some(Self::Mining)
+        } else if value.eq_ignore_ascii_case("fishing") {
+            Some(Self::Fishing)
         } else {
             None
         }
@@ -30,6 +33,7 @@ impl Skill {
         match self {
             Self::Woodcutting => GatherSkill::Woodcutting,
             Self::Mining => GatherSkill::Mining,
+            Self::Fishing => GatherSkill::Fishing,
         }
     }
 
@@ -37,6 +41,7 @@ impl Skill {
         match self {
             Self::Woodcutting => "Woodcutting",
             Self::Mining => "Mining",
+            Self::Fishing => "Fishing",
         }
     }
 
@@ -44,6 +49,7 @@ impl Skill {
         match self {
             Self::Woodcutting => "woodcutting",
             Self::Mining => "mining",
+            Self::Fishing => "fishing",
         }
     }
 }
@@ -52,6 +58,7 @@ impl Skill {
 pub enum Location {
     Start,
     Custom,
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +76,8 @@ pub struct GathererSettings {
     pub woodcutting_resources: Vec<String>,
     #[serde(default = "default_mining_resources")]
     pub mining_resources: Vec<String>,
+    #[serde(default = "default_fishing_method")]
+    pub fishing_method: String,
     #[serde(default = "default_target_preference")]
     pub target_preference: String,
     #[serde(default = "default_location")]
@@ -98,6 +107,9 @@ fn default_wc_resources() -> Vec<String> {
 fn default_mining_resources() -> Vec<String> {
     vec!["copper".into(), "tin".into()]
 }
+fn default_fishing_method() -> String {
+    "fishing.saltfish.op1".into()
+}
 fn default_target_preference() -> String {
     "Best tier".into()
 }
@@ -123,6 +135,7 @@ impl Default for GathererSettings {
             skill: default_skill(),
             woodcutting_resources: default_wc_resources(),
             mining_resources: default_mining_resources(),
+            fishing_method: default_fishing_method(),
             target_preference: default_target_preference(),
             location: default_location(),
             custom_tile: None,
@@ -150,7 +163,7 @@ impl GathererSettings {
             ConfigError::new(
                 "skill",
                 "unsupported-skill",
-                "G1 supports Woodcutting and Mining",
+                "supports Woodcutting, Mining and Fishing",
             )
         })?;
         if !(2..=64).contains(&self.radius) {
@@ -171,7 +184,7 @@ impl GathererSettings {
             return Err(ConfigError::new(
                 "location",
                 "invalid-option",
-                "G1 offers Start and Custom locations",
+                "offers Start, Custom and Auto locations",
             ));
         }
         if self.location.eq_ignore_ascii_case("custom") && self.custom_tile.is_none() {
@@ -192,7 +205,7 @@ impl GathererSettings {
             return Err(ConfigError::new(
                 "deathPolicy",
                 "staged-option",
-                "G1 only supports Stop after death",
+                "death recovery is introduced in G4a",
             ));
         }
         let resources = self.resources_for(skill);
@@ -201,6 +214,7 @@ impl GathererSettings {
                 match skill {
                     Skill::Woodcutting => "woodcuttingResources",
                     Skill::Mining => "miningResources",
+                    Skill::Fishing => "fishingMethod",
                 },
                 "required",
                 "select at least one resource",
@@ -217,6 +231,7 @@ impl GathererSettings {
         match skill {
             Skill::Woodcutting => &self.woodcutting_resources,
             Skill::Mining => &self.mining_resources,
+            Skill::Fishing => std::slice::from_ref(&self.fishing_method),
         }
     }
 
@@ -232,6 +247,7 @@ impl GathererSettings {
         self.skill != other.skill
             || self.woodcutting_resources != other.woodcutting_resources
             || self.mining_resources != other.mining_resources
+            || self.fishing_method != other.fishing_method
             || self.location != other.location
             || self.custom_tile != other.custom_tile
     }
@@ -248,6 +264,7 @@ impl GathererSettings {
         match self.skill_kind() {
             Skill::Woodcutting => "woodcuttingResources",
             Skill::Mining => "miningResources",
+            Skill::Fishing => "fishingMethod",
         }
     }
 }
@@ -258,6 +275,8 @@ impl Location {
             Some(Self::Start)
         } else if value.eq_ignore_ascii_case("custom") {
             Some(Self::Custom)
+        } else if value.eq_ignore_ascii_case("auto") {
+            Some(Self::Auto)
         } else {
             None
         }
@@ -436,7 +455,7 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "skill",
             "string",
             Some("Woodcutting"),
-            &["Woodcutting", "Mining"],
+            &["Woodcutting", "Mining", "Fishing"],
             None,
             None,
         ),
@@ -457,18 +476,26 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             Some("gather:mining"),
         ),
         setting(
+            "fishingMethod",
+            "string",
+            Some("fishing.saltfish.op1"),
+            &[],
+            Some("{ key: 'skill', anyOf: ['Fishing'] }"),
+            Some("gather:fishing"),
+        ),
+        setting(
             "targetPreference",
             "string",
             Some("Best tier"),
             &["Best tier", "Nearest"],
-            None,
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining'] }"),
             None,
         ),
         setting(
             "location",
             "string",
             Some("Start"),
-            &["Start", "Custom"],
+            &["Start", "Custom", "Auto"],
             None,
             None,
         ),
@@ -559,16 +586,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn schema_has_only_g1_capabilities() {
-        let ids: Vec<_> = schema().iter().map(|row| row.id.as_str()).collect();
-        assert!(ids.contains(&"skill"));
-        assert!(ids.contains(&"woodcuttingResources"));
-        assert!(ids.contains(&"miningResources"));
-        assert!(!ids.contains(&"fishingMethod"));
-        assert!(!ids.contains(&"bank"));
-    }
-
-    #[test]
     fn settings_reject_staged_modes_and_accept_coerced_defaults() {
         let mut bag = SettingsBag::new();
         bag.insert("skill".into(), json!("Mining"));
@@ -577,16 +594,11 @@ mod tests {
         assert_eq!(parsed.skill_kind(), Skill::Mining);
         assert_eq!(parsed.mining_resources, ["copper"]);
 
-        bag.insert("location".into(), json!("Auto"));
+        bag.insert("location".into(), json!("Closest"));
         assert_eq!(
             GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
             "invalid-option"
         );
-    }
-
-    #[test]
-    fn products_accept_only_the_known_incidental_gem_gap() {
-        assert!(ACCEPTED_PRODUCT_GAPS.contains(&"incidental-gem-roll"));
     }
 
     #[test]

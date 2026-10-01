@@ -1,12 +1,16 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
-use api::gather_methods::{known_rows, GatherCatalog, GatherMethod, GatherSpot, TargetClass};
+use api::gather_methods::{
+    known_rows, GatherCatalog, GatherMethod, GatherSkill, GatherSpot, SceneRegionInput, TargetClass,
+};
 use api::selected::{EntityId, Knowledge, Truth};
-use api::snapshot::{LocView, WorldStateView, WorldTile};
+use api::snapshot::{LocView, NpcView, WorldStateView, WorldTile};
 use std::sync::Arc;
 
 const MAX_PRODUCTS: usize = 8;
 const MAX_AVOID: usize = 8;
+const HAZARD_WAIT_TICKS: u64 = 60;
+const NO_NPC_INDEX: i32 = -1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlacementClass {
@@ -26,6 +30,7 @@ pub struct AvoidedTile {
 
 #[derive(Debug, Clone)]
 pub struct TargetPlan {
+    /// Resource identity: for fishing this is the NPC type, not its instance index.
     pub entity: EntityId,
     pub tile: WorldTile,
     pub op: Arc<str>,
@@ -33,6 +38,9 @@ pub struct TargetPlan {
     pub products: [i32; MAX_PRODUCTS],
     pub products_len: u8,
     pub skill_stat: i32,
+    pub method_index: u16,
+    /// NPC slot index captured from the observed row; -1 for loc/object targets.
+    pub npc_index: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,29 +74,52 @@ impl AvoidedTile {
     };
 }
 
+pub struct SelectionObservation<'a> {
+    pub world: &'a WorldStateView,
+    pub locs: &'a [LocView],
+    pub npcs: &'a [NpcView],
+    pub here: WorldTile,
+    pub now: u64,
+    pub skill_stat: i32,
+}
+
+pub struct PlacementScene<'a> {
+    pub world: &'a WorldStateView,
+    pub locs: &'a [LocView],
+    pub npcs: &'a [NpcView],
+    pub hazard_npcs: &'a [i32],
+}
+
+type Candidate<'a> = (
+    u16,
+    &'a GatherMethod,
+    &'a GatherSpot,
+    PlacementClass,
+    WorldTile,
+    i32,
+    i64,
+);
+
+/// Classify one fixed loc placement against the scene and its content-derived
+/// replacement ids. Placements outside the observed rectangle are approached,
+/// not treated as absent or depleted.
 pub fn classify_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
-    world: &WorldStateView,
-    locs: &[LocView],
+    scene: PlacementScene<'_>,
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
-    // The observed build rectangle is the authoritative loaded-scene test.
-    // A placement on another plane is equally unloaded, even if its x/z are
-    // inside the rectangle of the current plane.
-    let loaded = spot.origin.level == world.level
-        && spot.origin.x >= world.map_base_x
-        && spot.origin.x < world.map_base_x.saturating_add(104)
-        && spot.origin.z >= world.map_base_z
-        && spot.origin.z < world.map_base_z.saturating_add(104);
-    if !loaded {
+    let PlacementScene {
+        world,
+        locs,
+        npcs,
+        hazard_npcs,
+    } = scene;
+    if !tile_loaded(spot.origin, world) {
         return PlacementClass::Unloaded;
     }
-    if avoided
-        .iter()
-        .any(|entry| entry.until > now && entry.tile == spot.origin)
-    {
+    if is_avoided(spot.origin, avoided, now) {
         return PlacementClass::Avoided;
     }
     let Some(targets) = known_targets(method) else {
@@ -97,10 +128,7 @@ pub fn classify_placement(
     for loc in locs.iter().filter(|loc| loc.tile == spot.origin) {
         let Some(target) = targets.iter().find(|target| {
             matches!(target.respawn, Knowledge::Known(_))
-                && match target.entity {
-                    EntityId::Loc(id) => id == loc.id,
-                    _ => false,
-                }
+                && matches!(target.entity, EntityId::Loc(id) if id == loc.id)
         }) else {
             continue;
         };
@@ -111,19 +139,73 @@ pub fn classify_placement(
             TargetClass::Unclassified => PlacementClass::Absent,
         };
     }
+    if has_hazard_npc(npcs, hazard_npcs, spot.origin) {
+        return PlacementClass::Hazard;
+    }
     PlacementClass::Absent
 }
 
-pub struct SelectionObservation<'a> {
-    pub world: &'a WorldStateView,
-    pub locs: &'a [LocView],
-    pub here: WorldTile,
-    pub now: u64,
-    pub skill_stat: i32,
+fn classify_fishing_placement(
+    spot: &GatherSpot,
+    method: &GatherMethod,
+    world: &WorldStateView,
+    npcs: &[NpcView],
+    hazard_npcs: &[i32],
+    avoided: &[AvoidedTile; MAX_AVOID],
+    now: u64,
+) -> PlacementClass {
+    let Some(bounds) = movement_bounds(spot) else {
+        return PlacementClass::Absent;
+    };
+    if !region_loaded(bounds, world) {
+        return PlacementClass::Unloaded;
+    }
+    if avoided
+        .iter()
+        .any(|entry| entry.until > now && region_contains(bounds, entry.tile))
+    {
+        return PlacementClass::Avoided;
+    }
+    let Some(targets) = known_targets(method) else {
+        return PlacementClass::Absent;
+    };
+    for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+        let Some(id) = npc_type_id(npc) else {
+            continue;
+        };
+        if let Some(target) = targets.iter().find(|target| {
+            matches!(target.respawn, Knowledge::Known(_))
+                && target.entity == EntityId::Npc(id)
+                && matches!(target.class, TargetClass::Depleted | TargetClass::Hazard)
+        }) {
+            return match target.class {
+                TargetClass::Depleted => PlacementClass::Depleted,
+                TargetClass::Hazard => PlacementClass::Hazard,
+                TargetClass::Resource | TargetClass::Unclassified => unreachable!(),
+            };
+        }
+        if hazard_npcs.contains(&id) {
+            return PlacementClass::Hazard;
+        }
+    }
+    if npcs.iter().any(|npc| {
+        region_contains(bounds, npc.tile)
+            && npc_type_id(npc).is_some_and(|id| {
+                spot.entity == EntityId::Npc(id)
+                    && targets.iter().any(|target| {
+                        target.entity == EntityId::Npc(id)
+                            && target.class == TargetClass::Resource
+                            && matches!(target.respawn, Knowledge::Known(_))
+                    })
+            })
+    }) {
+        return PlacementClass::Live;
+    }
+    PlacementClass::Absent
 }
 
-/// Select the best live or not-yet-loaded placement. The pass is allocation
-/// free; copies are made only after a candidate wins at a boundary.
+/// Select live resources before considering any unloaded placement. The live
+/// pass is allocation-free and only copies a plan after its winner is known.
 pub fn select(
     catalog: &GatherCatalog,
     method_indices: &[usize],
@@ -135,74 +217,261 @@ pub fn select(
     let SelectionObservation {
         world,
         locs,
+        npcs,
         here,
         now,
         skill_stat,
     } = observation;
     let preference = settings.target_preference_kind();
+    let region = area.region();
     let mut absent: u16 = 0;
     let mut zone_gated: u16 = 0;
     let mut wait_until = now;
     let mut non_absent = false;
-    let mut best: Option<(&GatherMethod, &GatherSpot, PlacementClass, i64)> = None;
+    let mut best_live = None;
+
     for &method_index in method_indices {
         let Some(method) = catalog.methods().get(method_index) else {
             continue;
         };
-        let region = area.region();
-        let Ok(spots) = catalog.spots(method, &region) else {
+        let Ok(method_index) = u16::try_from(method_index) else {
             continue;
         };
-        for spot in spots {
-            if !known_targets(method).is_some_and(|targets| {
-                targets.iter().any(|target| {
-                    target.entity == spot.entity && matches!(target.respawn, Knowledge::Known(_))
-                })
+        if method.skill == GatherSkill::Fishing {
+            let Some(spots) = complete_spots(method) else {
+                continue;
+            };
+            for spot in spots.iter().filter(|spot| {
+                fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
             }) {
-                continue;
-            }
-            if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
-                zone_gated = zone_gated.saturating_add(1);
-                continue;
-            }
-            let class = classify_placement(spot, method, world, locs, avoided, now);
-            let respawn = respawn_max(catalog, method, spot);
-            match class {
-                PlacementClass::Live | PlacementClass::Unloaded => {
-                    non_absent = true;
-                    let distance = distance(here, spot.origin);
-                    if better_candidate(
-                        preference,
-                        best.as_ref()
-                            .map(|(current_method, current_spot, _, distance)| {
-                                (
-                                    i64::from(method_level(current_method, skill_stat)),
-                                    *distance,
-                                    current_spot.id.0,
-                                )
-                            }),
-                        method,
-                        skill_stat,
-                        distance,
-                        spot.id.0,
-                    ) {
-                        best = Some((method, spot, class, distance));
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    zone_gated = zone_gated.saturating_add(1);
+                    continue;
+                }
+                let Some(bounds) = movement_bounds(spot) else {
+                    continue;
+                };
+                for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+                    let Some(type_id) = npc_type_id(npc) else {
+                        continue;
+                    };
+                    if spot.entity != EntityId::Npc(type_id) || is_avoided(npc.tile, avoided, now) {
+                        continue;
                     }
+                    let Ok(index) = i32::try_from(npc.index) else {
+                        continue;
+                    };
+                    consider_candidate(
+                        &mut best_live,
+                        preference,
+                        (
+                            method_index,
+                            method,
+                            spot,
+                            PlacementClass::Live,
+                            npc.tile,
+                            index,
+                            distance(here, npc.tile),
+                        ),
+                        skill_stat,
+                    );
                 }
-                PlacementClass::Depleted | PlacementClass::Hazard | PlacementClass::Avoided => {
-                    non_absent = true;
-                    let until = now.saturating_add(u64::from(respawn));
-                    wait_until = wait_until.max(until);
+            }
+        } else {
+            let Ok(spots) = catalog.spots(method, &region) else {
+                continue;
+            };
+            for spot in spots.filter(|spot| known_resource_target(method, spot.entity)) {
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    zone_gated = zone_gated.saturating_add(1);
+                    continue;
                 }
-                PlacementClass::Absent => absent = absent.saturating_add(1),
+                if classify_placement(
+                    spot,
+                    method,
+                    PlacementScene {
+                        world,
+                        locs,
+                        npcs,
+                        hazard_npcs: catalog.hazard_npcs(),
+                    },
+                    avoided,
+                    now,
+                ) == PlacementClass::Live
+                {
+                    consider_candidate(
+                        &mut best_live,
+                        preference,
+                        (
+                            method_index,
+                            method,
+                            spot,
+                            PlacementClass::Live,
+                            spot.origin,
+                            NO_NPC_INDEX,
+                            distance(here, spot.origin),
+                        ),
+                        skill_stat,
+                    );
+                }
             }
         }
     }
 
-    if let Some((method, spot, class, _)) = best {
+    if let Some((method_index, method, spot, class, tile, npc_index, _)) = best_live {
         return SelectionResult {
             target: Some(SelectedTarget {
-                plan: make_plan(catalog, method, spot, skill_stat),
+                plan: make_plan(
+                    catalog,
+                    method_index,
+                    method,
+                    spot,
+                    tile,
+                    npc_index,
+                    skill_stat,
+                ),
+                class,
+            }),
+            outcome: Selection::Target(class),
+            zone_gated,
+        };
+    }
+
+    let mut best_unloaded = None;
+    for &method_index in method_indices {
+        let Some(method) = catalog.methods().get(method_index) else {
+            continue;
+        };
+        let Ok(method_index) = u16::try_from(method_index) else {
+            continue;
+        };
+        if method.skill == GatherSkill::Fishing {
+            let Some(spots) = complete_spots(method) else {
+                continue;
+            };
+            for spot in spots.iter().filter(|spot| {
+                fishing_spot_eligible(spot, area) && known_resource_target(method, spot.entity)
+            }) {
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    continue;
+                }
+                let class = classify_fishing_placement(
+                    spot,
+                    method,
+                    world,
+                    npcs,
+                    catalog.hazard_npcs(),
+                    avoided,
+                    now,
+                );
+                match class {
+                    PlacementClass::Unloaded => {
+                        consider_candidate(
+                            &mut best_unloaded,
+                            preference,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                class,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
+                            skill_stat,
+                        );
+                    }
+                    PlacementClass::Depleted | PlacementClass::Hazard | PlacementClass::Avoided => {
+                        non_absent = true;
+                        let respawn = u64::from(respawn_max(method, spot));
+                        let until = match class {
+                            PlacementClass::Hazard => {
+                                now.saturating_add(respawn.max(HAZARD_WAIT_TICKS))
+                            }
+                            PlacementClass::Avoided => {
+                                now.max(avoid_until(spot, method.skill, avoided))
+                            }
+                            _ => now.saturating_add(respawn),
+                        };
+                        wait_until = wait_until.max(until);
+                    }
+                    PlacementClass::Absent => absent = absent.saturating_add(1),
+                    PlacementClass::Live => {
+                        // The live pass already considered every eligible NPC.
+                        non_absent = true;
+                    }
+                }
+            }
+        } else {
+            let Ok(spots) = catalog.spots(method, &region) else {
+                continue;
+            };
+            for spot in spots.filter(|spot| known_resource_target(method, spot.entity)) {
+                if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
+                    continue;
+                }
+                let class = classify_placement(
+                    spot,
+                    method,
+                    PlacementScene {
+                        world,
+                        locs,
+                        npcs,
+                        hazard_npcs: catalog.hazard_npcs(),
+                    },
+                    avoided,
+                    now,
+                );
+                let respawn = u64::from(respawn_max(method, spot));
+                match class {
+                    PlacementClass::Unloaded => {
+                        consider_candidate(
+                            &mut best_unloaded,
+                            preference,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                class,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
+                            skill_stat,
+                        );
+                    }
+                    PlacementClass::Depleted | PlacementClass::Hazard | PlacementClass::Avoided => {
+                        non_absent = true;
+                        let until = match class {
+                            PlacementClass::Hazard => {
+                                now.saturating_add(respawn.max(HAZARD_WAIT_TICKS))
+                            }
+                            PlacementClass::Avoided => {
+                                now.max(avoid_until(spot, method.skill, avoided))
+                            }
+                            _ => now.saturating_add(respawn),
+                        };
+                        wait_until = wait_until.max(until);
+                    }
+                    PlacementClass::Absent => absent = absent.saturating_add(1),
+                    PlacementClass::Live => non_absent = true,
+                }
+            }
+        }
+    }
+
+    if let Some((method_index, method, spot, class, tile, npc_index, _)) = best_unloaded {
+        return SelectionResult {
+            target: Some(SelectedTarget {
+                plan: make_plan(
+                    catalog,
+                    method_index,
+                    method,
+                    spot,
+                    tile,
+                    npc_index,
+                    skill_stat,
+                ),
                 class,
             }),
             outcome: Selection::Target(class),
@@ -221,6 +490,137 @@ pub fn select(
         outcome: Selection::Exhausted { wait_until, absent },
         zone_gated,
     }
+}
+
+fn consider_candidate<'a>(
+    best: &mut Option<Candidate<'a>>,
+    preference: TargetPreference,
+    candidate: Candidate<'a>,
+    skill_stat: i32,
+) {
+    let (method_index, method, spot, class, tile, npc_index, candidate_distance) = candidate;
+    let better = better_candidate(
+        preference,
+        best.as_ref()
+            .map(|(_, current_method, current_spot, _, _, _, distance)| {
+                (
+                    i64::from(method_level(current_method, skill_stat)),
+                    *distance,
+                    current_spot.id.0,
+                )
+            }),
+        method,
+        skill_stat,
+        candidate_distance,
+        spot.id.0,
+    );
+    if better {
+        *best = Some((
+            method_index,
+            method,
+            spot,
+            class,
+            tile,
+            npc_index,
+            candidate_distance,
+        ));
+    }
+}
+
+fn complete_spots(method: &GatherMethod) -> Option<&[GatherSpot]> {
+    match &method.spots {
+        Knowledge::Known(spots) => Some(spots),
+        Knowledge::Partial { .. } | Knowledge::Unknown(_) => None,
+    }
+}
+
+fn known_resource_target(method: &GatherMethod, entity: EntityId) -> bool {
+    known_targets(method).is_some_and(|targets| {
+        targets.iter().any(|target| {
+            target.entity == entity
+                && target.class == TargetClass::Resource
+                && matches!(target.respawn, Knowledge::Known(_))
+        })
+    })
+}
+
+fn movement_bounds(spot: &GatherSpot) -> Option<SceneRegionInput> {
+    match &spot.movement {
+        Knowledge::Known(Some(region)) => Some(*region),
+        Knowledge::Known(None) => Some(SceneRegionInput {
+            min_x: spot.origin.x,
+            min_z: spot.origin.z,
+            max_x: spot.origin.x,
+            max_z: spot.origin.z,
+            level: spot.origin.level,
+        }),
+        Knowledge::Partial { .. } | Knowledge::Unknown(_) => None,
+    }
+}
+
+fn fishing_spot_eligible(spot: &GatherSpot, area: WorkArea) -> bool {
+    movement_bounds(spot).is_some_and(|bounds| regions_intersect(bounds, area.region()))
+}
+
+fn regions_intersect(a: SceneRegionInput, b: SceneRegionInput) -> bool {
+    a.level == b.level
+        && a.min_x <= b.max_x
+        && b.min_x <= a.max_x
+        && a.min_z <= b.max_z
+        && b.min_z <= a.max_z
+}
+
+fn region_contains(region: SceneRegionInput, tile: WorldTile) -> bool {
+    region.level == tile.level
+        && (region.min_x..=region.max_x).contains(&tile.x)
+        && (region.min_z..=region.max_z).contains(&tile.z)
+}
+
+fn region_loaded(region: SceneRegionInput, world: &WorldStateView) -> bool {
+    region.level == world.level
+        && region.min_x >= world.map_base_x
+        && region.max_x < world.map_base_x.saturating_add(104)
+        && region.min_z >= world.map_base_z
+        && region.max_z < world.map_base_z.saturating_add(104)
+}
+
+fn tile_loaded(tile: WorldTile, world: &WorldStateView) -> bool {
+    tile.level == world.level
+        && tile.x >= world.map_base_x
+        && tile.x < world.map_base_x.saturating_add(104)
+        && tile.z >= world.map_base_z
+        && tile.z < world.map_base_z.saturating_add(104)
+}
+
+fn npc_type_id(npc: &NpcView) -> Option<i32> {
+    i32::try_from(npc.r#type?).ok()
+}
+
+fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> bool {
+    npcs.iter()
+        .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
+}
+
+fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
+    avoided
+        .iter()
+        .any(|entry| entry.until > now && entry.tile == tile)
+}
+
+fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MAX_AVOID]) -> u64 {
+    avoided
+        .iter()
+        .filter(|entry| {
+            entry.until > 0
+                && if skill == GatherSkill::Fishing {
+                    movement_bounds(spot).is_some_and(|bounds| region_contains(bounds, entry.tile))
+                } else {
+                    entry.tile == spot.origin
+                }
+        })
+        .map(|entry| entry.until)
+        .max()
+        .unwrap_or(0)
 }
 
 fn better_candidate(
@@ -255,7 +655,7 @@ fn known_targets(method: &GatherMethod) -> Option<&[api::gather_methods::GatherT
     }
 }
 
-fn respawn_max(catalog: &GatherCatalog, method: &GatherMethod, spot: &GatherSpot) -> u32 {
+fn respawn_max(method: &GatherMethod, spot: &GatherSpot) -> u32 {
     let Some(targets) = known_targets(method) else {
         return 0;
     };
@@ -270,26 +670,41 @@ fn respawn_max(catalog: &GatherCatalog, method: &GatherMethod, spot: &GatherSpot
     let Knowledge::Known(scale) = &fact.scale else {
         return 0;
     };
-    // Keep the catalog's max as-is. The catalog argument is intentionally
-    // retained in the signature so future target-specific respawn joins do not
-    // need to change the selection call shape.
-    let _ = catalog;
     scale.max_ticks
 }
 
 fn make_plan(
     catalog: &GatherCatalog,
+    method_index: u16,
     method: &GatherMethod,
     spot: &GatherSpot,
+    tile: WorldTile,
+    npc_index: i32,
     skill_stat: i32,
 ) -> TargetPlan {
     let (op_slot, op_label) = catalog.op(method).ok().flatten().unwrap_or((1, "Mine"));
     let _ = op_slot;
     let mut products = [0; MAX_PRODUCTS];
     let mut products_len = 0;
-    for product in known_rows(&method.products).iter().take(MAX_PRODUCTS) {
-        products[products_len] = product.item;
-        products_len += 1;
+    for product in known_rows(&method.products).iter() {
+        if products_len == MAX_PRODUCTS {
+            break;
+        }
+        if !products[..products_len].contains(&product.item) {
+            products[products_len] = product.item;
+            products_len += 1;
+        }
+    }
+    if method.skill == GatherSkill::Mining {
+        for &gem in catalog.incidental_gem_ids() {
+            if products_len == MAX_PRODUCTS {
+                break;
+            }
+            if !products[..products_len].contains(&gem) {
+                products[products_len] = gem;
+                products_len += 1;
+            }
+        }
     }
     let alias = catalog
         .alias(spot.entity)
@@ -297,12 +712,14 @@ fn make_plan(
         .unwrap_or(method.id.0.as_ref());
     TargetPlan {
         entity: spot.entity,
-        tile: spot.origin,
+        tile,
         op: Arc::from(op_label),
         alias: Arc::from(alias),
         products,
         products_len: products_len as u8,
         skill_stat,
+        method_index,
+        npc_index,
     }
 }
 
@@ -322,39 +739,38 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::gather_methods::{GatherTarget, SpotId};
+    use api::snapshot::{LocLayer, LocView, NpcView};
+    use std::collections::HashMap;
 
-    #[test]
-    fn placement_states_follow_scene_evidence_and_avoid_expiry() {
-        let world = WorldStateView {
-            map_base_x: 3200,
-            map_base_z: 3200,
-            level: 0,
-            ..WorldStateView::default()
-        };
-        let mut method = GatherMethod {
-            id: api::selected::FactKey::new("woodcutting.normal"),
-            skill: api::gather_methods::GatherSkill::Woodcutting,
+    fn target(entity: EntityId, class: TargetClass) -> GatherTarget {
+        GatherTarget {
+            entity,
+            op: 1,
+            class,
+            respawn: Knowledge::Known(None),
+        }
+    }
+
+    fn method(skill: GatherSkill, targets: Vec<GatherTarget>) -> GatherMethod {
+        GatherMethod {
+            id: api::selected::FactKey::new("fixture.method"),
+            skill,
             resources: Arc::from([]),
-            targets: Knowledge::Known(Arc::from([api::gather_methods::GatherTarget {
-                entity: EntityId::Loc(10),
-                op: 1,
-                class: TargetClass::Resource,
-                respawn: Knowledge::Known(None),
-            }])),
+            targets: Knowledge::Known(Arc::from(targets)),
             products: Knowledge::Known(Arc::from([])),
             tools: Knowledge::Known(Arc::from([])),
             consumes: Knowledge::Known(Arc::from([])),
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
-        };
-        let mut spot = GatherSpot {
-            id: api::gather_methods::SpotId(1),
-            entity: EntityId::Loc(10),
-            origin: WorldTile {
-                x: 3304,
-                z: 3200,
-                level: 0,
-            },
+        }
+    }
+
+    fn spot(entity: EntityId, origin: WorldTile) -> GatherSpot {
+        GatherSpot {
+            id: SpotId(1),
+            entity,
+            origin,
             width: 1,
             length: 1,
             movement: Knowledge::Known(None),
@@ -363,27 +779,20 @@ mod tests {
                 first: 1,
                 last: 1,
             },
-        };
-        let mut avoided = [AvoidedTile::EMPTY; MAX_AVOID];
-        assert_eq!(
-            classify_placement(&spot, &method, &world, &[], &avoided, 1),
-            PlacementClass::Unloaded
-        );
-        spot.origin.x = 3303;
-        assert_eq!(
-            classify_placement(&spot, &method, &world, &[], &avoided, 1),
-            PlacementClass::Absent
-        );
-        let mut loc = LocView {
+        }
+    }
+
+    fn loc(id: i32, tile: WorldTile) -> LocView {
+        LocView {
             typecode: 0,
             info: 0,
-            id: 10,
+            id,
             name: None,
             description: None,
             actions: vec![],
-            tile: spot.origin,
+            tile,
             distance: 0,
-            layer: api::snapshot::LocLayer::Ground,
+            layer: LocLayer::Ground,
             shape: 10,
             angle: 0,
             width: 1,
@@ -397,68 +806,732 @@ mod tests {
             map_function: -1,
             map_scene: -1,
             force_approach: 0,
+        }
+    }
+
+    fn npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
+        NpcView {
+            index,
+            r#type: Some(type_id),
+            name: None,
+            actions: vec![],
+            tile,
+            distance: 0,
+            animation: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: tile,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }
+    }
+
+    fn real_catalog() -> Arc<GatherCatalog> {
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289)
+            .expect("embedded game data");
+        api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
+            .expect("start catalog preparation")
+            .join()
+            .expect("catalog worker")
+            .expect("prepared gathering catalog")
+    }
+
+    fn method_index(catalog: &GatherCatalog, method: &GatherMethod) -> usize {
+        catalog
+            .methods()
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate, method))
+            .expect("method belongs to catalog")
+    }
+
+    fn scene_around(tile: WorldTile) -> WorldStateView {
+        WorldStateView {
+            map_base_x: tile.x.saturating_sub(52),
+            map_base_z: tile.z.saturating_sub(52),
+            level: tile.level,
+            ..WorldStateView::default()
+        }
+    }
+
+    #[test]
+    fn placements_follow_observed_rectangle_replacements_and_avoid_expiry() {
+        let world = WorldStateView {
+            map_base_x: 3200,
+            map_base_z: 3200,
+            level: 0,
+            ..WorldStateView::default()
         };
+        let mut method = method(
+            GatherSkill::Woodcutting,
+            vec![
+                target(EntityId::Loc(10), TargetClass::Resource),
+                target(EntityId::Loc(11), TargetClass::Depleted),
+                target(EntityId::Loc(12), TargetClass::Hazard),
+            ],
+        );
+        let mut placement = spot(
+            EntityId::Loc(10),
+            WorldTile {
+                x: 3304,
+                z: 3200,
+                level: 0,
+            },
+        );
+        let avoided = [AvoidedTile::EMPTY; MAX_AVOID];
+        assert_eq!(
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
+            PlacementClass::Unloaded
+        );
+
+        // At the loaded edge: player is 19 tiles from the final scene tile;
+        // this placement is 30 tiles past that edge, but still inside radius.
+        let here = WorldTile {
+            x: 3284,
+            z: 3200,
+            level: 0,
+        };
+        placement.origin.x = 3334;
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Start,
+            anchor: here,
+            radius: 64,
+        };
+        assert!(area.contains(placement.origin));
+        assert_eq!(
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
+            PlacementClass::Unloaded
+        );
+
+        placement.origin.x = 3303;
+        assert_eq!(
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
+                &avoided,
+                1
+            ),
+            PlacementClass::Absent
+        );
         for (id, class, expected) in [
             (10, TargetClass::Resource, PlacementClass::Live),
             (11, TargetClass::Depleted, PlacementClass::Depleted),
             (12, TargetClass::Hazard, PlacementClass::Hazard),
         ] {
-            method.targets = Knowledge::Known(Arc::from([api::gather_methods::GatherTarget {
-                entity: EntityId::Loc(id),
-                op: 1,
-                class,
-                respawn: Knowledge::Known(None),
-            }]));
-            loc.id = id;
+            method.targets = Knowledge::Known(Arc::from([target(EntityId::Loc(id), class)]));
             assert_eq!(
                 classify_placement(
-                    &spot,
+                    &placement,
                     &method,
-                    &world,
-                    std::slice::from_ref(&loc),
+                    PlacementScene {
+                        world: &world,
+                        locs: &[loc(id, placement.origin)],
+                        npcs: &[],
+                        hazard_npcs: &[],
+                    },
                     &avoided,
-                    1
+                    1,
                 ),
                 expected
             );
         }
+        method.targets = Knowledge::Known(Arc::from([
+            target(EntityId::Loc(10), TargetClass::Resource),
+            target(EntityId::Loc(12), TargetClass::Hazard),
+        ]));
+        let hazard_npcs = [900];
+        assert_eq!(
+            classify_placement(
+                &placement,
+                &method,
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[npc(4, 900, placement.origin)],
+                    hazard_npcs: &hazard_npcs,
+                },
+                &avoided,
+                1,
+            ),
+            PlacementClass::Hazard
+        );
+
+        let mut avoided = avoided;
         avoided[0] = AvoidedTile {
-            tile: spot.origin,
+            tile: placement.origin,
             until: 3,
         };
         assert_eq!(
             classify_placement(
-                &spot,
+                &placement,
                 &method,
-                &world,
-                std::slice::from_ref(&loc),
+                PlacementScene {
+                    world: &world,
+                    locs: &[loc(12, placement.origin)],
+                    npcs: &[],
+                    hazard_npcs: &[],
+                },
                 &avoided,
-                2
+                2,
             ),
             PlacementClass::Avoided
         );
         assert_eq!(
             classify_placement(
-                &spot,
+                &placement,
                 &method,
-                &world,
-                std::slice::from_ref(&loc),
+                PlacementScene {
+                    world: &world,
+                    locs: &[loc(12, placement.origin)],
+                    npcs: &[],
+                    hazard_npcs: &[],
+                },
                 &avoided,
-                3
+                3,
             ),
             PlacementClass::Hazard
         );
-        spot.origin.level = 1;
+        placement.origin.level = 1;
         assert_eq!(
             classify_placement(
-                &spot,
+                &placement,
                 &method,
-                &world,
-                std::slice::from_ref(&loc),
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[]
+                },
                 &avoided,
                 2
             ),
             PlacementClass::Unloaded
         );
+    }
+
+    #[test]
+    fn fishing_spots_use_movement_boxes_and_do_not_target_hazards() {
+        let bounds = SceneRegionInput {
+            min_x: 3290,
+            min_z: 3290,
+            max_x: 3310,
+            max_z: 3310,
+            level: 0,
+        };
+        let origin = WorldTile {
+            x: 3280,
+            z: 3280,
+            level: 0,
+        };
+        let mut fish_spot = spot(EntityId::Npc(309), origin);
+        fish_spot.movement = Knowledge::Known(Some(bounds));
+        let fish_method = method(
+            GatherSkill::Fishing,
+            vec![target(EntityId::Npc(309), TargetClass::Resource)],
+        );
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: WorldTile {
+                x: 3300,
+                z: 3300,
+                level: 0,
+            },
+            radius: 2,
+        };
+        assert!(!area.contains(origin));
+        assert!(fishing_spot_eligible(&fish_spot, area));
+
+        let world = WorldStateView {
+            map_base_x: 3250,
+            map_base_z: 3250,
+            level: 0,
+            ..WorldStateView::default()
+        };
+        let target_tile = WorldTile {
+            x: 3301,
+            z: 3302,
+            level: 0,
+        };
+        assert_eq!(
+            classify_fishing_placement(
+                &fish_spot,
+                &fish_method,
+                &world,
+                &[npc(42, 309, target_tile)],
+                &[],
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                1,
+            ),
+            PlacementClass::Live
+        );
+        assert_eq!(
+            classify_fishing_placement(
+                &fish_spot,
+                &fish_method,
+                &world,
+                &[],
+                &[],
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                1,
+            ),
+            PlacementClass::Absent
+        );
+        assert_eq!(
+            classify_fishing_placement(
+                &fish_spot,
+                &fish_method,
+                &world,
+                &[npc(43, 900, target_tile)],
+                &[900],
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                1,
+            ),
+            PlacementClass::Hazard
+        );
+        assert!(!known_resource_target(&fish_method, EntityId::Npc(900)));
+
+        fish_spot.movement = Knowledge::Known(Some(SceneRegionInput {
+            min_x: 3330,
+            min_z: 3290,
+            max_x: 3340,
+            max_z: 3310,
+            level: 0,
+        }));
+        assert!(fishing_spot_eligible(
+            &fish_spot,
+            WorkArea {
+                anchor: WorldTile {
+                    x: 3335,
+                    z: 3300,
+                    level: 0,
+                },
+                ..area
+            }
+        ));
+        assert_eq!(
+            classify_fishing_placement(
+                &fish_spot,
+                &fish_method,
+                &WorldStateView {
+                    map_base_x: 3200,
+                    map_base_z: 3200,
+                    level: 0,
+                    ..WorldStateView::default()
+                },
+                &[],
+                &[],
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                1,
+            ),
+            PlacementClass::Unloaded
+        );
+    }
+
+    #[test]
+    fn selected_fishing_target_uses_npc_type_index_and_live_tile() {
+        let catalog = real_catalog();
+        let method = catalog
+            .method("fishing.saltfish.op1")
+            .expect("saltfish fishing method");
+        let method_index = method_index(&catalog, method);
+        let spot = complete_spots(method)
+            .expect("complete fishing placements")
+            .iter()
+            .find(|spot| {
+                known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+                    && movement_bounds(spot).is_some_and(|bounds| {
+                        [
+                            WorldTile {
+                                x: bounds.min_x,
+                                z: bounds.min_z,
+                                level: bounds.level,
+                            },
+                            WorldTile {
+                                x: bounds.max_x,
+                                z: bounds.max_z,
+                                level: bounds.level,
+                            },
+                            WorldTile {
+                                x: bounds.min_x + (bounds.max_x - bounds.min_x) / 2,
+                                z: bounds.min_z + (bounds.max_z - bounds.min_z) / 2,
+                                level: bounds.level,
+                            },
+                        ]
+                        .into_iter()
+                        .any(|tile| tile != spot.origin && region_contains(bounds, tile))
+                    })
+            })
+            .expect("a moving fishing spot in the pinned content");
+        let bounds = movement_bounds(spot).expect("fishing movement bounds");
+        let tile = [
+            WorldTile {
+                x: bounds.min_x,
+                z: bounds.min_z,
+                level: bounds.level,
+            },
+            WorldTile {
+                x: bounds.max_x,
+                z: bounds.max_z,
+                level: bounds.level,
+            },
+            WorldTile {
+                x: bounds.min_x + (bounds.max_x - bounds.min_x) / 2,
+                z: bounds.min_z + (bounds.max_z - bounds.min_z) / 2,
+                level: bounds.level,
+            },
+        ]
+        .into_iter()
+        .find(|tile| *tile != spot.origin && region_contains(bounds, *tile))
+        .expect("a non-origin tile in the movement box");
+        let EntityId::Npc(type_id) = spot.entity else {
+            panic!("fishing spot identity must be an NPC type");
+        };
+        let type_index = usize::try_from(type_id).expect("NPC type id is nonnegative");
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: tile,
+            radius: 2,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            location: "Custom".into(),
+            custom_tile: Some(tile),
+            radius: 2,
+            ..GathererSettings::default()
+        };
+        let world = scene_around(tile);
+        let observed_npcs = [npc(42, type_index, tile)];
+        let selected = select(
+            &catalog,
+            &[method_index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &observed_npcs,
+                here: tile,
+                now: 1,
+                skill_stat: 10,
+            },
+        );
+        let target = selected.target.expect("live fish selected");
+        assert_eq!(target.class, PlacementClass::Live);
+        assert_eq!(target.plan.entity, EntityId::Npc(type_id));
+        assert_eq!(target.plan.npc_index, 42);
+        assert_eq!(target.plan.tile, tile);
+        let moved_tile = [
+            WorldTile {
+                x: tile.x.saturating_add(1),
+                ..tile
+            },
+            WorldTile {
+                x: tile.x.saturating_sub(1),
+                ..tile
+            },
+            WorldTile {
+                z: tile.z.saturating_add(1),
+                ..tile
+            },
+            WorldTile {
+                z: tile.z.saturating_sub(1),
+                ..tile
+            },
+        ]
+        .into_iter()
+        .find(|moved| *moved != tile && area.contains(*moved) && region_contains(bounds, *moved))
+        .expect("a moved fishing instance remains in its eligible movement box");
+        let moved_npc = [npc(43, type_index, moved_tile)];
+        let reacquired = select(
+            &catalog,
+            &[method_index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &moved_npc,
+                here: tile,
+                now: 2,
+                skill_stat: 10,
+            },
+        )
+        .target
+        .expect("the moved spot NPC is re-acquired");
+        assert_eq!(reacquired.plan.entity, EntityId::Npc(type_id));
+        assert_eq!(reacquired.plan.npc_index, 43);
+        assert_eq!(reacquired.plan.tile, moved_tile);
+        let hazard_id = catalog
+            .hazard_npcs()
+            .iter()
+            .copied()
+            .find(|id| *id != type_id)
+            .expect("a content-derived hazard NPC id distinct from the fish type");
+        let observed_hazard = [npc(
+            43,
+            usize::try_from(hazard_id).expect("hazard id fits an NPC type"),
+            tile,
+        )];
+        let hazard_selection = select(
+            &catalog,
+            &[method_index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &observed_hazard,
+                here: tile,
+                now: 2,
+                skill_stat: 10,
+            },
+        );
+        if let Some(candidate) = hazard_selection.target {
+            assert_eq!(candidate.plan.entity, EntityId::Npc(type_id));
+            assert_eq!(candidate.class, PlacementClass::Unloaded);
+            assert_eq!(candidate.plan.npc_index, NO_NPC_INDEX);
+        }
+    }
+
+    #[test]
+    fn a_live_lower_tier_beats_an_unloaded_higher_tier_and_tier_falls_back() {
+        let catalog = real_catalog();
+        let low = catalog.method("woodcutting.normal").expect("normal trees");
+        let high = catalog.method("woodcutting.oak").expect("oak trees");
+        let low_index = method_index(&catalog, low);
+        let high_index = method_index(&catalog, high);
+        let mut high_by_tile = HashMap::new();
+        for candidate in complete_spots(high).expect("oak placements") {
+            if known_resource_target(high, candidate.entity)
+                && catalog.access(high, candidate).ok() == Some(Truth::True)
+            {
+                high_by_tile
+                    .entry((
+                        candidate.origin.x,
+                        candidate.origin.z,
+                        candidate.origin.level,
+                    ))
+                    .or_insert(candidate);
+            }
+        }
+        let mut pair = None;
+        'placements: for lower in complete_spots(low).expect("normal placements") {
+            if !known_resource_target(low, lower.entity)
+                || catalog.access(low, lower).ok() != Some(Truth::True)
+            {
+                continue;
+            }
+            for distance in 50..=64 {
+                for (dx, dz) in [(distance, 0), (-distance, 0), (0, distance), (0, -distance)] {
+                    let Some(x) = lower.origin.x.checked_add(dx) else {
+                        continue;
+                    };
+                    let Some(z) = lower.origin.z.checked_add(dz) else {
+                        continue;
+                    };
+                    if let Some(higher) = high_by_tile.get(&(x, z, lower.origin.level)).copied() {
+                        pair = Some((lower, higher, dx, dz));
+                        break 'placements;
+                    }
+                }
+            }
+        }
+        let (lower, higher, dx, dz) = pair.expect("near-edge normal/oak placements in content");
+        let mut world = scene_around(lower.origin);
+        if dx > 0 {
+            world.map_base_x = lower.origin.x.saturating_sub(84);
+        } else if dx < 0 {
+            world.map_base_x = lower.origin.x.saturating_sub(20);
+        } else if dz > 0 {
+            world.map_base_z = lower.origin.z.saturating_sub(84);
+        } else {
+            world.map_base_z = lower.origin.z.saturating_sub(20);
+        }
+        let methods = [low_index, high_index];
+        let settings = GathererSettings::default();
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Start,
+            anchor: lower.origin,
+            radius: 64,
+        };
+        let here = lower.origin;
+        let lower_id = match lower.entity {
+            EntityId::Loc(id) => id,
+            _ => panic!("woodcutting placement uses loc identity"),
+        };
+        let lower_live = [loc(lower_id, lower.origin)];
+        let live_result = select(
+            &catalog,
+            &methods,
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &lower_live,
+                npcs: &[],
+                here,
+                now: 10,
+                skill_stat: 8,
+            },
+        );
+        let selected = live_result.target.expect("live lower-tier resource");
+        assert_eq!(selected.class, PlacementClass::Live);
+        assert_eq!(selected.plan.entity, lower.entity);
+        assert_eq!(selected.plan.tile, lower.origin);
+
+        assert_eq!(higher.origin.x - lower.origin.x, dx);
+        assert_eq!(higher.origin.z - lower.origin.z, dz);
+        let fallback = select(
+            &catalog,
+            &methods,
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 10,
+                skill_stat: 8,
+            },
+        );
+        let selected = fallback.target.expect("highest tier unloaded fallback");
+        assert_eq!(selected.class, PlacementClass::Unloaded);
+        assert_eq!(selected.plan.entity, higher.entity);
+    }
+
+    #[test]
+    fn depleted_placements_wait_for_the_content_respawn_bound() {
+        let catalog = real_catalog();
+        let method = catalog.method("woodcutting.oak").expect("oak method");
+        let method_index = method_index(&catalog, method);
+        let spot = complete_spots(method)
+            .expect("oak placements")
+            .iter()
+            .find(|spot| {
+                known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+            })
+            .expect("eligible oak placement");
+        let depleted_id = known_targets(method)
+            .expect("known oak targets")
+            .iter()
+            .find_map(|target| match target.entity {
+                EntityId::Loc(id)
+                    if target.class == TargetClass::Depleted
+                        && matches!(target.respawn, Knowledge::Known(_)) =>
+                {
+                    Some(id)
+                }
+                _ => None,
+            })
+            .expect("oak stump id");
+        let expected_wait = u64::from(respawn_max(method, spot));
+        assert!(expected_wait > 0, "oak respawn scale comes from content");
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: spot.origin,
+            radius: 2,
+        };
+        let world = scene_around(spot.origin);
+        let locs = [loc(depleted_id, spot.origin)];
+        let settings = GathererSettings::default();
+        let selected = select(
+            &catalog,
+            &[method_index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &locs,
+                npcs: &[],
+                here: spot.origin,
+                now: 100,
+                skill_stat: 8,
+            },
+        );
+        assert!(selected.target.is_none());
+        assert!(matches!(
+            selected.outcome,
+            Selection::Exhausted { wait_until, .. }
+                if wait_until >= 100 + expected_wait
+        ));
+    }
+
+    #[test]
+    fn target_yield_contains_content_derived_incidental_mining_gems() {
+        let catalog = real_catalog();
+        let method = catalog.method("mining.coal").expect("coal method");
+        let index = method_index(&catalog, method);
+        let spot = complete_spots(method)
+            .expect("complete coal placements")
+            .iter()
+            .find(|spot| {
+                known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+            })
+            .expect("eligible coal placement");
+        let plan = make_plan(
+            &catalog,
+            u16::try_from(index).expect("catalog method index fits"),
+            method,
+            spot,
+            spot.origin,
+            NO_NPC_INDEX,
+            4,
+        );
+        for gem in catalog.incidental_gem_ids() {
+            assert!(
+                plan.products[..usize::from(plan.products_len)].contains(gem),
+                "incidental gem product {gem} missing from target yield"
+            );
+        }
     }
 }
