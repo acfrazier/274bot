@@ -240,6 +240,123 @@ fn reach_picks_the_observed_loc_not_the_anchor() {
 }
 
 #[test]
+fn reach_walks_through_an_open_door_instead_of_closing_it() {
+    let mut s = ready();
+    s.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile: tile(3077, 3426),
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 0,
+        },
+        energy: 100,
+        weight: 0,
+    });
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(3081, 3430);
+    wheel.distance = 4;
+    let mut leaf = loc(1531, "Door", "Close");
+    leaf.tile = tile(3076, 3426);
+    leaf.distance = 1;
+    let mut other_door = loc(1530, "Door", "Open");
+    other_door.tile = tile(3077, 3431);
+    other_door.distance = 5;
+    s.seed_locs(vec![wheel.clone(), leaf, other_door]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let handle = with_tick(&s, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)).is_pending());
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Walk(request) => {
+            assert_eq!(request.target, wheel.tile);
+            assert_eq!(request.radius, 1);
+        }
+        HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
+    }
+    assert!(
+        !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Loc { action, .. })
+                if action.eq_ignore_ascii_case("close")
+        ))
+    );
+}
+
+#[test]
+fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
+    let mut s = ready();
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(3081, 3430);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(3076, 3427);
+    door.distance = 1;
+    s.seed_locs(vec![wheel.clone(), door.clone()]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let handle = with_tick(&s, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)).is_pending());
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Walk(request) => {
+            assert_eq!(request.target, door.tile);
+            assert_eq!(request.radius, 1);
+        }
+        HostEffect::Interaction(request) => {
+            panic!("door must be approached before Open, got {request:?}")
+        }
+    }
+}
+
+#[test]
 fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
     for kind in [
         reach::ReachKind::Loc {

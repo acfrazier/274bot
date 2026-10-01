@@ -21007,8 +21007,174 @@ fn modeled_two_by_two_loc_routes_to_a_target_cardinal_arrival_stand() {
     );
 }
 
+fn assert_snapshot_route_no_path(
+    world: Arc<NavWorld>,
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+) {
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((from.x, from.z, from.level)),
+        world: Some(world),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    arm.queue_route_in_snapshot_synced(
+        snapshot,
+        to.x,
+        to.z,
+        to.level,
+        FindOptions::default(),
+        radius,
+        true,
+        29,
+    )
+    .expect("route worker spawned")
+    .recv_timeout(Duration::from_secs(2))
+    .expect("route worker completed");
+
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    assert!(
+        bot.route.is_none(),
+        "an unreachable target must not route to a radius tile"
+    );
+    assert!(
+        bot.walk_outcome_failed,
+        "an unreachable target must publish NoPath"
+    );
+    assert_eq!(bot.walk_outcome_x, to.x);
+    assert_eq!(bot.walk_outcome_z, to.z);
+    assert_eq!(bot.walk_outcome_level, to.level);
+}
+
 #[test]
-fn empty_or_unroutable_solid_target_goals_fall_back_to_radius_policy() {
+fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
+    use client::dash3d::CollisionFlag;
+    use nav::transport::{TransportEdge, TransportKind};
+
+    const SIZE: usize = 64;
+    let target = WorldTile {
+        x: 16,
+        z: 32,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 20,
+        z: 32,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for z in 0..SIZE {
+        flags[z * SIZE + 18] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 19] |= CollisionFlag::W_W as u32;
+    }
+    flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+
+    let edge = TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 19,
+            z: 32,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 18,
+            z: 32,
+            level: 0,
+        },
+        loc_id: 1530,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.at.entry(edge.at).or_default().push(0);
+    graph.edges.push(edge);
+    let world = Arc::new(raw_flags_world(&flags, SIZE, graph, Vec::new()));
+    let snapshot = raw_flags_scene(&flags, SIZE, (20, 0), from);
+    assert!(
+        !api::query::SceneQuery::new(snapshot.scene(), Some(from)).contains(target),
+        "the packed target must be offscene at arm time"
+    );
+
+    let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 4);
+    assert_ne!(
+        route.dest, from,
+        "radius four must not settle on the source side of the wall"
+    );
+    assert!(
+        route.dest.x <= 18,
+        "route endpoint must remain on the target side, got {:?}",
+        route.dest
+    );
+    assert!(
+        route.legs.iter().any(
+            |leg| matches!(leg, nav::router::Leg::Transport { edge } if edge.kind == TransportKind::Door)
+        ),
+        "the packed route must cross the closed wall by its door"
+    );
+
+    let reach_snapshot = raw_flags_scene(&flags, SIZE, (0, 0), route.dest);
+    let flood = api::query::SceneQuery::new(reach_snapshot.scene(), Some(route.dest)).flood_reach();
+    let view = api::query::pack_reach_query(reach_snapshot.scene(), flood.as_ref());
+    assert!(
+        api::query::is_arrived(route.dest, target, 4, || &view),
+        "the selected endpoint must be able to reach the offscene solid target"
+    );
+}
+
+#[test]
+fn offscene_solid_target_without_arrival_stands_returns_no_path() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 64;
+    let target = WorldTile {
+        x: 16,
+        z: 32,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 20,
+        z: 32,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for x in 15..=17usize {
+        for z in 31..=33usize {
+            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
+        }
+    }
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let snapshot = raw_flags_scene(&flags, SIZE, (20, 0), from);
+    assert!(
+        !api::query::SceneQuery::new(snapshot.scene(), Some(from)).contains(target),
+        "the packed target must be offscene at arm time"
+    );
+
+    assert_snapshot_route_no_path(world, &snapshot, from, target, 4);
+}
+
+#[test]
+fn solid_target_with_unreachable_arrival_stands_returns_no_path() {
     use client::dash3d::CollisionFlag;
 
     const SIZE: usize = 32;
@@ -21017,87 +21183,26 @@ fn empty_or_unroutable_solid_target_goals_fall_back_to_radius_policy() {
         z: 16,
         level: 0,
     };
-
-    // No target-cardinal stand: the target sits inside a 3x3 solid block.
-    let from = WorldTile {
-        x: 12,
-        z: 16,
-        level: 0,
-    };
-    let mut flags = vec![0u32; SIZE * SIZE];
-    let mut client = nav_client();
-    for x in 15..=17usize {
-        for z in 15..=17usize {
-            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
-            client.collision[0].flags[x][z] |= CollisionFlag::SQ_BLOCKED;
-        }
-    }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: SIZE,
-            height: SIZE,
-            walk,
-            blocked,
-            flags: None,
-        },
-        TransportGraph::default(),
-        Vec::new(),
-    ));
-    let mut snapshot = GameSnapshot::new();
-    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
-    let route = arm_snapshot_route(world, &snapshot, from, target, 4);
-    assert_eq!(
-        route.dest, from,
-        "empty corrected goals fall back to the old in-radius route"
-    );
-
-    // Legal target-cardinal stands exist, but a full-height wall makes all
-    // of them unroutable. The old radius policy can still settle on this side.
     let from = WorldTile {
         x: 13,
         z: 16,
         level: 0,
     };
     let mut flags = vec![0u32; SIZE * SIZE];
-    let mut client = nav_client();
     for z in 0..SIZE {
         flags[z * SIZE + 13] |= CollisionFlag::W_E as u32;
         flags[z * SIZE + 14] |= CollisionFlag::W_W as u32;
-        client.collision[0].flags[13][z] |= CollisionFlag::W_E;
-        client.collision[0].flags[14][z] |= CollisionFlag::W_W;
     }
     flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
-    client.collision[0].flags[target.x as usize][target.z as usize] |= CollisionFlag::SQ_BLOCKED;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: SIZE,
-            height: SIZE,
-            walk,
-            blocked,
-            flags: None,
-        },
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
         TransportGraph::default(),
         Vec::new(),
     ));
-    let mut snapshot = GameSnapshot::new();
-    nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
-    let route = arm_snapshot_route(world, &snapshot, from, target, 3);
-    assert_eq!(
-        route.dest, from,
-        "unroutable corrected goals fall back to the old in-radius route"
-    );
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+
+    assert_snapshot_route_no_path(world, &snapshot, from, target, 3);
 }
 
 /// A level-0 world over raw client `flags` (row-major, `size` wide).
