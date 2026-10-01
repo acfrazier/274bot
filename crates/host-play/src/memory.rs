@@ -8,7 +8,7 @@
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
@@ -1209,7 +1209,7 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     scenario_name: Option<String>,
-    output: std::fs::File,
+    output: BufWriter<std::fs::File>,
     diagnostics: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
     pub single_renderer: bool,
@@ -1412,6 +1412,9 @@ impl Run {
             .create_new(true)
             .open(&output_path)
             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+        // JSON's Display writes individual tokens. Coalesce those writes,
+        // especially when the samples file lives on a VM's shared volume.
+        let output = BufWriter::new(output);
         let qualification_output = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1899,6 +1902,9 @@ impl Run {
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
+            // Frontends finish with process::exit, which skips destructors:
+            // each complete row must be visible before this poll returns.
+            self.output.flush().map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
             }
