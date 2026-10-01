@@ -66,19 +66,24 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
     fixture_cache(&dir.0);
     let cache = CacheManifest::capture(289, &dir.0).unwrap();
     let manifest =
-        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None, None, None).unwrap();
+        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
+            .unwrap();
     manifest
-        .verify(289, &cache, b"pack", Some(b"flags"), None, None, None)
+        .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .unwrap();
     assert!(manifest
-        .verify(274, &cache, b"pack", Some(b"flags"), None, None, None)
+        .verify(274, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .is_err());
     assert!(manifest
-        .verify(289, &cache, b"other", Some(b"flags"), None, None, None)
+        .verify(289, &cache, b"other", Some(b"flags"), None, None, None, 0, 0)
         .is_err());
     assert!(manifest
-        .verify(289, &cache, b"pack", None, None, None, None)
+        .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 1, 0)
         .is_err());
+    assert!(manifest
+        .verify(289, &cache, b"pack", None, None, None, None, 0, 0)
+        .is_err());
+
     let with_reach = NavManifest::capture(
         289,
         &cache,
@@ -87,11 +92,13 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
         Some(b"reach"),
         None,
         None,
+        0,
+        0,
     )
     .unwrap();
     assert!(with_reach.reach_sha256.is_some());
     assert!(with_reach
-        .verify(289, &cache, b"pack", Some(b"flags"), None, None, None)
+        .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .is_err());
     with_reach
         .verify(
@@ -102,8 +109,11 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
             Some(b"reach"),
             None,
             None,
+            0,
+            0,
         )
         .unwrap();
+
     let with_canlight = NavManifest::capture(
         289,
         &cache,
@@ -112,6 +122,8 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
         Some(b"reach"),
         Some(b"canlight"),
         None,
+        0,
+        0,
     )
     .unwrap();
     assert!(with_canlight.canlight_sha256.is_some());
@@ -123,7 +135,9 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
             Some(b"flags"),
             Some(b"reach"),
             None,
-            None
+            None,
+            0,
+            0
         )
         .is_err());
     with_canlight
@@ -135,8 +149,11 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
             Some(b"reach"),
             Some(b"canlight"),
             None,
+            0,
+            0,
         )
         .unwrap();
+
     let with_pois = NavManifest::capture(
         289,
         &cache,
@@ -145,6 +162,8 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
         Some(b"reach"),
         Some(b"canlight"),
         Some(b"pois"),
+        0,
+        0,
     )
     .unwrap();
     assert!(with_pois.pois_sha256.is_some());
@@ -157,6 +176,8 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
             Some(b"reach"),
             Some(b"canlight"),
             Some(b"pois"),
+            0,
+            0,
         )
         .unwrap();
 }

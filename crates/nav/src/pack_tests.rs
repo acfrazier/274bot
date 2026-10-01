@@ -17,7 +17,9 @@ use crate::quest_gates::tests::{
 };
 use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
-use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
+use crate::router::AvoidRect;
+use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules};
+use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
 use crate::world::NavWorld;
 use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
@@ -866,6 +868,332 @@ fn roundtrip_collision_and_transport_graph() {
     ));
 }
 
+fn zone_table_pack_fixture() -> (Vec<u8>, ZoneTable) {
+    let origin = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let mut zones = vec![
+        Zone::npc(
+            WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            1,
+            ZoneClass::LevelRule,
+            10,
+            0,
+        ),
+        Zone::shaped_npc(
+            WorldTile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+            1,
+            1,
+            ZoneClass::Always,
+            u16::MAX,
+            0,
+            0,
+        ),
+        Zone::hazard(
+            AvoidRect {
+                min_x: 3,
+                min_z: 3,
+                max_x: 3,
+                max_z: 3,
+                level: Some(0),
+            },
+            0,
+            1,
+        ),
+    ];
+    zones[0].group = 0;
+    let wilderness = WildernessRules::default();
+    let table = ZoneTable::from_parts(
+        zones,
+        vec![
+            ZoneKind::new("ranger", "Ranger", 123, 5, true, false),
+            ZoneKind::new("lava-bridge", "Lava bridge", -1, 0, false, false),
+        ],
+        vec![ZoneGroup::new(
+            "wolf-pack",
+            "Wolf pack",
+            AvoidRect {
+                min_x: 0,
+                min_z: 0,
+                max_x: 2,
+                max_z: 2,
+                level: Some(0),
+            },
+            vec![0].into_boxed_slice(),
+        )],
+        vec![(
+            0,
+            AvoidRect {
+                min_x: 0,
+                min_z: 0,
+                max_x: 0,
+                max_z: 0,
+                level: Some(0),
+            },
+        )],
+        vec![0b0011_1000],
+        origin,
+        4,
+        4,
+        &wilderness,
+    )
+    .unwrap();
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 4 * 4]);
+    let collision = WorldCollision {
+        origin,
+        width: 4,
+        height: 4,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.zones = Some(table.clone());
+    (encode(&collision, &graph, &[]), table)
+}
+
+#[test]
+fn v12_pack_keeps_an_empty_zone_table_present() {
+    let bytes = encode(&tiny_collision(), &TransportGraph::default(), &[]);
+    let (_, graph, _) = decode(&bytes).unwrap();
+    let table = graph.zones.as_ref().expect("v12 declares a zone table");
+    assert!(table.zones().is_empty());
+    assert!(table.kinds().is_empty());
+}
+
+#[test]
+fn v12_zone_table_roundtrips_rows_and_rebuilds_its_index() {
+    let (bytes, table) = zone_table_pack_fixture();
+    assert_eq!(bytes[4], VERSION);
+    assert_eq!(super::zones::wire_size(Some(&table)), 211);
+    let (_, decoded, _) = decode(&bytes).unwrap();
+    let decoded_table = decoded.zones.as_ref().unwrap();
+    assert_eq!(decoded_table, &table);
+    assert_eq!(
+        decoded_table
+            .at(WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            })
+            .collect::<Vec<_>>(),
+        Vec::<u16>::new()
+    );
+    assert_eq!(
+        decoded_table
+            .at(WorldTile {
+                x: 3,
+                z: 2,
+                level: 0,
+            })
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+}
+
+#[test]
+fn v12_shape_rows_preserve_square_and_rectangular_bounds() {
+    let origin = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let square_bits = (1u64 << 1)
+        | (1 << 2)
+        | (1 << 4)
+        | (1 << 5)
+        | (1 << 6)
+        | (1 << 7)
+        | (1 << 8)
+        | (1 << 9)
+        | (1 << 10)
+        | (1 << 11)
+        | (1 << 13)
+        | (1 << 14);
+    let rectangular_bits = (1u64 << 1)
+        | (1 << 2)
+        | (1 << 3)
+        | (1 << 5)
+        | (1 << 6)
+        | (1 << 7)
+        | (1 << 8)
+        | (1 << 9)
+        | (1 << 11)
+        | (1 << 12)
+        | (1 << 13);
+    let table = ZoneTable::from_parts(
+        vec![
+            Zone::shaped_npc(
+                WorldTile {
+                    x: 3,
+                    z: 3,
+                    level: 0,
+                },
+                2,
+                2,
+                ZoneClass::Always,
+                u16::MAX,
+                0,
+                0,
+            ),
+            Zone::shaped_npc(
+                WorldTile {
+                    x: 9,
+                    z: 3,
+                    level: 0,
+                },
+                3,
+                1,
+                ZoneClass::Always,
+                u16::MAX,
+                0,
+                1,
+            ),
+        ],
+        vec![ZoneKind::new("hunter", "Hunter", 456, 10, false, false)],
+        vec![],
+        vec![],
+        vec![square_bits, rectangular_bits],
+        origin,
+        14,
+        8,
+        &WildernessRules::default(),
+    )
+    .unwrap();
+    let (walk, blocked) = pack_walk(&[0u32; 4 * 14 * 8]);
+    let collision = WorldCollision {
+        origin,
+        width: 14,
+        height: 8,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.zones = Some(table.clone());
+
+    assert_eq!(super::zones::wire_size(Some(&table)), 97);
+    let bytes = encode(&collision, &graph, &[]);
+    let (_, decoded, _) = decode(&bytes).unwrap();
+    let decoded_table = decoded.zones.as_ref().unwrap();
+    assert_eq!(decoded_table, &table);
+    assert_eq!(
+        decoded_table
+            .at(WorldTile {
+                x: 5,
+                z: 3,
+                level: 0,
+            })
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
+    assert!(decoded_table
+        .at(WorldTile {
+            x: 5,
+            z: 2,
+            level: 0,
+        })
+        .next()
+        .is_none());
+    assert_eq!(
+        decoded_table
+            .at(WorldTile {
+                x: 12,
+                z: 3,
+                level: 0,
+            })
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(decoded_table
+        .at(WorldTile {
+            x: 12,
+            z: 4,
+            level: 0,
+        })
+        .next()
+        .is_none());
+}
+
+#[test]
+fn v12_decode_rejects_malformed_zone_rows_and_shapes() {
+    let (bytes, table) = zone_table_pack_fixture();
+    let zone_start = bytes.len() - super::zones::wire_size(Some(&table));
+    let kind_0_size = 15 + "ranger".len() + "Ranger".len();
+    let kind_1_start = zone_start + 4 + kind_0_size;
+    let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
+
+    let mut too_many_zones = bytes.clone();
+    too_many_zones[zone_count_at..zone_count_at + 4]
+        .copy_from_slice(&32_768u32.to_le_bytes());
+    assert!(matches!(
+        decode(&too_many_zones),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut wrong_hazard_kind = bytes.clone();
+    wrong_hazard_kind[kind_1_start..kind_1_start + 4].copy_from_slice(&0i32.to_le_bytes());
+    assert!(matches!(
+        decode(&wrong_hazard_kind),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut bad_shape_index = bytes.clone();
+    let shape_row = bytes.len() - 11;
+    bad_shape_index[shape_row..shape_row + 2].copy_from_slice(&3u16.to_le_bytes());
+    assert!(matches!(
+        decode(&bad_shape_index),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut hazard_shape = bytes.clone();
+    hazard_shape[shape_row..shape_row + 2].copy_from_slice(&2u16.to_le_bytes());
+    assert!(matches!(
+        decode(&hazard_shape),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut oversized_east_extent = bytes.clone();
+    let shaped_npc_radius = zone_count_at + 4 + 14 + 9;
+    oversized_east_extent[shaped_npc_radius] = 7;
+    assert!(matches!(
+        decode(&oversized_east_extent),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut oversized_north_extent = bytes.clone();
+    oversized_north_extent[shape_row + 2] = 7;
+    assert!(matches!(
+        decode(&oversized_north_extent),
+        Err(PackError::BadLength(_))
+    ));
+    assert!(matches!(
+        decode(&bytes[..bytes.len() - 1]),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut duplicate_shape = bytes;
+    let shape_count_at = duplicate_shape.len() - 15;
+    duplicate_shape[shape_count_at..shape_count_at + 4].copy_from_slice(&2u32.to_le_bytes());
+    duplicate_shape.extend_from_slice(&1u16.to_le_bytes());
+    duplicate_shape.push(1);
+    duplicate_shape.extend_from_slice(&0b0011_1000u64.to_le_bytes());
+    assert!(matches!(
+        decode(&duplicate_shape),
+        Err(PackError::BadLength(_))
+    ));
+}
+
 #[test]
 fn decode_rejects_old_version_streams() {
     // A version-2 or version-3 stream (pre-four-plane wire) is
@@ -1010,7 +1338,7 @@ fn v9_roundtrips_members_req_true_and_false() {
 }
 
 #[test]
-fn v11_decode_rejects_older_version_bytes() {
+fn v12_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -1030,8 +1358,10 @@ fn v11_decode_rejects_older_version_bytes() {
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
     bytes[4] = 9;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(9))));
-    // A v10 pack predates quest-family binding and stage gates: it is
-    // refused for a rebake, never loaded as an ungated v11 pack.
+    // A v11 pack predates zone tables and is refused for a rebake.
+    bytes[4] = 11;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(11))));
+    // A v10 pack predates quest-family binding and stage gates.
     bytes[4] = 10;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(10))));
 }
@@ -1082,9 +1412,9 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     graph.edges.push(door);
     let mut bytes = encode(&collision, &graph, &[]);
     // members_req sits just before wildy_cap (i32), the edge's quest-gate
-    // count (u32), the bank-stand count (u32), and the wilderness trailer
-    // (zone count + divisor + offset).
-    let flag_at = bytes.len() - 12 - 4 - 4 - 4 - 1;
+    // count (u32), bank-stand count (u32), wilderness rules (12 B), and
+    // the five zero-count zone tables (20 B).
+    let flag_at = bytes.len() - 20 - 12 - 4 - 4 - 4 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -2001,10 +2331,10 @@ fn every_constructible_quest_family_encodes_a_decodable_pack() {
 /// Gates a pack cannot bind, or a malformed binding, refuse the whole pack
 /// as inconsistent; nothing loads as silently ungated.
 #[test]
-fn v11_decode_refuses_unbound_or_malformed_quest_gates() {
+fn v12_decode_refuses_unbound_or_malformed_quest_gates() {
     // The single edge's gate list ends its record, before the bank-stand
-    // count (u32) and the wilderness trailer (zone count, divisor, offset).
-    const TRAILER: usize = 4 + 12;
+    // count (u32), wilderness trailer (12 B), and zone counts (20 B).
+    const TRAILER: usize = 4 + 12 + 20;
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
     let unbound = encode(&tiny_collision(), &graph, &[]);

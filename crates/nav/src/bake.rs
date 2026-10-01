@@ -9,12 +9,13 @@
 //! [`verify_cache_manifest`]); the cache is a bake input, never a shipped
 //! resource.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::config::Cache;
+use client::dash3d::{CollisionFlag, LocAngle, LocShape};
 use client::io::JagFile;
 use sha2::{Digest, Sha256};
 
@@ -26,10 +27,12 @@ use crate::pack::{
     sha256_hex, FORMAT_ID,
 };
 use crate::paint::bake_reach;
+use crate::router::AvoidRect;
 use crate::transport::{
     assert_transmitted_varp_reqs, derive_transports_for_bake, require_members_guards,
     require_wilderness_teleport_legality,
 };
+use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
 
 /// Door loc configs under `content/scripts/doors/configs`.
 pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -43,14 +46,16 @@ pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 /// Baker sources whose bytes join the generator identity: a generated
 /// artifact is stale after any change to one of them. Paths are relative to
 /// the `nav` crate root; keep this list to the code that decides artifact
-/// bytes. Pack/flags come from bake/collision/pack/transport (the pack's
-/// quest-gate order and validation from `quest_gates.rs`); reach bits also
-/// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
-/// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 41] = [
+/// bytes. Pack/flags come from bake/collision/pack/transport and zone
+/// derivation; reach bits also depend on `paint.rs` (`bake_reach`) and
+/// `router.rs` (`step_ok`). Traveller and grid-search changes do not decide
+/// those bytes.
+pub const GENERATOR_SOURCES: [&str; 45] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
+    "src/map/services.rs",
+    "src/pack/zones.rs",
     "src/pack.rs",
     "src/paint.rs",
     "src/quest_gates.rs",
@@ -89,6 +94,8 @@ pub const GENERATOR_SOURCES: [&str; 41] = [
     "src/transport/rs2_syntax.rs",
     "src/transport/stage_doors.rs",
     "src/transport/engine_door_procs.rs2",
+    "src/zones.rs",
+    "src/zones/curated.rs",
 ];
 
 /// Digest of the bake generator: the manual id, the pack format identity and
@@ -236,6 +243,523 @@ pub struct BakedNav {
     pub notes: Vec<String>,
 }
 
+struct DerivedZones {
+    table: ZoneTable,
+    npc_count: usize,
+    npc_kind_count: usize,
+    always_count: usize,
+    level_rule_count: usize,
+    shaped_count: usize,
+    total_npc_spawns: usize,
+}
+
+struct PendingZone {
+    zone: Zone,
+    npc_id: i32,
+    shape_bits: Option<u64>,
+}
+
+fn derive_zone_table(
+    content_root: &Path,
+    collision: &WorldCollision,
+    graph: &crate::transport::TransportGraph,
+    npc_types: &[client::config::NpcType],
+    door_ids: &HashSet<i32>,
+) -> Result<DerivedZones, String> {
+    let inputs =
+        crate::map::services::collect_hunter_inputs(content_root, npc_types, door_ids)?;
+    let definitions: HashMap<_, _> = inputs
+        .definitions
+        .iter()
+        .map(|definition| (definition.npc_id, definition))
+        .collect();
+
+    let mut used_ids = HashSet::new();
+    for spawn in &inputs.spawns {
+        if definitions
+            .get(&spawn.npc_id)
+            .is_some_and(|definition| definition.huntrange > 0)
+        {
+            used_ids.insert(spawn.npc_id);
+        }
+    }
+    let mut kinds = Vec::with_capacity(used_ids.len() + crate::zones::curated::HAZARDS.len());
+    let mut kind_indices = HashMap::with_capacity(used_ids.len());
+    for definition in &inputs.definitions {
+        if !used_ids.contains(&definition.npc_id) {
+            continue;
+        }
+        let vislevel = u16::try_from(definition.vislevel)
+            .map_err(|_| format!("hunter NPC {} has invalid combat level", definition.id))?;
+        let kind_index = u16::try_from(kinds.len())
+            .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
+        kind_indices.insert(definition.npc_id, kind_index);
+        kinds.push(ZoneKind::new(
+            definition.id.as_str(),
+            format!("{} (L{})", definition.display_name, definition.vislevel),
+            definition.npc_id,
+            vislevel,
+            definition.find_newmode.to_ascii_lowercase().starts_with("applayer"),
+            definition.vis_off,
+        ));
+    }
+
+    let open_door_faces = openable_door_faces(&inputs.openable_doors)?;
+    let mut pending = Vec::with_capacity(used_ids.len());
+    for spawn in &inputs.spawns {
+        let Some(definition) = definitions.get(&spawn.npc_id).copied() else {
+            return Err(format!("map spawn references hunter id {} without a config", spawn.npc_id));
+        };
+        if definition.huntrange < 1 {
+            continue;
+        }
+        if spawn.link_below {
+            return Err(format!(
+                "hunter spawn {}@{},{},{} stands on a link-below tile",
+                definition.id, spawn.x, spawn.z, spawn.level
+            ));
+        }
+        let class = match definition.check_nottoostrong.to_ascii_lowercase().as_str() {
+            "off" => ZoneClass::Always,
+            "outside_wilderness" => ZoneClass::LevelRule,
+            other => {
+                return Err(format!(
+                    "hunter NPC {} has unsupported check_nottoostrong={other}",
+                    definition.id
+                ))
+            }
+        };
+        let cap = if class == ZoneClass::Always {
+            u16::MAX
+        } else {
+            u16::try_from(definition.vislevel)
+                .ok()
+                .and_then(|level| level.checked_mul(2))
+                .ok_or_else(|| format!("hunter NPC {} has invalid combat cap", definition.id))?
+        };
+        let trigger = definition.find_newmode.to_ascii_lowercase();
+        let ap = if trigger.starts_with("applayer") {
+            true
+        } else if trigger.starts_with("opplayer") {
+            false
+        } else {
+            return Err(format!(
+                "hunter NPC {} has unsupported find_newmode={trigger}",
+                definition.id
+            ));
+        };
+        let kind = *kind_indices
+            .get(&spawn.npc_id)
+            .ok_or_else(|| format!("hunter NPC {} has no kind row", definition.id))?;
+        let tile = WorldTile {
+            x: spawn.x,
+            z: spawn.z,
+            level: i32::from(spawn.level),
+        };
+        let size = definition.size;
+        if size < 1 {
+            return Err(format!("hunter NPC {} has invalid size {size}", definition.id));
+        }
+        let (zone, shape_bits) = if definition.stationary && !ap {
+            let width = u8::try_from(size)
+                .ok()
+                .filter(|size| *size <= 6)
+                .ok_or_else(|| {
+                    format!(
+                        "stationary melee hunter {} exceeds the 6x6 footprint limit",
+                        definition.id
+                    )
+                })?;
+            let bits = stationary_melee_shape(collision, tile, width, &open_door_faces)
+                .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
+            (
+                Zone::shaped_npc(tile, width, width, class, cap, kind, NO_SHAPE),
+                Some(bits),
+            )
+        } else if definition.stationary && ap {
+            let (min_x, min_z, max_x, max_z) = stationary_ranged_bounds(
+                tile,
+                size,
+                definition.huntrange,
+                definition.attackrange,
+            )
+            .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
+            let mut zone = Zone::npc(tile, 0, class, cap, kind);
+            zone.min_x = min_x;
+            zone.min_z = min_z;
+            zone.max_x = max_x;
+            zone.max_z = max_z;
+            (zone, None)
+        } else {
+            let wander = if definition.never_wanders {
+                0
+            } else {
+                definition.wanderrange
+            };
+            let acquisition = wander
+                .checked_add(definition.huntrange)
+                .ok_or_else(|| format!("hunter NPC {} acquisition radius overflows", definition.id))?;
+            let tether_range = if ap {
+                definition.attackrange
+            } else {
+                1
+            };
+            let tether = definition
+                .maxrange
+                .checked_add(tether_range)
+                .ok_or_else(|| format!("hunter NPC {} tether range overflows", definition.id))?;
+            let radius = u8::try_from(acquisition.min(tether))
+                .map_err(|_| format!("hunter NPC {} radius exceeds u8", definition.id))?;
+            (Zone::npc(tile, radius, class, cap, kind), None)
+        };
+        pending.push(PendingZone {
+            zone,
+            npc_id: spawn.npc_id,
+            shape_bits,
+        });
+    }
+    pending.sort_unstable_by_key(|row| {
+        (
+            row.zone.level,
+            row.zone.spawn_z,
+            row.zone.spawn_x,
+            row.npc_id,
+        )
+    });
+
+    let npc_count = pending.len();
+    let always_count = pending
+        .iter()
+        .filter(|row| row.zone.class == ZoneClass::Always)
+        .count();
+    let level_rule_count = npc_count - always_count;
+    let mut zones = Vec::with_capacity(npc_count + crate::zones::curated::HAZARDS.len());
+    let mut shapes = Vec::new();
+    for mut row in pending {
+        if let Some(bits) = row.shape_bits {
+            row.zone.shape = u16::try_from(shapes.len())
+                .map_err(|_| "zone shape count exceeds the packed limit".to_string())?;
+            shapes.push(bits);
+        }
+        zones.push(row.zone);
+    }
+
+    let mut groups = Vec::with_capacity(crate::zones::curated::GROUPS.len());
+    for spec in crate::zones::curated::GROUPS {
+        let group_index = u16::try_from(groups.len())
+            .map_err(|_| "zone group count exceeds the packed limit".to_string())?;
+        let mut members = Vec::new();
+        for (index, zone) in zones.iter_mut().enumerate() {
+            let npc_id = kinds[usize::from(zone.kind)].npc_id;
+            if spec.npc_ids.contains(&npc_id)
+                && spec.rect.contains(WorldTile {
+                    x: zone.spawn_x,
+                    z: zone.spawn_z,
+                    level: i32::from(zone.level),
+                })
+            {
+                if zone.group != NO_GROUP {
+                    return Err(format!(
+                        "zone {}@{},{},{} belongs to more than one curated group",
+                        kinds[usize::from(zone.kind)].id,
+                        zone.spawn_x,
+                        zone.spawn_z,
+                        zone.level
+                    ));
+                }
+                zone.group = group_index;
+                members.push(
+                    u16::try_from(index)
+                        .map_err(|_| "zone count exceeds the packed limit".to_string())?,
+                );
+            }
+        }
+        if members.is_empty() {
+            return Err(format!("curated zone group {} matched no hunter spawn", spec.id));
+        }
+        groups.push(ZoneGroup::new(
+            spec.id,
+            spec.label,
+            spec.rect,
+            members.into_boxed_slice(),
+        ));
+    }
+
+    let npc_kind_count = kinds.len();
+    for hazard in crate::zones::curated::HAZARDS {
+        let kind_index = u16::try_from(kinds.len())
+            .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
+        kinds.push(ZoneKind::new(hazard.id, hazard.label, -1, 0, false, false));
+        zones.push(Zone::hazard(hazard.rect, hazard.level, kind_index));
+    }
+    let table = ZoneTable::from_parts(
+        zones,
+        kinds,
+        groups,
+        Vec::new(),
+        shapes,
+        collision.origin,
+        u32::try_from(collision.width).map_err(|_| "zone grid width exceeds u32".to_string())?,
+        u32::try_from(collision.height).map_err(|_| "zone grid height exceeds u32".to_string())?,
+        &graph.wilderness,
+    )
+    .map_err(|error| format!("invalid derived zone table: {error}"))?;
+    Ok(DerivedZones {
+        npc_count,
+        npc_kind_count,
+        always_count,
+        level_rule_count,
+        shaped_count: table.shapes().len(),
+        total_npc_spawns: inputs.total_npc_spawns,
+        table,
+    })
+}
+
+
+fn stationary_ranged_bounds(
+    spawn: WorldTile,
+    size: i32,
+    hunt_range: i32,
+    attack_range: i32,
+) -> Result<(i32, i32, i32, i32), String> {
+    let footprint_max_x = spawn
+        .x
+        .checked_add(size - 1)
+        .ok_or_else(|| "stationary hunter footprint overflows x".to_string())?;
+    let footprint_max_z = spawn
+        .z
+        .checked_add(size - 1)
+        .ok_or_else(|| "stationary hunter footprint overflows z".to_string())?;
+    let min_x = spawn
+        .x
+        .checked_sub(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
+        .max(
+            spawn
+                .x
+                .checked_sub(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
+        );
+    let min_z = spawn
+        .z
+        .checked_sub(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
+        .max(
+            spawn
+                .z
+                .checked_sub(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
+        );
+    let max_x = spawn
+        .x
+        .checked_add(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
+        .min(
+            footprint_max_x
+                .checked_add(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
+        );
+    let max_z = spawn
+        .z
+        .checked_add(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
+        .min(
+            footprint_max_z
+                .checked_add(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
+        );
+    if min_x > max_x || min_z > max_z {
+        return Err("stationary hunter range intersection is empty".into());
+    }
+    Ok((min_x, min_z, max_x, max_z))
+}
+
+fn stationary_melee_shape(
+    collision: &WorldCollision,
+    spawn: WorldTile,
+    size: u8,
+    openable_door_faces: &HashSet<(i32, i32, i32, u8)>,
+) -> Result<u64, String> {
+    let side = u32::from(size) + 2;
+    if side * side > u64::BITS {
+        return Err("stationary melee hunter footprint exceeds the 8x8 shape limit".into());
+    }
+    let mut mask = 0u64;
+    for dz in 0..u32::from(size) {
+        for dx in 0..u32::from(size) {
+            set_shape_cell(&mut mask, dx + 1, dz + 1, side)?;
+        }
+    }
+    let size_i32 = i32::from(size);
+    for offset in 0..size_i32 {
+        let west_z = spawn
+            .z
+            .checked_add(offset)
+            .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            spawn.x,
+            west_z,
+            spawn.level,
+            CollisionFlag::W_W as u8,
+        ) {
+            set_shape_cell(&mut mask, 0, u32::try_from(offset + 1).unwrap(), side)?;
+        }
+        let east_x = spawn
+            .x
+            .checked_add(size_i32 - 1)
+            .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            east_x,
+            west_z,
+            spawn.level,
+            CollisionFlag::W_E as u8,
+        ) {
+            set_shape_cell(
+                &mut mask,
+                u32::from(size) + 1,
+                u32::try_from(offset + 1).unwrap(),
+                side,
+            )?;
+        }
+        let south_x = spawn
+            .x
+            .checked_add(offset)
+            .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            south_x,
+            spawn.z,
+            spawn.level,
+            CollisionFlag::W_S as u8,
+        ) {
+            set_shape_cell(&mut mask, u32::try_from(offset + 1).unwrap(), 0, side)?;
+        }
+        let north_z = spawn
+            .z
+            .checked_add(size_i32 - 1)
+            .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            south_x,
+            north_z,
+            spawn.level,
+            CollisionFlag::W_N as u8,
+        ) {
+            set_shape_cell(
+                &mut mask,
+                u32::try_from(offset + 1).unwrap(),
+                u32::from(size) + 1,
+                side,
+            )?;
+        }
+    }
+    Ok(mask)
+}
+
+fn set_shape_cell(mask: &mut u64, x: u32, z: u32, width: u32) -> Result<(), String> {
+    let bit = z
+        .checked_mul(width)
+        .and_then(|row| row.checked_add(x))
+        .filter(|bit| *bit < u64::BITS)
+        .ok_or_else(|| "stationary melee mask bit is out of range".to_string())?;
+    *mask |= 1u64 << bit;
+    Ok(())
+}
+
+fn face_is_open(
+    collision: &WorldCollision,
+    openable_door_faces: &HashSet<(i32, i32, i32, u8)>,
+    x: i32,
+    z: i32,
+    level: i32,
+    wall_flag: u8,
+) -> bool {
+    let is_door = openable_door_faces.contains(&(x, z, level, wall_flag));
+    is_door || collision_walk_byte(collision, x, z, level) & wall_flag == 0
+}
+
+fn collision_walk_byte(collision: &WorldCollision, x: i32, z: i32, level: i32) -> u8 {
+    let Ok(plane) = usize::try_from(level) else {
+        return 0;
+    };
+    if plane >= 4 {
+        return 0;
+    }
+    let Some(local_x) = x.checked_sub(collision.origin.x) else {
+        return 0;
+    };
+    let Some(local_z) = z.checked_sub(collision.origin.z) else {
+        return 0;
+    };
+    let (Ok(local_x), Ok(local_z)) = (usize::try_from(local_x), usize::try_from(local_z)) else {
+        return 0;
+    };
+    if local_x >= collision.width || local_z >= collision.height {
+        return 0;
+    }
+    let Some(index) = plane
+        .checked_mul(collision.width.saturating_mul(collision.height))
+        .and_then(|base| local_z.checked_mul(collision.width).and_then(|row| base.checked_add(row)))
+        .and_then(|row| row.checked_add(local_x))
+    else {
+        return 0;
+    };
+    collision.walk.get(index).copied().unwrap_or(0)
+}
+
+fn openable_door_faces(
+    doors: &[crate::map::services::OpenableDoor],
+) -> Result<HashSet<(i32, i32, i32, u8)>, String> {
+    let mut faces = HashSet::with_capacity(doors.len().saturating_mul(2));
+    for door in doors {
+        if i32::from(door.shape) != LocShape::WALL_STRAIGHT {
+            continue;
+        }
+        let (tile_flag, opposite_flag, dx, dz) = match i32::from(door.rotation) {
+            angle if angle == LocAngle::WEST => (
+                CollisionFlag::W_W as u8,
+                CollisionFlag::W_E as u8,
+                -1,
+                0,
+            ),
+            angle if angle == LocAngle::NORTH => (
+                CollisionFlag::W_N as u8,
+                CollisionFlag::W_S as u8,
+                0,
+                1,
+            ),
+            angle if angle == LocAngle::EAST => (
+                CollisionFlag::W_E as u8,
+                CollisionFlag::W_W as u8,
+                1,
+                0,
+            ),
+            angle if angle == LocAngle::SOUTH => (
+                CollisionFlag::W_S as u8,
+                CollisionFlag::W_N as u8,
+                0,
+                -1,
+            ),
+            _ => continue,
+        };
+        faces.insert((door.x, door.z, door.level, tile_flag));
+        let Some(neighbor_x) = door.x.checked_add(dx) else {
+            return Err("openable door face overflows x".into());
+        };
+        let Some(neighbor_z) = door.z.checked_add(dz) else {
+            return Err("openable door face overflows z".into());
+        };
+        faces.insert((neighbor_x, neighbor_z, door.level, opposite_flag));
+    }
+    Ok(faces)
+}
+
 /// Bake the whole world for one request. Every `.jm2` under the maps dir
 /// bakes or the call fails; non-`.jm2` files are metadata and skipped.
 pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
@@ -306,10 +830,31 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let (graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
+    let (mut graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
     require_members_guards(content_root, &graph)?;
+    let derived_zones =
+        derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
+    let zone_count = u32::try_from(derived_zones.table.zones().len())
+        .map_err(|_| "zone count exceeds the manifest range".to_string())?;
+    let zone_npc_count = u32::try_from(derived_zones.npc_count)
+        .map_err(|_| "NPC zone count exceeds the manifest range".to_string())?;
+    let group_count = derived_zones.table.groups().len();
+    let hazard_count = crate::zones::curated::HAZARDS.len();
+    let npc_kind_count = derived_zones.npc_kind_count;
+    let npc_count = derived_zones.npc_count;
+    let always_count = derived_zones.always_count;
+    let level_rule_count = derived_zones.level_rule_count;
+    let shaped_count = derived_zones.shaped_count;
+    let total_npc_spawns = derived_zones.total_npc_spawns;
+    graph.zones = Some(derived_zones.table);
+    notes.push(format!(
+        "zones: {zone_count} ({npc_count} NPC, {hazard_count} hazard), \
+         {npc_kind_count} NPC kinds, {group_count} groups, {shaped_count} stationary melee shapes; \
+         {total_npc_spawns} map NPC spawns counted; {always_count} Always / {level_rule_count} LevelRule; \
+         0 carves"
+    ));
     if audit.converted != 0 {
         notes.push(format!(
             "converted {} non-transmitted varp requirements to completed journal gates",
@@ -408,6 +953,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
             Some(&reach_bytes),
             Some(&canlight_bytes),
             pois.as_deref(),
+            zone_count,
+            zone_npc_count,
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
