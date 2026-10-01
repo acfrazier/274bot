@@ -882,6 +882,7 @@ fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
                         sequence: u64::from(tick),
                     },
                     accepted: true,
+                    chat_since: 0,
                 },
             );
             clicked_at = Some(tick);
@@ -934,6 +935,7 @@ fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
                     sequence: u64::from(tick),
                 },
                 accepted: true,
+                chat_since: 0,
             },
         );
     }
@@ -983,6 +985,7 @@ fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<
                     sequence: u64::from(tick),
                 },
                 accepted: refused_slot != Some(*index),
+                chat_since: 0,
             },
         );
     }
@@ -1094,6 +1097,7 @@ fn gatherer_rejected_click_observes_missing_target_before_retry() {
                         sequence: u64::from(tick),
                     },
                     accepted: false,
+                    chat_since: 0,
                 },
             );
             clicked_at = Some(tick);
@@ -1143,6 +1147,7 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
                         sequence: u64::from(tick),
                     },
                     accepted: true,
+                    chat_since: 0,
                 },
             );
             clicked_at = Some(tick);
