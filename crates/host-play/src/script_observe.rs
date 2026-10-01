@@ -413,6 +413,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // The slot repeats the run/action fence before accepting the receipt.
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             deliver_native_walk_end(&mut slot, bot, tick);
+            deliver_native_bank_pick(&mut slot, bot);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -1223,6 +1224,21 @@ pub(crate) fn script_observe_cached_with_channels(
                                 // `Refused` receipt on the next observation.
                                 arm.queue_native_route(snapshot, request, authority);
                             }
+                            script::native::HostEffect::BankPick(request) => {
+                                super::bank::queue_native_bank_pick(
+                                    navs,
+                                    name,
+                                    world,
+                                    state.clone(),
+                                    request,
+                                    authority.clone(),
+                                    api::quest_progress::EvidenceStamp {
+                                        run: authority.run(),
+                                        tick,
+                                        sequence: tick,
+                                    },
+                                );
+                            }
                         }
                     }
                     let mut dispatchable = Vec::with_capacity(interact.len());
@@ -1645,6 +1661,12 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     };
     slot.complete_native_walk(owner, receipt(owner, end));
     bot.native_receipt_seq = bot.walk_outcome_seq;
+}
+
+fn deliver_native_bank_pick(slot: &mut script::SlotScript, bot: &mut NavBot) {
+    if let Some((authority, receipt)) = bot.bank_pick.take_native_receipt() {
+        slot.complete_native_bank_pick(&authority, receipt);
+    }
 }
 
 pub(crate) fn deliver_channel_events(

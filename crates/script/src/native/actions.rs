@@ -1,6 +1,7 @@
 use super::ledger::{HostAction, HostEffect};
 use super::owner::Owner;
 use super::*;
+use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 impl ActionContext<'_> {
@@ -147,6 +148,40 @@ impl ActionContext<'_> {
         Ok(request_id.get())
     }
 
+    /// Queue one selector-owned bank pick. This computes a route choice; it
+    /// does not consume a game-interaction event.
+    pub fn bank_pick(&mut self, request: BankPickRequest) -> Result<u64, ActionError> {
+        let owner = self.owner()?;
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        let request_id = ledger.next_id()?;
+        owner.set_interaction(request_id);
+        ledger.interaction = None;
+        ledger.interaction_request = None;
+        ledger.bank_pick = None;
+        ledger.bank_pick_request = Some(request_id);
+        ledger.outbox.push(HostAction {
+            owner,
+            request_id,
+            effect: HostEffect::BankPick(request),
+        });
+        Ok(request_id.get())
+    }
+
+    pub fn bank_pick_receipt(&self, request_id: u64) -> Option<&BankPickReceipt> {
+        let ledger = self.ledger.as_ref()?;
+        let owner = ledger.owner.as_ref()?;
+        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+            return None;
+        }
+        ledger.bank_pick.as_ref().filter(|receipt| {
+            ledger
+                .bank_pick_request
+                .is_some_and(|id| id.get() == request_id)
+                && receipt.request_id == request_id
+                && receipt.evidence.run == self.run()
+        })
+    }
+
     pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
@@ -207,6 +242,10 @@ impl ActionContext<'_> {
             if ledger.interaction_request == Some(request_id) {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
+            }
+            if ledger.bank_pick_request == Some(request_id) {
+                ledger.bank_pick_request = None;
+                ledger.bank_pick = None;
             }
             for receipt in &mut ledger.batch_receipts {
                 if receipt

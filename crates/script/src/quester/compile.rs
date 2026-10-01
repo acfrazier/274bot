@@ -25,7 +25,7 @@ pub struct CompileContext<'a> {
     pub gathering: Option<&'a GatherCatalog>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
     pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
-    /// `None` means select the nearest eligible bank at step start.
+    /// `None` uses the shared eligible-bank cost selector at step start.
     pub bank: Option<NamedBank>,
     pub bank_items: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
@@ -99,6 +99,7 @@ pub struct StepContext<'a, 'frame> {
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
     pub bank: &'a super::bank_memo::BankMemo,
+    pub banks: &'a Arc<api::named_banks::NamedBankFacts>,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
