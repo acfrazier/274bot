@@ -1514,17 +1514,28 @@ pub(crate) fn script_observe_cached_with_channels(
 /// or abort that ended the follow), and the published outcome of the route
 /// the owner still holds. A revoked owner receives neither.
 fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
-    let receipt = |owner: &script::native::HostAuthority, end| script::native::WalkReceipt {
-        request_id: owner.request_id().get(),
-        evidence: api::quest_progress::EvidenceStamp {
-            run: owner.run(),
-            tick,
-            sequence: tick,
-        },
-        end,
+    let receipt = |owner: &script::native::HostAuthority, end, blocked, detail| {
+        script::native::WalkReceipt {
+            request_id: owner.request_id().get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: owner.run(),
+                tick,
+                sequence: tick,
+            },
+            end,
+            blocked,
+            detail,
+        }
     };
     if let Some((owner, end)) = bot.native_end.take() {
-        slot.complete_native_walk(&owner, receipt(&owner, end));
+        let request_id = owner.request_id().get();
+        let detail = (bot.walk_outcome_request_id == request_id)
+            .then(|| bot.walk_outcome_detail.clone())
+            .flatten();
+        slot.complete_native_walk(&owner, receipt(&owner, end, None, detail));
+        if bot.walk_outcome_request_id == request_id {
+            bot.walk_outcome_detail = None;
+        }
     }
     let Some(owner) = bot.native_walk.as_ref() else {
         return;
@@ -1546,8 +1557,19 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     } else {
         script::native::WalkEnd::RouteEnded
     };
-    slot.complete_native_walk(owner, receipt(owner, end));
+    let request_id = owner.request_id().get();
+    let blocked = bot
+        .native_walk_blocked
+        .as_ref()
+        .filter(|(request, _)| *request == request_id)
+        .map(|(_, keys)| Arc::clone(keys));
+    let detail = (bot.walk_outcome_request_id == request_id)
+        .then(|| bot.walk_outcome_detail.clone())
+        .flatten();
+    slot.complete_native_walk(owner, receipt(owner, end, blocked, detail));
     bot.native_receipt_seq = bot.walk_outcome_seq;
+    bot.native_walk_blocked = None;
+    bot.walk_outcome_detail = None;
 }
 
 pub(crate) fn deliver_channel_events(

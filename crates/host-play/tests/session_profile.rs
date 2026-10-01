@@ -473,6 +473,8 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
         reach_sha256: None,
         canlight_sha256: None,
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&nav),
@@ -893,6 +895,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         reach_sha256: None,
         canlight_sha256: None,
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -1053,6 +1057,8 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
         reach_sha256: None,
         canlight_sha256: None,
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(pack),
@@ -1297,6 +1303,8 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         reach_sha256: None,
         canlight_sha256: None,
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),

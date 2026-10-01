@@ -207,10 +207,13 @@ struct WalkResilientOpts {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkPolicy,
-    /// Frozen `avoidZones`: rectangles route around; a catalog zone id is
-    /// refused ([`avoid_refusal`]).
+    /// Frozen `avoidZones`: rectangles and the known frozen catalog ids are
+    /// resolved by the host at the walk's arm-time endpoints.
     #[serde(default)]
     avoid_zones: Vec<InspectAvoidWire>,
+    /// Per-walk named danger-zone exemptions.
+    #[serde(default)]
+    cross_zones: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,27 +227,37 @@ pub(crate) struct WalkResilientArgs {
 /// bound, `route_inspect::MAX_AVOID`).
 const MAX_AVOID: usize = 16;
 
-/// Why `avoid` cannot route, if it cannot: a catalog zone id (frozen
-/// `KNOWN_DANGER_ZONES` is not a host table), a rectangle with inverted
-/// bounds or a level off 0–3, or more than [`MAX_AVOID`] rectangles.
-pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<&'static str> {
+/// Frozen ids accepted for compat `avoidZones`; their geometry is resolved
+/// by host-play once the walk's endpoints and combat level are known.
+pub(crate) fn known_avoid_catalog_id(id: &str) -> bool {
+    matches!(id, "white-wolf-mountain" | "draynor-jail-guards")
+}
+
+/// Why `avoid` cannot route, if it cannot: an unknown catalog id, a
+/// rectangle with inverted bounds or a level off 0–3, or more than
+/// [`MAX_AVOID`] raw entries. The host rechecks the expanded rectangle bound.
+pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<String> {
     if avoid.len() > MAX_AVOID {
-        return Some("avoidZones: more than 16 rectangles");
+        return Some("avoidZones: more than 16 entries".into());
     }
     avoid.iter().find_map(|zone| match zone {
         InspectAvoidWire::Unsupported => {
-            Some("avoidZones: only rectangles route; catalog zone ids are not a host table")
+            Some("avoidZones: expected a rectangle or a known catalog zone id".into())
         }
+        InspectAvoidWire::Catalog(id) if !known_avoid_catalog_id(id) => {
+            Some(format!("avoidZones: unknown zone {id:?}"))
+        }
+        InspectAvoidWire::Catalog(_) => None,
         InspectAvoidWire::Rect {
             min_x,
             max_x,
             min_z,
             max_z,
             level,
-        } => {
-            (min_x > max_x || min_z > max_z || level.is_some_and(|level| !(0..=3).contains(&level)))
-                .then_some("avoidZones: a rectangle with inverted bounds or a level off 0-3")
-        }
+        } => (min_x > max_x
+            || min_z > max_z
+            || level.is_some_and(|level| !(0..=3).contains(&level)))
+            .then(|| "avoidZones: a rectangle with inverted bounds or a level off 0-3".into()),
     })
 }
 
@@ -714,6 +727,7 @@ pub(crate) struct Walk {
     radius: i32,
     allow_teleports: bool,
     avoid: Vec<InspectAvoidWire>,
+    cross: Vec<String>,
 }
 
 impl Walk {
@@ -725,17 +739,25 @@ impl Walk {
         allow_teleports: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
-        Self::begin_avoiding(dest, radius, timeout_ms, allow_teleports, Vec::new(), cx)
+        Self::begin_avoiding(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            Vec::new(),
+            Vec::new(),
+            cx,
+        )
     }
 
-    /// [`Self::begin`] for a route that keeps out of `avoid` (frozen
-    /// `WalkOptions.avoidZones`; validated by [`avoid_refusal`]).
+    /// [`Self::begin`] with rectangle/catalog avoids and named zone exemptions.
     pub(crate) fn begin_avoiding(
         dest: WorldTile,
         radius: i32,
         timeout_ms: u64,
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
+        cross: Vec<String>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         if here().is_none() {
@@ -761,6 +783,7 @@ impl Walk {
             dest,
             radius,
             allow_teleports,
+            cross,
             avoid,
         };
         cx.emit(walk.request());
@@ -807,6 +830,7 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
+                cross: self.cross.clone(),
                 avoid: self.avoid.clone(),
             }
         } else {
@@ -819,6 +843,7 @@ impl Walk {
                 allow_bank_fetch: true,
                 request_id: self.token,
                 avoid: self.avoid.clone(),
+                cross: self.cross.clone(),
             }
         }
     }
@@ -903,6 +928,9 @@ pub(crate) struct Resilient {
     /// Frozen `avoidZones` rectangles: every baked walk and the verify
     /// probe keep out of them (`WalkExecutor.ts:245, 701`).
     avoid: Vec<InspectAvoidWire>,
+    /// Per-walk zone names are preserved across repaths, but apply only to
+    /// this request.
+    cross: Vec<String>,
     logs: VecDeque<String>,
 }
 
@@ -933,6 +961,7 @@ impl Resilient {
             recover: true,
             avoid: Vec::new(),
             logs: VecDeque::new(),
+            cross: Vec::new(),
         }
     }
 
@@ -946,6 +975,10 @@ impl Resilient {
     /// Frozen `opts.avoidZones` (`Traversal.ts:34, 166`).
     pub(crate) fn with_avoid(mut self, avoid: Vec<InspectAvoidWire>) -> Self {
         self.avoid = avoid;
+        self
+    }
+    pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
+        self.cross = cross;
         self
     }
 
@@ -1156,6 +1189,7 @@ impl Resilient {
             self.timeout_ms,
             allow_teleports,
             self.avoid.clone(),
+            self.cross.clone(),
             cx,
         ) {
             Ok(walk) => {
@@ -1455,6 +1489,9 @@ impl Family for WalkResilient {
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
             return Begin::Refuse(reason.into());
         }
+        if opts.cross_zones.len() > 8 {
+            return Begin::Refuse("crossZones: more than 8 zone ids".into());
+        }
         if interrupted() {
             return Begin::Done(false);
         }
@@ -1475,6 +1512,7 @@ impl Family for WalkResilient {
         )
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
+        .with_cross(opts.cross_zones)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
             drive,

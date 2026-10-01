@@ -56,6 +56,40 @@ fn world_with(graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
     Arc::new(NavWorld::from_parts(open_world(8, 8), graph, banks))
 }
 
+fn zoned_line_world(mut graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
+    let collision = open_world(40, 1);
+    let zones = vec![nav::zones::Zone::npc(
+        tile(2, 0, 0),
+        0,
+        nav::zones::ZoneClass::Always,
+        u16::MAX,
+        0,
+    )];
+    let kinds = vec![nav::zones::ZoneKind::new(
+        "test-barrier",
+        "Test barrier",
+        123,
+        0,
+        false,
+        false,
+    )];
+    graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            zones,
+            kinds,
+            vec![],
+            vec![],
+            vec![],
+            collision.origin,
+            collision.width as u32,
+            collision.height as u32,
+            &graph.wilderness,
+        )
+        .unwrap(),
+    );
+    Arc::new(NavWorld::from_parts(collision, graph, banks))
+}
+
 fn named_cache() -> Arc<Cache> {
     let mut cache = Cache::default();
     while cache.npcs.len() <= 381 {
@@ -374,6 +408,84 @@ fn pre_state_stand_proof_rejects_post_only_stand() {
     assert!(!term.ok, "PRE stand search must fail without the coins");
     assert!(!term.bank_planned);
     assert_eq!(term.reason, "NoPath");
+}
+
+#[test]
+fn no_path_reason_names_the_active_zone_witness() {
+    let from = tile(0, 0, 0);
+    let capture = InspectCapture {
+        request_id: 3,
+        generation: 0,
+        world: zoned_line_world(TransportGraph::default(), vec![]),
+        state: WorldState::empty(),
+        bank: vec![],
+        from,
+        to: tile(4, 0, 0),
+        opts: FindOptions {
+            allow_wilderness: true,
+            ..FindOptions::default()
+        },
+        avoid: vec![],
+        cache: None,
+        obj_names: None,
+        test_barrier: None,
+        search_budget_strict: None,
+        search_budget_stand: None,
+        search_budget_post: None,
+    };
+    let term = calculate(&capture);
+    assert!(!term.ok);
+    assert!(term.reason.starts_with("blocked by danger zones:"));
+    assert!(term.reason.contains("test-barrier@2,0,0"));
+}
+
+#[test]
+fn bank_access_no_path_reason_names_the_active_zone_witness() {
+    let from = tile(0, 0, 0);
+    let destination = tile(0, 0, 1);
+    let stand = tile(4, 0, 0);
+    let mut graph = TransportGraph::default();
+    graph.at.entry(from).or_default().push(0);
+    graph.edges.push(edge(
+        TransportKind::Boat,
+        from,
+        destination,
+        381,
+        vec![(995, 1)],
+    ));
+    let capture = InspectCapture {
+        request_id: 4,
+        generation: 0,
+        world: zoned_line_world(
+            graph,
+            vec![BankStand {
+                name: "Bank booth".into(),
+                tile: stand,
+                access: BankAccess::Booth { op: 2 },
+            }],
+        ),
+        state: WorldState::empty(),
+        bank: vec![(995, 1)],
+        from,
+        to: destination,
+        opts: FindOptions {
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        avoid: vec![],
+        cache: None,
+        obj_names: None,
+        test_barrier: None,
+        search_budget_strict: None,
+        search_budget_stand: None,
+        search_budget_post: None,
+    };
+    let term = calculate(&capture);
+    assert!(!term.ok);
+    assert!(!term.bank_planned, "the bank-access path itself is blocked");
+    assert!(term.reason.starts_with("blocked by danger zones:"));
+    assert!(term.reason.contains("test-barrier@2,0,0"));
 }
 
 #[test]

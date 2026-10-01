@@ -1079,10 +1079,13 @@ pub(crate) struct WalkToArgs {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkToPolicy,
-    /// Frozen `avoidZones`: rectangles route around; a catalog zone id is
-    /// refused ([`avoid_refusal`]).
+    /// Frozen `avoidZones`: rectangles and known catalog ids are resolved
+    /// at the host arm site with the endpoints and combat level.
     #[serde(default)]
     avoid_zones: Vec<InspectAvoidWire>,
+    /// Per-walk named danger-zone exemptions.
+    #[serde(default)]
+    cross_zones: Vec<String>,
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
@@ -1096,22 +1099,25 @@ const WALK_TO_RADIUS: i32 = 2;
 const WALK_TO_MS: u64 = 300_000;
 
 impl WalkToArgs {
-    /// Options the host walk has no wire for, refused loud (never dropped).
-    fn refusal(&self) -> Option<&'static str> {
+    /// Options the host walk cannot honor are refused, never dropped.
+    fn refusal(&self) -> Option<String> {
         if let Some(reason) = avoid_refusal(&self.avoid_zones) {
             return Some(reason);
         }
+        if self.cross_zones.len() > 8 {
+            return Some("crossZones: more than 8 zone ids".into());
+        }
         if self.policy.allow_teleport_ids > 0 || self.policy.deny_teleport_ids > 0 {
-            return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter");
+            return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter".into());
         }
         if self.policy.use_ships == Some(false) || self.policy.use_shortcuts == Some(false) {
-            return Some("policy.useShips/useShortcuts false: the host router cannot exclude ships or shortcuts");
+            return Some("policy.useShips/useShortcuts false: the host router cannot exclude ships or shortcuts".into());
         }
         if self.path_follow {
-            return Some("pathFollow: the host follow has no stall/deviation overrides");
+            return Some("pathFollow: the host follow has no stall/deviation overrides".into());
         }
         if self.force_repath {
-            return Some("forceRepath: the host walk has no forced repath of a live route");
+            return Some("forceRepath: the host walk has no forced repath of a live route".into());
         }
         None
     }
@@ -1139,6 +1145,7 @@ pub(crate) struct WalkTo {
     timeout_ms: u64,
     allow_teleports: bool,
     avoid: Vec<InspectAvoidWire>,
+    cross: Vec<String>,
     phase: WalkToPhase,
     logs: VecDeque<String>,
     result: Option<bool>,
@@ -1170,13 +1177,23 @@ impl Family for WalkTo {
         let timeout_ms = args.timeout_ms.unwrap_or(WALK_TO_MS);
         let allow_teleports = args.allow_teleports(dest);
         let avoid = args.avoid_zones;
-        match Walk::begin_avoiding(dest, radius, timeout_ms, allow_teleports, avoid.clone(), cx) {
+        let cross = args.cross_zones;
+        match Walk::begin_avoiding(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            avoid.clone(),
+            cross.clone(),
+            cx,
+        ) {
             Ok(walk) => Begin::Run(Self {
                 dest,
                 radius,
                 timeout_ms,
                 allow_teleports,
                 avoid,
+                cross,
                 phase: WalkToPhase::Walking {
                     walk,
                     retried: false,
@@ -1285,6 +1302,7 @@ impl WalkTo {
                     self.timeout_ms,
                     self.allow_teleports,
                     self.avoid.clone(),
+                    self.cross.clone(),
                     cx,
                 ) {
                     Ok(walk) => {

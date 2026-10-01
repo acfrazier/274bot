@@ -745,6 +745,7 @@ mod tests {
                     allow_bank_fetch: false,
                     request_id: 0,
                     avoid: Vec::new(),
+                    cross: Vec::new(),
                 },
                 InteractReq::WalkNearestBank,
                 InteractReq::AbortWalk { request_id: 0 },
@@ -779,6 +780,7 @@ mod tests {
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
+                cross: Vec::new().into_boxed_slice(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
