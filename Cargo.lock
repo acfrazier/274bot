@@ -180,6 +180,7 @@ name = "api"
 version = "0.1.9"
 dependencies = [
  "client",
+ "flate2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -3771,10 +3772,12 @@ dependencies = [
  "parking_lot",
  "png",
  "pollster",
+ "proc-macro2",
  "scenario",
  "script",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "thiserror 2.0.20",
  "vault",
  "wgpu",

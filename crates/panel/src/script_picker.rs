@@ -8,10 +8,10 @@ use script::{ScriptKind, ScriptSource};
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
 pub const BROWSE_WINDOW_TITLE: &str = "Scripts";
 
-/// Font Awesome Free Solid PUA, merged into the default atlas the same way
-/// the rail merges DejaVu. Drawn as `ui.text` / button prefixes — no PushFont.
+/// Nerd Fonts' Font Awesome Solid PUA icons, included in the panel's 3270
+/// base font. Drawn as `ui.text` / button prefixes — no PushFont.
 pub const GLYPH_HOME: &str = "\u{f015}";
-pub const GLYPH_DESKTOP: &str = "\u{f390}";
+pub const GLYPH_DESKTOP: &str = "\u{f108}";
 pub const GLYPH_DOCUMENTS: &str = "\u{f15c}";
 pub const GLYPH_DOWNLOADS: &str = "\u{f019}";
 pub const GLYPH_FOLDER: &str = "\u{f07b}";
