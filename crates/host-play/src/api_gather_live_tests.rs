@@ -819,7 +819,7 @@ fn live_quest_progress_complete_cook_through_load_api() {
         false,
         vec![],
         |_| (None, None),
-        move |client, username, hold| {
+        move |client, username, frame_input| {
             if username != frame_account {
                 return;
             }
@@ -829,7 +829,7 @@ fn live_quest_progress_complete_cook_through_load_api() {
             }
             let mut snapshot = api::snapshot::GameSnapshot::new();
             snapshot.rebuild(client);
-            if hold {
+            if frame_input.hold {
                 return;
             }
             let result = (|| -> Result<(), String> {
