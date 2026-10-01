@@ -21,8 +21,13 @@ pub fn onset(
     if !changed || animation < 0 {
         return false;
     }
-    if local.target.is_some_and(|target| !engaged.is_some_and(|actor| actor.matches(target))) {
+    if local
+        .target
+        .is_some_and(|target| !engaged.is_some_and(|actor| actor.matches(target)))
+    {
         return false;
     }
-    tables.style_seq(animation).is_some_and(|mask| mask.contains(StyleMask::MELEE))
+    tables
+        .style_seq(animation)
+        .is_some_and(|mask| mask.contains(StyleMask::MELEE))
 }

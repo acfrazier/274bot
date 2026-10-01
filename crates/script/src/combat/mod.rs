@@ -1,15 +1,17 @@
 //! Shared observed-state combat machine. S3a admits melee Open/Hold only.
 //! Style/flick/PvP slices extend this core rather than adding another planner.
+mod arbiter;
 pub mod frame;
+mod machine;
 pub mod prayer;
 pub mod request;
 pub mod schedule;
 pub mod select;
 pub mod tables;
 pub mod threats;
-mod arbiter;
-mod machine;
-pub mod style { pub mod melee; }
+pub mod style {
+    pub mod melee;
+}
 pub use machine::Combat;
 pub use prayer::{ClearPrayers, PrayerSweepReport};
 pub use request::*;

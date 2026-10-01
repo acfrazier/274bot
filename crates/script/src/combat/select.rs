@@ -28,7 +28,11 @@ pub fn lines(danger: Option<i32>, hp_max: i32) -> Lines {
                 drink_gate: danger.saturating_mul(3).saturating_add(1),
             }
         }
-        None => Lines { emergency: half, eat: half, drink_gate: half },
+        None => Lines {
+            emergency: half,
+            eat: half,
+            drink_gate: half,
+        },
     }
 }
 
@@ -71,7 +75,9 @@ pub mod facts {
         if let Some(forced) = row.forced_max_hit {
             return to_hit(forced);
         }
-        if row.bespoke { return None; }
+        if row.bespoke {
+            return None;
+        }
         let main = match row.attack_kind {
             Some(NpcAttackKind::Ranged) => stat_max(row.ranged, row.rangebonus),
             Some(NpcAttackKind::Magic) => None,
@@ -86,7 +92,9 @@ pub mod facts {
         if let Some(forced) = row.forced_max_hit {
             return (forced >= 0).then_some(forced);
         }
-        if row.bespoke { return None; }
+        if row.bespoke {
+            return None;
+        }
         match style {
             StyleObs::Melee => stat_max(row.strength, row.strengthbonus),
             StyleObs::Ranged => stat_max(row.ranged, row.rangebonus),
@@ -114,20 +122,46 @@ pub mod facts {
         let value = match kind {
             DragonfireKind::Elvarg => {
                 (if shield { 10 } else { 70 })
-                    - if shield { 3 * i32::from(antifire) } else { 15 * i32::from(antifire) }
-                    - if shield { 3 * i32::from(protect_magic) } else { 15 * i32::from(protect_magic) }
+                    - if shield {
+                        3 * i32::from(antifire)
+                    } else {
+                        15 * i32::from(antifire)
+                    }
+                    - if shield {
+                        3 * i32::from(protect_magic)
+                    } else {
+                        15 * i32::from(protect_magic)
+                    }
             }
             DragonfireKind::Chromatic => {
-                if shield { if antifire { 0 } else { 5 } }
-                else if antifire && protect_magic { 0 }
-                else if antifire { 35 }
-                else if protect_magic { 10 }
-                else { 50 }
+                if shield {
+                    if antifire {
+                        0
+                    } else {
+                        5
+                    }
+                } else if antifire && protect_magic {
+                    0
+                } else if antifire {
+                    35
+                } else if protect_magic {
+                    10
+                } else {
+                    50
+                }
             }
             DragonfireKind::Metal => {
-                if shield { if antifire { 0 } else { 5 } }
-                else if antifire { 35 }
-                else { 50 }
+                if shield {
+                    if antifire {
+                        0
+                    } else {
+                        5
+                    }
+                } else if antifire {
+                    35
+                } else {
+                    50
+                }
             }
             DragonfireKind::Other => return None,
         };
@@ -137,7 +171,9 @@ pub mod facts {
     /// Player hit 9 under a matching protect implies at least max hit 15.
     #[inline]
     pub fn player_max_hit_floor(hit: i32, matching_protect: bool) -> Option<u8> {
-        if hit < 0 { return None; }
+        if hit < 0 {
+            return None;
+        }
         let maximum = if matching_protect {
             hit.saturating_mul(5).saturating_add(2) / 3
         } else {
@@ -149,13 +185,17 @@ pub mod facts {
     pub(super) fn stat_max(stat: Option<i32>, bonus: Option<i32>) -> Option<i32> {
         let stat = i64::from(stat?);
         let bonus = i64::from(bonus?);
-        if stat < 0 { return None; }
+        if stat < 0 {
+            return None;
+        }
         let hit = ((stat + 9) * (bonus + 64) + 320) / 640;
         i32::try_from(hit).ok().map(|value| value.max(0))
     }
 
     fn to_hit(value: i32) -> Option<u8> {
-        if value < 0 { return None; }
+        if value < 0 {
+            return None;
+        }
         u8::try_from(value).ok()
     }
 }
@@ -163,20 +203,30 @@ pub mod facts {
 /// Return true only for the observed auto-retaliate-on encoding. Missing or
 /// non-boolean varp values remain unknown for G4b's fail-closed decision.
 pub fn retaliate(frame: &Frame<'_>) -> Option<bool> {
-    frame.varps.iter().find(|row| row.index == super::OPTION_NODEF).and_then(|row| match row.value {
-        0 => Some(true),
-        1 => Some(false),
-        _ => None,
-    })
+    frame
+        .varps
+        .iter()
+        .find(|row| row.index == super::OPTION_NODEF)
+        .and_then(|row| match row.value {
+            0 => Some(true),
+            1 => Some(false),
+            _ => None,
+        })
 }
 
 /// Existing HuntFighter rule re-expressed over the borrowed snapshot actor.
 pub fn taken_by_another(npc: &NpcView, engaged: Option<ActorRef>, local_slot: usize) -> bool {
-    if engaged.is_some_and(|actor| actor.kind == ActorKind::Npc && usize::from(actor.index) == npc.index) {
+    if engaged
+        .is_some_and(|actor| actor.kind == ActorKind::Npc && usize::from(actor.index) == npc.index)
+    {
         return false;
     }
-    let targets_me = npc.target.is_some_and(|target| target.kind == ActorKind::Player && target.index == local_slot);
-    let targets_another = npc.target.is_some_and(|target| target.kind == ActorKind::Player && target.index != local_slot);
+    let targets_me = npc
+        .target
+        .is_some_and(|target| target.kind == ActorKind::Player && target.index == local_slot);
+    let targets_another = npc
+        .target
+        .is_some_and(|target| target.kind == ActorKind::Player && target.index != local_slot);
     targets_another || (npc.in_combat && !targets_me)
 }
 
@@ -184,15 +234,23 @@ pub fn taken_by_another(npc: &NpcView, engaged: Option<ActorRef>, local_slot: us
 /// still a threat, but it is never selected or emitted as a combat target.
 pub fn actor_attackable(frame: &Frame<'_>, actor: ActorRef) -> bool {
     match actor.kind {
-        ActorKind::Npc => frame.npcs.iter().find(|row| row.index == usize::from(actor.index))
+        ActorKind::Npc => frame
+            .npcs
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
             .is_some_and(|row| has_attack(&row.actions)),
-        ActorKind::Player => frame.players.iter().find(|row| row.index == usize::from(actor.index))
+        ActorKind::Player => frame
+            .players
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
             .is_some_and(|row| has_attack(&row.actor.actions)),
     }
 }
 
 fn has_attack(actions: &[Option<String>]) -> bool {
-    actions.iter().any(|action| action.as_deref() == Some("Attack"))
+    actions
+        .iter()
+        .any(|action| action.as_deref() == Some("Attack"))
 }
 
 /// Pick an attackable target without allocating or weakening actor identity.
@@ -205,14 +263,22 @@ pub fn pick_target(
     seed: u64,
 ) -> Option<ActorRef> {
     match &request.target {
-        Target::Npc { types, pick, not_targeting_others } => {
+        Target::Npc {
+            types,
+            pick,
+            not_targeting_others,
+        } => {
             let origin = request.stand.unwrap_or(frame.here);
             let mut best: Option<(&NpcView, u64, u64)> = None;
             let mut random_state = seed | 1;
             let mut seen = 0u64;
             for npc in frame.npcs.iter().filter(|npc| {
                 !corpse(npc)
-                    && npc.r#type.is_some_and(|id| types.iter().any(|wanted| usize::try_from(*wanted).ok() == Some(id)))
+                    && npc.r#type.is_some_and(|id| {
+                        types
+                            .iter()
+                            .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
+                    })
                     && within_search_bounds(npc.tile, request.search_bounds.as_deref())
                     && tile_distance(npc.tile, origin) <= u32::from(request.engage_radius)
                     && (!not_targeting_others || !taken_by_another(npc, None, frame.me()))
@@ -228,7 +294,7 @@ pub fn pick_target(
                         random_state ^= random_state << 13;
                         random_state ^= random_state >> 7;
                         random_state ^= random_state << 17;
-                        random_state % seen == 0
+                        random_state.is_multiple_of(seen)
                     }
                     (_, None) => true,
                 };
@@ -238,42 +304,68 @@ pub fn pick_target(
             }
             best.and_then(|(npc, _, _)| npc_actor(npc))
         }
-        Target::Attacker { npcs, players } => threats.iter(frame.tick)
+        Target::Attacker { npcs, players } => threats
+            .iter(frame.tick)
             .filter(|threat| match threat.actor.kind {
                 ActorKind::Npc => *npcs,
                 ActorKind::Player => *players,
             })
-            .filter(|threat| actor_in_search_bounds(frame, threat.actor, request.search_bounds.as_deref()))
+            .filter(|threat| {
+                actor_in_search_bounds(frame, threat.actor, request.search_bounds.as_deref())
+            })
             .filter(|threat| actor_attackable(frame, threat.actor))
             .max_by_key(|threat| {
                 let magnitude = threat.max_hit_est().unwrap_or(u8::MAX);
-                (magnitude, u16::MAX.wrapping_sub(frame.tick.wrapping_sub(threat.last_seen)))
+                (
+                    magnitude,
+                    u16::MAX.wrapping_sub(frame.tick.wrapping_sub(threat.last_seen)),
+                )
             })
             .map(|threat| threat.actor),
-        Target::Player { name } => frame.players.iter().find(|player| {
-            player.actor.name.as_deref() == Some(name.as_ref())
-                && within_search_bounds(player.actor.tile, request.search_bounds.as_deref())
-                && player_actor(player).is_some_and(|actor| actor_attackable(frame, actor))
-        }).and_then(player_actor),
+        Target::Player { name } => frame
+            .players
+            .iter()
+            .find(|player| {
+                player.actor.name.as_deref() == Some(name.as_ref())
+                    && within_search_bounds(player.actor.tile, request.search_bounds.as_deref())
+                    && player_actor(player).is_some_and(|actor| actor_attackable(frame, actor))
+            })
+            .and_then(player_actor),
     }
 }
 #[inline]
-fn actor_in_search_bounds(frame: &Frame<'_>, actor: ActorRef, bounds: Option<&[SceneRegionInput]>) -> bool {
+fn actor_in_search_bounds(
+    frame: &Frame<'_>,
+    actor: ActorRef,
+    bounds: Option<&[SceneRegionInput]>,
+) -> bool {
     match actor.kind {
-        ActorKind::Npc => frame.npcs.iter().find(|row| row.index == usize::from(actor.index))
+        ActorKind::Npc => frame
+            .npcs
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
             .is_some_and(|row| within_search_bounds(row.tile, bounds)),
-        ActorKind::Player => frame.players.iter().find(|row| row.index == usize::from(actor.index))
+        ActorKind::Player => frame
+            .players
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
             .is_some_and(|row| within_search_bounds(row.actor.tile, bounds)),
     }
 }
 #[inline]
 fn npc_actor(npc: &NpcView) -> Option<ActorRef> {
-    Some(ActorRef { kind: ActorKind::Npc, index: u16::try_from(npc.index).ok()? })
+    Some(ActorRef {
+        kind: ActorKind::Npc,
+        index: u16::try_from(npc.index).ok()?,
+    })
 }
 
 #[inline]
 fn player_actor(player: &api::snapshot::PlayerView) -> Option<ActorRef> {
-    Some(ActorRef { kind: ActorKind::Player, index: u16::try_from(player.index).ok()? })
+    Some(ActorRef {
+        kind: ActorKind::Player,
+        index: u16::try_from(player.index).ok()?,
+    })
 }
 
 /// `Target::Attacker` remains a threat-based request; this helper distinguishes
@@ -283,7 +375,9 @@ pub fn has_unattackable_allowed(
     frame: &Frame<'_>,
     threats: &ThreatSet,
 ) -> bool {
-    let Target::Attacker { npcs, players } = &request.target else { return false; };
+    let Target::Attacker { npcs, players } = &request.target else {
+        return false;
+    };
     threats.iter(frame.tick).any(|threat| {
         let allowed = match threat.actor.kind {
             ActorKind::Npc => *npcs,
@@ -297,10 +391,7 @@ pub fn has_unattackable_allowed(
 
 /// Candidate protect prayer for an attack style. Prayer tiers are generated
 /// in level order: Magic, Missiles, Melee.
-pub(crate) fn protect_fact<'a>(
-    tables: &'a CombatTables,
-    style: StyleObs,
-) -> Option<&'a PrayerFact> {
+pub(crate) fn protect_fact(tables: &CombatTables, style: StyleObs) -> Option<&PrayerFact> {
     let tier = match style {
         StyleObs::Magic | StyleObs::Dragonfire => 0,
         StyleObs::Ranged => 1,
@@ -320,15 +411,18 @@ pub(crate) fn style_from_mask(mask: StyleMask) -> StyleObs {
 }
 
 pub(crate) fn active_protect(frame: &Frame<'_>, tables: &CombatTables) -> Option<StyleObs> {
-    [StyleObs::Melee, StyleObs::Ranged, StyleObs::Magic].into_iter().find(|style| {
-        protect_fact(tables, *style).is_some_and(|row| prayer_on(frame, row.varp))
-    })
+    [StyleObs::Melee, StyleObs::Ranged, StyleObs::Magic]
+        .into_iter()
+        .find(|style| protect_fact(tables, *style).is_some_and(|row| prayer_on(frame, row.varp)))
 }
 
 #[inline]
 pub(crate) fn prayer_on(frame: &Frame<'_>, varp: i32) -> bool {
-    varp.checked_sub(83).and_then(|index| usize::try_from(index).ok())
-        .and_then(|index| frame.prayers.get(index)).copied().unwrap_or(false)
+    varp.checked_sub(83)
+        .and_then(|index| usize::try_from(index).ok())
+        .and_then(|index| frame.prayers.get(index))
+        .copied()
+        .unwrap_or(false)
 }
 
 /// Maximum incoming damage of one threat under its current/selected style.
@@ -343,17 +437,30 @@ pub(crate) fn residual(
     match threat.actor.kind {
         ActorKind::Player => {
             let maximum = i32::from(threat.max_hit_est()?);
-            if protect == Some(style) { Some(maximum.saturating_mul(6) / 10) } else { Some(maximum) }
+            if protect == Some(style) {
+                Some(maximum.saturating_mul(6) / 10)
+            } else {
+                Some(maximum)
+            }
         }
         ActorKind::Npc => {
             let row = tables.npc(threat.ident)?;
             if style == StyleObs::Dragonfire {
-                return row.dragonfire.and_then(|kind| facts::dragonfire_residual(
-                    kind, shield, antifire, protect == Some(StyleObs::Magic),
-                ));
+                return row.dragonfire.and_then(|kind| {
+                    facts::dragonfire_residual(
+                        kind,
+                        shield,
+                        antifire,
+                        protect == Some(StyleObs::Magic),
+                    )
+                });
             }
             let maximum = facts::npc_style_max_hit(row, style)?;
-            if protect == Some(style) { Some(0) } else { Some(maximum) }
+            if protect == Some(style) {
+                Some(0)
+            } else {
+                Some(maximum)
+            }
         }
     }
 }
@@ -378,39 +485,69 @@ pub fn wanted_protect<'a>(
 
     for threat in threats.iter(tick) {
         any_threat = true;
-        let mixed = threat.actor.kind == ActorKind::Npc && tables.npc(threat.ident).is_some_and(|row| {
-            row.dragonfire.is_some() || row.attack_kind == Some(NpcAttackKind::Mixed)
-        });
-        for style in [StyleObs::Melee, StyleObs::Ranged, StyleObs::Magic, StyleObs::Dragonfire] {
+        let mixed = threat.actor.kind == ActorKind::Npc
+            && tables.npc(threat.ident).is_some_and(|row| {
+                row.dragonfire.is_some() || row.attack_kind == Some(NpcAttackKind::Mixed)
+            });
+        for style in [
+            StyleObs::Melee,
+            StyleObs::Ranged,
+            StyleObs::Magic,
+            StyleObs::Dragonfire,
+        ] {
             let count = if mixed {
                 let events = threat.recent_count(style);
-                if events > 0 { events } else if threat.history_len() == 0 && style == threat.style { 1 } else { 0 }
-            } else if style == effective_style(threat) { 1 } else { 0 };
-            if count == 0 { continue; }
+                if events > 0 {
+                    events
+                } else if threat.history_len() == 0 && style == threat.style {
+                    1
+                } else {
+                    0
+                }
+            } else if style == effective_style(threat) {
+                1
+            } else {
+                0
+            };
+            if count == 0 {
+                continue;
+            }
             let age = tick.wrapping_sub(threat.last_seen);
-            let event_age = age.saturating_mul(8)
-                .saturating_add(u16::from(threat.recent_position(style).unwrap_or(threat.history_len())));
+            let event_age = age.saturating_mul(8).saturating_add(u16::from(
+                threat
+                    .recent_position(style)
+                    .unwrap_or(threat.history_len()),
+            ));
             for (index, protect_style) in protect_styles.into_iter().enumerate() {
                 let possible = can_protect_style(style, protect_style);
-                if !possible { continue; }
+                if !possible {
+                    continue;
+                }
                 let no_protect = residual(threat, style, None, tables, shield, antifire);
-                let with_protect = residual(threat, style, Some(protect_style), tables, shield, antifire);
+                let with_protect =
+                    residual(threat, style, Some(protect_style), tables, shield, antifire);
                 match (no_protect, with_protect) {
                     (Some(no), Some(with)) => {
                         let saving = i64::from(no.saturating_sub(with).max(0)) * i64::from(count);
                         scores[index] = scores[index].saturating_add(saving);
                         largest_known = largest_known.max(saving);
-                        if saving > 0 && event_age < newest[index] { newest[index] = event_age; }
+                        if saving > 0 && event_age < newest[index] {
+                            newest[index] = event_age;
+                        }
                     }
                     _ => {
                         unknown[index] = unknown[index].saturating_add(count);
-                        if event_age < newest[index] { newest[index] = event_age; }
+                        if event_age < newest[index] {
+                            newest[index] = event_age;
+                        }
                     }
                 }
             }
         }
     }
-    if !any_threat { return None; }
+    if !any_threat {
+        return None;
+    }
 
     let proxy = largest_known.max(1);
     let best = (0..3).max_by_key(|index| {
@@ -419,11 +556,17 @@ pub fn wanted_protect<'a>(
     })?;
     let style = protect_styles[best];
     // No known or unknown saving means no protect is wanted.
-    (scores[best] > 0 || unknown[best] > 0).then(|| protect_fact(tables, style)).flatten()
+    (scores[best] > 0 || unknown[best] > 0)
+        .then(|| protect_fact(tables, style))
+        .flatten()
 }
 
 fn effective_style(threat: &Threat) -> StyleObs {
-    if threat.style == StyleObs::Unknown { threat.fallback_style() } else { threat.style }
+    if threat.style == StyleObs::Unknown {
+        threat.fallback_style()
+    } else {
+        threat.style
+    }
 }
 
 fn can_protect_style(attack: StyleObs, protect: StyleObs) -> bool {
@@ -435,16 +578,20 @@ fn corpse(npc: &NpcView) -> bool {
 }
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> u32 {
-    if a.level != b.level { return u32::MAX; }
+    if a.level != b.level {
+        return u32::MAX;
+    }
     a.x.abs_diff(b.x).max(a.z.abs_diff(b.z))
 }
 #[inline]
 fn within_search_bounds(tile: api::WorldTile, bounds: Option<&[SceneRegionInput]>) -> bool {
-    bounds.map_or(true, |regions| regions.iter().any(|region| {
-        region.level == tile.level
-            && (region.min_x..=region.max_x).contains(&tile.x)
-            && (region.min_z..=region.max_z).contains(&tile.z)
-    }))
+    bounds.is_none_or(|regions| {
+        regions.iter().any(|region| {
+            region.level == tile.level
+                && (region.min_x..=region.max_x).contains(&tile.x)
+                && (region.min_z..=region.max_z).contains(&tile.z)
+        })
+    })
 }
 
 fn health_rank(npc: &NpcView) -> u64 {
@@ -507,10 +654,22 @@ mod tests {
         assert_eq!(npc_max_hit(&warlord), Some(9));
         assert_eq!(npc_max_hit(&elvarg), Some(9));
         assert_eq!(npc_max_hit(&dagannoth), Some(24));
-        assert_eq!(facts::npc_style_max_hit(&dagannoth, StyleObs::Ranged), Some(24));
+        assert_eq!(
+            facts::npc_style_max_hit(&dagannoth, StyleObs::Ranged),
+            Some(24)
+        );
         assert_eq!(npc_max_hit(&bespoke), None);
         assert_eq!(facts::npc_style_max_hit(&bespoke, StyleObs::Melee), None);
-        assert_eq!(facts::npc_max_hit(&npc_fact(None, None, Some(NpcAttackKind::Magic), None, None)), None);
+        assert_eq!(
+            facts::npc_max_hit(&npc_fact(
+                None,
+                None,
+                Some(NpcAttackKind::Magic),
+                None,
+                None
+            )),
+            None
+        );
     }
 
     #[test]
@@ -523,40 +682,157 @@ mod tests {
 
     #[test]
     fn dragon_kinds_follow_their_distinct_protection_tables() {
-        assert_eq!(dragonfire_residual(DragonfireKind::Elvarg, false, false, false), Some(70));
-        assert_eq!(dragonfire_residual(DragonfireKind::Elvarg, true, false, false), Some(10));
-        assert_eq!(dragonfire_residual(DragonfireKind::Elvarg, true, true, true), Some(4));
-        assert_eq!(dragonfire_residual(DragonfireKind::Elvarg, true, false, true), Some(7));
-        assert_eq!(dragonfire_residual(DragonfireKind::Chromatic, false, true, false), Some(35));
-        assert_eq!(dragonfire_residual(DragonfireKind::Chromatic, false, false, true), Some(10));
-        assert_eq!(dragonfire_residual(DragonfireKind::Chromatic, false, true, true), Some(0));
-        assert_eq!(dragonfire_residual(DragonfireKind::Chromatic, true, false, true), Some(5));
-        assert_eq!(dragonfire_residual(DragonfireKind::Chromatic, true, true, false), Some(0));
-        assert_eq!(dragonfire_residual(DragonfireKind::Metal, false, true, true), Some(35));
-        assert_eq!(dragonfire_residual(DragonfireKind::Metal, false, false, true), Some(50));
-        assert_eq!(dragonfire_residual(DragonfireKind::Other, false, false, true), None);
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Elvarg, false, false, false),
+            Some(70)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Elvarg, true, false, false),
+            Some(10)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Elvarg, true, true, true),
+            Some(4)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Elvarg, true, false, true),
+            Some(7)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Chromatic, false, true, false),
+            Some(35)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Chromatic, false, false, true),
+            Some(10)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Chromatic, false, true, true),
+            Some(0)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Chromatic, true, false, true),
+            Some(5)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Chromatic, true, true, false),
+            Some(0)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Metal, false, true, true),
+            Some(35)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Metal, false, false, true),
+            Some(50)
+        );
+        assert_eq!(
+            dragonfire_residual(DragonfireKind::Other, false, false, true),
+            None
+        );
     }
 
     #[test]
     fn derived_lines_match_known_and_unknown_danger() {
-        assert_eq!(lines(Some(9), 40), Lines { emergency: 10, eat: 19, drink_gate: 28 });
-        assert_eq!(lines(None, 40), Lines { emergency: 20, eat: 20, drink_gate: 20 });
+        assert_eq!(
+            lines(Some(9), 40),
+            Lines {
+                emergency: 10,
+                eat: 19,
+                drink_gate: 28
+            }
+        );
+        assert_eq!(
+            lines(None, 40),
+            Lines {
+                emergency: 20,
+                eat: 20,
+                drink_gate: 20
+            }
+        );
         assert_eq!(lines(Some(0), 40).eat, 1);
     }
     #[test]
     fn acquisition_bounds_are_inclusive_level_aware_unions() {
         let regions = [
-            SceneRegionInput { min_x: 10, min_z: 20, max_x: 12, max_z: 22, level: 0 },
-            SceneRegionInput { min_x: 20, min_z: 30, max_x: 21, max_z: 31, level: 1 },
+            SceneRegionInput {
+                min_x: 10,
+                min_z: 20,
+                max_x: 12,
+                max_z: 22,
+                level: 0,
+            },
+            SceneRegionInput {
+                min_x: 20,
+                min_z: 30,
+                max_x: 21,
+                max_z: 31,
+                level: 1,
+            },
         ];
-        assert!(within_search_bounds(api::WorldTile { x: 10, z: 20, level: 0 }, Some(&regions)));
-        assert!(within_search_bounds(api::WorldTile { x: 12, z: 22, level: 0 }, Some(&regions)));
-        assert!(within_search_bounds(api::WorldTile { x: 20, z: 30, level: 1 }, Some(&regions)));
-        assert!(!within_search_bounds(api::WorldTile { x: 13, z: 22, level: 0 }, Some(&regions)));
-        assert!(!within_search_bounds(api::WorldTile { x: 15, z: 25, level: 0 }, Some(&regions)));
-        assert!(!within_search_bounds(api::WorldTile { x: 10, z: 20, level: 1 }, Some(&regions[..1])));
-        assert!(!within_search_bounds(api::WorldTile { x: 10, z: 20, level: 0 }, Some(&[])));
-        assert!(within_search_bounds(api::WorldTile { x: 500, z: -500, level: 3 }, None));
+        assert!(within_search_bounds(
+            api::WorldTile {
+                x: 10,
+                z: 20,
+                level: 0
+            },
+            Some(&regions)
+        ));
+        assert!(within_search_bounds(
+            api::WorldTile {
+                x: 12,
+                z: 22,
+                level: 0
+            },
+            Some(&regions)
+        ));
+        assert!(within_search_bounds(
+            api::WorldTile {
+                x: 20,
+                z: 30,
+                level: 1
+            },
+            Some(&regions)
+        ));
+        assert!(!within_search_bounds(
+            api::WorldTile {
+                x: 13,
+                z: 22,
+                level: 0
+            },
+            Some(&regions)
+        ));
+        assert!(!within_search_bounds(
+            api::WorldTile {
+                x: 15,
+                z: 25,
+                level: 0
+            },
+            Some(&regions)
+        ));
+        assert!(!within_search_bounds(
+            api::WorldTile {
+                x: 10,
+                z: 20,
+                level: 1
+            },
+            Some(&regions[..1])
+        ));
+        assert!(!within_search_bounds(
+            api::WorldTile {
+                x: 10,
+                z: 20,
+                level: 0
+            },
+            Some(&[])
+        ));
+        assert!(within_search_bounds(
+            api::WorldTile {
+                x: 500,
+                z: -500,
+                level: 3
+            },
+            None
+        ));
     }
-
 }

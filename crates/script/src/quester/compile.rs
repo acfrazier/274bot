@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn unknown_handler_is_rejected() {
         let err = compile_err(|document| {
-            document.roles[0].sequences[0].steps[0].kind = "combat".into();
+            document.roles[0].sequences[0].steps[0].kind = "no_such_family".into();
         });
         assert_eq!(err.code.as_ref(), "unknown-handler");
     }

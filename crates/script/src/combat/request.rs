@@ -1,8 +1,8 @@
 //! One engagement's immutable intent and compact, observed outcome.
+use api::gather_methods::SceneRegionInput;
 use api::quest_progress::EvidenceStamp;
 pub use api::snapshot::ActorKind;
 use api::WorldTile;
-use api::gather_methods::SceneRegionInput;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -17,30 +17,71 @@ impl ActorRef {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style { Melee, Ranged, Mage }
+pub enum Style {
+    Melee,
+    Ranged,
+    Mage,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
-pub enum MeleeMode { Accurate, Aggressive, Defensive, Controlled }
+pub enum MeleeMode {
+    Accurate,
+    Aggressive,
+    Defensive,
+    Controlled,
+}
 impl MeleeMode {
     pub(crate) const fn xp_mask(self) -> u8 {
-        match self { Self::Accurate => 1, Self::Aggressive => 2, Self::Defensive => 4, Self::Controlled => 7 }
+        match self {
+            Self::Accurate => 1,
+            Self::Aggressive => 2,
+            Self::Defensive => 4,
+            Self::Controlled => 7,
+        }
     }
     pub(crate) const fn from_code(code: u8) -> Option<Self> {
-        match code { 0 => Some(Self::Accurate), 1 => Some(Self::Aggressive), 2 => Some(Self::Defensive), 3 => Some(Self::Controlled), _ => None }
+        match code {
+            0 => Some(Self::Accurate),
+            1 => Some(Self::Aggressive),
+            2 => Some(Self::Defensive),
+            3 => Some(Self::Controlled),
+            _ => None,
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PrayerMode { #[default] Hold, Flick }
+pub enum PrayerMode {
+    #[default]
+    Hold,
+    Flick,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tactic { Open, Safespot, LureCorner }
+pub enum Tactic {
+    Open,
+    Safespot,
+    LureCorner,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pick { Nearest, Random, LowestHealth }
+pub enum Pick {
+    Nearest,
+    Random,
+    LowestHealth,
+}
 #[derive(Debug, Clone)]
 pub enum Target {
-    Npc { types: Arc<[i32]>, pick: Pick, not_targeting_others: bool },
-    Attacker { npcs: bool, players: bool },
-    Player { name: Arc<str> },
+    Npc {
+        types: Arc<[i32]>,
+        pick: Pick,
+        not_targeting_others: bool,
+    },
+    Attacker {
+        npcs: bool,
+        players: bool,
+    },
+    Player {
+        name: Arc<str>,
+    },
 }
 /// Resolved kit rows, not a loadout resolver. The caller applies the overlay
 /// and selected-content resolution once before constructing this shared DTO.
@@ -50,7 +91,9 @@ pub struct CompiledKit {
     pub carry: Arc<[(i32, u32)]>,
 }
 #[derive(Debug, Clone)]
-pub struct SpellRef { pub alias: Arc<str> }
+pub struct SpellRef {
+    pub alias: Arc<str>,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Allowances {
     pub prayer: bool,
@@ -61,7 +104,13 @@ pub struct Allowances {
 }
 impl Default for Allowances {
     fn default() -> Self {
-        Self { prayer: true, food: true, potions: true, equipment: true, retaliate_toggle: true }
+        Self {
+            prayer: true,
+            food: true,
+            potions: true,
+            equipment: true,
+            retaliate_toggle: true,
+        }
     }
 }
 #[derive(Debug, Clone)]
@@ -72,11 +121,22 @@ pub enum Fallback {
     Fight,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntruderRule { Ignore, FightBack }
+pub enum IntruderRule {
+    Ignore,
+    FightBack,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IntruderPolicy { pub player: IntruderRule, pub npc: IntruderRule }
+pub struct IntruderPolicy {
+    pub player: IntruderRule,
+    pub npc: IntruderRule,
+}
 impl Default for IntruderPolicy {
-    fn default() -> Self { Self { player: IntruderRule::FightBack, npc: IntruderRule::Ignore } }
+    fn default() -> Self {
+        Self {
+            player: IntruderRule::FightBack,
+            npc: IntruderRule::Ignore,
+        }
+    }
 }
 #[derive(Debug, Clone)]
 pub struct CombatRequest {
@@ -101,27 +161,63 @@ pub struct CombatRequest {
 impl Default for CombatRequest {
     fn default() -> Self {
         Self {
-            target: Target::Attacker { npcs: true, players: true },
-            tactic: Tactic::Open, style: Style::Melee, kit: None, spells: None,
+            target: Target::Attacker {
+                npcs: true,
+                players: true,
+            },
+            tactic: Tactic::Open,
+            style: Style::Melee,
+            kit: None,
+            spells: None,
             melee_mode: None,
-            stand: None, search_bounds: None, engage_radius: 12, lost_radius: 20, budget_ticks: 1500,
-            allow: Allowances::default(), fallback: Fallback::Abort,
-            intruder: IntruderPolicy::default(), retaliate: true,
-            prayer_mode: PrayerMode::Hold, until_ticks: 0,
+            stand: None,
+            search_bounds: None,
+            engage_radius: 12,
+            lost_radius: 20,
+            budget_ticks: 1500,
+            allow: Allowances::default(),
+            fallback: Fallback::Abort,
+            intruder: IntruderPolicy::default(),
+            retaliate: true,
+            prayer_mode: PrayerMode::Hold,
+            until_ticks: 0,
         }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum Unprotected { NoFood, Dragonfire, NoAmmo, NoRunes }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum PrepItem { Weapon, Shield, Ammo, Staff, Arm }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum AbortReason {
-    Unprotected(Unprotected), Unattackable, SafespotBroken, Retreated,
-    RetreatFailed, PrepFailed(PrepItem), Unresponsive,
+pub enum Unprotected {
+    NoFood,
+    Dragonfire,
+    NoAmmo,
+    NoRunes,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum CombatEnd { Killed, TargetGone, NoTarget, Budget, Died, Aborted(AbortReason) }
+pub enum PrepItem {
+    Weapon,
+    Shield,
+    Ammo,
+    Staff,
+    Arm,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum AbortReason {
+    Unprotected(Unprotected),
+    Unattackable,
+    SafespotBroken,
+    Retreated,
+    RetreatFailed,
+    PrepFailed(PrepItem),
+    Unresponsive,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum CombatEnd {
+    Killed,
+    TargetGone,
+    NoTarget,
+    Budget,
+    Died,
+    Aborted(AbortReason),
+}
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct CombatReport {
     pub end: CombatEnd,
@@ -151,7 +247,10 @@ pub struct CombatReport {
 }
 const _: () = assert!(std::mem::size_of::<CombatReport>() <= 80);
 
-fn serialize_evidence<S: serde::Serializer>(stamp: &EvidenceStamp, serializer: S) -> Result<S::Ok, S::Error> {
+fn serialize_evidence<S: serde::Serializer>(
+    stamp: &EvidenceStamp,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
     use serde::ser::SerializeStruct;
     let mut value = serializer.serialize_struct("Evidence", 2)?;
     value.serialize_field("tick", &stamp.tick)?;

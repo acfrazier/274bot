@@ -99,7 +99,10 @@ pub struct Threat {
 
 impl Threat {
     const EMPTY: Self = Self {
-        actor: ActorRef { kind: ActorKind::Npc, index: 0 },
+        actor: ActorRef {
+            kind: ActorKind::Npc,
+            index: 0,
+        },
         ident: 0,
         last_cycle: -1,
         animation_seen: -1,
@@ -115,7 +118,14 @@ impl Threat {
         meta: 0,
     };
 
-    fn new(actor: ActorRef, ident: i32, style: StyleObs, rate: u8, max_hit: Option<u8>, tick: u16) -> Self {
+    fn new(
+        actor: ActorRef,
+        ident: i32,
+        style: StyleObs,
+        rate: u8,
+        max_hit: Option<u8>,
+        tick: u16,
+    ) -> Self {
         let mut row = Self {
             actor,
             ident,
@@ -163,12 +173,15 @@ impl Threat {
     pub fn recent_count(&self, style: StyleObs) -> u8 {
         let wanted = style as u32;
         let len = self.history_len();
-        (0..len).filter(|slot| ((self.recent >> (u32::from(*slot) * 3)) & 0b111) == wanted).count() as u8
+        (0..len)
+            .filter(|slot| ((self.recent >> (u32::from(*slot) * 3)) & 0b111) == wanted)
+            .count() as u8
     }
     #[inline]
     pub fn recent_position(&self, style: StyleObs) -> Option<u8> {
         let wanted = style as u32;
-        (0..self.history_len()).find(|slot| ((self.recent >> (u32::from(*slot) * 3)) & 0b111) == wanted)
+        (0..self.history_len())
+            .find(|slot| ((self.recent >> (u32::from(*slot) * 3)) & 0b111) == wanted)
     }
 
     #[inline]
@@ -207,7 +220,11 @@ impl Threat {
     }
 
     fn set_fact_live(&mut self, live: bool) {
-        if live { self.meta |= THREAT_FACT_LIVE; } else { self.meta &= !THREAT_FACT_LIVE; }
+        if live {
+            self.meta |= THREAT_FACT_LIVE;
+        } else {
+            self.meta &= !THREAT_FACT_LIVE;
+        }
     }
 
     fn mark_event(&mut self) {
@@ -217,7 +234,8 @@ impl Threat {
     fn add_style_event(&mut self, style: StyleObs) {
         let len = self.history_len();
         self.recent = ((self.recent << 3) | u32::from(style as u8)) & 0x00ff_ffff;
-        self.meta = (self.meta & !HISTORY_MASK) | (u16::from(len.saturating_add(1).min(8)) << HISTORY_SHIFT);
+        self.meta = (self.meta & !HISTORY_MASK)
+            | (u16::from(len.saturating_add(1).min(8)) << HISTORY_SHIFT);
     }
     fn refine_latest_style(&mut self, style: StyleObs) {
         if self.history_len() == 0 {
@@ -298,10 +316,18 @@ pub struct HitOnsets {
 }
 
 impl HitOnsets {
-    const EMPTY_EVENT: HitEvent = HitEvent { slot: 0, value: 0, kind: -1 };
+    const EMPTY_EVENT: HitEvent = HitEvent {
+        slot: 0,
+        value: 0,
+        kind: -1,
+    };
 
     const fn empty() -> Self {
-        Self { rows: [Self::EMPTY_EVENT; 4], len: 0, next: 0 }
+        Self {
+            rows: [Self::EMPTY_EVENT; 4],
+            len: 0,
+            next: 0,
+        }
     }
 
     fn push(&mut self, slot: u8, value: i32, kind: i32) {
@@ -315,7 +341,9 @@ impl Iterator for HitOnsets {
     type Item = (usize, i32, i32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next >= self.len { return None; }
+        if self.next >= self.len {
+            return None;
+        }
         let event = self.rows[usize::from(self.next)];
         self.next += 1;
         Some((usize::from(event.slot), event.value, event.kind))
@@ -411,7 +439,9 @@ impl ThreatSet {
             let row = &mut self.rows[index];
             Self::record_impact(row, tick);
             if kind == HITMARK_DAMAGE && value > 0 {
-                events.damage = events.damage.saturating_add(u16::try_from(value).unwrap_or(u16::MAX));
+                events.damage = events
+                    .damage
+                    .saturating_add(u16::try_from(value).unwrap_or(u16::MAX));
                 if active_protect.is_some() {
                     events.positive_protected = events.positive_protected.saturating_add(1);
                 }
@@ -423,7 +453,9 @@ impl ThreatSet {
             }
         }
         for row in &mut self.rows {
-            if row.has_due() && row.due_tick == tick { row.clear_due(); }
+            if row.has_due() && row.due_tick == tick {
+                row.clear_due();
+            }
         }
         self.retire_expired(tick);
         events
@@ -443,11 +475,34 @@ impl ThreatSet {
         shield: bool,
         antifire: bool,
     ) -> Option<i32> {
-        if self.has_unknown(tick) { return None; }
-        let protect = select::active_protect(frame, tables);
+        self.danger_with(
+            tables,
+            tick,
+            shield,
+            antifire,
+            select::active_protect(frame, tables),
+        )
+    }
+
+    /// The input phase installs a planned protection before NPC decisions.
+    pub(crate) fn danger_with(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        shield: bool,
+        antifire: bool,
+        protect: Option<StyleObs>,
+    ) -> Option<i32> {
+        if self.has_unknown(tick) {
+            return None;
+        }
         let mut total = 0i32;
         for threat in self.iter(tick) {
-            let style = if threat.style == StyleObs::Unknown { threat.fallback_style() } else { threat.style };
+            let style = if threat.style == StyleObs::Unknown {
+                threat.fallback_style()
+            } else {
+                threat.style
+            };
             let residual = select::residual(threat, style, protect, tables, shield, antifire)?;
             total = total.saturating_add(residual);
         }
@@ -476,8 +531,16 @@ impl ThreatSet {
         let pending = self.flags & GLOBAL_UNKNOWN != 0
             && (self.unknown_until == now || tick_until(self.unknown_until, now));
         if pending {
-            let old_start = if tick_reached(now, self.unknown_tick) { 0 } else { self.unknown_tick.wrapping_sub(now) };
-            let new_start = if tick_reached(now, start) { 0 } else { start.wrapping_sub(now) };
+            let old_start = if tick_reached(now, self.unknown_tick) {
+                0
+            } else {
+                self.unknown_tick.wrapping_sub(now)
+            };
+            let new_start = if tick_reached(now, start) {
+                0
+            } else {
+                start.wrapping_sub(now)
+            };
             let old_end = self.unknown_until.wrapping_sub(now);
             let new_end = until.wrapping_sub(now);
             self.unknown_tick = now.wrapping_add(old_start.min(new_start));
@@ -491,7 +554,9 @@ impl ThreatSet {
 
     fn expire_unknown(&mut self, tick: u16) {
         if self.flags & GLOBAL_UNKNOWN != 0
-            && tick != self.unknown_until && tick_reached(tick, self.unknown_until) {
+            && tick != self.unknown_until
+            && tick_reached(tick, self.unknown_until)
+        {
             self.flags &= !GLOBAL_UNKNOWN;
         }
     }
@@ -534,73 +599,124 @@ impl ThreatSet {
     }
 
     fn observe_npc(&mut self, npc: &NpcView, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
-        let Some(index) = u16::try_from(npc.index).ok() else { return; };
-        let actor = ActorRef { kind: ActorKind::Npc, index };
-        let ident = npc.r#type.and_then(|id| i32::try_from(id).ok()).unwrap_or(-1);
+        let Some(index) = u16::try_from(npc.index).ok() else {
+            return;
+        };
+        let actor = ActorRef {
+            kind: ActorKind::Npc,
+            index,
+        };
+        let ident = npc
+            .r#type
+            .and_then(|id| i32::try_from(id).ok())
+            .unwrap_or(-1);
         let faces = faces_us(npc.target, frame.me());
         let hint = faces && npc.in_combat;
         let existing = self.find_identity(actor, ident);
         let animation = npc.animation;
         let anim_mask = tables.style_seq(animation);
-        let has_attack_animation = animation >= 0 && anim_mask.as_ref().is_some_and(|mask| mask.bits() != 0);
+        let has_attack_animation =
+            animation >= 0 && anim_mask.as_ref().is_some_and(|mask| mask.bits() != 0);
         let spot = tables.style_spotanim(npc.spot_animation);
-        let has_attack_spot = faces && cycle_recent(frame.loop_cycle, npc.spot_animation_stamp)
+        let has_attack_spot = faces
+            && cycle_recent(frame.loop_cycle, npc.spot_animation_stamp)
             && spot.is_some_and(|row| row.where_ == StyleWhere::Attacker);
         if existing.is_none() && !hint && !(faces && has_attack_animation) && !has_attack_spot {
             self.forget_reused_slot(actor, ident);
             return;
         }
         self.forget_reused_slot(actor, ident);
-        let Some(row_index) = self.ensure_npc(npc, actor, ident, tables, tick) else { return; };
+        let Some(row_index) = self.ensure_npc(npc, actor, ident, tables, tick) else {
+            return;
+        };
         let row = &mut self.rows[row_index];
         row.set_fact_live(hint);
         let old_animation = row.animation_seen;
         let old_frame = row.animation_frame;
         let frame_now = clamp_frame(npc.animation_frame);
-        let anim_onset = animation != old_animation || (animation == old_animation && frame_now < old_frame);
+        let anim_onset =
+            animation != old_animation || (animation == old_animation && frame_now < old_frame);
         if faces && anim_onset && animation >= 0 {
             let style = anim_mask.map_or(StyleObs::Unknown, select::style_from_mask);
             if style == StyleObs::Unknown {
                 Self::record_unknown_onset(row, tick, frame.loop_cycle);
             } else {
-                Self::record_event(row, style, PRIORITY_ANIMATION, tick, frame.loop_cycle, Some(tick));
+                Self::record_event(
+                    row,
+                    style,
+                    PRIORITY_ANIMATION,
+                    tick,
+                    frame.loop_cycle,
+                    Some(tick),
+                );
             }
         }
         row.animation_seen = animation;
         row.animation_frame = frame_now;
-        if faces && cycle_recent(frame.loop_cycle, npc.spot_animation_stamp)
-            && cycle_newer(npc.spot_animation_stamp, row.last_cycle) {
-            if let Some(style) = spot.filter(|value| value.where_ == StyleWhere::Attacker)
-                .map(|value| select::style_from_mask(value.style)) {
+        if faces
+            && cycle_recent(frame.loop_cycle, npc.spot_animation_stamp)
+            && cycle_newer(npc.spot_animation_stamp, row.last_cycle)
+        {
+            if let Some(style) = spot
+                .filter(|value| value.where_ == StyleWhere::Attacker)
+                .map(|value| select::style_from_mask(value.style))
+            {
                 let event_tick = cycle_to_tick(tick, frame.loop_cycle, npc.spot_animation_stamp);
                 if style == StyleObs::Unknown {
                     Self::record_unknown_onset(row, event_tick, npc.spot_animation_stamp);
                 } else {
-                    Self::record_event(row, style, PRIORITY_SPOT, event_tick, npc.spot_animation_stamp, Some(event_tick));
+                    Self::record_event(
+                        row,
+                        style,
+                        PRIORITY_SPOT,
+                        event_tick,
+                        npc.spot_animation_stamp,
+                        Some(event_tick),
+                    );
                 }
             }
         }
         row.rate = tables.npc(ident).map_or(0, |fact| tables.npc_rate(fact));
     }
 
-    fn observe_player(&mut self, player: &PlayerView, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
-        let Some(index) = u16::try_from(player.index).ok() else { return; };
-        let actor = ActorRef { kind: ActorKind::Player, index };
-        let ident = player.actor.name.as_deref().map(select::ident::fnv1a).unwrap_or(0);
+    fn observe_player(
+        &mut self,
+        player: &PlayerView,
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        tick: u16,
+    ) {
+        let Some(index) = u16::try_from(player.index).ok() else {
+            return;
+        };
+        let actor = ActorRef {
+            kind: ActorKind::Player,
+            index,
+        };
+        let ident = player
+            .actor
+            .name
+            .as_deref()
+            .map(select::ident::fnv1a)
+            .unwrap_or(0);
         let faces = faces_us(player.actor.target, frame.me());
         let existing = self.find_identity(actor, ident);
         let animation = player.actor.animation;
         let anim_mask = tables.style_seq(animation);
-        let has_attack_animation = animation >= 0 && anim_mask.as_ref().is_some_and(|mask| mask.bits() != 0);
+        let has_attack_animation =
+            animation >= 0 && anim_mask.as_ref().is_some_and(|mask| mask.bits() != 0);
         let spot = tables.style_spotanim(player.actor.spot_animation);
-        let has_attack_spot = faces && cycle_recent(frame.loop_cycle, player.actor.spot_animation_stamp)
+        let has_attack_spot = faces
+            && cycle_recent(frame.loop_cycle, player.actor.spot_animation_stamp)
             && spot.is_some_and(|row| row.where_ == StyleWhere::Attacker);
         if existing.is_none() && !(faces && has_attack_animation) && !has_attack_spot {
             self.forget_reused_slot(actor, ident);
             return;
         }
         self.forget_reused_slot(actor, ident);
-        let Some(row_index) = self.ensure_player(player, actor, ident, tables, tick) else { return; };
+        let Some(row_index) = self.ensure_player(player, actor, ident, tables, tick) else {
+            return;
+        };
         let row = &mut self.rows[row_index];
         let (visible_style, rate, family) = player_style(player, tables);
         let weapon_changed = family != row.projectile_family() || rate != row.rate;
@@ -608,68 +724,136 @@ impl ThreatSet {
             row.style = visible_style;
         }
         row.rate = rate;
-        if !row.has_due() { row.set_projectile_family(family); }
+        if !row.has_due() {
+            row.set_projectile_family(family);
+        }
         let old_animation = row.animation_seen;
         let old_frame = row.animation_frame;
         let frame_now = clamp_frame(player.actor.animation_frame);
-        let anim_onset = animation != old_animation || (animation == old_animation && frame_now < old_frame);
+        let anim_onset =
+            animation != old_animation || (animation == old_animation && frame_now < old_frame);
         if faces && anim_onset && animation >= 0 {
             let style = anim_mask.map_or(StyleObs::Unknown, select::style_from_mask);
             if style == StyleObs::Unknown {
                 Self::record_unknown_onset(row, tick, frame.loop_cycle);
             } else {
-                Self::record_event(row, style, PRIORITY_ANIMATION, tick, frame.loop_cycle, Some(tick));
+                Self::record_event(
+                    row,
+                    style,
+                    PRIORITY_ANIMATION,
+                    tick,
+                    frame.loop_cycle,
+                    Some(tick),
+                );
             }
         }
         row.animation_seen = animation;
         row.animation_frame = frame_now;
-        if faces && cycle_recent(frame.loop_cycle, player.actor.spot_animation_stamp)
-            && cycle_newer(player.actor.spot_animation_stamp, row.last_cycle) {
-            if let Some(style) = spot.filter(|value| value.where_ == StyleWhere::Attacker)
-                .map(|value| select::style_from_mask(value.style)) {
-                let event_tick = cycle_to_tick(tick, frame.loop_cycle, player.actor.spot_animation_stamp);
+        if faces
+            && cycle_recent(frame.loop_cycle, player.actor.spot_animation_stamp)
+            && cycle_newer(player.actor.spot_animation_stamp, row.last_cycle)
+        {
+            if let Some(style) = spot
+                .filter(|value| value.where_ == StyleWhere::Attacker)
+                .map(|value| select::style_from_mask(value.style))
+            {
+                let event_tick =
+                    cycle_to_tick(tick, frame.loop_cycle, player.actor.spot_animation_stamp);
                 if style == StyleObs::Unknown {
                     Self::record_unknown_onset(row, event_tick, player.actor.spot_animation_stamp);
                 } else {
-                    Self::record_event(row, style, PRIORITY_SPOT, event_tick, player.actor.spot_animation_stamp, Some(event_tick));
+                    Self::record_event(
+                        row,
+                        style,
+                        PRIORITY_SPOT,
+                        event_tick,
+                        player.actor.spot_animation_stamp,
+                        Some(event_tick),
+                    );
                 }
             }
         }
     }
 
     fn observe_projectiles(&mut self, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
-        let me = ActorTargetView { kind: ActorKind::Player, index: frame.me() };
-        for projectile in frame.projectiles.iter().filter(|projectile| projectile.target == Some(me)) {
-            if !cycle_recent(frame.loop_cycle, projectile.t1) { continue; }
+        let me = ActorTargetView {
+            kind: ActorKind::Player,
+            index: frame.me(),
+        };
+        for projectile in frame
+            .projectiles
+            .iter()
+            .filter(|projectile| projectile.target == Some(me))
+        {
+            if !cycle_recent(frame.loop_cycle, projectile.t1) {
+                continue;
+            }
             let launch_tick = cycle_to_tick(tick, frame.loop_cycle, projectile.t1);
-            let duplicate_launch = frame.projectiles.iter()
-                .filter(|candidate| candidate.target == Some(me) && candidate.src == projectile.src && candidate.t1 == projectile.t1)
+            let duplicate_launch = frame
+                .projectiles
+                .iter()
+                .filter(|candidate| {
+                    candidate.target == Some(me)
+                        && candidate.src == projectile.src
+                        && candidate.t1 == projectile.t1
+                })
                 .take(2)
-                .count() > 1;
+                .count()
+                > 1;
             if duplicate_launch {
                 self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
                 continue;
             }
-            let style = tables.style_spotanim(projectile.spotanim)
+            let style = tables
+                .style_spotanim(projectile.spotanim)
                 .filter(|row| row.where_ == StyleWhere::Projectile)
                 .map_or(StyleObs::Unknown, |row| select::style_from_mask(row.style));
             let mut source = None;
             let mut ambiguous = false;
             for npc in frame.npcs.iter().filter(|row| row.tile == projectile.src) {
-                let Some(index) = u16::try_from(npc.index).ok() else { continue; };
-                let actor = ActorRef { kind: ActorKind::Npc, index };
-                let ident = npc.r#type.and_then(|id| i32::try_from(id).ok()).unwrap_or(-1);
-                if faces_us(npc.target, frame.me()) || self.find_identity(actor, ident).is_some() {
-                    if source.replace(actor).is_some() { ambiguous = true; break; }
+                let Some(index) = u16::try_from(npc.index).ok() else {
+                    continue;
+                };
+                let actor = ActorRef {
+                    kind: ActorKind::Npc,
+                    index,
+                };
+                let ident = npc
+                    .r#type
+                    .and_then(|id| i32::try_from(id).ok())
+                    .unwrap_or(-1);
+                if (faces_us(npc.target, frame.me()) || self.find_identity(actor, ident).is_some())
+                    && source.replace(actor).is_some()
+                {
+                    ambiguous = true;
+                    break;
                 }
             }
             if !ambiguous {
-                for player in frame.players.iter().filter(|row| row.actor.tile == projectile.src) {
-                    let Some(index) = u16::try_from(player.index).ok() else { continue; };
-                    let actor = ActorRef { kind: ActorKind::Player, index };
-                    let ident = player.actor.name.as_deref().map(select::ident::fnv1a).unwrap_or(0);
-                    if faces_us(player.actor.target, frame.me()) || self.find_identity(actor, ident).is_some() {
-                        if source.replace(actor).is_some() { ambiguous = true; break; }
+                for player in frame
+                    .players
+                    .iter()
+                    .filter(|row| row.actor.tile == projectile.src)
+                {
+                    let Some(index) = u16::try_from(player.index).ok() else {
+                        continue;
+                    };
+                    let actor = ActorRef {
+                        kind: ActorKind::Player,
+                        index,
+                    };
+                    let ident = player
+                        .actor
+                        .name
+                        .as_deref()
+                        .map(select::ident::fnv1a)
+                        .unwrap_or(0);
+                    if (faces_us(player.actor.target, frame.me())
+                        || self.find_identity(actor, ident).is_some())
+                        && source.replace(actor).is_some()
+                    {
+                        ambiguous = true;
+                        break;
                     }
                 }
             }
@@ -694,20 +878,42 @@ impl ThreatSet {
             {
                 let row = &mut self.rows[index];
                 let new_launch = cycle_newer(projectile.t1, row.last_cycle)
-                    || (style != StyleObs::Unknown && projectile.t1 == row.last_cycle
-                        && tick_age(launch_tick, row.last_seen) <= 2 && row.priority() < PRIORITY_PROJECTILE);
-                if !new_launch { continue; }
+                    || (style != StyleObs::Unknown
+                        && projectile.t1 == row.last_cycle
+                        && tick_age(launch_tick, row.last_seen) <= 2
+                        && row.priority() < PRIORITY_PROJECTILE);
+                if !new_launch {
+                    continue;
+                }
                 if style == StyleObs::Unknown {
                     Self::record_unknown_onset(row, launch_tick, projectile.t1);
                 } else {
-                    Self::record_event(row, style, PRIORITY_PROJECTILE, launch_tick, projectile.t1, Some(launch_tick));
+                    Self::record_event(
+                        row,
+                        style,
+                        PRIORITY_PROJECTILE,
+                        launch_tick,
+                        projectile.t1,
+                        Some(launch_tick),
+                    );
                 }
-                if let Some(due_tick) = due.filter(|due_tick| *due_tick == tick || tick_until(*due_tick, tick)) {
-                    let overlaps = row.has_due() && (row.due_tick == tick || tick_until(row.due_tick, tick));
+                if let Some(due_tick) =
+                    due.filter(|due_tick| *due_tick == tick || tick_until(*due_tick, tick))
+                {
+                    let overlaps =
+                        row.has_due() && (row.due_tick == tick || tick_until(row.due_tick, tick));
                     if overlaps {
                         let old_due = row.due_tick;
-                        let first = if old_due.wrapping_sub(tick) <= due_tick.wrapping_sub(tick) { old_due } else { due_tick };
-                        let latest = if tick_until(due_tick, old_due) { due_tick } else { old_due };
+                        let first = if old_due.wrapping_sub(tick) <= due_tick.wrapping_sub(tick) {
+                            old_due
+                        } else {
+                            due_tick
+                        };
+                        let latest = if tick_until(due_tick, old_due) {
+                            due_tick
+                        } else {
+                            old_due
+                        };
                         ambiguous_range = Some((first, latest));
                     } else {
                         row.add_due(due_tick, family);
@@ -722,12 +928,20 @@ impl ThreatSet {
 
     fn observe_impact_spot(&mut self, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
         let stamp = frame.local.player.actor.spot_animation_stamp;
-        if stamp < 0 || !cycle_recent(frame.loop_cycle, stamp) || !cycle_newer(stamp, self.impact_seen) { return; }
+        if stamp < 0
+            || !cycle_recent(frame.loop_cycle, stamp)
+            || !cycle_newer(stamp, self.impact_seen)
+        {
+            return;
+        }
         self.impact_seen = stamp;
-        let style = tables.style_spotanim(frame.local.player.actor.spot_animation)
+        let style = tables
+            .style_spotanim(frame.local.player.actor.spot_animation)
             .filter(|row| row.where_ == StyleWhere::OnUs)
             .map_or(StyleObs::Unknown, |row| select::style_from_mask(row.style));
-        if style == StyleObs::Unknown { return; }
+        if style == StyleObs::Unknown {
+            return;
+        }
         let Some(actor) = sole_facing(frame) else {
             self.mark_unknown(tick);
             return;
@@ -737,7 +951,14 @@ impl ThreatSet {
             return;
         };
         let event_tick = cycle_to_tick(tick, frame.loop_cycle, stamp);
-        Self::record_event(&mut self.rows[index], style, PRIORITY_IMPACT, event_tick, stamp, None);
+        Self::record_event(
+            &mut self.rows[index],
+            style,
+            PRIORITY_IMPACT,
+            event_tick,
+            stamp,
+            None,
+        );
     }
 
     fn update_unknown_fallbacks(
@@ -747,29 +968,47 @@ impl ThreatSet {
         active_protect: Option<StyleObs>,
     ) {
         for row in &mut self.rows {
-            if !row.is_live(tick) || row.actor.kind != ActorKind::Npc || row.style != StyleObs::Unknown {
+            if !row.is_live(tick)
+                || row.actor.kind != ActorKind::Npc
+                || row.style != StyleObs::Unknown
+            {
                 continue;
             }
-            let is_dragon = tables.npc(row.ident).is_some_and(|fact| fact.dragonfire.is_some());
+            let is_dragon = tables
+                .npc(row.ident)
+                .is_some_and(|fact| fact.dragonfire.is_some());
             if is_dragon {
                 row.fallback_since = u16::MAX;
                 continue;
             }
             if active_protect == Some(row.fallback_style()) {
-                if row.fallback_since == u16::MAX { row.fallback_since = tick; }
+                if row.fallback_since == u16::MAX {
+                    row.fallback_since = tick;
+                }
             } else {
                 row.fallback_since = u16::MAX;
             }
         }
     }
 
-    fn advance_fallback(&mut self, row_index: usize, tick: u16, protect: Option<StyleObs>, live: usize) {
-        if live != 1 { return; }
+    fn advance_fallback(
+        &mut self,
+        row_index: usize,
+        tick: u16,
+        protect: Option<StyleObs>,
+        live: usize,
+    ) {
+        if live != 1 {
+            return;
+        }
         let row = &mut self.rows[row_index];
         let fallback = row.fallback_style();
-        if row.actor.kind != ActorKind::Npc || row.style != StyleObs::Unknown
+        if row.actor.kind != ActorKind::Npc
+            || row.style != StyleObs::Unknown
             || row.fallback_since == u16::MAX
-            || protect != Some(fallback) || tick_age(tick, row.fallback_since) < 2 {
+            || protect != Some(fallback)
+            || tick_age(tick, row.fallback_since) < 2
+        {
             return;
         }
         let next = match fallback {
@@ -781,25 +1020,54 @@ impl ThreatSet {
         row.fallback_since = tick;
     }
 
-    fn ensure_actor(&mut self, actor: ActorRef, frame: &Frame<'_>, tables: &CombatTables, tick: u16) -> Option<usize> {
+    fn ensure_actor(
+        &mut self,
+        actor: ActorRef,
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        tick: u16,
+    ) -> Option<usize> {
         match actor.kind {
             ActorKind::Npc => {
-                let npc = frame.npcs.iter().find(|npc| npc.index == usize::from(actor.index))?;
-                let ident = npc.r#type.and_then(|id| i32::try_from(id).ok()).unwrap_or(-1);
+                let npc = frame
+                    .npcs
+                    .iter()
+                    .find(|npc| npc.index == usize::from(actor.index))?;
+                let ident = npc
+                    .r#type
+                    .and_then(|id| i32::try_from(id).ok())
+                    .unwrap_or(-1);
                 self.forget_reused_slot(actor, ident);
                 self.ensure_npc(npc, actor, ident, tables, tick)
             }
             ActorKind::Player => {
-                let player = frame.players.iter().find(|player| player.index == usize::from(actor.index))?;
-                let ident = player.actor.name.as_deref().map(select::ident::fnv1a).unwrap_or(0);
+                let player = frame
+                    .players
+                    .iter()
+                    .find(|player| player.index == usize::from(actor.index))?;
+                let ident = player
+                    .actor
+                    .name
+                    .as_deref()
+                    .map(select::ident::fnv1a)
+                    .unwrap_or(0);
                 self.forget_reused_slot(actor, ident);
                 self.ensure_player(player, actor, ident, tables, tick)
             }
         }
     }
 
-    fn ensure_npc(&mut self, _npc: &NpcView, actor: ActorRef, ident: i32, tables: &CombatTables, tick: u16) -> Option<usize> {
-        if let Some(index) = self.find_identity(actor, ident) { return Some(index); }
+    fn ensure_npc(
+        &mut self,
+        _npc: &NpcView,
+        actor: ActorRef,
+        ident: i32,
+        tables: &CombatTables,
+        tick: u16,
+    ) -> Option<usize> {
+        if let Some(index) = self.find_identity(actor, ident) {
+            return Some(index);
+        }
         let fact = tables.npc(ident);
         let style = fact.map_or(StyleObs::Unknown, npc_main_style);
         let rate = fact.map_or(0, |row| tables.npc_rate(row));
@@ -816,7 +1084,9 @@ impl ThreatSet {
         tables: &CombatTables,
         tick: u16,
     ) -> Option<usize> {
-        if let Some(index) = self.find_identity(actor, ident) { return Some(index); }
+        if let Some(index) = self.find_identity(actor, ident) {
+            return Some(index);
+        }
         let (style, rate, family) = player_style(player, tables);
         let mut row = Threat::new(actor, ident, style, rate, None, tick);
         row.animation_seen = -1;
@@ -826,7 +1096,9 @@ impl ThreatSet {
     }
 
     fn find_identity(&self, actor: ActorRef, ident: i32) -> Option<usize> {
-        self.rows.iter().position(|row| row.valid() && row.actor == actor && row.ident == ident)
+        self.rows
+            .iter()
+            .position(|row| row.valid() && row.actor == actor && row.ident == ident)
     }
 
     fn clear_npc_hints(&mut self) {
@@ -839,7 +1111,11 @@ impl ThreatSet {
 
     fn forget_reused_slot(&mut self, actor: ActorRef, ident: i32) {
         for row in &mut self.rows {
-            if row.valid() && row.actor.kind == actor.kind && row.actor.index == actor.index && row.ident != ident {
+            if row.valid()
+                && row.actor.kind == actor.kind
+                && row.actor.index == actor.index
+                && row.ident != ident
+            {
                 *row = Threat::EMPTY;
             }
         }
@@ -850,7 +1126,12 @@ impl ThreatSet {
             self.rows[index] = row;
             return Some(index);
         }
-        let (weakest, weight) = self.rows.iter().enumerate().min_by_key(|(_, old)| old.weight()).map(|(i, old)| (i, old.weight()))?;
+        let (weakest, weight) = self
+            .rows
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, old)| old.weight())
+            .map(|(i, old)| (i, old.weight()))?;
         self.mark_overflow(tick);
         if row.weight() > weight {
             self.rows[weakest] = row;
@@ -887,10 +1168,14 @@ impl ThreatSet {
                     row.refine_latest_style(style);
                 }
             }
-            if cycle_newer(cycle, row.last_cycle) { row.last_cycle = cycle; }
+            if cycle_newer(cycle, row.last_cycle) {
+                row.last_cycle = cycle;
+            }
         }
         if let Some(decision_tick) = decision_tick {
-            if tick_until(decision_tick, row.last_decision) { row.last_decision = decision_tick; }
+            if tick_until(decision_tick, row.last_decision) {
+                row.last_decision = decision_tick;
+            }
         }
     }
 
@@ -900,8 +1185,12 @@ impl ThreatSet {
             row.mark_event();
             row.set_priority(PRIORITY_IMPACT);
         }
-        if tick_until(tick, row.last_decision) { row.last_decision = tick; }
-        if cycle_newer(cycle, row.last_cycle) { row.last_cycle = cycle; }
+        if tick_until(tick, row.last_decision) {
+            row.last_decision = tick;
+        }
+        if cycle_newer(cycle, row.last_cycle) {
+            row.last_cycle = cycle;
+        }
     }
 
     fn record_impact(row: &mut Threat, tick: u16) {
@@ -913,11 +1202,20 @@ impl ThreatSet {
     }
 
     fn due_source(&self, tick: u16) -> DueAttribution {
-        if self.has_unattributed_event(tick) { return DueAttribution::Ambiguous; }
+        if self.has_unattributed_event(tick) {
+            return DueAttribution::Ambiguous;
+        }
         let mut found = None;
-        for row in self.rows.iter().filter(|row| row.is_live(tick) && row.has_due()
-            && (row.due_tick == tick || (row.projectile_family() == ProjectileFamily::Unknown && tick_until(row.due_tick, tick)))) {
-            if row.projectile_family() == ProjectileFamily::Unknown || found.replace(row.actor).is_some() {
+        for row in self.rows.iter().filter(|row| {
+            row.is_live(tick)
+                && row.has_due()
+                && (row.due_tick == tick
+                    || (row.projectile_family() == ProjectileFamily::Unknown
+                        && tick_until(row.due_tick, tick)))
+        }) {
+            if row.projectile_family() == ProjectileFamily::Unknown
+                || found.replace(row.actor).is_some()
+            {
                 return DueAttribution::Ambiguous;
             }
         }
@@ -930,12 +1228,26 @@ pub fn sole_facing(frame: &Frame<'_>) -> Option<ActorRef> {
     let me = frame.me();
     let mut found = None;
     for npc in frame.npcs.iter().filter(|row| faces_us(row.target, me)) {
-        if found.is_some() { return None; }
-        found = Some(ActorRef { kind: ActorKind::Npc, index: u16::try_from(npc.index).ok()? });
+        if found.is_some() {
+            return None;
+        }
+        found = Some(ActorRef {
+            kind: ActorKind::Npc,
+            index: u16::try_from(npc.index).ok()?,
+        });
     }
-    for player in frame.players.iter().filter(|row| faces_us(row.actor.target, me)) {
-        if found.is_some() { return None; }
-        found = Some(ActorRef { kind: ActorKind::Player, index: u16::try_from(player.index).ok()? });
+    for player in frame
+        .players
+        .iter()
+        .filter(|row| faces_us(row.actor.target, me))
+    {
+        if found.is_some() {
+            return None;
+        }
+        found = Some(ActorRef {
+            kind: ActorKind::Player,
+            index: u16::try_from(player.index).ok()?,
+        });
     }
     found
 }
@@ -953,8 +1265,12 @@ fn npc_main_style(row: &api::game_data::NpcNameRow) -> StyleObs {
 }
 
 fn player_style(player: &PlayerView, tables: &CombatTables) -> (StyleObs, u8, ProjectileFamily) {
-    let Some(weapon) = player.weapon else { return (StyleObs::Melee, 0, ProjectileFamily::Unknown); };
-    let Some(fact) = tables.weapon_style(weapon) else { return (StyleObs::Melee, 0, ProjectileFamily::Unknown); };
+    let Some(weapon) = player.weapon else {
+        return (StyleObs::Melee, 0, ProjectileFamily::Unknown);
+    };
+    let Some(fact) = tables.weapon_style(weapon) else {
+        return (StyleObs::Melee, 0, ProjectileFamily::Unknown);
+    };
     let style = select::style_from_mask(super::tables::StyleMask(fact.style));
     let family = match (style, fact.category) {
         (StyleObs::Magic, _) => ProjectileFamily::PlayerSpell,
@@ -962,7 +1278,15 @@ fn player_style(player: &PlayerView, tables: &CombatTables) -> (StyleObs, u8, Pr
         (StyleObs::Ranged, 3 | 4) => ProjectileFamily::PlayerThrown,
         _ => ProjectileFamily::Unknown,
     };
-    (if style == StyleObs::Unknown { StyleObs::Melee } else { style }, fact.attackrate, family)
+    (
+        if style == StyleObs::Unknown {
+            StyleObs::Melee
+        } else {
+            style
+        },
+        fact.attackrate,
+        family,
+    )
 }
 fn projectile_family(
     actor: ActorRef,
@@ -974,19 +1298,32 @@ fn projectile_family(
         (ActorKind::Npc, StyleObs::Ranged) => ProjectileFamily::NpcRanged,
         (ActorKind::Npc, StyleObs::Magic) => ProjectileFamily::NpcSpell,
         (ActorKind::Player, StyleObs::Magic) => ProjectileFamily::PlayerSpell,
-        (ActorKind::Player, StyleObs::Ranged) => frame.players.iter()
+        (ActorKind::Player, StyleObs::Ranged) => frame
+            .players
+            .iter()
             .find(|player| player.index == usize::from(actor.index))
-            .map_or(ProjectileFamily::Unknown, |player| player_style(player, tables).2),
+            .map_or(ProjectileFamily::Unknown, |player| {
+                player_style(player, tables).2
+            }),
         _ => ProjectileFamily::Unknown,
     }
 }
 
 /// Reconstruct the hit-queue tick independently of projectile visual flight.
-fn projectile_due_tick(projectile: &ProjectileView, family: ProjectileFamily, tick: u16, loop_cycle: i32) -> Option<u16> {
+fn projectile_due_tick(
+    projectile: &ProjectileView,
+    family: ProjectileFamily,
+    tick: u16,
+    loop_cycle: i32,
+) -> Option<u16> {
     let flight = projectile.t2.checked_sub(projectile.t1)?;
-    if flight < 0 { return None; }
+    if flight < 0 {
+        return None;
+    }
     let delay = match family {
-        ProjectileFamily::NpcRanged | ProjectileFamily::PlayerThrown => 32i32.saturating_add(flight),
+        ProjectileFamily::NpcRanged | ProjectileFamily::PlayerThrown => {
+            32i32.saturating_add(flight)
+        }
         ProjectileFamily::PlayerRanged => 41i32.saturating_add(flight),
         ProjectileFamily::NpcSpell | ProjectileFamily::PlayerSpell => 51i32.saturating_add(flight),
         ProjectileFamily::Unknown => return None,
@@ -997,11 +1334,23 @@ fn projectile_due_tick(projectile: &ProjectileView, family: ProjectileFamily, ti
 }
 
 /// The narrowest launch-relative queue window available when family is unknown.
-fn projectile_due_window(projectile: &ProjectileView, tick: u16, loop_cycle: i32) -> Option<(u16, u16)> {
+fn projectile_due_window(
+    projectile: &ProjectileView,
+    tick: u16,
+    loop_cycle: i32,
+) -> Option<(u16, u16)> {
     let flight = projectile.t2.checked_sub(projectile.t1)?;
-    if !(0..=i32::from(THREAT_TTL) * 30).contains(&flight) { return None; }
+    if !(0..=i32::from(THREAT_TTL) * 30).contains(&flight) {
+        return None;
+    }
     let earliest = u16::try_from(32i32.saturating_add(flight).div_euclid(30)).ok()?;
-    let latest = u16::try_from(51i32.saturating_add(flight).div_euclid(30).saturating_add(1)).ok()?;
+    let latest = u16::try_from(
+        51i32
+            .saturating_add(flight)
+            .div_euclid(30)
+            .saturating_add(1),
+    )
+    .ok()?;
     let launch = cycle_to_tick(tick, loop_cycle, projectile.t1);
     Some((launch.wrapping_add(earliest), launch.wrapping_add(latest)))
 }
@@ -1019,7 +1368,6 @@ fn cycle_to_tick(tick: u16, loop_cycle: i32, event_cycle: i32) -> u16 {
 fn tick_reached(now: u16, deadline: u16) -> bool {
     now.wrapping_sub(deadline) < 0x8000
 }
-
 
 fn clamp_frame(frame: i32) -> i16 {
     i16::try_from(frame).unwrap_or(if frame < 0 { -1 } else { i16::MAX })
@@ -1050,7 +1398,11 @@ mod tests {
         ProjectileView {
             spotanim: 0,
             level: 0,
-            src: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+            src: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
             target: None,
             t1,
             t2,
@@ -1059,11 +1411,31 @@ mod tests {
 
     #[test]
     fn hit_onsets_consume_poison_and_unknown_cycles_without_attributing_them() {
-        let mut hitmarks = [HitmarkView { value: 0, kind: -1, cycle: 0 }; 4];
-        hitmarks[0] = HitmarkView { value: 0, kind: HITMARK_POISON, cycle: 110 };
-        hitmarks[1] = HitmarkView { value: 0, kind: HITMARK_BLOCK, cycle: 111 };
-        hitmarks[2] = HitmarkView { value: 9, kind: 99, cycle: 112 };
-        hitmarks[3] = HitmarkView { value: 12, kind: HITMARK_DAMAGE, cycle: 100 };
+        let mut hitmarks = [HitmarkView {
+            value: 0,
+            kind: -1,
+            cycle: 0,
+        }; 4];
+        hitmarks[0] = HitmarkView {
+            value: 0,
+            kind: HITMARK_POISON,
+            cycle: 110,
+        };
+        hitmarks[1] = HitmarkView {
+            value: 0,
+            kind: HITMARK_BLOCK,
+            cycle: 111,
+        };
+        hitmarks[2] = HitmarkView {
+            value: 9,
+            kind: 99,
+            cycle: 112,
+        };
+        hitmarks[3] = HitmarkView {
+            value: 12,
+            kind: HITMARK_DAMAGE,
+            cycle: 100,
+        };
         let mut onset = HitOnset::new();
 
         let mut events = onset.observe(&hitmarks, 100);
@@ -1072,7 +1444,11 @@ mod tests {
         assert_eq!(events.next(), None);
         assert_eq!(onset.hit_seen, [110, 111, 112, -1]);
 
-        hitmarks[0] = HitmarkView { value: 9, kind: HITMARK_DAMAGE, cycle: 110 };
+        hitmarks[0] = HitmarkView {
+            value: 9,
+            kind: HITMARK_DAMAGE,
+            cycle: 110,
+        };
         assert_eq!(onset.observe(&hitmarks, 100).len(), 0);
         hitmarks[0].cycle = 120;
         hitmarks[0].value = 9;
@@ -1161,7 +1537,10 @@ mod tests {
         let mut threats = ThreatSet::default();
         for (index, max_hit) in [1, 2, 3, 4].into_iter().enumerate() {
             let row = Threat::new(
-                actor(ActorKind::Npc, u16::try_from(index).expect("four threat rows")),
+                actor(
+                    ActorKind::Npc,
+                    u16::try_from(index).expect("four threat rows"),
+                ),
                 i32::try_from(index).expect("four threat rows"),
                 StyleObs::Melee,
                 4,

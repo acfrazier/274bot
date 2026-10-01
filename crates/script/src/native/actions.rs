@@ -68,10 +68,7 @@ impl ActionContext<'_> {
     }
     /// Admit one ordered, wire-bounded interaction batch by taking ownership
     /// of its compact request prefix.
-    pub fn emit_batch(
-        &mut self,
-        mut rows: [Option<InteractReq>; 5],
-    ) -> Result<u64, ActionError> {
+    pub fn emit_batch(&mut self, mut rows: [Option<InteractReq>; 5]) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         let len = validate_batch(&rows, self.pin.revision)?;
         let ledger = self.ledger.as_ref().expect("owner checked");
@@ -275,10 +272,7 @@ fn batch_shape_error() -> ActionError {
     ActionError::Unavailable(Arc::clone(&REASON))
 }
 
-fn selected_protect_component(
-    revision: api::selected::ClientRevision,
-    component_id: i32,
-) -> bool {
+fn selected_protect_component(revision: api::selected::ClientRevision, component_id: i32) -> bool {
     const PROTECT_NAMES: [&str; 3] = [
         "Protect from Magic",
         "Protect from Missiles",
@@ -288,8 +282,7 @@ fn selected_protect_component(
         .ok()
         .is_some_and(|data| {
             data.prayers().iter().any(|prayer| {
-                PROTECT_NAMES.contains(&prayer.name.as_str())
-                    && prayer.button_com == component_id
+                PROTECT_NAMES.contains(&prayer.name.as_str()) && prayer.button_com == component_id
             })
         })
 }
@@ -320,7 +313,8 @@ fn validate_batch(
             return Err(batch_shape_error());
         }
         let (cost, terminal) = match request {
-            InteractReq::IfButton { .. } | InteractReq::Wear { .. }
+            InteractReq::IfButton { .. }
+            | InteractReq::Wear { .. }
             | InteractReq::SetRetaliate { .. } => (1, false),
             InteractReq::Held { action, .. } if action == "Eat" => {
                 eats += 1;
@@ -1016,13 +1010,7 @@ mod tests {
             let occupied = NonZeroU64::new(100).unwrap();
             assert!(owner.acquire_batch(occupied, 4));
             assert_eq!(owner.batch_free(), 1);
-            let rows = [
-                Some(wear_request()),
-                Some(npc_attack()),
-                None,
-                None,
-                None,
-            ];
+            let rows = [Some(wear_request()), Some(npc_attack()), None, None, None];
             assert_eq!(
                 cx.emit_batch(rows),
                 Err(ActionError::BudgetExhausted),
@@ -1030,9 +1018,7 @@ mod tests {
             );
             assert_no_batch_change(cx, &owner, 2, 1, 0);
             for offset in 0..4 {
-                owner.cancel_interaction(
-                    NonZeroU64::new(occupied.get() + offset).unwrap(),
-                );
+                owner.cancel_interaction(NonZeroU64::new(occupied.get() + offset).unwrap());
             }
             assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), 2);
         });
@@ -1094,13 +1080,7 @@ mod tests {
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
             assert_no_batch_change(cx, &owner, first + 1, 4, 1);
 
-            let actions = cx
-                .ledger
-                .as_mut()
-                .unwrap()
-                .outbox
-                .drain(..)
-                .collect::<Vec<_>>();
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             for action in actions {
                 let receipt = InteractionReceipt {
                     request_id: action.request_id.get(),
@@ -1144,13 +1124,7 @@ mod tests {
                     Some(InteractReq::IfButton { component_id: 901 }),
                 ])
                 .unwrap();
-            let batch_actions = cx
-                .ledger
-                .as_mut()
-                .unwrap()
-                .outbox
-                .drain(..)
-                .collect::<Vec<_>>();
+            let batch_actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             assert_eq!(batch_actions.len(), 5);
             assert!(batch_actions
                 .iter()
@@ -1158,6 +1132,13 @@ mod tests {
             assert_eq!(owner.batch_free(), 0);
 
             cx.budget.observe(2);
+            assert_eq!(
+                cx.emit_disposal(drop_request(0)),
+                Err(ActionError::BudgetExhausted),
+                "a full batch leaves no disposal reservation"
+            );
+            cx.cancel_request(first);
+            assert!(!batch_actions[0].live());
             assert_eq!(cx.emit_disposal(drop_request(0)).unwrap(), first + 5);
             assert_eq!(owner.batch_free(), 0);
             assert_eq!(
@@ -1169,11 +1150,11 @@ mod tests {
                 first + 6
             );
 
-            cx.cancel_request(first);
-            assert!(!batch_actions[0].live());
+            cx.cancel_request(first + 1);
+            assert!(!batch_actions[1].live());
             assert_eq!(owner.batch_free(), 1);
             assert_eq!(cx.emit_disposal(drop_request(1)).unwrap(), first + 6);
-            for offset in 1..5 {
+            for offset in 2..5 {
                 cx.cancel_request(first + offset);
             }
             assert!(batch_actions.iter().all(|action| !action.live()));
@@ -1207,13 +1188,7 @@ mod tests {
                 Some(InteractReq::IfButton { component_id: 901 }),
             ];
             let first = cx.emit_batch(rows).unwrap();
-            let actions = cx
-                .ledger
-                .as_mut()
-                .unwrap()
-                .outbox
-                .drain(..)
-                .collect::<Vec<_>>();
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             assert_eq!(actions.len(), 5);
             assert!(actions
                 .iter()
@@ -1258,10 +1233,7 @@ mod tests {
                 assert!(!action.live());
                 assert_eq!(owner.batch_free(), index + 1);
                 assert_eq!(cx.interaction_receipt(receipt.request_id), Some(&receipt));
-                assert!(actions
-                    .iter()
-                    .skip(index + 1)
-                    .all(HostAction::live));
+                assert!(actions.iter().skip(index + 1).all(HostAction::live));
             }
             assert_eq!(owner.batch_free(), 5);
 
@@ -1276,16 +1248,9 @@ mod tests {
                 ])
                 .unwrap();
             assert_eq!(second, first + 5);
-            let second_actions = cx
-                .ledger
-                .as_mut()
-                .unwrap()
-                .outbox
-                .drain(..)
-                .collect::<Vec<_>>();
-            let authorities = std::array::from_fn::<_, 3, _>(|index| {
-                second_actions[index].authority()
-            });
+            let second_actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
+            let authorities =
+                std::array::from_fn::<_, 3, _>(|index| second_actions[index].authority());
             assert!(second_actions
                 .iter()
                 .all(|action| action.batch == second && action.live()));
@@ -1371,14 +1336,13 @@ mod tests {
                 Err(ActionError::BudgetExhausted)
             );
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
-            assert!(
-                cx.ledger
-                    .as_ref()
-                    .unwrap()
-                    .outbox
-                    .iter()
-                    .all(|action| action.batch == 0)
-            );
+            assert!(cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| action.batch == 0));
             eprintln!(
                 "G1 disposal outbox retained bytes={}",
                 cx.ledger.as_ref().unwrap().outbox.capacity() * std::mem::size_of::<HostAction>(),
@@ -1399,7 +1363,7 @@ mod tests {
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
             cx.cancel_request(requests[2]);
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 4);
-            let actions = cx.ledger.as_mut().unwrap().outbox.drain(..).collect::<Vec<_>>();
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             for action in actions.into_iter().rev() {
                 let receipt = InteractionReceipt {
                     request_id: action.request_id.get(),
@@ -1492,7 +1456,7 @@ mod tests {
                 cx.emit_disposal(drop_request(4)),
                 Err(ActionError::BudgetExhausted)
             );
-            let actions = cx.ledger.as_mut().unwrap().outbox.drain(..).collect::<Vec<_>>();
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             assert!(actions.iter().all(HostAction::live));
             assert_eq!(actions.len(), 5);
             assert!(actions.iter().all(|action| action.batch == 0));

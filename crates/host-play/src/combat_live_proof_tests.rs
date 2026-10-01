@@ -12,13 +12,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::SelectedGameData;
 use api::interact::{Interactions, SendResult};
-use api::obj_names::ObjNames;
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::{FrameBuf, Pump};
 use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
-use script::native::ScriptStatus;
 use script::quester::compile::{compile_path, CompiledPath};
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
@@ -172,8 +170,9 @@ impl ThrowawayHome {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("combat-s3a-{label}-{}-{id}", std::process::id()));
+        let path = PathBuf::from(EVIDENCE_DIR)
+            .join("homes")
+            .join(format!("{label}-{}-{id}", std::process::id()));
         std::fs::create_dir_all(&path)
             .map_err(|error| format!("create throwaway HOME {}: {error}", path.display()))?;
         let previous = std::env::var_os("HOME");
@@ -364,7 +363,7 @@ impl EvidenceWriter {
         let pixels = self.frame.snapshot();
         let png_path = if pixels.len() == (765 * 503) as usize {
             let mut rgba = Vec::with_capacity(pixels.len() * 4);
-            for pixel in pixels {
+            for pixel in &pixels {
                 rgba.push(((pixel >> 16) & 0xff) as u8);
                 rgba.push(((pixel >> 8) & 0xff) as u8);
                 rgba.push((pixel & 0xff) as u8);
@@ -427,6 +426,33 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2_080);
+    // Runtime preparation may publish OnDemand entries. Copy the retained
+    // complete snapshot into this run's writable HOME, never symlink it.
+    let source = std::env::var_os("BOT_COMBAT_CACHE_SNAPSHOT")
+        .map(PathBuf::from)
+        .ok_or_else(|| "combat live proof requires BOT_COMBAT_CACHE_SNAPSHOT".to_owned())?;
+    let version = source
+        .file_name()
+        .ok_or_else(|| "cache snapshot has no version directory".to_owned())?;
+    let cache = home.join("unpack").join(version);
+    std::fs::create_dir_all(&cache).map_err(|error| format!("create cache copy: {error}"))?;
+    for entry in
+        std::fs::read_dir(&source).map_err(|error| format!("read retained cache: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("read retained cache entry: {error}"))?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("cache entry type: {error}"))?
+            .is_file()
+        {
+            return Err(format!(
+                "retained cache entry is not a regular file: {}",
+                entry.path().display()
+            ));
+        }
+        std::fs::copy(entry.path(), cache.join(entry.file_name()))
+            .map_err(|error| format!("copy retained cache: {error}"))?;
+    }
     Ok(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -435,6 +461,7 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
         port: Some(port),
         http_port: Some(http_port),
         vault_path: Some(home.join("vault")),
+        cache_dir: Some(cache),
         unpack_dir: Some(home.join("unpack")),
         nav_pack,
         engine_dir: Some(engine_dir),
@@ -695,7 +722,10 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 || item_count(baseline, PRAYER_POTION_4_ID) != 0
                 || item_count(baseline, SUPER_ATTACK_4_ID) != 0
             {
-                return Some(format!("{} did not seed its exact food quantities and Prayer1 with no potion", case.key()));
+                return Some(format!(
+                    "{} did not seed its exact food quantities and Prayer1 with no potion",
+                    case.key()
+                ));
             }
         }
         Case::M4 => {
@@ -761,7 +791,10 @@ fn case_invalid_reason(case: Case, capture: &CombatCapture) -> Option<String> {
         && report_with_end(capture, "Killed").is_some()
         && m6_combo_receipt(capture)["first_eligible_decision"].is_null()
     {
-        return Some("M6 INVALID: no Fight eat decision had HP in 8..=16 after the first warlord onset".into());
+        return Some(
+            "M6 INVALID: no Fight eat decision had HP in 8..=16 after the first warlord onset"
+                .into(),
+        );
     }
     None
 }
@@ -854,7 +887,7 @@ fn m3_ready(capture: &CombatCapture) -> bool {
         && integer(report, "combat_restorations") == Some(food)
         && integer(report, "combat_multi_op_plans") == Some(food)
         && report_multi_op_count_matches(capture, report)
-        && no_prayer_clicks(capture)
+        && !has_prayer_clicks(capture)
         && !capture.actions.iter().any(is_drink)
         && m3_eat_plans_ok(capture)
         && m3_eat_timing_ok(capture)
@@ -875,53 +908,70 @@ fn m6_combo_receipt(capture: &CombatCapture) -> Value {
     let mut first_eligible = None;
     let mut combos = 0;
     let mut food_rows = 0;
-    let eats = plans.iter().filter(|plan| plan.rows.iter().any(|row| is_eat(row))).map(|plan| {
-        let first = plan.rows[0];
-        let hp = stat_effective(&first["snapshot"], "hitpoints");
-        let after_onset = onset.is_some_and(|onset| plan.tick >= onset);
-        let eligible = after_onset && hp.is_some_and(|hp| (8..=16).contains(&hp))
-            && item_count(&first["snapshot"], LOBSTER_ID) > 0
-            && item_count(&first["snapshot"], COOKED_KARAMBWAN_ID) > 0;
-        if eligible && first_eligible.is_none() { first_eligible = Some(plan.tick); }
-        let combo = plan.rows.len() == 2 && is_eat(first) && is_eat(plan.rows[1]);
-        food_rows += plan.rows.iter().filter(|row| is_eat(row)).count();
-        combos += usize::from(combo);
-        let ordered = held_item_id(first) == Some(i64::from(LOBSTER_ID))
-            && plan.rows.len() == 2
-            && if combo {
-                held_item_id(plan.rows[1]) == Some(i64::from(COOKED_KARAMBWAN_ID))
-            } else {
-                is_npc_attack(plan.rows[1])
-            };
-        let next_output = capture.frames.iter().find(|frame| frame["tick"].as_i64().is_some_and(|tick| tick > plan.tick));
-        let combo_output = next_output.is_some_and(|frame| {
-            stat_effective(frame, "hitpoints") == Some(40)
-                && item_count(frame, LOBSTER_ID) == item_count(&first["snapshot"], LOBSTER_ID) - 1
-                && item_count(frame, COOKED_KARAMBWAN_ID) == item_count(&first["snapshot"], COOKED_KARAMBWAN_ID) - 1
-        });
-        let silent_lock = !(plan.tick + 1..=plan.tick + 3).any(|tick| {
-            capture.actions.iter().any(|action| action["tick"].as_i64() == Some(tick))
-        });
-        let restored = batch_plan_at(&plans, plan.tick + 4)
-            .is_some_and(|resume| resume.rows.last().is_some_and(|row| is_npc_attack(row)));
-        let row_valid = after_onset && hp.is_some_and(|hp| hp <= 19)
-            && ordered && plan.rows.iter().all(|row| action_wire_valid(row))
-            && (combo == eligible)
-            && (!combo || (combo_output && silent_lock && restored));
-        json!({
-            "tick": plan.tick,
-            "decision_hp": hp,
-            "after_first_warlord_onset": after_onset,
-            "eligible_combo": eligible,
-            "combo": combo,
-            "ordered_plan": ordered,
-            "next_output_hp": next_output.and_then(|frame| stat_effective(frame, "hitpoints")),
-            "both_counts_decremented_and_hp_capped": combo_output,
-            "three_locked_ticks_silent": silent_lock,
-            "attack_at_first_unlocked_tick": restored,
-            "valid": row_valid,
+    let eats = plans
+        .iter()
+        .filter(|plan| plan.rows.iter().any(|row| is_eat(row)))
+        .map(|plan| {
+            let first = plan.rows[0];
+            let hp = stat_effective(&first["snapshot"], "hitpoints");
+            let after_onset = onset.is_some_and(|onset| plan.tick >= onset);
+            let eligible = after_onset
+                && hp.is_some_and(|hp| (8..=16).contains(&hp))
+                && item_count(&first["snapshot"], LOBSTER_ID) > 0
+                && item_count(&first["snapshot"], COOKED_KARAMBWAN_ID) > 0;
+            if eligible && first_eligible.is_none() {
+                first_eligible = Some(plan.tick);
+            }
+            let combo = plan.rows.len() == 2 && is_eat(first) && is_eat(plan.rows[1]);
+            food_rows += plan.rows.iter().filter(|row| is_eat(row)).count();
+            combos += usize::from(combo);
+            let ordered = held_item_id(first) == Some(i64::from(LOBSTER_ID))
+                && plan.rows.len() == 2
+                && if combo {
+                    held_item_id(plan.rows[1]) == Some(i64::from(COOKED_KARAMBWAN_ID))
+                } else {
+                    is_npc_attack(plan.rows[1])
+                };
+            let next_output = capture
+                .frames
+                .iter()
+                .find(|frame| frame["tick"].as_i64().is_some_and(|tick| tick > plan.tick));
+            let combo_output = next_output.is_some_and(|frame| {
+                stat_effective(frame, "hitpoints") == Some(40)
+                    && item_count(frame, LOBSTER_ID)
+                        == item_count(&first["snapshot"], LOBSTER_ID) - 1
+                    && item_count(frame, COOKED_KARAMBWAN_ID)
+                        == item_count(&first["snapshot"], COOKED_KARAMBWAN_ID) - 1
+            });
+            let silent_lock = !(plan.tick + 1..=plan.tick + 3).any(|tick| {
+                capture
+                    .actions
+                    .iter()
+                    .any(|action| action["tick"].as_i64() == Some(tick))
+            });
+            let restored = batch_plan_at(&plans, plan.tick + 4)
+                .is_some_and(|resume| resume.rows.last().is_some_and(|row| is_npc_attack(row)));
+            let row_valid = after_onset
+                && hp.is_some_and(|hp| hp <= 19)
+                && ordered
+                && plan.rows.iter().all(|row| action_wire_valid(row))
+                && (combo == eligible)
+                && (!combo || (combo_output && silent_lock && restored));
+            json!({
+                "tick": plan.tick,
+                "decision_hp": hp,
+                "after_first_warlord_onset": after_onset,
+                "eligible_combo": eligible,
+                "combo": combo,
+                "ordered_plan": ordered,
+                "next_output_hp": next_output.and_then(|frame| stat_effective(frame, "hitpoints")),
+                "both_counts_decremented_and_hp_capped": combo_output,
+                "three_locked_ticks_silent": silent_lock,
+                "attack_at_first_unlocked_tick": restored,
+                "valid": row_valid,
+            })
         })
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
     json!({
         "first_warlord_onset": onset,
         "first_eligible_decision": first_eligible,
@@ -933,22 +983,35 @@ fn m6_combo_receipt(capture: &CombatCapture) -> Value {
 }
 
 fn m6_ready(capture: &CombatCapture) -> bool {
-    let Some(report) = report_with_end(capture, "Killed") else { return false; };
+    let Some(report) = report_with_end(capture, "Killed") else {
+        return false;
+    };
     let receipt = m6_combo_receipt(capture);
-    let Some(combos) = receipt["combo_count"].as_i64().filter(|count| *count > 0) else { return false; };
-    let Some(eats) = receipt["eats"].as_array() else { return false; };
+    let Some(combos) = receipt["combo_count"].as_i64().filter(|count| *count > 0) else {
+        return false;
+    };
+    let Some(eats) = receipt["eats"].as_array() else {
+        return false;
+    };
     let plans = batch_plans(capture);
-    let first_attack = first_attack_action(capture).and_then(|attack| attack["tick"].as_i64());
-    let prep_wear = first_attack.is_some_and(|attack_tick| plans.iter().any(|plan| {
-        plan.tick < attack_tick && plan.rows.len() == 1
-            && plan.rows[0]["request"]["op"] == json!("wear") && action_wire_valid(plan.rows[0])
-    }));
+    let first_attack = first_attack_action(capture).and_then(|attack| attack["sequence"].as_u64());
+    let prep_wear = first_attack.is_some_and(|attack_sequence| {
+        plans.iter().any(|plan| {
+            plan.rows.iter().any(|row| {
+                row["sequence"]
+                    .as_u64()
+                    .is_some_and(|sequence| sequence < attack_sequence)
+                    && row["request"]["op"] == json!("wear")
+                    && action_wire_valid(row)
+            })
+        })
+    });
     prep_wear
         && !receipt["first_eligible_decision"].is_null()
         && eats.iter().all(|eat| eat["valid"] == json!(true))
         && integer(report, "combat_food") == receipt["food_rows"].as_i64()
         && integer(report, "combat_restorations") == receipt["restoration_runs"].as_i64()
-        && integer(report, "combat_multi_op_plans") == receipt["restoration_runs"].as_i64()
+        && report_multi_op_count_matches(capture, report)
         && integer(report, "combat_locked_ticks") == Some(3 * combos)
         && integer(report, "combat_prayer_doses") == Some(0)
         && integer(report, "combat_boost_doses") == Some(0)
@@ -958,7 +1021,10 @@ fn m6_ready(capture: &CombatCapture) -> bool {
         && native_interactions_wire_valid(capture)
         && batch_plan_contract(capture, &plans)
         && no_attack_after_report(capture, report)
-        && !capture.statuses.iter().any(|status| status["fields"]["combat_end"] == json!("Died"))
+        && !capture
+            .statuses
+            .iter()
+            .any(|status| status["fields"]["combat_end"] == json!("Died"))
         && has_real_attack_packet(capture)
 }
 
@@ -1236,7 +1302,7 @@ fn native_interactions_wire_valid(capture: &CombatCapture) -> bool {
         .actions
         .iter()
         .filter(|action| action["kind"] == json!("interaction"))
-        .all(|action| action_wire_valid(action))
+        .all(action_wire_valid)
 }
 
 fn plan_event_count(plan: &BatchPlan<'_>) -> Option<usize> {
@@ -1303,7 +1369,7 @@ fn report_multi_op_count_matches(capture: &CombatCapture, report: &Value) -> boo
     integer(report, "combat_multi_op_plans") == Some(observed)
 }
 
-fn prayer_fact(capture: &CombatCapture, name: &str) -> Option<&Value> {
+fn prayer_fact<'a>(capture: &'a CombatCapture, name: &str) -> Option<&'a Value> {
     capture.prayer_facts.iter().find(|prayer| {
         prayer["name"]
             .as_str()
@@ -1469,7 +1535,7 @@ fn first_warlord_attack_onset(capture: &CombatCapture) -> Option<i64> {
     None
 }
 
-fn first_prayer_action(capture: &CombatCapture, name: &str) -> Option<&Value> {
+fn first_prayer_action<'a>(capture: &'a CombatCapture, name: &str) -> Option<&'a Value> {
     let component = prayer_component(capture, name)?;
     capture
         .actions
@@ -1567,7 +1633,7 @@ fn prayer_off_plan_after_corpse(capture: &CombatCapture, report: &Value) -> bool
         capture.frames.iter().any(|frame| {
             frame["tick"]
                 .as_i64()
-                .is_some_and(|tick| (lock_end..=lock_end + 2).contains(&tick))
+                .is_some_and(|tick| tick > plan.tick && (lock_end..=lock_end + 2).contains(&tick))
                 && all_prayer_bits_off(frame)
         })
     })
@@ -1575,7 +1641,7 @@ fn prayer_off_plan_after_corpse(capture: &CombatCapture, report: &Value) -> bool
 
 fn no_eat_at_zero_danger(capture: &CombatCapture, report: &Value) -> bool {
     integer(report, "combat_food") == Some(0)
-        && !capture.actions.iter().any(|action| is_eat(action))
+        && !capture.actions.iter().any(is_eat)
         && capture
             .actions
             .iter()
@@ -1648,7 +1714,7 @@ fn m2_restoration_runs_ok(capture: &CombatCapture, report: &Value) -> bool {
     };
     let plans = batch_plans(capture);
     let mut expected_runs = 0i64;
-    let mut lock_end_attacks = Vec::<(i64, u64)>::new();
+    let mut restore_owed = false;
     for plan in &plans {
         let first_sequence = plan.rows.first().and_then(|row| row["sequence"].as_u64());
         if first_sequence.is_none_or(|sequence| sequence <= first_attack_sequence)
@@ -1666,21 +1732,22 @@ fn m2_restoration_runs_ok(capture: &CombatCapture, report: &Value) -> bool {
             .filter(|action| is_npc_attack(action))
             .collect::<Vec<_>>();
         if clearing {
-            expected_runs += 1;
+            if !restore_owed {
+                expected_runs += 1;
+            }
+            restore_owed = true;
             if !attacks.is_empty() {
                 if attacks.len() != 1 || !plan.rows.last().is_some_and(|last| is_npc_attack(last)) {
                     return false;
                 }
+                restore_owed = false;
             } else if plan.rows.last().is_some_and(|last| is_drink(last)) {
-                let Some(next) = batch_plan_at(&plans, plan.tick + 3) else {
-                    return false;
-                };
-                if !last_is_attack_or_drink(next) {
-                    return false;
-                }
-                if let Some(last) = next.rows.last().filter(|last| is_npc_attack(last)) {
-                    if let Some(sequence) = last["sequence"].as_u64() {
-                        lock_end_attacks.push((next.tick, sequence));
+                if corpse_tick > plan.tick + 3 {
+                    let Some(next) = batch_plan_at(&plans, plan.tick + 3) else {
+                        return false;
+                    };
+                    if !last_is_attack_or_drink(next) {
+                        return false;
                     }
                 }
             } else {
@@ -1688,15 +1755,10 @@ fn m2_restoration_runs_ok(capture: &CombatCapture, report: &Value) -> bool {
             }
         } else {
             for attack in attacks {
-                let Some(sequence) = attack["sequence"].as_u64() else {
-                    return false;
-                };
-                let lock_end = lock_end_attacks.iter().any(|(tick, attack_sequence)| {
-                    *tick == plan.tick && *attack_sequence == sequence
-                });
-                if !lock_end && !attack_is_mismatch_or_stale(capture, attack, engaged_index) {
+                if !restore_owed && !attack_is_mismatch_or_stale(capture, attack, engaged_index) {
                     return false;
                 }
+                restore_owed = false;
             }
         }
     }
@@ -1910,10 +1972,10 @@ fn m3_timing_receipt(capture: &CombatCapture) -> Value {
             let old_deadline = previous_onset.map(|onset| onset + 4);
             let expected_onset = tick
                 .zip(old_deadline)
-                .map(|(eat_tick, deadline)| eat_tick.max(deadline + 3));
+                .map(|(eat_tick, deadline)| (eat_tick + 1).max(deadline + 3));
             let eligible = tick
                 .zip(old_deadline)
-                .is_some_and(|(eat_tick, deadline)| deadline + 3 <= eat_tick);
+                .is_some_and(|(eat_tick, deadline)| deadline + 3 <= eat_tick + 1);
             let observed_onset =
                 tick.and_then(|tick| onsets.iter().copied().filter(|onset| *onset >= tick).min());
             json!({
@@ -1930,6 +1992,7 @@ fn m3_timing_receipt(capture: &CombatCapture) -> Value {
         .collect::<Vec<_>>();
     json!({
         "swing_rate_ticks": 4,
+        "observation_delivery_offset_ticks": 1,
         "eligible_eat_count": eats.iter().filter(|eat| eat["deadline_plus_three_was_due_at_eat"] == json!(true)).count(),
         "eats": eats,
     })
@@ -2121,7 +2184,7 @@ fn all_prayer_bits_off(frame: &Value) -> bool {
         .is_some_and(|varps| varps.len() == 15 && varps.iter().all(|row| row["value"] == json!(0)))
 }
 
-fn prayer_varp(frame: &Value, id: i32) -> Option<i64> {
+fn prayer_varp(frame: &Value, id: i64) -> Option<i64> {
     frame["prayer_varps"]
         .as_array()?
         .iter()
@@ -2238,14 +2301,19 @@ fn run_case(case: Case) {
         QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog"),
     );
     let stand = case
-        .stand(template.world().as_ref())
+        .stand(
+            template
+                .world()
+                .as_deref()
+                .expect("selected navigation world"),
+        )
         .expect("choose collision-backed combat fixture stand");
     let path_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../script/paths/289");
     let source_path = path_root.join(case.path_relative());
     let source = std::fs::read(&source_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
     let path = compile_path(&source, &selected, &quests)
-        .unwrap_or_else(|error| panic!("compile {}: {error}", source_path.display()));
+        .unwrap_or_else(|error| panic!("compile {}: {error:?}", source_path.display()));
 
     let names = super::mint_live_names(1);
     let account = names.first().expect("mint combat account").clone();
@@ -2254,13 +2322,10 @@ fn run_case(case: Case) {
         .find(|(name, _)| name == &account)
         .map(|(_, password)| password)
         .expect("mint local combat password");
-    let capture = Arc::new(Mutex::new(CombatCapture {
-        case: case.key().to_owned(),
-        inject_maze_after_imp_attack: case.inject_maze(),
-        ..CombatCapture::default()
-    }));
+    let capture = Arc::new(Mutex::new(CombatCapture::default()));
     {
         let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+        proof.inject_maze_after_imp_attack = case.inject_maze();
         proof.prayer_facts = selected
             .prayers()
             .iter()
@@ -2324,6 +2389,7 @@ fn run_case(case: Case) {
         move |_| (None, Some(Arc::clone(&frame_buffer))),
         move |client, username, hold| {
             if username == frame_account {
+                client.set_draw(true);
                 frame_state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -2352,7 +2418,9 @@ fn run_case(case: Case) {
             writer.outcome = "INVALID".to_owned();
             break;
         }
-        if matches!(case, Case::M2 | Case::M3 | Case::M6) && has_multiple_local_threats(&capture_snapshot) {
+        if matches!(case, Case::M2 | Case::M3 | Case::M6)
+            && has_multiple_local_threats(&capture_snapshot)
+        {
             let reason = format!(
                 "{} natural-area interference: multiple nearby/facing NPC threats",
                 case.key()
@@ -2371,7 +2439,7 @@ fn run_case(case: Case) {
             break;
         }
         drop(capture_snapshot);
-        let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = state.lock().unwrap_or_else(|e| e.into_inner());
         match state.runner.status() {
             RunnerStatus::Passed => {
                 writer.scenario_status = "Passed".to_owned();
@@ -2401,12 +2469,17 @@ fn run_case(case: Case) {
 
     let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
     if capture_snapshot.invalid_reason.is_some() {
-        writer.outcome = if case == Case::M6 && capture_snapshot.invalid_reason.as_deref()
-            .is_some_and(|reason| reason.starts_with("M6 NOT_STAGED:")) {
+        writer.outcome = if case == Case::M6
+            && capture_snapshot
+                .invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("M6 NOT_STAGED:"))
+        {
             "NOT_STAGED"
         } else {
             "INVALID"
-        }.to_owned();
+        }
+        .to_owned();
         writer.error = terminal_error.or_else(|| capture_snapshot.invalid_reason.clone());
     } else if writer.outcome == "RUNNING" && case_ready(case, &capture_snapshot) {
         writer.outcome = "PASS".to_owned();
@@ -2425,18 +2498,6 @@ fn run_case(case: Case) {
         "PASS" | "INVALID" | "NOT_STAGED" => {}
         other => panic!("{} live proof {other}: {:?}", case.key(), writer.error),
     }
-}
-
-fn stat_pair_equals(frame: &Value, name: &str, base: i64, effective: i64) -> bool {
-    stat_pair(frame, name) == Some((base, effective))
-}
-
-fn item_count_exact(frame: &Value, id: i32, count: i64) -> bool {
-    item_count(frame, id) == count
-}
-
-fn standable_anchor_value(tile: WorldTile) -> Value {
-    json!({"x": tile.x, "z": tile.z, "level": tile.level})
 }
 
 #[test]

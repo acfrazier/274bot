@@ -22890,8 +22890,7 @@ mod host_batch_tests {
     fn rows(
         requests: impl IntoIterator<Item = script::shim::InteractReq>,
     ) -> [Option<script::shim::InteractReq>; 5] {
-        let mut rows: [Option<script::shim::InteractReq>; 5] =
-            std::array::from_fn(|_| None);
+        let mut rows: [Option<script::shim::InteractReq>; 5] = std::array::from_fn(|_| None);
         let mut requests = requests.into_iter();
         for row in &mut rows {
             *row = requests.next();
@@ -22900,17 +22899,10 @@ mod host_batch_tests {
         rows
     }
 
-    fn observed_receipts(
-        cx: &ActionContext<'_>,
-        first: u64,
-        len: usize,
-    ) -> Option<Vec<bool>> {
+    fn observed_receipts(cx: &ActionContext<'_>, first: u64, len: usize) -> Option<Vec<bool>> {
         let mut receipts = Vec::with_capacity(len);
         for offset in 0..len {
-            receipts.push(
-                cx.interaction_receipt(first + offset as u64)?
-                    .accepted,
-            );
+            receipts.push(cx.interaction_receipt(first + offset as u64)?.accepted);
         }
         Some(receipts)
     }
@@ -22960,10 +22952,7 @@ mod host_batch_tests {
             })
         }
 
-        fn poll(
-            &mut self,
-            cx: &mut ActionContext<'_>,
-        ) -> Poll<Result<Self::Output, ActionError>> {
+        fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
             if self.batch_receipts.is_none() {
                 if let Ok(first) = &self.batch {
                     let Some(receipts) = observed_receipts(cx, *first, self.batch_len) else {
@@ -23020,10 +23009,7 @@ mod host_batch_tests {
     }
 
     impl Script for BatchScript {
-        fn tick(
-            &mut self,
-            tick: &mut NativeTick<'_>,
-        ) -> Result<ScriptFlow, ScriptFailure> {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
             if let Some(request) = self.direct.take() {
                 tick.queue_test_interaction(request);
             }
@@ -23039,6 +23025,14 @@ mod host_batch_tests {
                 }
             }
             Ok(ScriptFlow::Continue)
+        }
+
+        fn recovery_anchor(&self) -> Option<api::WorldTile> {
+            Some(api::WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            })
         }
     }
 
@@ -23135,7 +23129,7 @@ mod host_batch_tests {
         }
         let mut npc = client::dash3d::ClientNpc::at(1, 0);
         npc.r#type = Some(npc_type);
-        client.npc.push(Some(Box::new(npc)));
+        client.npc[0] = Some(Box::new(npc));
         client.npc_ids[0] = 0;
         client.npc_count = 1;
         client.bump_gens(client::io::ServerProt::IF_OPENMAIN_SIDE);
@@ -23207,7 +23201,7 @@ mod host_batch_tests {
             state: None,
             bank: Vec::new(),
         };
-        assert!(arm.route_with_radius(4, 0, 0, script::FindOptions::default(), 0));
+        assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
         assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
     }
 
@@ -23252,7 +23246,10 @@ mod host_batch_tests {
         );
 
         let first = rig.observe(1, true, false);
-        assert!(first.exclusive, "a live nonzero batch owns this observation");
+        assert!(
+            first.exclusive,
+            "a live nonzero batch owns this observation"
+        );
         assert_eq!(
             rig.driver.if_button_components,
             vec![3420, 3421],
@@ -23264,7 +23261,10 @@ mod host_batch_tests {
         );
 
         let second = rig.observe(2, true, false);
-        assert!(second.exclusive, "the follow-up batch is independently exclusive");
+        assert!(
+            second.exclusive,
+            "the follow-up batch is independently exclusive"
+        );
         assert_eq!(rig.driver.if_button_components, vec![3420, 3421, 3422]);
         let third = rig.observe(3, true, false);
         assert!(!third.exclusive, "receipt polling is not a batch dispatch");
@@ -23305,8 +23305,7 @@ mod host_batch_tests {
                 || queued(&rig.navs).is_some(),
             );
             assert_eq!(
-                due,
-                !batch_exclusive,
+                due, !batch_exclusive,
                 "only an admitted batch freezes the follow for this key"
             );
             if due {
@@ -23319,7 +23318,7 @@ mod host_batch_tests {
             let _ = rig.observe(2, true, false);
             let report = rig.report().unwrap().unwrap();
             if batch_exclusive {
-                assert!(matches!(report.batch, Ok(_)));
+                assert!(report.batch.is_ok());
                 assert_eq!(report.batch_receipts, Some(vec![true]));
                 assert!(matches!(
                     report.ordinary,
@@ -23327,10 +23326,7 @@ mod host_batch_tests {
                 ));
                 assert_eq!(report.ordinary_receipt, None);
             } else {
-                assert!(matches!(
-                    report.batch,
-                    Err(ActionError::BudgetExhausted)
-                ));
+                assert!(matches!(report.batch, Err(ActionError::BudgetExhausted)));
                 assert_eq!(report.batch_receipts, None);
                 assert!(matches!(report.ordinary, Some(Ok(_))));
                 assert_eq!(report.ordinary_receipt, Some(true));
@@ -23385,10 +23381,7 @@ mod host_batch_tests {
         assert_eq!(rig.driver.if_button_components, vec![3420]);
         assert_eq!(rig.driver.npc_ops, 1);
         assert_eq!(rig.driver.menu_order.len(), 2);
-        assert_eq!(
-            rig.driver.menu_order[0],
-            (MiniMenuAction::IF_BUTTON, 3420)
-        );
+        assert_eq!(rig.driver.menu_order[0], (MiniMenuAction::IF_BUTTON, 3420));
         assert_eq!(rig.driver.menu_order[1].0, MiniMenuAction::OP_NPC1);
 
         let key = (rig.client.gens.player, Some((0, 0, 0)));
@@ -23455,13 +23448,24 @@ mod host_batch_tests {
             None,
             None,
         );
-        force_watchdog_recovering(
-            &mut script_slot(&recovering.scripts, "alice")
-                .unwrap()
-                .lock()
-                .unwrap(),
-            (0, 0, 0),
-        );
+        {
+            let slot = script_slot(&recovering.scripts, "alice").unwrap();
+            let mut slot = slot.lock().unwrap();
+            let now = Instant::now();
+            slot.feed_watchdog(now, Some((0, 0, 0)), &[], false, true, &[]);
+            assert!(matches!(
+                slot.feed_watchdog(
+                    now + script::watchdog::WEDGE,
+                    Some((0, 0, 0)),
+                    &[],
+                    false,
+                    true,
+                    &[],
+                ),
+                script::WatchdogAction::ArmWalk { .. }
+            ));
+            assert!(slot.watchdog().holds_script_actions());
+        }
         let held = recovering.observe(1, true, false);
         assert!(!held.exclusive);
         assert!(

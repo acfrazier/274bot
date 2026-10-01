@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "id": "combat_melee_upkeep",
+  "id": "imp",
   "display_name": "Combat Melee Upkeep Fixture",
   "required": [],
   "tested_stats": null,
@@ -23,7 +23,7 @@
       "role": null,
       "progress_binding": "journal:imp",
       "progress": {
-        "colour": { "not_started": "imp:0", "in_progress": "imp:1", "complete": "imp:2" },
+        "colour": { "not_started": "imp:0", "in_progress": "imp:0", "complete": "imp:2" },
         "rules": [],
         "flags": [],
         "monotonic": false

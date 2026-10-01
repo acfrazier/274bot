@@ -1291,12 +1291,7 @@ fn entity_network_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> W
 }
 
 /// Projectile sources are encoded as scene-local tile centers in pixel space.
-fn projectile_source_tile(
-    src_x: i32,
-    src_z: i32,
-    level: i32,
-    base: (i32, i32),
-) -> WorldTile {
+fn projectile_source_tile(src_x: i32, src_z: i32, level: i32, base: (i32, i32)) -> WorldTile {
     WorldTile {
         x: base.0 + (src_x - 64) / 128,
         z: base.1 + (src_z - 64) / 128,

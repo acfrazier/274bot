@@ -192,8 +192,7 @@ impl Ledger {
         let owner = self.owner.as_ref().expect("owner checked");
         if owner.batch_live(authority.request_id()) {
             self.batch_receipts[self.next_batch_receipt] = Some(receipt);
-            self.next_batch_receipt =
-                (self.next_batch_receipt + 1) % self.batch_receipts.len();
+            self.next_batch_receipt = (self.next_batch_receipt + 1) % self.batch_receipts.len();
             owner.cancel_interaction(authority.request_id());
         } else if self.interaction_request == Some(authority.request_id())
             && self.interaction.is_none()
@@ -435,7 +434,10 @@ mod tests {
         assert!(!budget.event(true));
 
         budget.observe(7);
-        assert_eq!(budget.events, 5, "same-tick re-observation cannot refill it");
+        assert_eq!(
+            budget.events, 5,
+            "same-tick re-observation cannot refill it"
+        );
         assert!(!budget.batch());
         budget.observe(8);
         assert!(budget.batch(), "the next observed tick starts uncharged");

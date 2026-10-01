@@ -6,8 +6,8 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey, SelectedPin};
 use api::snapshot::{
     ActorTargetView, ActorView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily,
-    ItemContainer, LocalPlayerView, NpcView, PlayerView, SnapshotView, StatView, VarpView,
-    WorldStateView,
+    ItemContainer, LocalPlayerView, NpcView, PlayerView, SideTabView, SnapshotView, StatView,
+    VarpView, WorldStateView,
 };
 use std::time::Instant;
 
@@ -15,8 +15,12 @@ struct Lease;
 impl NativeMachine for Lease {
     type Args = ();
     type Output = ();
-    fn begin(_: (), _: &mut ActionContext<'_>) -> Result<Self, ActionError> { Ok(Self) }
-    fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> { Poll::Pending }
+    fn begin(_: (), _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self)
+    }
+    fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        Poll::Pending
+    }
     fn cancel(&mut self) {}
 }
 
@@ -26,19 +30,92 @@ struct Runtime {
     ledger: Option<Box<ledger::Ledger>>,
     budget: ledger::TickBudget,
     wall: Instant,
+    evidence: Option<EvidenceStamp>,
 }
 impl Runtime {
-    fn context<R>(&mut self, snapshot: &GameSnapshot, tick: u64, sequence: u64, f: impl FnOnce(&mut NativeActions, &mut ActionContext<'_>) -> R) -> R {
+    fn context<R>(
+        &mut self,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        sequence: u64,
+        f: impl FnOnce(&mut NativeActions, &mut ActionContext<'_>) -> R,
+    ) -> R {
         self.budget.observe(tick);
-        let evidence = EvidenceStamp { run: RunKey { slot: 1, run: 1, session: 1 }, tick, sequence };
-        let action_id = self.ledger.as_ref().and_then(|ledger| ledger.owner.as_ref()).map_or(0, |owner| owner.id.get());
+        let evidence = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence,
+        };
+        self.evidence = Some(evidence);
+        let action_id = self
+            .ledger
+            .as_ref()
+            .and_then(|ledger| ledger.owner.as_ref())
+            .map_or(0, |owner| owner.id.get());
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
-            evidence, pin: &self.pin, snapshot: SnapshotView::new(Some(snapshot), evidence),
-            retained: &mut self.retained, action_id, active_now: Duration::from_millis(tick * 600),
-            wall_now: self.wall, ledger: &mut self.ledger, budget: &mut self.budget, eligible: true,
+            evidence,
+            pin: &self.pin,
+            snapshot: SnapshotView::new(Some(snapshot), evidence),
+            retained: &mut self.retained,
+            action_id,
+            active_now: Duration::from_millis(tick * 600),
+            wall_now: self.wall,
+            ledger: &mut self.ledger,
+            budget: &mut self.budget,
+            eligible: true,
         };
         f(&mut actions, &mut cx)
+    }
+}
+
+#[derive(Default)]
+struct DrainedBatch {
+    effects: [Option<HostEffect>; 5],
+    request_ids: [u64; 5],
+    batch_ids: [u64; 5],
+    accepted: [bool; 5],
+    dispatched: [bool; 5],
+    len: usize,
+}
+impl DrainedBatch {
+    fn get(&self, index: usize) -> Option<&HostEffect> {
+        self.effects.get(index).and_then(Option::as_ref)
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn assert_ordered(&self) {
+        if self.len == 0 {
+            return;
+        }
+        let first = self.request_ids[0];
+        let batch = self.batch_ids[0];
+        for offset in 0..self.len {
+            assert_eq!(self.request_ids[offset], first + offset as u64);
+            assert_eq!(self.batch_ids[offset], batch);
+            if matches!(self.get(offset), Some(HostEffect::Interaction(_))) {
+                assert_ne!(
+                    batch, 0,
+                    "combat interactions use emit_batch, including one-row plans"
+                );
+            }
+        }
+        if batch != 0 {
+            assert_eq!(batch, first);
+        }
+    }
+    fn into_single(mut self) -> Option<HostEffect> {
+        assert!(
+            self.len <= 1,
+            "ordered batch has {} rows; inspect it with pending_batch",
+            self.len
+        );
+        self.effects[0].take()
     }
 }
 
@@ -53,36 +130,116 @@ impl Harness {
     }
     fn new_at(scene: &Scene, request: CombatRequest, origin: u64) -> Self {
         let mut runtime = Runtime {
-            pin: scene.data.selected_pin().unwrap(), retained: RetainedMemory::default(),
-            ledger: None, budget: ledger::TickBudget::default(), wall: Instant::now(),
+            pin: scene.data.selected_pin().unwrap(),
+            retained: RetainedMemory::default(),
+            ledger: None,
+            budget: ledger::TickBudget::default(),
+            wall: Instant::now(),
+            evidence: None,
         };
         let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
             let lease = actions.begin::<Lease>((), cx).unwrap();
-            let machine = Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx).unwrap();
+            let machine =
+                Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx).unwrap();
             (machine, lease)
         });
-        Self { machine, runtime, _lease: lease }
+        Self {
+            machine,
+            runtime,
+            _lease: lease,
+        }
     }
-    fn poll(&mut self, snapshot: &GameSnapshot, tick: u64) -> Poll<Result<CombatReport, ActionError>> {
+    fn poll(
+        &mut self,
+        snapshot: &GameSnapshot,
+        tick: u64,
+    ) -> Poll<Result<CombatReport, ActionError>> {
         self.poll_stamp(snapshot, tick, tick)
     }
-    fn poll_stamp(&mut self, snapshot: &GameSnapshot, tick: u64, sequence: u64) -> Poll<Result<CombatReport, ActionError>> {
+    fn poll_stamp(
+        &mut self,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        sequence: u64,
+    ) -> Poll<Result<CombatReport, ActionError>> {
         let machine = &mut self.machine;
-        self.runtime.context(snapshot, tick, sequence, |_, cx| machine.poll(cx))
+        self.runtime
+            .context(snapshot, tick, sequence, |_, cx| machine.poll(cx))
+    }
+    fn drain(&mut self, refuse_at: Option<usize>) -> DrainedBatch {
+        let evidence = self
+            .runtime
+            .evidence
+            .expect("poll establishes dispatch evidence");
+        let ledger = self.runtime.ledger.as_mut().unwrap();
+        let mut drained = DrainedBatch::default();
+        let mut stopped = false;
+        while !ledger.outbox.is_empty() {
+            let action = ledger.outbox.remove(0);
+            let index = drained.len;
+            assert!(
+                index < drained.effects.len(),
+                "combat batch exceeds five rows"
+            );
+            let authority = action.authority();
+            let dispatched = !stopped;
+            let accepted = dispatched && refuse_at != Some(index);
+            if dispatched && !accepted {
+                stopped = true;
+            }
+            if matches!(&action.effect, HostEffect::Interaction(_)) {
+                ledger.complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: action.request_id.get(),
+                        evidence: EvidenceStamp {
+                            run: authority.run(),
+                            tick: evidence.tick,
+                            sequence: evidence.sequence,
+                        },
+                        accepted,
+                    },
+                );
+            }
+            drained.request_ids[index] = action.request_id.get();
+            drained.batch_ids[index] = action.batch;
+            drained.accepted[index] = accepted;
+            drained.dispatched[index] = dispatched;
+            drained.effects[index] = Some(action.effect);
+            drained.len += 1;
+        }
+        if let Some(refuse_at) = refuse_at {
+            assert!(
+                refuse_at < drained.len,
+                "refused row must be in the admitted batch"
+            );
+        }
+        drained.assert_ordered();
+        drained
     }
     fn take(&mut self) -> Option<HostEffect> {
-        let ledger = self.runtime.ledger.as_mut().unwrap();
-        assert!(ledger.outbox.len() <= 1, "one request per observed tick");
-        ledger.outbox.pop().map(|action| action.effect)
+        self.drain(None).into_single()
     }
     fn pending(&mut self, scene: &Scene, tick: u64) -> Option<HostEffect> {
         assert!(matches!(self.poll(&scene.snapshot, tick), Poll::Pending));
         self.take()
     }
+    fn pending_batch(&mut self, scene: &Scene, tick: u64) -> DrainedBatch {
+        assert!(matches!(self.poll(&scene.snapshot, tick), Poll::Pending));
+        self.drain(None)
+    }
+    fn pending_with_refusal(&mut self, scene: &Scene, tick: u64, refuse_at: usize) -> DrainedBatch {
+        assert!(matches!(self.poll(&scene.snapshot, tick), Poll::Pending));
+        self.drain(Some(refuse_at))
+    }
     fn ready(&mut self, scene: &Scene, tick: u64) -> CombatReport {
         match self.poll(&scene.snapshot, tick) {
-            Poll::Ready(Ok(report)) => { assert!(self.take().is_none()); report }
-            result => panic!("expected completed combat, got {result:?}"),
+            Poll::Ready(Ok(report)) => {
+                assert_eq!(self.drain(None).len(), 0);
+                report
+            }
+            result => panic!("expected completed combat, got {result:?}; failures={:?}, pending={:?}, phase={:?}",
+                self.machine.schedule.unsettled, self.machine.pending.map(|row| (row.row.kind, row.age)), self.machine.phase),
         }
     }
 }
@@ -93,18 +250,36 @@ struct Scene {
     snapshot: GameSnapshot,
     local: LocalPlayerView,
     npcs: Vec<NpcView>,
+    players: Vec<PlayerView>,
     stats: Vec<StatView>,
     varps: Vec<VarpView>,
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
 }
-fn tile(x: i32, z: i32) -> api::WorldTile { api::WorldTile { x, z, level: 0 } }
+fn tile(x: i32, z: i32) -> api::WorldTile {
+    api::WorldTile { x, z, level: 0 }
+}
 fn actor(at: api::WorldTile) -> ActorView {
     ActorView {
-        name: None, actions: Vec::new(), tile: at, distance: 0, animation: -1, animation_frame: -1,
-        pose_animation: -1, orientation: 0, target_orientation: 0, overhead_text: None,
-        spot_animation: -1, spot_animation_stamp: -1, health: 40, total_health: 40,
-        face_entity: -1, target: None, moving: false, running: false, in_combat: false,
+        name: None,
+        actions: Vec::new(),
+        tile: at,
+        distance: 0,
+        animation: -1,
+        animation_frame: -1,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 40,
+        total_health: 40,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
     }
 }
 impl Scene {
@@ -114,21 +289,76 @@ impl Scene {
         let row = data.npc_by_config(config).unwrap();
         let at = tile(2600, 3200);
         let npc = NpcView {
-            index: 7, r#type: Some(row.id as usize), name: row.display.clone(),
-            actions: vec![Some("Attack".into())], tile: tile(at.x + 1, at.z), distance: 1,
-            animation: -1, animation_frame: -1, pose_animation: -1, orientation: 0,
-            target_orientation: 0, overhead_text: None, spot_animation: -1,
-            spot_animation_stamp: -1, health: 30, total_health: 30, face_entity: -1,
-            target: None, moving: false, running: false, in_combat: false, level: 1, size: 1,
-            network: tile(at.x + 1, at.z), x: 0, z: 0, yaw: 0,
+            index: 7,
+            r#type: Some(row.id as usize),
+            name: row.display.clone(),
+            actions: vec![Some("Attack".into())],
+            tile: tile(at.x + 1, at.z),
+            distance: 1,
+            animation: -1,
+            animation_frame: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 30,
+            total_health: 30,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 1,
+            size: 1,
+            network: tile(at.x + 1, at.z),
+            x: 0,
+            z: 0,
+            yaw: 0,
         };
-        let varps = data.prayers().iter().map(|row| VarpView { index: row.varp, value: 0 })
-            .chain([VarpView { index: super::super::OPTION_NODEF, value: 0 }]).collect();
+        let varps = data
+            .prayers()
+            .iter()
+            .map(|row| VarpView {
+                index: row.varp,
+                value: 0,
+            })
+            .chain([VarpView {
+                index: super::super::OPTION_NODEF,
+                value: 0,
+            }])
+            .collect();
         let mut scene = Self {
-            data, tables, snapshot: GameSnapshot::new(), npcs: vec![npc],
-            local: LocalPlayerView { player: PlayerView { index: 1, actor: actor(at), combat_level: 60, skill_level: 0, weapon: None }, energy: 100, weight: 0 },
-            stats: (0..25).map(|index| StatView { index, name: String::new(), effective: if index == 5 { 1 } else { 40 }, base: if index == 5 { 1 } else { 40 }, xp: 0, used: api::snapshot::stat_used(index as usize) }).collect(),
-            varps, inventory: Vec::new(), equipment: Vec::new(),
+            data,
+            tables,
+            snapshot: GameSnapshot::new(),
+            npcs: vec![npc],
+            players: Vec::new(),
+            local: LocalPlayerView {
+                player: PlayerView {
+                    index: 1,
+                    actor: actor(at),
+                    combat_level: 60,
+                    skill_level: 0,
+                    weapon: None,
+                },
+                energy: 100,
+                weight: 0,
+            },
+            stats: (0..25)
+                .map(|index| StatView {
+                    index,
+                    name: String::new(),
+                    effective: if index == 5 { 1 } else { 40 },
+                    base: if index == 5 { 1 } else { 40 },
+                    xp: 0,
+                    used: api::snapshot::stat_used(index as usize),
+                })
+                .collect(),
+            varps,
+            inventory: Vec::new(),
+            equipment: Vec::new(),
         };
         scene.refresh();
         scene
@@ -139,56 +369,154 @@ impl Scene {
     }
     fn refresh_without_local(&mut self) {
         self.snapshot.seed_ingame(2);
-        self.snapshot.seed_world(WorldStateView { map_base_x: 2560, map_base_z: 3160, members: true, ..WorldStateView::default() });
+        self.snapshot.seed_world(WorldStateView {
+            map_base_x: 2560,
+            map_base_z: 3160,
+            members: true,
+            ..WorldStateView::default()
+        });
         self.snapshot.seed_stats(self.stats.clone());
         self.snapshot.seed_varps(self.varps.clone());
         self.snapshot.seed_inventory(self.inventory.clone(), 28);
         self.snapshot.seed_equipment(self.equipment.clone());
         self.snapshot.seed_npcs(self.npcs.clone());
-        self.snapshot.seed_players(Vec::new());
+        self.snapshot.seed_players(self.players.clone());
         self.snapshot.seed_projectiles(Vec::new());
         self.snapshot.seed_side_tabs(Vec::new(), 0);
-        self.snapshot.seed_hitmarks(HitmarksView { marks: [HitmarkView { value: 0, kind: 0, cycle: 0 }; 4], loop_cycle: 0 });
+        self.snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
         self.snapshot.seed_chat_lines(Vec::new());
     }
     fn request(&self) -> CombatRequest {
-        CombatRequest { target: Target::Npc { types: Arc::from([self.npcs[0].r#type.unwrap() as i32]), pick: Pick::Nearest, not_targeting_others: true }, ..CombatRequest::default() }
+        CombatRequest {
+            target: Target::Npc {
+                types: Arc::from([self.npcs[0].r#type.unwrap() as i32]),
+                pick: Pick::Nearest,
+                not_targeting_others: true,
+            },
+            ..CombatRequest::default()
+        }
     }
     fn stat(&mut self, index: usize, effective: i32, base: i32) {
         self.stats[index].effective = effective;
         self.stats[index].base = base;
     }
     fn prayer(&mut self, varp: i32, on: bool) {
-        self.varps.iter_mut().find(|row| row.index == varp).unwrap().value = i32::from(on);
+        self.varps
+            .iter_mut()
+            .find(|row| row.index == varp)
+            .unwrap()
+            .value = i32::from(on);
     }
     fn held(&self, alias: &str, slot: i32) -> ItemView {
         let item = self.data.item_by_alias(alias).unwrap();
         ItemView {
-            def: ItemDefView { id: item.id, name: item.name.clone(), stackable: false, members: false, base_value: 1, noted: false, certificate_link: -1, certificate_template: -1 },
-            container: ItemContainer::Inventory, action_family: ItemActionFamily::Held, slot,
-            count: 1, actions: Vec::new(), component_id: 3214,
+            def: ItemDefView {
+                id: item.id,
+                name: item.name.clone(),
+                stackable: false,
+                members: false,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 3214,
         }
     }
     fn face_us(&mut self) {
-        self.npcs[0].target = Some(ActorTargetView { kind: ActorKind::Player, index: 1 });
+        self.npcs[0].target = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 1,
+        });
         self.npcs[0].in_combat = true;
     }
+    fn combat_tab(&mut self, root_component_id: i32) {
+        self.snapshot.seed_side_tabs(
+            vec![SideTabView {
+                index: 0,
+                root_component_id,
+                available: true,
+                active: true,
+                visible: true,
+                widgets: Vec::new(),
+            }],
+            0,
+        );
+    }
     fn install(&mut self) {
-        self.local.player.actor.target = Some(ActorTargetView { kind: ActorKind::Npc, index: 7 });
+        self.local.player.actor.target = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        });
         self.local.player.actor.in_combat = true;
     }
     fn melee_seq(&self) -> i32 {
-        self.data.style_seqs().iter().find(|row| self.tables.style_seq(row.seq_id).is_some_and(|mask| mask.contains(super::super::tables::StyleMask::MELEE))).unwrap().seq_id
+        self.data
+            .style_seqs()
+            .iter()
+            .find(|row| {
+                self.tables
+                    .style_seq(row.seq_id)
+                    .is_some_and(|mask| mask.contains(super::super::tables::StyleMask::MELEE))
+            })
+            .unwrap()
+            .seq_id
     }
 }
 fn attack(effect: Option<HostEffect>) {
-    assert!(matches!(effect, Some(HostEffect::Interaction(InteractReq::Npc { action, index: Some(7), .. })) if action == "Attack"));
+    assert!(
+        matches!(effect, Some(HostEffect::Interaction(InteractReq::Npc { action, index: Some(7), .. })) if action == "Attack")
+    );
 }
 fn held(effect: Option<HostEffect>, want: &str) {
-    assert!(matches!(effect, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == want));
+    assert!(
+        matches!(effect, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == want)
+    );
 }
-fn prayer(effect: Option<HostEffect>, button: i32) {
-    assert!(matches!(effect, Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) if component_id == button));
+fn attack_row(batch: &DrainedBatch, index: usize) {
+    assert!(matches!(
+        batch.get(index),
+        Some(HostEffect::Interaction(InteractReq::Npc {
+            action,
+            index: Some(7),
+            ..
+        })) if action == "Attack"
+    ));
+}
+fn held_row(batch: &DrainedBatch, index: usize, want: &str) {
+    assert!(matches!(
+        batch.get(index),
+        Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == want
+    ));
+}
+fn prayer_row(batch: &DrainedBatch, index: usize, button: i32) {
+    assert!(matches!(
+        batch.get(index),
+        Some(HostEffect::Interaction(InteractReq::IfButton { component_id }))
+            if *component_id == button
+    ));
+}
+fn assert_len(batch: &DrainedBatch, want: usize) {
+    assert_eq!(batch.len(), want);
+    assert_eq!(
+        batch.effects[want..]
+            .iter()
+            .filter(|row| row.is_some())
+            .count(),
+        0
+    );
 }
 fn fight(scene: &mut Scene) -> Harness {
     let mut harness = Harness::new(scene, scene.request());
@@ -203,16 +531,36 @@ fn fight(scene: &mut Scene) -> Harness {
 #[test]
 fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     let mut scene = Scene::new("imp");
-    let mut attacker = PlayerView { index: 8, actor: actor(tile(2601, 3200)), combat_level: 60, skill_level: 0, weapon: None };
+    let mut attacker = PlayerView {
+        index: 8,
+        actor: actor(tile(2601, 3200)),
+        combat_level: 60,
+        skill_level: 0,
+        weapon: None,
+    };
     attacker.actor.name = Some("Alpha".into());
     attacker.actor.actions = vec![Some("Attack".into())];
-    attacker.actor.target = Some(ActorTargetView { kind: ActorKind::Player, index: 1 });
+    attacker.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: 1,
+    });
+    attacker.actor.animation = scene.melee_seq();
     attacker.actor.in_combat = true;
     scene.snapshot.seed_players(vec![attacker.clone()]);
     let mut request = scene.request();
-    request.target = Target::Attacker { npcs: false, players: true };
+    request.target = Target::Attacker {
+        npcs: false,
+        players: true,
+    };
+    request.fallback = Fallback::Fight;
     let mut harness = Harness::new(&scene, request);
-    assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Interaction(InteractReq::Player { name, action })) if name == "Alpha" && action == "Attack"));
+    assert!(
+        matches!(harness.pending(&scene, 1), Some(HostEffect::Interaction(InteractReq::Player { name, action })) if name == "Alpha" && action == "Attack"),
+        "engaged={:?}, phase={:?}, end={:?}",
+        harness.machine.engaged,
+        harness.machine.phase,
+        harness.machine.end
+    );
     attacker.actor.name = Some("Beta".into());
     attacker.actor.health = 0;
     scene.snapshot.seed_players(vec![attacker]);
@@ -221,7 +569,13 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     }
     let report = harness.ready(&scene, 5);
     assert_eq!(report.end, CombatEnd::TargetGone);
-    assert_eq!(report.engaged, Some(ActorRef { kind: ActorKind::Player, index: 8 }));
+    assert_eq!(
+        report.engaged,
+        Some(ActorRef {
+            kind: ActorKind::Player,
+            index: 8
+        })
+    );
     assert_eq!(report.engaged_npc_type, -1);
 }
 
@@ -234,10 +588,16 @@ fn fail_closed_later_slices_have_no_host_work() {
             0 => request.style = Style::Ranged,
             1 => request.style = Style::Mage,
             2 => request.prayer_mode = PrayerMode::Flick,
-            _ => request.target = Target::Player { name: Arc::from("someone") },
+            _ => {
+                request.target = Target::Player {
+                    name: Arc::from("someone"),
+                }
+            }
         }
         let mut harness = Harness::new(&scene, scene.request());
-        let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx));
+        let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+            Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx)
+        });
         assert!(matches!(result, Err(ActionError::Unavailable(_))));
         assert!(harness.take().is_none());
     }
@@ -249,15 +609,26 @@ fn case14_kill_proof_beats_plain_disappearance_but_not_our_death() {
         let mut scene = Scene::new("imp");
         let mut harness = fight(&mut scene);
         scene.npcs[0].health = 0;
-        if dead { scene.stat(3, 0, 40); }
+        if dead {
+            scene.stat(3, 0, 40);
+        }
         scene.refresh();
-        assert_eq!(harness.ready(&scene, 3).end, if dead { CombatEnd::Died } else { CombatEnd::Killed });
+        assert_eq!(
+            harness.ready(&scene, 3).end,
+            if dead {
+                CombatEnd::Died
+            } else {
+                CombatEnd::Killed
+            }
+        );
     }
     let mut scene = Scene::new("imp");
     let mut harness = fight(&mut scene);
     scene.npcs.clear();
     scene.refresh();
-    for tick in 3..6 { assert!(harness.pending(&scene, tick).is_none()); }
+    for tick in 3..6 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
     assert_eq!(harness.ready(&scene, 6).end, CombatEnd::TargetGone);
 }
 
@@ -275,7 +646,10 @@ fn case40_missing_local_observations_do_not_latch_target_gone() {
         assert!(cx.snapshot().stats().is_some());
         assert!(cx.snapshot().local_player().is_none());
     });
-    for tick in 3..7 { assert!(matches!(harness.poll(&missing, tick), Poll::Pending)); assert!(harness.take().is_none()); }
+    for tick in 3..7 {
+        assert!(matches!(harness.poll(&missing, tick), Poll::Pending));
+        assert!(harness.take().is_none());
+    }
     scene.npcs[0].health = 0;
     scene.refresh();
     let report = harness.ready(&scene, 7);
@@ -288,7 +662,11 @@ fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
     let mut scene = Scene::new("imp");
     let other = scene.data.npc_by_config("khazard_warlord").unwrap().id;
     let mut request = scene.request();
-    request.target = Target::Npc { types: Arc::from([scene.npcs[0].r#type.unwrap() as i32, other]), pick: Pick::Nearest, not_targeting_others: true };
+    request.target = Target::Npc {
+        types: Arc::from([scene.npcs[0].r#type.unwrap() as i32, other]),
+        pick: Pick::Nearest,
+        not_targeting_others: true,
+    };
     let mut harness = Harness::new(&scene, request);
     attack(harness.pending(&scene, 1));
     scene.install();
@@ -301,7 +679,9 @@ fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
     harness.take();
     scene.npcs[0].r#type = Some(scene.data.npc_by_config("nasty_tree").unwrap().id as usize);
     scene.refresh();
-    for tick in 3..6 { assert!(harness.pending(&scene, tick).is_none()); }
+    for tick in 3..6 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
     assert_eq!(harness.ready(&scene, 6).end, CombatEnd::TargetGone);
 }
 
@@ -312,7 +692,10 @@ fn same_stamp_and_new_sequence_same_tick_cannot_duplicate_work() {
     attack(harness.pending(&scene, 1));
     assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
     assert!(harness.take().is_none());
-    assert!(matches!(harness.poll_stamp(&scene.snapshot, 1, 2), Poll::Pending));
+    assert!(matches!(
+        harness.poll_stamp(&scene.snapshot, 1, 2),
+        Poll::Pending
+    ));
     assert!(harness.take().is_none());
     assert_eq!(harness.machine.counters.ticks, 1);
 }
@@ -323,7 +706,7 @@ fn case27e_refused_drink_cannot_create_input_lock_or_restoration() {
     let mut harness = fight(&mut scene);
     scene.stat(5, 0, 43);
     scene.face_us();
-    scene.inventory.push(scene.held("4dose1prayerrestore", 0));
+    scene.inventory.push(scene.held("4doseprayerrestore", 0));
     scene.refresh();
     harness.runtime.budget.observe(3);
     assert!(harness.runtime.budget.event(false));
@@ -333,50 +716,82 @@ fn case27e_refused_drink_cannot_create_input_lock_or_restoration() {
     assert!(!harness.machine.schedule.pending(OpKind::Drink));
     held(harness.pending(&scene, 4), "Drink");
     assert_eq!(harness.machine.input_lock(), Some(7));
-    assert_eq!(harness.machine.schedule.restore_due, 7);
 }
 
 #[test]
-fn case27_recovery_food_unlocks_protection_drink_next_tick() {
+fn case27_recovery_food_and_drink_share_a_ready_plan() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(3, 25, 40);
     scene.stat(5, 0, 43);
     scene.face_us();
     scene.inventory.push(scene.held("lobster", 0));
-    scene.inventory.push(scene.held("1dose1prayerrestore", 1));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
     scene.refresh();
-    held(harness.pending(&scene, 3), "Eat");
-    assert_eq!(harness.machine.schedule.restore_due, 4);
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 2);
+    held_row(&plan, 0, "Eat");
+    held_row(&plan, 1, "Drink");
+    assert_eq!(harness.machine.input_lock(), Some(6));
+
+    // Both item counts and the capped heal settle in the output observation.
     scene.stat(3, 37, 40);
-    scene.inventory.remove(0);
-    scene.refresh();
-    held(harness.pending(&scene, 4), "Drink");
     scene.stat(5, 17, 43);
     scene.inventory.clear();
     scene.refresh();
-    for tick in 5..7 { assert!(harness.pending(&scene, tick).is_none()); }
-    let protect = scene.data.prayers().iter().find(|row| row.name == "Protect from Melee").unwrap().clone();
-    prayer(harness.pending(&scene, 7), protect.button_com);
+    for tick in 4..6 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
+    assert_eq!(harness.machine.counters.locked, 2);
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let restore = harness.pending_batch(&scene, 6);
+    assert_len(&restore, 2);
+    prayer_row(&restore, 0, protect.button_com);
+    attack_row(&restore, 1);
     scene.prayer(protect.varp, true);
+    scene.install();
     scene.refresh();
-    attack(harness.pending(&scene, 8));
+    assert!(harness.pending(&scene, 7).is_none());
     assert_eq!(harness.machine.counters.restorations, 1);
     assert_eq!(harness.machine.counters.locked, 2);
 }
 
 #[test]
-fn karambwan_p_delay_holds_food_and_restoration_for_four_ticks() {
-    let mut scene = Scene::new("khazard_warlord");
-    let mut harness = fight(&mut scene);
+fn case44_lone_karambwan_uses_the_reachable_danger_four_gate() {
+    let mut scene = Scene::new("imp");
+    let danger_four = scene
+        .data
+        .npc_names()
+        .unwrap()
+        .rows
+        .iter()
+        .find(|row| super::select::facts::npc_max_hit(row) == Some(4))
+        .expect("selected content includes a non-bespoke danger-four NPC");
+    scene.npcs[0].r#type = Some(danger_four.id as usize);
+    scene.npcs[0].name = danger_four.display.clone();
+    scene.stat(5, 1, 1);
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack(harness.pending(&scene, 1));
+    scene.install();
     scene.face_us();
-    scene.stat(3, 9, 40);
+    scene.refresh();
+    assert!(harness.pending(&scene, 2).is_none());
+
+    scene.stat(3, 9, 30);
     scene.inventory.push(scene.held("tbwt_cooked_karambwan", 0));
     scene.refresh();
-    held(harness.pending(&scene, 3), "Eat");
+    let combo = harness.pending_batch(&scene, 3);
+    assert_len(&combo, 1);
+    held_row(&combo, 0, "Eat");
     assert_eq!(harness.machine.input_lock(), Some(7));
-    assert_eq!(harness.machine.schedule.restore_due, 7);
-    scene.stat(3, 27, 40);
+    scene.stat(3, 27, 30);
     scene.inventory.clear();
     scene.refresh();
     for tick in 4..7 {
@@ -396,36 +811,69 @@ fn held_food_on_cooldown_does_not_become_a_no_food_abort() {
     lobster.count = 2;
     scene.inventory.push(lobster);
     scene.refresh();
-    held(harness.pending(&scene, 3), "Eat");
+    let first = harness.pending_batch(&scene, 3);
+    assert_len(&first, 2);
+    held_row(&first, 0, "Eat");
+    attack_row(&first, 1);
+    scene.install();
     scene.inventory[0].count = 1;
     scene.stat(3, 10, 40);
     scene.refresh();
     for tick in 4..6 {
-        let effect = harness.pending(&scene, tick);
-        assert!(!matches!(effect, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Eat"));
+        assert_len(&harness.pending_batch(&scene, tick), 0);
         assert_eq!(harness.machine.end, None);
     }
-    held(harness.pending(&scene, 6), "Eat");
+    let retry = harness.pending_batch(&scene, 6);
+    assert_len(&retry, 2);
+    held_row(&retry, 0, "Eat");
+    attack_row(&retry, 1);
 }
 
 #[test]
-fn case27_failed_or_insufficient_heal_never_licenses_drink() {
-    for heal in [false, true] {
+fn case43_capped_recovery_gates_the_drink_strictly() {
+    for (hp, max, drink) in [(20, 30, true), (16, 30, false), (35, 40, true)] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
-        scene.stat(3, 24, 40);
+        scene.stat(3, hp, max);
         scene.stat(5, 0, 43);
         scene.face_us();
         scene.inventory.push(scene.held("lobster", 0));
-        scene.inventory.push(scene.held("4dose1prayerrestore", 1));
+        scene.inventory.push(scene.held("4doseprayerrestore", 1));
         scene.refresh();
-        held(harness.pending(&scene, 3), "Eat");
-        if heal { scene.stat(3, 27, 40); }
-        scene.refresh();
-        let next = harness.pending(&scene, 4);
-        assert!(!matches!(next, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Drink"));
-        assert_eq!(harness.machine.input_lock(), None);
+        let plan = harness.pending_batch(&scene, 3);
+        if hp == 35 {
+            assert_len(&plan, 1);
+            held_row(&plan, 0, "Drink");
+        } else {
+            assert_len(&plan, 2);
+            held_row(&plan, 0, "Eat");
+            if drink {
+                held_row(&plan, 1, "Drink");
+            } else {
+                attack_row(&plan, 1);
+            }
+        }
+        assert_eq!(plan.effects.iter().flatten().any(|row|
+            matches!(row, HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink")), drink);
+        if !drink {
+            assert_eq!(harness.machine.input_lock(), None);
+        }
     }
+
+    let mut scene = Scene::new("khazard_warlord");
+    let mut request = scene.request();
+    request.allow.food = false;
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    scene.install();
+    scene.refresh();
+    assert!(harness.pending(&scene, 2).is_none());
+    scene.stat(3, 25, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 3), 0);
 }
 
 #[test]
@@ -438,10 +886,18 @@ fn case3_food_only_line_and_real_heal_choose_largest_fitting_food() {
         scene.inventory.push(scene.held("lobster", 0));
         scene.inventory.push(scene.held("shark", 1));
         scene.refresh();
-        let effect = harness.pending(&scene, 3);
+        let plan = harness.pending_batch(&scene, 3);
         if hp == 19 {
-            assert!(matches!(effect, Some(HostEffect::Interaction(InteractReq::Held { name, action, .. })) if name == "Shark" && action == "Eat"));
-        } else { assert!(effect.is_empty()); }
+            assert_len(&plan, 2);
+            assert!(matches!(
+                plan.get(0),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Shark" && action == "Eat"
+            ));
+            attack_row(&plan, 1);
+        } else {
+            assert_len(&plan, 0);
+        }
     }
 }
 
@@ -460,7 +916,10 @@ fn case18_no_food_allowance_obeys_abort_or_fight_policy() {
         scene.inventory.push(scene.held("lobster", 0));
         scene.refresh();
         if matches!(fallback, Fallback::Abort) {
-            assert_eq!(harness.ready(&scene, 2).end, CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoFood)));
+            assert_eq!(
+                harness.ready(&scene, 2).end,
+                CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoFood))
+            );
         } else {
             assert!(harness.pending(&scene, 2).is_none());
             assert_eq!(harness.machine.end, None);
@@ -473,17 +932,36 @@ fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
-    let prayers: Vec<_> = scene.data.prayers().iter().filter(|row| ["Protect from Melee", "Ultimate Strength", "Incredible Reflexes"].contains(&row.name.as_str())).map(|row| (row.varp, row.button_com)).collect();
+    let prayers: Vec<_> = scene
+        .data
+        .prayers()
+        .iter()
+        .filter(|row| {
+            [
+                "Protect from Melee",
+                "Ultimate Strength",
+                "Incredible Reflexes",
+            ]
+            .contains(&row.name.as_str())
+        })
+        .map(|row| (row.varp, row.button_com))
+        .collect();
     assert_eq!(prayers.len(), 3);
-    for (varp, _) in &prayers { scene.prayer(*varp, true); }
+    for (varp, _) in &prayers {
+        scene.prayer(*varp, true);
+    }
     scene.npcs[0].health = 0;
     scene.refresh();
-    for (offset, (varp, button)) in prayers.iter().enumerate() {
-        prayer(harness.pending(&scene, 3 + offset as u64), *button);
-        scene.prayer(*varp, false);
-        scene.refresh();
+    let off = harness.pending_batch(&scene, 3);
+    assert_len(&off, prayers.len());
+    for (index, (_, button)) in prayers.iter().enumerate() {
+        prayer_row(&off, index, *button);
     }
-    let report = harness.ready(&scene, 6);
+    for (varp, _) in &prayers {
+        scene.prayer(*varp, false);
+    }
+    scene.refresh();
+    let report = harness.ready(&scene, 4);
     assert_eq!(report.end, CombatEnd::Killed);
     assert_eq!(report.restorations, 0);
 }
@@ -507,7 +985,7 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
     assert_eq!(allocations.count_total, 0);
     assert!(harness.machine.counters.swings >= 50);
     assert_eq!(harness.machine.counters.food, 0);
-    assert!(std::mem::size_of::<Combat>() <= 384);
+    assert!(std::mem::size_of::<Combat>() <= 512);
     assert!(std::mem::size_of::<CombatReport>() <= 80);
     println!("Combat={} CombatReport={} CombatRequest={} ArcRequest={} ActionHandle={} HostAction={} Ledger={} InteractionReceipt={} WalkReceipt={}",
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
@@ -524,7 +1002,7 @@ fn case27_drink_lock_preserves_safety_and_coalesces_restoration() {
         scene.stat(5, 0, 43);
         scene.face_us();
         scene.inventory.push(scene.held("lobster", 0));
-        scene.inventory.push(scene.held("1dose1prayerrestore", 1));
+        scene.inventory.push(scene.held("1doseprayerrestore", 1));
         scene.refresh();
         held(harness.pending(&scene, 3), "Drink");
         scene.inventory.pop();
@@ -534,21 +1012,32 @@ fn case27_drink_lock_preserves_safety_and_coalesces_restoration() {
         assert!(harness.pending(&scene, 4).is_none());
         assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
         assert_eq!(harness.machine.counters.locked, 1);
-        if hits >= 2 { scene.stat(3, if hits == 3 { 2 } else { 12 }, 40); }
+        if hits >= 2 {
+            scene.stat(3, if hits == 3 { 2 } else { 12 }, 40);
+        }
         scene.refresh();
         assert!(harness.pending(&scene, 5).is_none());
-        let protect = scene.data.prayers().iter().find(|row| row.name == "Protect from Melee").unwrap().clone();
-        let protect_tick = if hits == 3 {
-            held(harness.pending(&scene, 6), "Eat");
+        let protect = scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == "Protect from Melee")
+            .unwrap()
+            .clone();
+        let restored = harness.pending_batch(&scene, 6);
+        let protect_index = usize::from(hits == 3);
+        assert_len(&restored, protect_index + 2);
+        if hits == 3 {
+            held_row(&restored, 0, "Eat");
             scene.stat(3, 14, 40);
             scene.inventory.clear();
-            scene.refresh();
-            7
-        } else { 6 };
-        prayer(harness.pending(&scene, protect_tick), protect.button_com);
+        }
+        prayer_row(&restored, protect_index, protect.button_com);
+        attack_row(&restored, protect_index + 1);
         scene.prayer(protect.varp, true);
+        scene.install();
         scene.refresh();
-        attack(harness.pending(&scene, protect_tick + 1));
+        assert!(harness.pending(&scene, 7).is_none());
         assert_eq!(harness.machine.counters.locked, 2);
         assert_eq!(harness.machine.counters.restorations, 1);
         assert_eq!(harness.machine.counters.food, u8::from(hits == 3));
@@ -564,9 +1053,19 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
         scene.stat(5, 0, 43);
         scene.face_us();
         scene.inventory.push(scene.held("lobster", 0));
-        scene.inventory.push(scene.held("1dose1prayerrestore", 1));
+        scene.inventory.push(scene.held("1doseprayerrestore", 1));
         scene.refresh();
-        held(harness.pending(&scene, 3), "Eat");
+        let plan = harness.pending_batch(&scene, 3);
+        if hp == 9 {
+            assert_len(&plan, 2);
+            held_row(&plan, 0, "Eat");
+            attack_row(&plan, 1);
+            assert_eq!(harness.machine.input_lock(), None);
+        } else {
+            assert_len(&plan, 2);
+            held_row(&plan, 0, "Eat");
+            held_row(&plan, 1, "Drink");
+        }
     }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
@@ -574,12 +1073,10 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
     scene.stat(5, 0, 43);
     scene.face_us();
     scene.inventory.push(scene.held("shrimp", 0));
-    scene.inventory.push(scene.held("1dose1prayerrestore", 1));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
     scene.refresh();
-    assert!(harness.pending(&scene, 3).is_none());
+    assert_len(&harness.pending_batch(&scene, 3), 0);
     assert!(harness.pending(&scene, 4).is_none());
-    assert!(!harness.machine.schedule.pending(OpKind::Drink));
-    assert!(!harness.machine.schedule.pending(OpKind::Eat));
 }
 
 #[test]
@@ -592,31 +1089,50 @@ fn case28_food_extends_known_and_past_deadlines_without_delaying_restore() {
         scene.refresh();
         assert!(harness.pending(&scene, if idle { 20 } else { 9 }).is_none());
         assert_eq!(harness.machine.cycle().deadline, if idle { 24 } else { 13 });
-        scene.local.player.actor.animation_frame = 1;
+        let swing_tick = if idle { 20 } else { 9 };
+        let eat_tick = if idle { 32 } else { 11 };
+        // A gap intentionally invalidates this clock; the past-deadline
+        // variant therefore keeps observing the same advancing animation.
+        for tick in swing_tick + 1..eat_tick {
+            scene.local.player.actor.animation_frame = (tick - swing_tick) as i32;
+            scene.refresh();
+            let plan = harness.pending_batch(&scene, tick);
+            for index in 0..plan.len() {
+                attack_row(&plan, index);
+            }
+        }
+        scene.local.player.actor.animation_frame = (eat_tick - swing_tick) as i32;
         scene.face_us();
         scene.stat(3, 19, 40);
         scene.inventory.push(scene.held("lobster", 0));
         scene.refresh();
-        let eat_tick = if idle { 32 } else { 11 };
-        held(harness.pending(&scene, eat_tick), "Eat");
+        let eat = harness.pending_batch(&scene, eat_tick);
+        assert_len(&eat, 2);
+        held_row(&eat, 0, "Eat");
+        attack_row(&eat, 1);
         assert_eq!(harness.machine.cycle().deadline, if idle { 27 } else { 16 });
         scene.stat(3, 31, 40);
         scene.inventory.clear();
+        scene.install();
         scene.refresh();
-        attack(harness.pending(&scene, eat_tick + 1));
+        assert!(harness.pending(&scene, eat_tick + 1).is_none());
         assert_eq!(harness.machine.counters.restorations, 1);
         if !idle {
-            for tick in 13..16 { assert!(harness.pending(&scene, tick).is_none()); }
+            for tick in 13..16 {
+                assert!(harness.pending(&scene, tick).is_none());
+            }
             scene.local.player.actor.animation_frame = 0;
             scene.refresh();
             assert!(harness.pending(&scene, 16).is_none());
             assert_eq!(harness.machine.cycle().deadline, 20);
-        } else { assert!(harness.pending(&scene, 34).is_none()); }
+        } else {
+            assert!(harness.pending(&scene, 34).is_none());
+        }
     }
 }
 
 #[test]
-fn case29_and38_safety_ops_form_one_restoration_run() {
+fn case29_projected_protection_suppresses_nonemergency_food() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
@@ -624,20 +1140,33 @@ fn case29_and38_safety_ops_form_one_restoration_run() {
     scene.face_us();
     scene.inventory.push(scene.held("lobster", 0));
     for name in ["Ultimate Strength", "Incredible Reflexes"] {
-        let varp = scene.data.prayers().iter().find(|row| row.name == name).unwrap().varp;
+        let varp = scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == name)
+            .unwrap()
+            .varp;
         scene.prayer(varp, true);
     }
     scene.refresh();
-    let protect = scene.data.prayers().iter().find(|row| row.name == "Protect from Melee").unwrap().clone();
-    prayer(harness.pending(&scene, 3), protect.button_com);
-    held(harness.pending(&scene, 4), "Eat");
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 2);
+    prayer_row(&plan, 0, protect.button_com);
+    attack_row(&plan, 1);
     scene.prayer(protect.varp, true);
-    scene.stat(3, 31, 40);
-    scene.inventory.clear();
+    scene.install();
     scene.refresh();
-    attack(harness.pending(&scene, 5));
+    assert!(harness.pending(&scene, 4).is_none());
     assert_eq!(harness.machine.counters.restorations, 1);
-    assert_eq!(harness.machine.counters.food, 1);
+    assert_eq!(harness.machine.counters.food, 0);
 }
 
 #[test]
@@ -649,7 +1178,9 @@ fn case30_stale_attack_pacing_uses_the_worn_weapon_rate() {
         scene.equipment.push(weapon);
         scene.refresh();
         let mut harness = fight(&mut scene);
-        for tick in 3..=rate + 1 { assert!(harness.pending(&scene, tick).is_none()); }
+        for tick in 3..=rate + 1 {
+            assert!(harness.pending(&scene, tick).is_none());
+        }
         attack(harness.pending(&scene, rate + 2));
     }
 }
@@ -662,7 +1193,13 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
     scene.stat(3, 7, 30);
     scene.inventory.push(scene.held("lobster", 0));
     scene.refresh();
-    let request = CombatRequest { target: Target::Attacker { npcs: true, players: false }, ..CombatRequest::default() };
+    let request = CombatRequest {
+        target: Target::Attacker {
+            npcs: true,
+            players: false,
+        },
+        ..CombatRequest::default()
+    };
     let mut harness = Harness::new(&scene, request);
     held(harness.pending(&scene, 1), "Eat");
     scene.stat(3, 19, 30);
@@ -680,43 +1217,120 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
 }
 
 #[test]
-fn case11_r2_offensive_drop_alternates_with_restore_and_keeps_protect() {
+fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 26, 43);
     scene.face_us();
-    let on: Vec<_> = scene.data.prayers().iter().filter(|row| ["Protect from Melee", "Ultimate Strength", "Incredible Reflexes"].contains(&row.name.as_str())).cloned().collect();
-    for row in &on { scene.prayer(row.varp, true); }
-    scene.refresh();
-    for (offset, row) in on.iter().filter(|row| row.name != "Protect from Melee").enumerate() {
-        prayer(harness.pending(&scene, 3 + offset as u64 * 2), row.button_com);
-        scene.prayer(row.varp, false);
-        scene.refresh();
-        attack(harness.pending(&scene, 4 + offset as u64 * 2));
+    let on: Vec<_> = scene
+        .data
+        .prayers()
+        .iter()
+        .filter(|row| {
+            [
+                "Protect from Melee",
+                "Ultimate Strength",
+                "Incredible Reflexes",
+            ]
+            .contains(&row.name.as_str())
+        })
+        .cloned()
+        .collect();
+    for row in &on {
+        scene.prayer(row.varp, true);
     }
-    assert_eq!(harness.machine.counters.restorations, 2);
-    let protect = on.iter().find(|row| row.name == "Protect from Melee").unwrap();
-    assert_eq!(scene.varps.iter().find(|row| row.index == protect.varp).unwrap().value, 1);
+    scene.refresh();
+    let mut tick = 3;
+    let mut plans = 0_u8;
+    while on.iter().any(|row| {
+        row.name != "Protect from Melee"
+            && scene
+                .varps
+                .iter()
+                .find(|varp| varp.index == row.varp)
+                .unwrap()
+                .value
+                != 0
+    }) {
+        let plan = harness.pending_batch(&scene, tick);
+        assert!(plan.len() >= 2);
+        attack_row(&plan, plan.len() - 1);
+        for index in 0..plan.len() - 1 {
+            let component = match plan.get(index) {
+                Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+                    *component_id
+                }
+                _ => panic!("only prayer deactivations may precede the restoring Attack"),
+            };
+            let row = scene
+                .data
+                .prayers()
+                .iter()
+                .find(|row| row.button_com == component)
+                .expect("deactivation resolves to a prayer component");
+            assert_ne!(row.name, "Protect from Melee");
+            assert_ne!(
+                scene
+                    .varps
+                    .iter()
+                    .find(|varp| varp.index == row.varp)
+                    .unwrap()
+                    .value,
+                0
+            );
+            scene.prayer(row.varp, false);
+        }
+        scene.install();
+        scene.refresh();
+        plans = plans.saturating_add(1);
+        tick += 1;
+    }
+    assert_len(&harness.pending_batch(&scene, tick), 0);
+    assert_eq!(harness.machine.counters.restorations, plans);
+    let protect = on
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap();
+    assert_eq!(
+        scene
+            .varps
+            .iter()
+            .find(|row| row.index == protect.varp)
+            .unwrap()
+            .value,
+        1
+    );
 }
 
 #[test]
 fn case5_prayer_floor_requires_active_or_wanted_prayer() {
-    for (base, current, drink) in [(43, 26, true), (43, 27, false), (31, 17, true), (31, 18, false)] {
+    for (base, current, drink) in [
+        (43, 26, true),
+        (43, 27, false),
+        (31, 17, true),
+        (31, 18, false),
+    ] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
         scene.stat(5, current, base);
-        scene.inventory.push(scene.held("1dose1prayerrestore", 0));
-        let strength = scene.data.prayers().iter().find(|row| row.name == "Ultimate Strength").unwrap().varp;
+        scene.inventory.push(scene.held("1doseprayerrestore", 0));
+        let strength = scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == "Ultimate Strength")
+            .unwrap()
+            .varp;
         scene.prayer(strength, true);
         scene.refresh();
-        let op = harness.pending(&scene, 3);
-        if drink { held(op, "Drink"); }
-        else { assert!(!matches!(op, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Drink")); }
+        let plan = harness.pending_batch(&scene, 3);
+        assert_eq!(plan.effects.iter().flatten().any(|row|
+            matches!(row, HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink")), drink);
     }
     let mut scene = Scene::new("imp");
     let mut harness = fight(&mut scene);
     scene.stat(5, 0, 43);
-    scene.inventory.push(scene.held("1dose1prayerrestore", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
     scene.refresh();
     assert!(harness.pending(&scene, 3).is_none());
 }
@@ -724,7 +1338,10 @@ fn case5_prayer_floor_requires_active_or_wanted_prayer() {
 #[test]
 fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
     let mut scene = Scene::new("khazard_warlord");
-    let goal = tile(scene.local.player.actor.tile.x + 20, scene.local.player.actor.tile.z);
+    let goal = tile(
+        scene.local.player.actor.tile.x + 20,
+        scene.local.player.actor.tile.z,
+    );
     let mut request = scene.request();
     request.fallback = Fallback::Retreat { tile: goal };
     let mut harness = Harness::new(&scene, request);
@@ -734,32 +1351,52 @@ fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
     assert!(harness.pending(&scene, 2).is_none());
     scene.stat(5, 0, 43);
     scene.face_us();
-    scene.inventory.push(scene.held("1dose1prayerrestore", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
     scene.refresh();
     held(harness.pending(&scene, 3), "Drink");
     scene.inventory.clear();
     scene.stat(5, 17, 43);
     scene.stat(3, 9, 40);
     scene.refresh();
-    for tick in 4..6 { assert!(harness.pending(&scene, tick).is_none()); }
+    for tick in 4..6 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
     assert_eq!(harness.machine.phase, Phase::Escape);
-    assert!(matches!(harness.pending(&scene, 6), Some(HostEffect::Interaction(InteractReq::SetRetaliate { on: false }))));
-    scene.varps.iter_mut().find(|row| row.index == super::super::OPTION_NODEF).unwrap().value = 1;
+    let obligated_before_escape_work = harness.machine.counters.restorations;
+    assert!(matches!(
+        harness.pending(&scene, 6),
+        Some(HostEffect::Interaction(InteractReq::SetRetaliate {
+            on: false
+        }))
+    ));
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == super::super::OPTION_NODEF)
+        .unwrap()
+        .value = 1;
     scene.refresh();
-    assert!(matches!(harness.pending(&scene, 7), Some(HostEffect::Walk(request)) if request.target == goal));
-    for tick in 8..20 { assert!(harness.pending(&scene, tick).is_none()); }
+    assert!(
+        matches!(harness.pending(&scene, 7), Some(HostEffect::Walk(request)) if request.target == goal)
+    );
+    for tick in 8..20 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
     scene.local.player.actor.tile = goal;
     scene.refresh();
     let report = harness.ready(&scene, 20);
     assert_eq!(report.end, CombatEnd::Aborted(AbortReason::Retreated));
     assert_eq!(report.locked_ticks, 2);
-    assert_eq!(report.restorations, 0);
+    assert_eq!(report.restorations, obligated_before_escape_work);
 }
 
 #[test]
 fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
     let mut scene = Scene::new("khazard_warlord");
-    let goal = tile(scene.local.player.actor.tile.x + 20, scene.local.player.actor.tile.z);
+    let goal = tile(
+        scene.local.player.actor.tile.x + 20,
+        scene.local.player.actor.tile.z,
+    );
     let mut request = scene.request();
     request.fallback = Fallback::Retreat { tile: goal };
     let mut harness = Harness::new(&scene, request);
@@ -768,16 +1405,40 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
     scene.face_us();
     scene.stat(3, 9, 40);
     scene.refresh();
-    assert!(matches!(harness.pending(&scene, 2), Some(HostEffect::Interaction(InteractReq::SetRetaliate { on: false }))));
-    scene.varps.iter_mut().find(|row| row.index == super::super::OPTION_NODEF).unwrap().value = 1;
+    assert!(matches!(
+        harness.pending(&scene, 2),
+        Some(HostEffect::Interaction(InteractReq::SetRetaliate {
+            on: false
+        }))
+    ));
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == super::super::OPTION_NODEF)
+        .unwrap()
+        .value = 1;
     scene.refresh();
-    assert!(matches!(harness.pending(&scene, 3), Some(HostEffect::Walk(_))));
+    assert!(matches!(
+        harness.pending(&scene, 3),
+        Some(HostEffect::Walk(_))
+    ));
     harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
         request_id: harness.machine.pending_walk.unwrap().get(),
-        evidence: EvidenceStamp { run: RunKey { slot: 1, run: 1, session: 1 }, tick: 4, sequence: 4 },
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 4,
+            sequence: 4,
+        },
         end: crate::native::WalkEnd::Blocked,
     });
-    assert_eq!(harness.ready(&scene, 4).end, CombatEnd::Aborted(AbortReason::RetreatFailed));
+    assert_eq!(
+        harness.ready(&scene, 4).end,
+        CombatEnd::Aborted(AbortReason::RetreatFailed)
+    );
 }
 
 #[test]
@@ -785,7 +1446,7 @@ fn admitted_drink_lock_wraps_without_losing_observation_count() {
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(5, 0, 43);
     scene.face_us();
-    scene.inventory.push(scene.held("1dose1prayerrestore", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
     scene.refresh();
     let mut harness = Harness::new_at(&scene, scene.request(), 65_533);
     held(harness.pending(&scene, 65_534), "Drink");
@@ -793,10 +1454,20 @@ fn admitted_drink_lock_wraps_without_losing_observation_count() {
     scene.inventory.clear();
     scene.stat(5, 17, 43);
     scene.refresh();
-    for tick in 65_535..65_537 { assert!(harness.pending(&scene, tick).is_none()); }
+    for tick in 65_535..65_537 {
+        assert!(harness.pending(&scene, tick).is_none());
+    }
     assert_eq!(harness.machine.counters.locked, 2);
-    let protect = scene.data.prayers().iter().find(|row| row.name == "Protect from Melee").unwrap();
-    prayer(harness.pending(&scene, 65_537), protect.button_com);
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap();
+    let restored = harness.pending_batch(&scene, 65_537);
+    assert_len(&restored, 2);
+    prayer_row(&restored, 0, protect.button_com);
+    attack_row(&restored, 1);
 }
 
 #[test]
@@ -807,16 +1478,27 @@ fn case19_unsettled_food_waits_two_windows_and_eventually_aborts() {
     scene.stat(3, 19, 40);
     scene.inventory.push(scene.held("lobster", 0));
     scene.refresh();
-    held(harness.pending(&scene, 3), "Eat");
-    for tick in 4..9 {
-        let op = harness.pending(&scene, tick);
-        assert!(!matches!(op, Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Eat"));
+    for tick in [3, 9, 15] {
+        let attempt = harness.pending_batch(&scene, tick);
+        assert_len(&attempt, 2);
+        held_row(&attempt, 0, "Eat");
+        attack_row(&attempt, 1);
+        scene.install();
+        for quiet in tick + 1..tick + 6 {
+            let plan = harness.pending_batch(&scene, quiet);
+            for index in 0..plan.len() {
+                assert!(!matches!(
+                    plan.get(index),
+                    Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Eat"
+                ));
+            }
+        }
     }
-    held(harness.pending(&scene, 9), "Eat");
-    for tick in 10..15 { harness.pending(&scene, tick); }
-    held(harness.pending(&scene, 15), "Eat");
-    for tick in 16..21 { harness.pending(&scene, tick); }
-    assert_eq!(harness.ready(&scene, 21).end, CombatEnd::Aborted(AbortReason::Unresponsive));
+    assert_eq!(
+        harness.ready(&scene, 21).end,
+        CombatEnd::Aborted(AbortReason::Unresponsive)
+    );
+    assert_eq!(harness.machine.counters.food, 0);
 }
 
 #[test]
@@ -831,32 +1513,73 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
         scene.inventory.push(item);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit { worn: Arc::from([(slot, id)]), ..CompiledKit::default() }));
+        request.kit = Some(Arc::new(CompiledKit {
+            worn: Arc::from([(slot, id)]),
+            ..CompiledKit::default()
+        }));
         let mut harness = Harness::new(&scene, request);
-        assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Interaction(InteractReq::Wear { .. }))));
-        for tick in 2..5 { assert!(harness.pending(&scene, tick).is_none()); }
-        assert!(matches!(harness.pending(&scene, 5), Some(HostEffect::Interaction(InteractReq::Wear { .. }))));
-        for tick in 6..9 { assert!(harness.pending(&scene, tick).is_none()); }
+        let first = harness.pending_batch(&scene, 1);
+        assert_len(&first, 2);
+        assert!(matches!(
+            first.get(0),
+            Some(HostEffect::Interaction(InteractReq::Wear { .. }))
+        ));
+        attack_row(&first, 1);
+        // Dispatching Attack succeeds while the server refuses the wear.
+        scene.install();
+        scene.refresh();
+        for tick in 2..5 {
+            assert!(harness.pending(&scene, tick).is_none());
+        }
+        let retry = harness.pending_batch(&scene, 5);
+        assert_len(&retry, 2);
+        assert!(matches!(
+            retry.get(0),
+            Some(HostEffect::Interaction(InteractReq::Wear { .. }))
+        ));
+        attack_row(&retry, 1);
+        for tick in 6..9 {
+            assert!(harness.pending(&scene, tick).is_none());
+        }
         if let Some(item) = expected {
-            assert_eq!(harness.ready(&scene, 9).end, CombatEnd::Aborted(AbortReason::PrepFailed(item)));
-        } else { attack(harness.pending(&scene, 9)); }
+            assert_eq!(
+                harness.ready(&scene, 9).end,
+                CombatEnd::Aborted(AbortReason::PrepFailed(item))
+            );
+        } else {
+            assert!(harness.pending(&scene, 9).is_none());
+            scene.npcs[0].health = 0;
+            scene.refresh();
+            assert_eq!(harness.ready(&scene, 10).end, CombatEnd::Killed);
+        }
     }
     for (slot, fail) in [(3, true), (4, false)] {
         let scene = Scene::new("imp");
         let id = scene.data.item_by_alias("bronze_scimitar").unwrap().id;
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit { worn: Arc::from([(slot, id)]), ..CompiledKit::default() }));
+        request.kit = Some(Arc::new(CompiledKit {
+            worn: Arc::from([(slot, id)]),
+            ..CompiledKit::default()
+        }));
         let mut harness = Harness::new(&scene, request);
         if fail {
-            assert_eq!(harness.ready(&scene, 1).end, CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon)));
-        } else { attack(harness.pending(&scene, 1)); }
+            assert_eq!(
+                harness.ready(&scene, 1).end,
+                CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon))
+            );
+        } else {
+            attack(harness.pending(&scene, 1));
+        }
     }
 }
 
 #[test]
 fn case12_prep_boosts_once_each_then_respects_cycle_and_target_quarter() {
     let mut scene = Scene::new("khazard_warlord");
-    for (slot, alias) in ["1dose2attack", "1dose2strength", "1dose2defense"].into_iter().enumerate() {
+    for (slot, alias) in ["1dose2attack", "1dose2strength", "1dose2defense"]
+        .into_iter()
+        .enumerate()
+    {
         scene.inventory.push(scene.held(alias, slot as i32));
     }
     scene.refresh();
@@ -900,14 +1623,22 @@ fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
         scene.inventory.push(potion);
         scene.refresh();
         let mut request = scene.request();
-        if in_kit { request.kit = Some(Arc::new(CompiledKit { carry: Arc::from([(id, 1)]), ..CompiledKit::default() })); }
+        if in_kit {
+            request.kit = Some(Arc::new(CompiledKit {
+                carry: Arc::from([(id, 1)]),
+                ..CompiledKit::default()
+            }));
+        }
         let mut harness = Harness::new(&scene, request);
-        if in_kit { held(harness.pending(&scene, 1), "Drink"); }
-        else {
+        if in_kit {
+            held(harness.pending(&scene, 1), "Drink");
+        } else {
             attack(harness.pending(&scene, 1));
             scene.install();
             scene.refresh();
-            for tick in 2..6 { assert!(harness.pending(&scene, tick).is_none()); }
+            for tick in 2..6 {
+                assert!(harness.pending(&scene, tick).is_none());
+            }
         }
     }
 }
@@ -916,7 +1647,14 @@ fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
 fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
     for two_handed in [false, true] {
         let mut scene = Scene::new("elvarg");
-        let weapon = scene.held(if two_handed { "bronze_2h_sword" } else { "bronze_scimitar" }, 0);
+        let weapon = scene.held(
+            if two_handed {
+                "bronze_2h_sword"
+            } else {
+                "bronze_scimitar"
+            },
+            0,
+        );
         let weapon_id = weapon.def.id;
         let shield = scene.held("antidragonbreathshield", 1);
         let shield_name = shield.def.name.clone().unwrap();
@@ -927,33 +1665,51 @@ fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
         scene.inventory.extend([weapon.clone(), shield.clone()]);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit { worn: Arc::from([(3, weapon_id), (5, kit_shield_id)]), ..CompiledKit::default() }));
+        request.kit = Some(Arc::new(CompiledKit {
+            worn: Arc::from([(3, weapon_id), (5, kit_shield_id)]),
+            ..CompiledKit::default()
+        }));
         let mut harness = Harness::new(&scene, request);
         if two_handed {
-            assert_eq!(harness.ready(&scene, 1).end, CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Shield)));
+            assert_eq!(
+                harness.ready(&scene, 1).end,
+                CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Shield))
+            );
         } else {
-            assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == weapon.def.name.as_deref()));
+            let prep = harness.pending_batch(&scene, 1);
+            assert_len(&prep, 3);
+            assert!(
+                matches!(prep.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == weapon.def.name.as_deref())
+            );
+            assert!(
+                matches!(prep.get(1), Some(HostEffect::Interaction(InteractReq::Wear { name })) if name == &shield_name)
+            );
+            attack_row(&prep, 2);
             let mut worn = weapon;
             worn.slot = 3;
             worn.container = ItemContainer::Equipment;
             scene.equipment.push(worn);
-            scene.inventory.remove(0);
-            scene.refresh();
-            assert!(matches!(harness.pending(&scene, 2), Some(HostEffect::Interaction(InteractReq::Wear { name })) if name == shield_name));
             let mut worn = shield;
             worn.slot = 5;
             worn.container = ItemContainer::Equipment;
             scene.equipment.retain(|row| row.slot != 5);
             scene.equipment.push(worn);
             scene.inventory.clear();
-            scene.refresh();
-            attack(harness.pending(&scene, 3));
             scene.install();
             scene.local.player.actor.animation = scene.melee_seq();
+            scene.refresh();
+            assert!(harness.pending(&scene, 2).is_none());
+            scene.local.player.actor.animation_frame = 1;
+            scene.refresh();
+            assert!(harness.pending(&scene, 3).is_none());
             for tick in 4..54 {
-                scene.local.player.actor.animation_frame = (tick % 4) as i32;
+                scene.local.player.actor.animation_frame = ((tick - 2) % 4) as i32;
                 scene.refresh();
-                assert!(harness.pending(&scene, tick).is_none());
+                assert!(
+                    harness.pending(&scene, tick).is_none(),
+                    "tick {tick}, row {:?}",
+                    harness.machine.plan.rows[0]
+                );
             }
         }
     }
@@ -970,10 +1726,20 @@ fn case18_disallowed_potions_and_equipment_do_not_create_resource_intents() {
         request.allow.equipment = equipment;
         request.allow.potions = false;
         let mut harness = Harness::new(&scene, request);
+        let plan = harness.pending_batch(&scene, 1);
         if equipment {
-            assert!(matches!(harness.pending(&scene, 1), Some(HostEffect::Interaction(InteractReq::Wear { .. }))));
-        } else { attack(harness.pending(&scene, 1)); }
-        assert!(!harness.machine.schedule.pending(OpKind::Drink));
+            assert_len(&plan, 2);
+            assert!(matches!(
+                plan.get(0),
+                Some(HostEffect::Interaction(InteractReq::Wear { .. }))
+            ));
+            attack_row(&plan, 1);
+        } else {
+            assert_len(&plan, 1);
+            attack_row(&plan, 0);
+        }
+        assert!(!plan.effects.iter().flatten().any(|row|
+            matches!(row, HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink")));
     }
 }
 
@@ -984,7 +1750,10 @@ fn case20_and26_live_mismatch_emits_only_two_owned_strings_without_cooldown_wait
     let mut ignored = scene.npcs[0].clone();
     ignored.index = 8;
     scene.npcs.push(ignored);
-    scene.local.player.actor.target = Some(ActorTargetView { kind: ActorKind::Npc, index: 8 });
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 8,
+    });
     scene.refresh();
     let allocations = allocation_counter::measure(|| attack(harness.pending(&scene, 3)));
     assert_eq!(allocations.count_total, 2);
@@ -1002,14 +1771,21 @@ fn case39_synthetic_wire_cost_driver_bounds_fifty_fight_ticks() {
     let mut harness = fight(&mut scene);
     scene.face_us();
     scene.stat(5, 0, 43);
-    scene.inventory.push(scene.held("1dose1prayerrestore", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
     scene.inventory.push(scene.held("lobster", 1));
-    let protect = scene.data.prayers().iter().find(|row| row.name == "Protect from Melee").unwrap().clone();
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
     let origin = scene.npcs[0].tile;
     let mut drink_tick = None;
     let mut food_tick = None;
     let mut prayer_tick = None;
     let mut routed = Vec::new();
+    let mut multi_plan_count = 0u8;
     for tick in 3..53 {
         if [20, 35].contains(&tick) {
             scene.npcs[0].tile.x = origin.x + 4;
@@ -1027,56 +1803,73 @@ fn case39_synthetic_wire_cost_driver_bounds_fifty_fight_ticks() {
         if tick % 4 == 0 && scene.npcs[0].distance == 1 {
             scene.local.player.actor.animation = scene.melee_seq();
             scene.local.player.actor.animation_frame = 0;
-        } else { scene.local.player.actor.animation_frame += 1; }
-        scene.refresh();
-        let op = harness.pending(&scene, tick);
-        let opcodes: &[&str] = match &op {
-            None => &[],
-            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack" =>
-                &["MOVE_OPCLICK", "OPNPC2"],
-            Some(HostEffect::Interaction(InteractReq::IfButton { .. })) => &["IF_BUTTON"],
-            Some(HostEffect::Interaction(InteractReq::Held { .. })) => &["OPHELD"],
-            _ => panic!("unexpected synthetic-driver request"),
-        };
-        assert!(opcodes.len() <= 2);
-        if let Some(drink) = drink_tick {
-            if tick == drink + 1 || tick == drink + 2 { assert_eq!(opcodes, &[] as &[&str]); }
+        } else {
+            scene.local.player.actor.animation_frame += 1;
         }
-        match op {
-            Some(HostEffect::Interaction(InteractReq::Npc { .. })) => {
-                assert_eq!(opcodes, ["MOVE_OPCLICK", "OPNPC2"]);
-                routed.push(tick);
-                scene.install();
+        scene.refresh();
+        let plan = harness.pending_batch(&scene, tick);
+        let mut wire_events = 0;
+        for index in 0..plan.len() {
+            match plan.get(index) {
+                Some(HostEffect::Interaction(InteractReq::Npc { action, .. }))
+                    if action == "Attack" =>
+                {
+                    assert_eq!(index + 1, plan.len(), "Attack is the terminal plan row");
+                    wire_events += 2;
+                    routed.push(tick);
+                    scene.install();
+                }
+                Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+                    assert_eq!(*component_id, protect.button_com);
+                    wire_events += 1;
+                    prayer_tick = Some(tick);
+                    scene.prayer(protect.varp, true);
+                }
+                Some(HostEffect::Interaction(InteractReq::Held { action, .. }))
+                    if action == "Drink" =>
+                {
+                    wire_events += 1;
+                    drink_tick = Some(tick);
+                    scene.inventory.retain(|row| {
+                        row.def.id != scene.data.item_by_alias("1doseprayerrestore").unwrap().id
+                    });
+                    scene.stat(5, 17, 43);
+                }
+                Some(HostEffect::Interaction(InteractReq::Held { action, .. }))
+                    if action == "Eat" =>
+                {
+                    wire_events += 1;
+                    food_tick = Some(tick);
+                    scene.inventory.clear();
+                    scene.stat(3, 31, 40);
+                }
+                _ => panic!("unexpected synthetic-driver request"),
             }
-            Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
-                assert_eq!(component_id, protect.button_com);
-                prayer_tick = Some(tick);
-                scene.prayer(protect.varp, true);
+        }
+        if plan.len() >= 2 {
+            multi_plan_count = multi_plan_count.saturating_add(1);
+        }
+        assert!(
+            wire_events <= 5,
+            "tick {tick} has {wire_events} user events"
+        );
+        if let Some(drink) = drink_tick {
+            if tick == drink + 1 || tick == drink + 2 {
+                assert_eq!(plan.len(), 0, "the potion lock excludes every plan row");
             }
-            Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Drink" => {
-                drink_tick = Some(tick);
-                scene.inventory.retain(|row| row.def.id != scene.data.item_by_alias("1dose1prayerrestore").unwrap().id);
-                scene.stat(5, 17, 43);
-            }
-            Some(HostEffect::Interaction(InteractReq::Held { action, .. })) if action == "Eat" => {
-                food_tick = Some(tick);
-                scene.inventory.clear();
-                scene.stat(3, 31, 40);
-            }
-            None => {},
-            _ => panic!("unexpected synthetic-driver acknowledgement"),
         }
     }
+    assert_eq!(harness.machine.counters.multi, multi_plan_count);
     assert_eq!(drink_tick, Some(3));
     assert_eq!(prayer_tick, Some(6));
     assert_eq!(food_tick, Some(11));
-    assert!(routed.contains(&7));
-    assert!(routed.contains(&12));
+    assert!(routed.contains(&6));
+    assert!(routed.contains(&11));
     assert_eq!(harness.machine.counters.locked, 2);
     assert_eq!(harness.machine.counters.restorations, 2);
 }
 #[test]
-fn case41_protect_on_ready_deadline_restores_swing_same_tick() {
+fn case41_protect_on_ready_deadline_restores_swing_same_plan() {
     let mut scene = Scene::new("khazard_warlord");
     // Protection is available, while the current points stay below the
     // offensive-prayer floor so the ready-tick fixture has no unrelated upkeep.
@@ -1114,8 +1907,7 @@ fn case41_protect_on_ready_deadline_restores_swing_same_tick() {
     scene.npcs[0].animation = melee;
     scene.npcs[0].animation_frame = 0;
     scene.local.player.actor.animation_frame = 3;
-    // The onset is observed at 11, but the prayer only becomes available at
-    // 12. A wanted click at 11 would not lose a swing under the old planner.
+    // The threat onset is observed at 11, but prayer is available only at 12.
     scene.stat(5, 0, 43);
     scene.refresh();
     assert!(harness.pending(&scene, 11).is_none());
@@ -1123,22 +1915,682 @@ fn case41_protect_on_ready_deadline_restores_swing_same_tick() {
     scene.stat(5, 20, 43);
     scene.refresh();
 
-    // Case 41 is the ready-tick oracle: the core must plan both the free
-    // reducer and the restoring Attack at tick 12, before the player phase.
-    assert!(matches!(harness.poll(&scene.snapshot, 12), Poll::Pending));
-    let outbox = &harness.runtime.ledger.as_ref().unwrap().outbox;
-    assert_eq!(outbox.len(), 2, "the ready tick must contain Protect + Attack");
+    // A single ordered batch puts Protect and the due restoring Attack into
+    // the tick-12 input phase. The client exposes that newly installed swing
+    // on the next PLAYER_INFO observation (13); evidence-based product timing
+    // therefore records deadline 17. The old single-op path delivered Attack
+    // at 13 and first observed its swing at 14 (deadline 18).
+    let plan = harness.pending_batch(&scene, 12);
+    assert_len(&plan, 2);
+    prayer_row(&plan, 0, protect.button_com);
+    attack_row(&plan, 1);
+
+    scene.prayer(protect.varp, true);
+    scene.install();
+    scene.local.player.actor.animation = melee;
+    scene.local.player.actor.animation_frame = 0;
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 13), 0);
+    assert_eq!(harness.machine.cycle().deadline, 17);
+    assert!(harness.machine.cycle().known);
+    assert_eq!(harness.machine.counters.restorations, 1);
+    assert_eq!(harness.machine.counters.multi, 1);
+}
+
+#[test]
+fn case42_offensives_fill_five_events_and_defer_the_extra_click() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.stat(5, 40, 43);
+    scene.face_us();
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let strength = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Ultimate Strength")
+        .unwrap()
+        .clone();
+    let attack = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Incredible Reflexes")
+        .unwrap()
+        .clone();
+    let extra = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| {
+            ![
+                "Protect from Melee",
+                "Ultimate Strength",
+                "Incredible Reflexes",
+            ]
+            .contains(&row.name.as_str())
+        })
+        .unwrap()
+        .clone();
+    scene.prayer(extra.varp, true);
+    scene.refresh();
+
+    let full = harness.pending_batch(&scene, 3);
+    assert_len(&full, 4);
+    prayer_row(&full, 0, protect.button_com);
+    prayer_row(&full, 1, strength.button_com);
+    prayer_row(&full, 2, attack.button_com);
+    attack_row(&full, 3);
+    assert_eq!(harness.machine.plan.events, 5);
+    assert_eq!(harness.machine.counters.multi, 1);
+
+    for row in [&protect, &strength, &attack] {
+        scene.prayer(row.varp, true);
+    }
+    scene.install();
+    scene.refresh();
+    let deferred = harness.pending_batch(&scene, 4);
+    assert_len(&deferred, 2);
+    prayer_row(&deferred, 0, extra.button_com);
+    attack_row(&deferred, 1);
+    assert_eq!(harness.machine.counters.multi, 2);
+}
+
+#[test]
+fn case46_retaliate_turns_on_before_the_fight_attack() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == super::super::OPTION_NODEF)
+        .unwrap()
+        .value = 1;
+    scene.refresh();
+
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 2);
     assert!(matches!(
-        &outbox[0].effect,
-        HostEffect::Interaction(InteractReq::IfButton { component_id })
-            if *component_id == protect.button_com
+        plan.get(0),
+        Some(HostEffect::Interaction(InteractReq::SetRetaliate {
+            on: true
+        }))
+    ));
+    attack_row(&plan, 1);
+    assert_eq!(harness.machine.plan.events, 3);
+
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == super::super::OPTION_NODEF)
+        .unwrap()
+        .value = 0;
+    scene.install();
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 4), 0);
+    assert_eq!(harness.machine.counters.multi, 1);
+}
+
+#[test]
+fn case47_winddown_sweeps_six_prayers_after_a_drink_lock() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.face_us();
+    scene.stat(5, 0, 43);
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
+    scene.refresh();
+    held(harness.pending(&scene, 3), "Drink");
+    assert_eq!(harness.machine.input_lock(), Some(6));
+    scene.inventory.clear();
+    scene.stat(5, 17, 43);
+
+    let prayers: Vec<_> = scene
+        .data
+        .prayers()
+        .iter()
+        .take(6)
+        .map(|row| (row.varp, row.button_com))
+        .collect();
+    scene.npcs[0].health = 0;
+    for (varp, _) in &prayers {
+        scene.prayer(*varp, true);
+    }
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 4), 0);
+    assert_len(&harness.pending_batch(&scene, 5), 0);
+    assert_eq!(harness.machine.counters.locked, 2);
+    let obligated_before_cleanup = harness.machine.counters.restorations;
+
+    let first = harness.pending_batch(&scene, 6);
+    assert_len(&first, 5);
+    for (index, (_, button)) in prayers[..5].iter().enumerate() {
+        prayer_row(&first, index, *button);
+    }
+    for (varp, _) in &prayers[..5] {
+        scene.prayer(*varp, false);
+    }
+    scene.refresh();
+    let last = harness.pending_batch(&scene, 7);
+    assert_len(&last, 1);
+    prayer_row(&last, 0, prayers[5].1);
+    scene.prayer(prayers[5].0, false);
+    scene.refresh();
+    let report = harness.ready(&scene, 8);
+    assert_eq!(report.end, CombatEnd::Killed);
+    assert_eq!(report.locked_ticks, 2);
+    assert_eq!(report.restorations, obligated_before_cleanup);
+}
+
+#[test]
+fn case49_fail_stop_preserves_accepted_food_and_retries_the_restoration() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.face_us();
+    scene.stat(3, 9, 40);
+    scene.stat(5, 1, 43);
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.refresh();
+
+    let refused = harness.pending_with_refusal(&scene, 3, 1);
+    assert_len(&refused, 3);
+    held_row(&refused, 0, "Eat");
+    prayer_row(
+        &refused,
+        1,
+        scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == "Protect from Melee")
+            .unwrap()
+            .button_com,
+    );
+    attack_row(&refused, 2);
+    assert!(refused.accepted[0]);
+    assert!(refused.dispatched[1]);
+    assert!(!refused.accepted[1]);
+    assert!(!refused.dispatched[2]);
+    assert!(!refused.accepted[2]);
+    assert_eq!(harness.machine.counters.food, 0);
+    assert_eq!(harness.machine.counters.restorations, 0);
+
+    scene.inventory.clear();
+    scene.stat(3, 21, 40);
+    scene.refresh();
+    let retry = harness.pending_batch(&scene, 4);
+    assert_len(&retry, 2);
+    prayer_row(
+        &retry,
+        0,
+        scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == "Protect from Melee")
+            .unwrap()
+            .button_com,
+    );
+    attack_row(&retry, 1);
+    assert_eq!(harness.machine.counters.food, 1);
+    assert_eq!(harness.machine.counters.restorations, 1);
+}
+
+#[test]
+fn case50_foreign_event_spills_attack_without_same_tick_reemission() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.face_us();
+    scene.stat(5, 40, 43);
+    scene.refresh();
+
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let strength = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Ultimate Strength")
+        .unwrap()
+        .clone();
+    let attack = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Incredible Reflexes")
+        .unwrap()
+        .clone();
+    let batch = harness.pending_batch(&scene, 3);
+    assert_len(&batch, 4);
+    prayer_row(&batch, 0, protect.button_com);
+    prayer_row(&batch, 1, strength.button_com);
+    prayer_row(&batch, 2, attack.button_com);
+    attack_row(&batch, 3);
+    assert_eq!(harness.machine.plan.events, 5);
+
+    // One already-queued foreign event consumes the first wire slot. The
+    // first four plan events (three clicks plus MOVE_OPCLICK) land at tick 3;
+    // only the terminal OPNPC2 crosses the engine's five-handler boundary.
+    let mut delivered_events = 1usize;
+    let mut spilled_attack = false;
+    for index in 0..batch.len() {
+        let cost = if index == 3 { 2 } else { 1 };
+        let accepted_now = cost.min(5 - delivered_events);
+        delivered_events += accepted_now;
+        if index == 3 && accepted_now < cost {
+            spilled_attack = true;
+        }
+    }
+    assert_eq!(delivered_events, 5);
+    assert!(spilled_attack);
+
+    scene.prayer(protect.varp, true);
+    scene.prayer(strength.varp, true);
+    scene.prayer(attack.varp, true);
+    scene.install();
+    scene.refresh();
+    let settled = harness.pending_batch(&scene, 4);
+    assert_len(&settled, 0);
+    assert_eq!(harness.machine.counters.multi, 1);
+    assert!(!harness.machine.pending_row(RowKind::Attack));
+}
+
+fn observe_melee_mode(scene: &mut Scene, value: u8) {
+    let index = scene.tables.melee_mode_varp().unwrap();
+    if let Some(row) = scene.varps.iter_mut().find(|row| row.index == index) {
+        row.value = i32::from(value);
+    } else {
+        scene.varps.push(VarpView {
+            index,
+            value: i32::from(value),
+        });
+    }
+}
+
+fn weapon_tab_root(scene: &Scene, weapon_id: i32) -> i32 {
+    let tab = scene
+        .tables
+        .weapon_style(weapon_id)
+        .unwrap()
+        .tab
+        .expect("weapon combat tab");
+    scene.tables.combat_tab_root(tab).unwrap()
+}
+
+fn style_button(scene: &Scene, weapon_id: i32, observed: u8) -> i32 {
+    let tab = scene
+        .tables
+        .weapon_style(weapon_id)
+        .unwrap()
+        .tab
+        .expect("weapon combat tab");
+    scene
+        .tables
+        .melee_mode(tab, MeleeMode::Aggressive, Some(observed))
+        .unwrap()
+        .button
+}
+
+fn settle_weapon(scene: &mut Scene, weapon_id: i32) {
+    let index = scene
+        .inventory
+        .iter()
+        .position(|item| item.def.id == weapon_id)
+        .unwrap();
+    let mut weapon = scene.inventory.remove(index);
+    weapon.slot = 3;
+    weapon.container = ItemContainer::Equipment;
+    scene.equipment.retain(|item| item.slot != 3);
+    scene.equipment.push(weapon);
+}
+
+fn measured_weapon_rate(harness: &Harness, scene: &Scene) -> u8 {
+    let frame = Frame::borrow(SnapshotView::new(
+        Some(&scene.snapshot),
+        harness.runtime.evidence.unwrap(),
+    ))
+    .unwrap();
+    harness.machine.rate(&frame)
+}
+
+#[test]
+fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
+    let mut same_tab = Scene::new("imp");
+    let bronze = same_tab.held("bronze_scimitar", 3);
+    let bronze_id = bronze.def.id;
+    let mut equipped = bronze;
+    equipped.container = ItemContainer::Equipment;
+    same_tab.equipment.push(equipped);
+    let rune = same_tab.held("rune_scimitar", 0);
+    let rune_id = rune.def.id;
+    same_tab.inventory.push(rune.clone());
+    let (bronze_category, bronze_tab) = {
+        let fact = same_tab.tables.weapon_style(bronze_id).unwrap();
+        (fact.category, fact.tab)
+    };
+    let (rune_category, rune_tab) = {
+        let fact = same_tab.tables.weapon_style(rune_id).unwrap();
+        (fact.category, fact.tab)
+    };
+    assert_eq!(bronze_category, rune_category);
+    assert_eq!(bronze_tab, rune_tab);
+    let hack_root = same_tab
+        .tables
+        .combat_tab_root(bronze_tab.expect("scimitar combat tab"))
+        .unwrap();
+    observe_melee_mode(&mut same_tab, 0);
+    same_tab.refresh();
+    same_tab.combat_tab(hack_root);
+    let mut request = same_tab.request();
+    request.melee_mode = Some(MeleeMode::Aggressive);
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, rune_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut same_harness = Harness::new(&same_tab, request);
+    same_harness.machine.phase = Phase::Fight;
+
+    let same = same_harness.pending_batch(&same_tab, 1);
+    assert_len(&same, 3);
+    assert!(
+        matches!(same.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == rune.def.name.as_deref())
+    );
+    prayer_row(&same, 1, style_button(&same_tab, bronze_id, 0));
+    attack_row(&same, 2);
+    assert_eq!(same_harness.machine.plan.rows[2].aux, 4);
+    settle_weapon(&mut same_tab, rune_id);
+    same_tab.install();
+    let aggressive = same_tab
+        .tables
+        .melee_mode(
+            rune_tab.expect("scimitar combat tab"),
+            MeleeMode::Aggressive,
+            Some(0),
+        )
+        .unwrap();
+    observe_melee_mode(&mut same_tab, aggressive.slot);
+    same_tab.refresh();
+    same_tab.combat_tab(hack_root);
+    assert_len(&same_harness.pending_batch(&same_tab, 2), 0);
+
+    let mut changed_tab = Scene::new("imp");
+    let old = changed_tab.held("bronze_scimitar", 3);
+    let old_id = old.def.id;
+    let mut equipped = old;
+    equipped.container = ItemContainer::Equipment;
+    changed_tab.equipment.push(equipped);
+    let twohand = changed_tab.held("bronze_2h_sword", 0);
+    let twohand_id = twohand.def.id;
+    changed_tab.inventory.push(twohand.clone());
+    let old_fact = changed_tab.tables.weapon_style(old_id).unwrap();
+    let twohand_fact = changed_tab.tables.weapon_style(twohand_id).unwrap();
+    assert_eq!(old_fact.category, twohand_fact.category);
+    assert_ne!(old_fact.tab, twohand_fact.tab);
+    let old_root = changed_tab
+        .tables
+        .combat_tab_root(old_fact.tab.expect("old weapon combat tab"))
+        .unwrap();
+    let heavy_root = changed_tab
+        .tables
+        .combat_tab_root(twohand_fact.tab.expect("new weapon combat tab"))
+        .unwrap();
+    observe_melee_mode(&mut changed_tab, 0);
+    changed_tab.refresh();
+    changed_tab.combat_tab(old_root);
+    let mut request = changed_tab.request();
+    request.melee_mode = Some(MeleeMode::Aggressive);
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, twohand_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut changed_harness = Harness::new(&changed_tab, request);
+    changed_harness.machine.phase = Phase::Fight;
+
+    let first = changed_harness.pending_batch(&changed_tab, 1);
+    assert_len(&first, 2);
+    assert!(
+        matches!(first.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == twohand.def.name.as_deref())
+    );
+    attack_row(&first, 1);
+    assert_eq!(changed_harness.machine.plan.rows[1].aux, 7);
+    settle_weapon(&mut changed_tab, twohand_id);
+    changed_tab.install();
+    changed_tab.refresh();
+    changed_tab.combat_tab(old_root);
+    assert_len(&changed_harness.pending_batch(&changed_tab, 2), 0);
+    assert_eq!(measured_weapon_rate(&changed_harness, &changed_tab), 7);
+
+    changed_tab.combat_tab(heavy_root);
+    let style_tick = changed_harness.pending_batch(&changed_tab, 3);
+    assert_len(&style_tick, 2);
+    prayer_row(&style_tick, 0, style_button(&changed_tab, twohand_id, 0));
+    attack_row(&style_tick, 1);
+    assert_eq!(changed_harness.machine.plan.rows[1].aux, 7);
+
+    let mut stale_tab = Scene::new("imp");
+    let heavy = stale_tab.held("bronze_2h_sword", 3);
+    let heavy_id = heavy.def.id;
+    let mut equipped = heavy;
+    equipped.container = ItemContainer::Equipment;
+    stale_tab.equipment.push(equipped);
+    let rune = stale_tab.held("rune_scimitar", 0);
+    let rune_id = rune.def.id;
+    stale_tab.inventory.push(rune.clone());
+    let heavy_root = weapon_tab_root(&stale_tab, heavy_id);
+    let hack_root = weapon_tab_root(&stale_tab, rune_id);
+    observe_melee_mode(&mut stale_tab, 0);
+    stale_tab.refresh();
+    stale_tab.combat_tab(heavy_root);
+    let mut request = stale_tab.request();
+    request.melee_mode = Some(MeleeMode::Aggressive);
+    request.kit = Some(Arc::new(CompiledKit {
+        worn: Arc::from([(3, rune_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut stale_harness = Harness::new(&stale_tab, request);
+    stale_harness.machine.phase = Phase::Fight;
+
+    let first = stale_harness.pending_batch(&stale_tab, 1);
+    assert_len(&first, 2);
+    assert!(
+        matches!(first.get(0), Some(HostEffect::Interaction(InteractReq::Wear { name })) if Some(name.as_str()) == rune.def.name.as_deref())
+    );
+    attack_row(&first, 1);
+    settle_weapon(&mut stale_tab, rune_id);
+    stale_tab.install();
+    stale_tab.refresh();
+    stale_tab.combat_tab(heavy_root);
+    assert_len(&stale_harness.pending_batch(&stale_tab, 2), 0);
+    stale_tab.combat_tab(hack_root);
+    let observed = stale_harness.pending_batch(&stale_tab, 3);
+    assert_len(&observed, 2);
+    prayer_row(&observed, 0, style_button(&stale_tab, rune_id, 0));
+    attack_row(&observed, 1);
+}
+
+#[test]
+fn case53_script_refused_recovery_food_never_enters_a_drink_lock() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.stat(3, 25, 40);
+    scene.stat(5, 0, 43);
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+
+    // The prior owner may have written %eat_delay at T-1. The first poll
+    // conservatively emits the recovery food alone; the harness accepts the
+    // request while the synthetic script leaves its count and HP unchanged.
+    let first = harness.pending_batch(&scene, 1);
+    assert_len(&first, 2);
+    held_row(&first, 0, "Eat");
+    attack_row(&first, 1);
+    assert_eq!(harness.machine.eat_ready(), 3);
+    assert_eq!(harness.machine.input_lock(), None);
+
+    scene.install();
+    scene.refresh();
+    let refused_by_script = harness.pending_batch(&scene, 2);
+    assert_len(&refused_by_script, 0);
+    assert!(harness.machine.pending_row(RowKind::Eat));
+    assert_eq!(harness.machine.input_lock(), None);
+    assert_eq!(harness.machine.counters.locked, 0);
+}
+
+#[test]
+fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
+    let scene = Scene::new("imp");
+    let mut first_owner = Harness::new_at(&scene, scene.request(), 0);
+    let initial = first_owner.pending_batch(&scene, 1);
+    assert_len(&initial, 1);
+    attack_row(&initial, 0);
+    assert_eq!(first_owner.machine.eat_ready(), 3);
+
+    let scene = Scene::new("imp");
+    let mut request = scene.request();
+    request.until_ticks = 1;
+    let mut ending_owner = Harness::new_at(&scene, request, 0);
+    assert_eq!(ending_owner.ready(&scene, 1).end, CombatEnd::Budget);
+    let mut next_owner = Harness::new_at(&scene, scene.request(), 1);
+    let handoff = next_owner.pending_batch(&scene, 2);
+    assert_len(&handoff, 1);
+    attack_row(&handoff, 0);
+    assert_eq!(next_owner.machine.eat_ready(), 4);
+
+    let mut scene = Scene::new("imp");
+    let mut gap = fight(&mut scene);
+    let missing = {
+        let saved = std::mem::replace(&mut scene.snapshot, GameSnapshot::new());
+        scene.refresh_without_local();
+        std::mem::replace(&mut scene.snapshot, saved)
+    };
+    assert!(matches!(gap.poll(&missing, 5), Poll::Pending));
+    assert!(gap.take().is_none());
+    scene.refresh();
+    let after_gap = gap.pending_batch(&scene, 6);
+    assert_len(&after_gap, 1);
+    attack_row(&after_gap, 0);
+    assert_eq!(gap.machine.eat_ready(), 8);
+    assert_eq!(gap.machine.schedule.interaction, Interaction::Unknown);
+    assert!(!gap.machine.schedule.cycle.known);
+
+    let mut scene = Scene::new("khazard_warlord");
+    let mut own = fight(&mut scene);
+    scene.face_us();
+    scene.stat(3, 9, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.count = 2;
+    scene.inventory.push(lobster);
+    scene.refresh();
+    let eat = own.pending_batch(&scene, 3);
+    assert_len(&eat, 2);
+    held_row(&eat, 0, "Eat");
+    attack_row(&eat, 1);
+    scene.install();
+    scene.inventory[0].count = 1;
+    scene.stat(3, 21, 40);
+    scene.refresh();
+    assert_len(&own.pending_batch(&scene, 4), 0);
+    assert_eq!(own.machine.eat_ready(), 6);
+
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.stat(3, 25, 40);
+    scene.stat(5, 0, 43);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.count = 2;
+    scene.inventory.push(lobster);
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let mut spilled = Harness::new_at(&scene, scene.request(), 0);
+    let emitted = spilled.pending_batch(&scene, 1);
+    assert_len(&emitted, 2);
+    held_row(&emitted, 0, "Eat");
+    attack_row(&emitted, 1);
+    assert_eq!(spilled.machine.eat_ready(), 3);
+    // One hit of nine after the spilled eat leaves HP at 28. Keep the pack
+    // baseline stale through E+1, then expose its decrease at E+2.
+    scene.install();
+    scene.stat(3, 28, 40);
+    scene.refresh();
+    assert_len(&spilled.pending_batch(&scene, 2), 0);
+    scene.inventory[0].count = 1;
+    scene.refresh();
+    assert_len(&spilled.pending_batch(&scene, 3), 0);
+    assert_eq!(spilled.machine.eat_ready(), 5);
+    scene.stat(3, 28, 40);
+    scene.refresh();
+    let before_proven = spilled.pending_batch(&scene, 4);
+    assert_len(&before_proven, 2);
+    held_row(&before_proven, 0, "Eat");
+    attack_row(&before_proven, 1);
+    assert_eq!(spilled.machine.eat_ready(), 5);
+    assert_eq!(spilled.machine.input_lock(), None);
+}
+
+#[test]
+fn case44_ordinary_and_combo_food_share_only_a_proven_safe_lock() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.face_us();
+    scene.stat(3, 16, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.count = 1;
+    let mut karambwan = scene.held("tbwt_cooked_karambwan", 1);
+    karambwan.count = 1;
+    scene.inventory.extend([lobster, karambwan]);
+    scene.local.player.actor.animation = scene.melee_seq();
+    scene.local.player.actor.animation_frame = 0;
+    scene.refresh();
+
+    let combo = harness.pending_batch(&scene, 3);
+    assert_len(&combo, 2);
+    assert!(matches!(
+        combo.get(0),
+        Some(HostEffect::Interaction(InteractReq::Held { action, slot: Some(0), .. })) if action == "Eat"
     ));
     assert!(matches!(
-        &outbox[1].effect,
-        HostEffect::Interaction(InteractReq::Npc { action, index: Some(7), .. })
-            if action == "Attack"
+        combo.get(1),
+        Some(HostEffect::Interaction(InteractReq::Held { action, slot: Some(1), .. })) if action == "Eat"
     ));
-    assert_eq!(outbox[1].request_id.get(), outbox[0].request_id.get() + 1);
-    assert_eq!(outbox[0].batch, outbox[1].batch);
-    assert_eq!(harness.machine.cycle().deadline, 12);
+    assert_eq!(harness.machine.input_lock(), Some(7));
+    assert_eq!(harness.machine.cycle().deadline, 10);
+    assert_eq!(harness.machine.counters.multi, 1);
+
+    scene.inventory.clear();
+    scene.stat(3, 40, 40);
+    scene.refresh();
+    for tick in 4..7 {
+        assert_len(&harness.pending_batch(&scene, tick), 0);
+    }
+    assert_eq!(harness.machine.counters.food, 2);
+    assert_eq!(harness.machine.counters.locked, 3);
+    attack(harness.pending(&scene, 7));
+    assert_eq!(harness.machine.counters.restorations, 1);
+
+    let mut strict = Scene::new("khazard_warlord");
+    let mut strict_harness = fight(&mut strict);
+    strict.face_us();
+    strict.stat(3, 7, 40);
+    strict.inventory.push(strict.held("lobster", 0));
+    strict
+        .inventory
+        .push(strict.held("tbwt_cooked_karambwan", 1));
+    strict.refresh();
+    let plain = strict_harness.pending_batch(&strict, 3);
+    assert_len(&plain, 2);
+    held_row(&plain, 0, "Eat");
+    attack_row(&plain, 1);
+    assert_eq!(strict_harness.machine.input_lock(), None);
 }

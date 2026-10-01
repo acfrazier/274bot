@@ -6,7 +6,7 @@ use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, RunKey, Truth};
-use api::snapshot::GameSnapshot;
+use api::snapshot::{GameSnapshot, QuestListStatus, QuestStatusView, SnapshotView};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -90,26 +90,42 @@ fn fixture_compile_context<'a>(
 }
 
 #[test]
-fn imp_and_melee_fixture_paths_compile_on_r289() {
+fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
-    for (id, bytes) in [
-        ("imp", &include_bytes!("../../../paths/289/imp.json")[..]),
-        (
-            "combat_melee_upkeep",
-            &include_bytes!("../../../paths/289/fixtures/combat_melee_upkeep.json")[..],
-        ),
-        (
-            "combat_melee_food_only",
-            &include_bytes!("../../../paths/289/fixtures/combat_melee_food_only.json")[..],
-        ),
-        (
-            "combat_unattackable",
-            &include_bytes!("../../../paths/289/fixtures/combat_unattackable.json")[..],
-        ),
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Imp Catcher".into(),
+            component_id: 0,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    let view = SnapshotView::new(
+        Some(&snapshot),
+        EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        },
+    );
+    for bytes in [
+        &include_bytes!("../../../paths/289/imp.json")[..],
+        &include_bytes!("../../../paths/289/fixtures/combat_melee_upkeep.json")[..],
+        &include_bytes!("../../../paths/289/fixtures/combat_melee_food_only.json")[..],
+        &include_bytes!("../../../paths/289/fixtures/combat_unattackable.json")[..],
     ] {
         let path = compile_path(bytes, &data, &quests).unwrap();
-        assert_eq!(path.id.0.as_ref(), id);
+        assert_eq!(
+            crate::quester::progress::quest_colour(&path, &quests, view),
+            Some(QuestListStatus::NotStarted),
+        );
     }
 }
 

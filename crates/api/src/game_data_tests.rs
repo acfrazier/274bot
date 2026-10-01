@@ -168,6 +168,7 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     assert_eq!(food.message_delay, None);
     assert_eq!(food.next_stage.as_deref(), Some("stale_bread"));
     assert_eq!(food.stat_heal[0].base, 4);
+    assert_eq!(food.fixed_hp_heal(), Some(4));
 
     let old_food: ConsumptionFact = serde_json::from_str(
         r#"{
@@ -180,6 +181,7 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     assert_eq!(old_food.eat_delay_arg, None);
     assert_eq!(old_food.skill_delay_arg, None);
     assert_eq!(old_food.message_delay, None);
+    assert_eq!(old_food.fixed_hp_heal(), None);
 
     let spell: SpellFact = serde_json::from_str(
         r#"{
@@ -212,44 +214,92 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     assert_eq!(npc.dragonfire, Some(DragonfireKind::Chromatic));
     assert_eq!(npc.attackrate, Some(6));
 
-    let sequence: StyleSequenceFact =
-        serde_json::from_str(r#"{"seq_id":1,"style":3}"#).unwrap();
+    let sequence: StyleSequenceFact = serde_json::from_str(r#"{"seq_id":1,"style":3}"#).unwrap();
     let spotanim: StyleSpotanimFact =
         serde_json::from_str(r#"{"spotanim_id":2,"style":8,"where":"attacker"}"#).unwrap();
-    let weapon: WeaponStyleFact = serde_json::from_str(
-        r#"{"obj_id":3,"style":1,"attackrate":5,"category":0,"tab":9}"#,
-    )
-    .unwrap();
+    let weapon: WeaponStyleFact =
+        serde_json::from_str(r#"{"obj_id":3,"style":1,"attackrate":5,"category":0,"tab":9}"#)
+            .unwrap();
     let old_weapon: WeaponStyleFact =
         serde_json::from_str(r#"{"obj_id":4,"style":1,"attackrate":4,"category":0}"#).unwrap();
-    let unknown_weapon: WeaponStyleFact = serde_json::from_str(
-        r#"{"obj_id":5,"style":1,"attackrate":4,"category":0,"tab":null}"#,
-    )
-    .unwrap();
-    let combat_tab: CombatTabFact =
-        serde_json::from_str(r#"{"tab":9,"root_id":903}"#).unwrap();
+    let unknown_weapon: WeaponStyleFact =
+        serde_json::from_str(r#"{"obj_id":5,"style":1,"attackrate":4,"category":0,"tab":null}"#)
+            .unwrap();
+    let combat_tab: CombatTabFact = serde_json::from_str(r#"{"tab":9,"root_id":903}"#).unwrap();
     assert_eq!((sequence.seq_id, sequence.style), (1, 3));
     assert_eq!((spotanim.spotanim_id, spotanim.style), (2, 8));
     assert_eq!(spotanim.location, "attacker");
-    assert_eq!((weapon.obj_id, weapon.style, weapon.attackrate, weapon.category), (3, 1, 5, 0));
+    assert_eq!(
+        (
+            weapon.obj_id,
+            weapon.style,
+            weapon.attackrate,
+            weapon.category
+        ),
+        (3, 1, 5, 0)
+    );
     assert_eq!(weapon.tab, Some(9));
     assert_eq!(old_weapon.tab, None);
     assert_eq!(unknown_weapon.tab, None);
     assert_eq!((combat_tab.tab, combat_tab.root_id), (9, 903));
-    let melee_mode: MeleeModeFact = serde_json::from_str(
-        r#"{"tab":1,"slot":2,"mode":1,"button":9012}"#,
-    )
-    .unwrap();
+    let melee_mode: MeleeModeFact =
+        serde_json::from_str(r#"{"tab":1,"slot":2,"mode":1,"button":9012}"#).unwrap();
     assert_eq!(
-        (melee_mode.tab, melee_mode.slot, melee_mode.mode, melee_mode.button),
+        (
+            melee_mode.tab,
+            melee_mode.slot,
+            melee_mode.mode,
+            melee_mode.button
+        ),
         (1, 2, 1, 9012),
     );
 }
 
 #[test]
+fn same_name_food_facts_keep_per_item_heals_and_legacy_name_ambiguity() {
+    let json = minimal_json("").replace(
+        r#""consumption": []"#,
+        r#""consumption": [
+            {
+                "item":{"alias":"cooked_karambwan","id":3144,"name":"Cooked karambwan"},
+                "source_row":"cooked_karambwan","source_file":"consume_normal.dbrow",
+                "effect":"consume_food","eat_delay_arg":null,"skill_delay_arg":null,
+                "message_delay":2,"stat_change":[],
+                "stat_heal":[{"stat":"hitpoints","base":18,"percent":0}],
+                "heal_energy":[],"qualification":"fixed_hp_heal",
+                "next_stage":null,"dose_family":null,"dose_count":null
+            },
+            {
+                "item":{"alias":"harmful_karambwan","id":3142,"name":"Cooked karambwan"},
+                "source_row":"harmful_karambwan","source_file":"consume_effects.dbrow",
+                "effect":"consume_food","eat_delay_arg":null,"skill_delay_arg":null,
+                "message_delay":2,"stat_change":[{"stat":"hitpoints","base":-5,"percent":0}],
+                "stat_heal":[],"heal_energy":[],"qualification":"not_fixed_hp_heal",
+                "next_stage":null,"dose_family":null,"dose_count":null
+            }
+        ]"#,
+    );
+    let data = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274)
+        .expect("same-name consumption facts decode");
+
+    let cooked = data
+        .consumption_facts()
+        .iter()
+        .find(|fact| fact.item.id == 3144)
+        .expect("cooked karambwan fact");
+    let harmful = data
+        .consumption_facts()
+        .iter()
+        .find(|fact| fact.item.id == 3142)
+        .expect("harmful same-name fact");
+    assert_eq!(cooked.fixed_hp_heal(), Some(18));
+    assert_eq!(harmful.fixed_hp_heal(), None);
+    assert_eq!(data.fixed_food_heal("Cooked karambwan"), None);
+}
+
+#[test]
 fn legacy_selected_data_has_no_invented_melee_controls() {
-    let data =
-        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
     assert!(data.melee_modes().is_empty());
     assert_eq!(data.melee_mode_varp(), None);
 }

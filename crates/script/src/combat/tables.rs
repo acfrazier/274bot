@@ -6,15 +6,16 @@
 use std::sync::Arc;
 
 use super::request::MeleeMode;
+use crate::native::ActionError;
 use api::game_data::{
     ConsumptionFact, NpcNameRow, PrayerFact, SelectedGameData, StyleSpotanimFact, WeaponStyleFact,
 };
-use crate::native::ActionError;
 
 const STYLE_BITS: u8 = 0x0f;
 const PRAYER_TIERS: usize = 3;
 const MELEE_MODE_SLOTS: usize = 4;
 const COMBAT_TAB_COUNT: usize = 16;
+type MeleeModeIndex = [[Option<usize>; MELEE_MODE_SLOTS]; COMBAT_TAB_COUNT];
 
 fn unavailable(reason: &'static str) -> ActionError {
     ActionError::Unavailable(Arc::from(reason))
@@ -269,7 +270,7 @@ pub struct CombatTables {
     prayer_rows: [Option<usize>; 9],
     foods: Box<[FoodFact]>,
     potions: [Option<PotionFamily>; 7],
-    melee_mode_rows: [[Option<usize>; MELEE_MODE_SLOTS]; COMBAT_TAB_COUNT],
+    melee_mode_rows: MeleeModeIndex,
     melee_mode_varp: Option<i32>,
 }
 
@@ -375,9 +376,7 @@ impl CombatTables {
     /// Style mask for a selected-cache sequence id.
     pub fn style_seq(&self, seq_id: i32) -> Option<StyleMask> {
         let rows = self.selected.style_seqs();
-        let index = rows
-            .binary_search_by_key(&seq_id, |row| row.seq_id)
-            .ok()?;
+        let index = rows.binary_search_by_key(&seq_id, |row| row.seq_id).ok()?;
         StyleMask::from_bits(rows[index].style)
     }
 
@@ -470,37 +469,25 @@ impl CombatTables {
     }
 }
 
-fn fixed_hp_heal(fact: &ConsumptionFact) -> Option<i32> {
-    if fact.qualification != "fixed_hp_heal" || fact.source_file != "consume_normal.dbrow" {
-        return None;
-    }
-    let [heal] = fact.stat_heal.as_slice() else {
-        return None;
-    };
-    (heal.stat == "hitpoints" && heal.percent == 0 && heal.base > 0).then_some(heal.base)
-}
-
 fn validate_delay(delay: Option<i32>) -> bool {
     delay.is_none_or(|delay| delay >= 0)
 }
 
+fn validate_ordinary_eat_delay(delay: Option<i32>) -> bool {
+    delay.is_none_or(|delay| (0..=2).contains(&delay))
+}
+
 fn build_foods(consumption: &[ConsumptionFact]) -> Result<Vec<FoodFact>, ActionError> {
-    // A display name is one supported food only when every source row for it
-    // agrees on a fixed hitpoint heal, matching SelectedGameData's contract.
-    let mut heals_by_name = std::collections::HashMap::<String, (Option<i32>, bool)>::new();
-    for fact in consumption {
-        let key = fact.item.name.to_ascii_lowercase();
-        let heal = fixed_hp_heal(fact);
-        let entry = heals_by_name.entry(key).or_insert((heal, true));
-        if entry.0 != heal {
-            entry.1 = false;
-        }
+    if consumption
+        .iter()
+        .any(|fact| !validate_ordinary_eat_delay(fact.eat_delay_arg))
+    {
+        return Err(unavailable("ordinary food fact has an invalid eat delay"));
     }
 
     let mut foods = Vec::new();
     for fact in consumption {
-        let key = fact.item.name.to_ascii_lowercase();
-        let Some(&(Some(heal), true)) = heals_by_name.get(&key) else {
+        let Some(heal) = fact.fixed_hp_heal() else {
             continue;
         };
         if fact.item.id < 0
@@ -573,7 +560,9 @@ fn build_potions(
             };
             let effect = (stat, change.base, change.percent);
             if effects[family_index].is_some_and(|existing| existing != effect) {
-                return Err(unavailable("combat potion family has conflicting stat changes"));
+                return Err(unavailable(
+                    "combat potion family has conflicting stat changes",
+                ));
             }
             effects[family_index] = Some(effect);
         }
@@ -603,8 +592,8 @@ fn build_potions(
                 }
             }
         }
-        let (stat, constant, percent) =
-            effects[index].map_or((None, 0, 0), |(stat, constant, percent)| {
+        let (stat, constant, percent) = effects[index]
+            .map_or((None, 0, 0), |(stat, constant, percent)| {
                 (Some(stat), constant, percent)
             });
         families[index] = Some(PotionFamily {
@@ -625,10 +614,14 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
         }
         if facts.rows.iter().any(|row| {
             row.id < 0
-                || row.attackrate.is_some_and(|rate| !(0..=255).contains(&rate))
+                || row
+                    .attackrate
+                    .is_some_and(|rate| !(0..=255).contains(&rate))
                 || row.forced_max_hit.is_some_and(|hit| hit < 0)
         }) {
-            return Err(unavailable("combat NPC row has an invalid id, rate, or forced hit"));
+            return Err(unavailable(
+                "combat NPC row has an invalid id, rate, or forced hit",
+            ));
         }
     }
     if selected
@@ -648,7 +641,9 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
             .windows(2)
             .any(|pair| pair[0].tab >= pair[1].tab)
     {
-        return Err(unavailable("combat style or tab rows are not strictly sorted"));
+        return Err(unavailable(
+            "combat style or tab rows are not strictly sorted",
+        ));
     }
     let combat_tabs = selected.combat_tabs();
     if combat_tabs.iter().enumerate().any(|(index, row)| {
@@ -684,17 +679,18 @@ fn validate_combat_indexes(selected: &SelectedGameData) -> Result<(), ActionErro
             .iter()
             .any(|row| weapon_style(row).is_none())
     {
-        return Err(unavailable("combat style row has an unsupported mask or value"));
+        return Err(unavailable(
+            "combat style row has an unsupported mask or value",
+        ));
     }
     Ok(())
 }
 fn build_melee_mode_index(
     selected: &SelectedGameData,
-) -> Result<([[Option<usize>; MELEE_MODE_SLOTS]; COMBAT_TAB_COUNT], Option<i32>), ActionError> {
+) -> Result<(MeleeModeIndex, Option<i32>), ActionError> {
     let rows = selected.melee_modes();
     if rows.windows(2).any(|pair| {
-        pair[0].tab > pair[1].tab
-            || (pair[0].tab == pair[1].tab && pair[0].slot >= pair[1].slot)
+        pair[0].tab > pair[1].tab || (pair[0].tab == pair[1].tab && pair[0].slot >= pair[1].slot)
     }) {
         return Err(unavailable(
             "combat melee mode rows are not strictly sorted by tab and slot",
@@ -718,7 +714,10 @@ fn build_melee_mode_index(
                 "combat melee mode has an invalid slot, mode, button, or root",
             ));
         }
-        if indexes[usize::from(tab.code())][slot].replace(index).is_some() {
+        if indexes[usize::from(tab.code())][slot]
+            .replace(index)
+            .is_some()
+        {
             return Err(unavailable("combat melee mode slot is duplicated"));
         }
     }
@@ -798,13 +797,14 @@ mod tests {
         id: i32,
         name: &str,
         heal: Option<i32>,
-        eat_delay_arg: Option<i32>,
-        skill_delay_arg: Option<i32>,
-        message_delay: Option<i32>,
-        dose_family: Option<&str>,
-        dose_count: Option<u8>,
-        next_stage: Option<&str>,
+        delays: [Option<i32>; 3],
+        dose: Option<(&str, u8, &str)>,
     ) -> Value {
+        let [eat_delay_arg, skill_delay_arg, message_delay] = delays;
+        let (dose_family, dose_count, next_stage) = dose
+            .map_or((None, None, None), |(family, count, next)| {
+                (Some(family), Some(count), Some(next))
+            });
         let stat_heal = heal.map_or_else(Vec::new, |base| {
             vec![json!({"stat":"hitpoints", "base":base, "percent":0})]
         });
@@ -842,10 +842,28 @@ mod tests {
             .iter()
             .map(|(name, level)| prayer(name, *level))
             .collect();
-        let mut items = vec![item("bread", 100), item("karambwan", 101), item("empty_vial", 299)];
+        let mut items = vec![
+            item("bread", 100),
+            item("karambwan", 101),
+            item("empty_vial", 299),
+        ];
         let mut consumption = vec![
-            consume("bread", 100, "Bread", Some(4), Some(2), Some(3), None, None, None, None),
-            consume("karambwan", 101, "Cooked karambwan", Some(18), None, None, Some(2), None, None, None),
+            consume(
+                "bread",
+                100,
+                "Bread",
+                Some(4),
+                [Some(2), Some(3), None],
+                None,
+            ),
+            consume(
+                "karambwan",
+                101,
+                "Cooked karambwan",
+                Some(18),
+                [None, None, Some(2)],
+                None,
+            ),
         ];
         for count in 1..=4u8 {
             let alias = format!("prayer_restore_{count}");
@@ -861,12 +879,8 @@ mod tests {
                 id,
                 &alias,
                 None,
-                None,
-                None,
-                Some(1),
-                Some("potion_prayerrestore"),
-                Some(count),
-                Some(&next),
+                [None, None, Some(1)],
+                Some(("potion_prayerrestore", count, &next)),
             ));
         }
         for count in 1..=4u8 {
@@ -883,12 +897,8 @@ mod tests {
                 id,
                 &alias,
                 None,
-                None,
-                None,
-                Some(1),
-                Some("potion_2attack"),
-                Some(count),
-                Some(&next),
+                [None, None, Some(1)],
+                Some(("potion_2attack", count, &next)),
             );
             if count == 4 {
                 fact["stat_change"] = json!([{"stat":"attack","base":5,"percent":15}]);
@@ -961,16 +971,26 @@ mod tests {
     #[test]
     fn selected_tables_resolve_combat_facts_without_per_lookup_copies() {
         let tables = CombatTables::build(selected_fixture()).expect("valid combat facts");
-        assert_eq!(tables.food(100), Some(&FoodFact {
-            item_id: 100,
-            heal: 4,
-            eat_delay_arg: Some(2),
-            skill_delay_arg: Some(3),
-            message_delay: None,
-        }));
+        assert_eq!(
+            tables.food(100),
+            Some(&FoodFact {
+                item_id: 100,
+                heal: 4,
+                eat_delay_arg: Some(2),
+                skill_delay_arg: Some(3),
+                message_delay: None,
+            })
+        );
         assert_eq!(tables.food(101).unwrap().message_delay, Some(2));
         assert_eq!(tables.food(999), None);
-        assert_eq!(tables.selected().consumable("karambwan").unwrap().eat_delay_arg, None);
+        assert_eq!(
+            tables
+                .selected()
+                .consumable("karambwan")
+                .unwrap()
+                .eat_delay_arg,
+            None
+        );
 
         let potion = tables.potion(PotionKind::Prayer).expect("prayer family");
         assert_eq!(
@@ -990,7 +1010,9 @@ mod tests {
             [Some(0), Some(1), Some(2), Some(3)]
         );
         assert_eq!((potion.stat, potion.constant, potion.percent), (None, 0, 0));
-        let boost = tables.potion(PotionKind::SuperAttack).expect("attack family");
+        let boost = tables
+            .potion(PotionKind::SuperAttack)
+            .expect("attack family");
         assert_eq!(
             (boost.stat, boost.constant, boost.percent),
             (Some(CombatStat::Attack), 5, 15)
@@ -1002,15 +1024,30 @@ mod tests {
         assert_eq!(tables.npc(8).map(|row| tables.npc_rate(row)), Some(4));
         assert_eq!(tables.npc(7).map(|row| tables.npc_rate(row)), Some(6));
         assert!(tables.npc(999).is_none());
-        assert_eq!(tables.prayer(PrayerRole::Protect, 0).unwrap().name, "Protect from Magic");
-        assert_eq!(tables.prayer(PrayerRole::Strength, 2).unwrap().name, "Ultimate Strength");
+        assert_eq!(
+            tables.prayer(PrayerRole::Protect, 0).unwrap().name,
+            "Protect from Magic"
+        );
+        assert_eq!(
+            tables.prayer(PrayerRole::Strength, 2).unwrap().name,
+            "Ultimate Strength"
+        );
         assert!(tables.prayer(PrayerRole::Attack, 3).is_none());
 
         assert_eq!(tables.style_seq(10), Some(StyleMask::MELEE));
-        assert!(tables.style_seq(11).unwrap().contains(StyleMask::RANGED | StyleMask::MAGIC));
+        assert!(tables
+            .style_seq(11)
+            .unwrap()
+            .contains(StyleMask::RANGED | StyleMask::MAGIC));
         assert_eq!(tables.style_seq(999), None);
-        assert_eq!(tables.style_spotanim(20).unwrap().where_, StyleWhere::Projectile);
-        assert_eq!(tables.weapon_style(30).unwrap().tab, Some(CombatTab::HeavySword));
+        assert_eq!(
+            tables.style_spotanim(20).unwrap().where_,
+            StyleWhere::Projectile
+        );
+        assert_eq!(
+            tables.weapon_style(30).unwrap().tab,
+            Some(CombatTab::HeavySword)
+        );
         assert_eq!(tables.weapon_style(31).unwrap().tab, None);
         assert_eq!(tables.weapon_style(31).unwrap().category, 1);
         assert_eq!(tables.combat_tab_root(CombatTab::HeavySword), Some(901));
@@ -1018,6 +1055,62 @@ mod tests {
         assert_eq!(tables.combat_tab_root(CombatTab::Axe), None);
         assert_eq!(CombatStat::Magic.index(), 6);
         assert_eq!(tables.melee_mode_varp(), Some(43));
+    }
+
+    #[test]
+    fn selected_foods_use_per_item_heals_when_names_collide() {
+        let mut data = selected_fixture_value();
+        let consumption = data["consumption"].as_array_mut().unwrap();
+        consumption.push(consume(
+            "cooked_karambwan",
+            3144,
+            "Cooked karambwan",
+            Some(18),
+            [None, None, Some(2)],
+            None,
+        ));
+        let mut harmful = consume(
+            "harmful_karambwan",
+            3142,
+            "Cooked karambwan",
+            None,
+            [None, None, Some(2)],
+            None,
+        );
+        harmful["stat_change"] = json!([{"stat":"hitpoints","base":-5,"percent":0}]);
+        consumption.push(harmful);
+
+        let selected = Arc::new(serde_json::from_value(data).unwrap());
+        let tables = CombatTables::build(selected).expect("valid food remains indexed");
+        assert_eq!(
+            tables.food(3144),
+            Some(&FoodFact {
+                item_id: 3144,
+                heal: 18,
+                eat_delay_arg: None,
+                skill_delay_arg: None,
+                message_delay: Some(2),
+            })
+        );
+        assert_eq!(tables.food(3142), None);
+    }
+
+    #[test]
+    fn selected_tables_reject_ordinary_eat_delay_above_two_on_non_healing_rows() {
+        let mut data = selected_fixture_value();
+        data["consumption"].as_array_mut().unwrap().push(consume(
+            "harmful_food",
+            3142,
+            "Harmful food",
+            None,
+            [Some(3), None, None],
+            None,
+        ));
+        let selected = Arc::new(serde_json::from_value(data).unwrap());
+        assert!(
+            CombatTables::build(selected).is_err(),
+            "all ordinary eat-delay arguments must remain within 0..=2"
+        );
     }
 
     #[test]
@@ -1050,17 +1143,26 @@ mod tests {
         let current_tie = tables
             .melee_mode(CombatTab::HeavySword, MeleeMode::Controlled, Some(2))
             .unwrap();
-        assert_eq!((current_tie.slot, current_tie.actual), (2, MeleeMode::Aggressive));
+        assert_eq!(
+            (current_tie.slot, current_tie.actual),
+            (2, MeleeMode::Aggressive)
+        );
         assert!(current_tie.fallback);
         let lowest_tie = tables
             .melee_mode(CombatTab::HeavySword, MeleeMode::Controlled, None)
             .unwrap();
-        assert_eq!((lowest_tie.slot, lowest_tie.actual), (0, MeleeMode::Accurate));
+        assert_eq!(
+            (lowest_tie.slot, lowest_tie.actual),
+            (0, MeleeMode::Accurate)
+        );
         assert!(lowest_tie.fallback);
         let accurate_fallback = tables
             .melee_mode(CombatTab::Spear, MeleeMode::Accurate, Some(1))
             .unwrap();
-        assert_eq!((accurate_fallback.button, accurate_fallback.slot), (1071, 1));
+        assert_eq!(
+            (accurate_fallback.button, accurate_fallback.slot),
+            (1071, 1)
+        );
         assert_eq!(accurate_fallback.actual, MeleeMode::Controlled);
         assert!(accurate_fallback.fallback);
 
@@ -1073,7 +1175,10 @@ mod tests {
         let controlled_exact = tables
             .melee_mode(CombatTab::Spear, MeleeMode::Controlled, Some(2))
             .unwrap();
-        assert_eq!((controlled_exact.slot, controlled_exact.actual), (2, MeleeMode::Controlled));
+        assert_eq!(
+            (controlled_exact.slot, controlled_exact.actual),
+            (2, MeleeMode::Controlled)
+        );
         assert!(!controlled_exact.fallback);
         assert_eq!(
             tables.melee_mode(CombatTab::Blunt, MeleeMode::Accurate, None),
@@ -1156,6 +1261,4 @@ mod tests {
             [Some(299), Some(201), None, Some(203)]
         );
     }
-
-
 }

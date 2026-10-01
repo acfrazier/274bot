@@ -3,35 +3,43 @@ use super::*;
 use api::snapshot::{NpcView, WorldTile};
 
 fn npc(index: usize, distance: i32, size: i32, name: &str) -> NpcView {
-    NpcView { index,
-    r#type: Some(1),
-    name: Some(name.into()),
-    actions: vec![Some("Attack".into())],
-    tile: WorldTile {
+    NpcView {
+        index,
+        r#type: Some(1),
+        name: Some(name.into()),
+        actions: vec![Some("Attack".into())],
+        tile: WorldTile {
+            x: 3201,
+            z: 3205,
+            level: 0,
+        },
+        distance,
+        animation: 0,
+        animation_frame: 0,
+        pose_animation: 0,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 5,
+        total_health: 5,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 2,
+        size,
+        network: WorldTile {
+            x: 3205,
+            z: 3201,
+            level: 0,
+        },
         x: 3201,
         z: 3205,
-        level: 0,
-    },
-    distance, animation: 0, animation_frame: 0, pose_animation: 0,
-    orientation: 0,
-    target_orientation: 0,
-    overhead_text: None, spot_animation: -1, spot_animation_stamp: -1, health: 5,
-    total_health: 5,
-    face_entity: -1,
-    target: None,
-    moving: false,
-    running: false,
-    in_combat: false,
-    level: 2,
-    size,
-    network: WorldTile {
-        x: 3205,
-        z: 3201,
-        level: 0,
-    },
-    x: 3201,
-    z: 3205,
-    yaw: 0, }
+        yaw: 0,
+    }
 }
 
 fn receipt_for(index: i32) -> ActorObservationScriptReceipt {

@@ -33,6 +33,7 @@ serde_json = "=1.0.140"
 bzip2 = "0.4"
 png = "=0.18.1"
 script = { path = "../script", features = ["test-hooks"] }
+scenario = { path = "../scenario" }
 
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]

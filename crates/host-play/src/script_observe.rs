@@ -1156,14 +1156,14 @@ pub(crate) fn script_observe_cached_with_channels(
                                     crate::combat_proof::record_interaction(
                                         name,
                                         tick,
-                                        authority.run(),
-                                        authority.request_id().get(),
-                                        batch,
+                                        (authority.request_id().get(), batch),
                                         &authority,
                                         request,
-                                        accepted,
-                                        proof_decoded,
-                                        proof_wire_opcodes.as_deref().unwrap_or_default(),
+                                        (
+                                            accepted,
+                                            proof_decoded,
+                                            proof_wire_opcodes.as_deref().unwrap_or_default(),
+                                        ),
                                         snapshot,
                                     );
                                 }

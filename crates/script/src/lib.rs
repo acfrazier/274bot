@@ -8,6 +8,7 @@ pub mod boost_potions;
 pub mod canvas;
 #[cfg(feature = "load")]
 pub mod channel;
+pub mod combat;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;
@@ -41,7 +42,6 @@ pub mod loadouts_store;
 mod module_imports;
 /// Typed compiled cards, preparation, execution and output.
 pub mod native;
-pub mod combat;
 pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
