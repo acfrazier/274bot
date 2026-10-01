@@ -785,6 +785,10 @@ export interface NativeApi {
     /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */
     stop(): HelperResult<null>;
   };
+  /** Sync read of the release Path index. Not a Promise and not a request op. */
+  questPaths(): HelperResult<{ rows: QuestPathRow[] }>;
+  /** One awaited owned progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */
+  questProgress(input: { quest: string }): Promise<QuestProgressOutcome>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
@@ -1020,5 +1024,46 @@ export type GatherEnd =
 
 export type GatherOutcome =
   | { kind: 'done'; value: GatherEnd }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
+
+/** One released quest path of the release index. The release index is Cook only. */
+export interface QuestPathRow {
+  id: string;
+  display: string;
+  journal: boolean;
+  stages: string[];
+}
+
+/** Three-valued truth used by progress rows and their flags. */
+export type Truth3 = 'true' | 'false' | 'unknown';
+
+/** A resolved value or the content gap behind an unknown one. */
+export type Known<T> =
+  | { state: 'known'; value: T }
+  | { state: 'unknown'; gap: string };
+
+/** One owned quest progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */
+export interface QuestProgressRow {
+  quest: string;
+  display: string;
+  colour: 'notStarted' | 'inProgress' | 'complete' | 'unknown';
+  stage: Known<string>;
+  complete: Truth3;
+  rule: Known<string>;
+  flags: Array<{ flag: string; truth: Truth3; count: number | null }>;
+  evidence: { run: number; session: number; tick: number; sequence: number };
+  journal_read: boolean;
+  binding: string;
+  role: string | null;
+}
+
+/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `unavailable:<why>` or `failed:<why>` and never ran. */
+export type QuestProgressEnd =
+  | { end: 'done'; token: number; row: QuestProgressRow }
+  | { end: 'refused'; token: number; reason: string };
+
+export type QuestProgressOutcome =
+  | { kind: 'done'; value: QuestProgressEnd }
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
