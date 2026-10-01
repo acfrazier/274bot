@@ -110,6 +110,8 @@ pixels. The 3270 font remains **14 logical px** and is rasterized at the
 monitor scale; `ScaleAllSizes` and the panel's custom dimensions use that
 same scale. A monitor change rebuilds the font atlas and reapplies the
 unscaled base style before layout resumes.
+Text-input IME candidate areas use the same physical-pixel coordinate system
+for the caret, including at fractional display scales.
 Single-bot hides the dock tab strip (`AUTO_HIDE_TAB_BAR`). The MultiBox
 **rail** keeps a tab so its close X is visible; closing it turns MultiBox
 off and **shrinks** the OS window by the 264 logical px strip (same falling
