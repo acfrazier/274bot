@@ -396,34 +396,41 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
-fn plant_snapshot(unpack: &std::path::Path, packs: &[(String, Vec<u8>)]) {
+fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    struct FixtureEntries;
+    impl client::unpack::EntrySource for FixtureEntries {
+        fn fetch_entries(
+            &mut self,
+            _archive: i32,
+            files: &[i32],
+        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+        }
+    }
     let versionlist = &packs
         .iter()
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let version = client::unpack::version_hash(versionlist);
-    let dir = unpack.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut manifest = format!(
-        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
-        dir.display()
-    );
+    let transfer = nav::manifest::hash_bytes(versionlist);
+    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let input = unpack.join("fixture-input");
+    std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
-        std::fs::write(dir.join(name), bytes).unwrap();
-        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+        std::fs::write(input.join(name), bytes).unwrap();
     }
-    for name in ["models", "anims", "midi", "maps"] {
-        let mut bin = 0u32.to_le_bytes().to_vec();
-        bin.extend_from_slice(&4u32.to_le_bytes());
-        bin.extend_from_slice(b"body");
-        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
-        manifest += &format!(
-            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
-            bin.len()
-        );
-    }
-    std::fs::write(dir.join("manifest"), manifest).unwrap();
+    let out = unpack
+        .join(format!("revision-{revision}"))
+        .join(negotiated)
+        .join(transfer);
+    // Use the same verified retained publisher fixture as host runtime_bind.
+    // Legacy size-only markers are not ordinary-launch asset candidates.
+    client::unpack::fetch_snapshot(
+        &input.to_string_lossy(),
+        &out.to_string_lossy(),
+        &mut FixtureEntries,
+    )
+    .unwrap();
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
@@ -506,7 +513,7 @@ fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     )
     .unwrap();
     let unpack = root.join("unpack");
-    plant_snapshot(&unpack, &packs);
+    plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
     (root, cache, manifest_path, unpack, port)
 }
