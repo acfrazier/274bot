@@ -2160,6 +2160,38 @@ fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() 
     );
 }
 
+#[test]
+fn lumbridge_castle_stairs_route_to_first_floor_wheel_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+    let wheel = tile(3209, 3212, 1);
+    assert!(!world.collision.standable(wheel), "wheel occupies its target");
+    let dest = tile(3210, 3211, 1);
+    let edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1738 && edge.at == tile(3204, 3207, 0))
+        .expect("real Lumbridge south staircase");
+    eprintln!("Lumbridge stairs: {edge:?}; allowed={}", state.allows(edge));
+    assert!(state.allows(edge), "ordinary castle stairs have no gates");
+    assert!(world.collision.standable(edge.to));
+    for from in [tile(3205, 3206, 0), tile(3215, 3212, 0)] {
+        let route = find_with(&world.collision, &world.graph, from, dest, opts, &state)
+            .expect("ground floor and courtyard route to the wheel");
+        eprintln!("Lumbridge from {from:?}: {route:?}");
+        validate_real_route(&world.collision, &world.graph, &route, &state, opts, &[]);
+        assert!(route.legs.iter().any(|leg| matches!(
+            leg,
+            Leg::Transport { edge } if edge.kind == TransportKind::Stairs
+                && edge.at.level == 0 && edge.to.level == 1
+        )));
+    }
+}
+
 fn real_members_state() -> WorldState {
     WorldState {
         map_members: true,
