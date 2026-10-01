@@ -115,19 +115,20 @@ pub(crate) fn selected(index: i32) -> Value {
 }
 
 pub(crate) fn nearest_bank(from: WorldTile) -> Option<NamedBank> {
-    nearest_with_preferences(from, PREFERENCES.get())
+    BANKS.with(|banks| nearest_in(&banks.borrow(), from, PREFERENCES.get()))
 }
 
-fn nearest_with_preferences(from: WorldTile, preferences: BankPreferences) -> Option<NamedBank> {
-    BANKS.with(|banks| {
-        banks
-            .borrow()
-            .banks()
-            .iter()
-            .filter(|bank| eligible(bank, preferences))
-            .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
-            .copied()
-    })
+fn nearest_in(
+    facts: &NamedBankFacts,
+    from: WorldTile,
+    preferences: BankPreferences,
+) -> Option<NamedBank> {
+    facts
+        .banks()
+        .iter()
+        .filter(|bank| eligible(bank, preferences))
+        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
+        .copied()
 }
 
 pub(crate) fn nearest(from: WorldTile) -> Value {
@@ -173,10 +174,23 @@ pub(crate) struct SelectArgs {
 pub(crate) struct SelectBank {
     request_id: u64,
     fallback: Option<NamedBank>,
+    facts: Arc<NamedBankFacts>,
 }
 
 impl SelectBank {
     pub(crate) fn start(args: SelectArgs, cx: &mut Cx<'_>) -> Option<Self> {
+        let facts = BANKS.with(|banks| Arc::clone(&banks.borrow()));
+        Self::start_with(facts, PREFERENCES.get(), args, cx)
+    }
+
+    /// Start selection against this caller-owned immutable catalog. Compiled
+    /// cards use this explicit seam; the isolate family keeps its TLS adapter.
+    pub(crate) fn start_with(
+        facts: Arc<NamedBankFacts>,
+        defaults: BankPreferences,
+        args: SelectArgs,
+        cx: &mut Cx<'_>,
+    ) -> Option<Self> {
         let from = args.from.or_else(|| {
             observed::with(|scene| {
                 scene.since_login().here().map(|t| FromTile {
@@ -193,12 +207,12 @@ impl SelectBank {
             return None;
         }
         let request_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let defaults = PREFERENCES.get();
         let preferences = BankPreferences {
             use_mage_bank: args.use_mage_bank.unwrap_or(defaults.use_mage_bank),
             use_zanaris_bank: args.use_zanaris_bank.unwrap_or(defaults.use_zanaris_bank),
         };
-        let fallback = nearest_with_preferences(
+        let fallback = nearest_in(
+            &facts,
             WorldTile {
                 x: from.x,
                 z: from.z,
@@ -206,8 +220,6 @@ impl SelectBank {
             },
             preferences,
         );
-        // Start before host admission: a held/drained request must still end.
-        // The machine clock preserves the normal pause/hold freeze contract.
         cx.clock().arm(5000);
         cx.emit(InteractReq::SelectBank {
             x: from.x,
@@ -221,18 +233,21 @@ impl SelectBank {
         Some(Self {
             request_id,
             fallback,
+            facts,
         })
     }
 
     pub(crate) fn result_bank(&self, cx: &mut Cx<'_>) -> Option<Option<NamedBank>> {
-        // Reject even a matching late worker result once this window ends.
         if cx.clock().bound_reached() {
             return Some(self.fallback);
         }
         observed::with(|scene| {
             let result = scene.since_login().bank_selection()?;
-            (result.request_id == self.request_id && result.kind != 0)
-                .then(|| selected_bank(result.bank_index))
+            (result.request_id == self.request_id && result.kind != 0).then(|| {
+                usize::try_from(result.bank_index)
+                    .ok()
+                    .and_then(|index| self.facts.banks().get(index).copied())
+            })
         })
     }
 

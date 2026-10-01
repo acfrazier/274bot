@@ -568,6 +568,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: action.request_id.get() != requests[1],
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -662,6 +663,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: true,
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()

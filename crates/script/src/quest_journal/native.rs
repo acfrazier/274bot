@@ -71,7 +71,6 @@ fn foreign_modal_failure(root: i32, texts: &[String]) -> Option<ActionError> {
         ActionError::Failed(Arc::from(format!("journal blocked by modal text ({text})")))
     })
 }
-
 impl NativeMachine for JournalMachine {
     type Args = JournalRequest;
     type Output = JournalRead;

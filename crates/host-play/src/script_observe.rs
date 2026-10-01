@@ -1134,6 +1134,10 @@ pub(crate) fn script_observe_cached_with_channels(
                                             sequence: tick,
                                         },
                                         accepted,
+                                        chat_since: snapshot
+                                            .chat_lines()
+                                            .first()
+                                            .map_or(0, |line| line.sequence),
                                     },
                                 );
                             }

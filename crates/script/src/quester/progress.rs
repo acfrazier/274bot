@@ -48,14 +48,35 @@ pub struct CountCapture {
     pub max_digits: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressRuleDiagnostic {
+    pub index: usize,
+    pub stage: FactKey,
+    pub varp: Option<i32>,
+}
 impl CompiledProgress {
+    /// Return the authored rule for a resolved stage, preserving authored
+    /// newest-first order.
+    pub fn rule_for_stage(&self, stage: &FactKey) -> Option<&CompiledProgressRule> {
+        self.rules.iter().find(|rule| &rule.stage == stage)
+    }
+
     /// The fixture/status diagnostic attached to a stage rule. This is never
     /// consulted while resolving predicates or selecting a stage.
-    pub fn varp_hint(&self, stage: &FactKey) -> Option<i32> {
+    pub fn rule_diagnostic(&self, stage: &FactKey) -> Option<ProgressRuleDiagnostic> {
         self.rules
             .iter()
-            .find(|rule| &rule.stage == stage)
-            .and_then(|rule| rule.varp)
+            .enumerate()
+            .find(|(_, rule)| &rule.stage == stage)
+            .map(|(index, rule)| ProgressRuleDiagnostic {
+                index,
+                stage: rule.stage.clone(),
+                varp: rule.varp,
+            })
+    }
+
+    pub fn varp_hint(&self, stage: &FactKey) -> Option<i32> {
+        self.rule_for_stage(stage).and_then(|rule| rule.varp)
     }
 }
 
