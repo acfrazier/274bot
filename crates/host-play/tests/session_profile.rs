@@ -1662,6 +1662,8 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
         reach_sha256: Some(reach_sha256.clone()),
         canlight_sha256: Some(canlight_sha256.clone()),
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -1730,6 +1732,8 @@ fn external_manifest_rejects_wrong_reach_and_canlight_hashes() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         pois_sha256: None,
+        zone_count: 0,
+        zone_npc_count: 0,
     };
     for extension in ["navreach", "navcanlight"] {
         let mut bad = manifest.clone();

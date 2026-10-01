@@ -752,7 +752,8 @@ impl FollowRun {
                                 TransportTarget::Loc(_) => false,
                             })
                     } else {
-                        cheb(here, approach_at) > 1
+                        loc_transport_ready(snapshot, edge, here)
+                            .map_or(cheb(here, approach_at) > 1, |ready| !ready)
                     };
                     if needs_approach {
                         if self
@@ -764,9 +765,23 @@ impl FollowRun {
                         }
                         self.settle_until = None;
                         let Some(approach) = selected_stand.or_else(|| {
-                            (!npc_backed(edge))
-                                .then(|| approach_tile(snapshot, approach_at, here))
-                                .flatten()
+                            if npc_backed(edge) {
+                                return None;
+                            }
+                            if loc_transport_ready(snapshot, edge, here).is_some() {
+                                if let Some(loc) = find_transport_loc(snapshot, edge) {
+                                    let flood = SceneQuery::new(snapshot.scene(), Some(here))
+                                        .flood_reach()?;
+                                    return api::query::loc_approach::booth_approach(
+                                        loc,
+                                        snapshot.scene(),
+                                        here,
+                                        &flood,
+                                    )?
+                                    .dest;
+                                }
+                            }
+                            approach_tile(snapshot, approach_at, here)
                         }) else {
                             // No standable tile adjacent to the target in
                             // the loaded scene: keep waiting, bounded by

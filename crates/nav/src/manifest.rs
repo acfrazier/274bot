@@ -81,7 +81,7 @@ impl CacheManifest {
     }
 }
 
-/// Sidecar manifest binding a v12 navigation pack to world/cache inputs.
+/// Sidecar manifest binding a v13 navigation pack to world/cache inputs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NavManifest {
@@ -108,7 +108,7 @@ pub struct NavManifest {
 }
 
 impl NavManifest {
-    /// Capture the pack identity and its v12 zone-table counts.
+    /// Capture the pack identity and its zone-table counts.
     #[allow(clippy::too_many_arguments)]
     pub fn capture(
         revision: u16,
@@ -144,7 +144,7 @@ impl NavManifest {
     }
 
     /// Verify the pack identity and its zone-table counts from the decoded
-    /// v12 table supplied by the caller.
+    /// table supplied by the caller.
     #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
