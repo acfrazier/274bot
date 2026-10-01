@@ -6655,10 +6655,9 @@ fn dispatch_wires_with_no_modal_stays_quiet() {
     assert_eq!(c.out.pos, 0, "no chat modal → nothing dispatched");
 }
 
-/// A guardian hold drops WASD walks (the follow is frozen too) but
-/// still lets chat Continue/Answer through.
+/// A held manual step still publishes intent before follow, but never sends.
 #[test]
-fn dispatch_wires_drops_walk_while_hold_but_keeps_chat() {
+fn manual_steps_publish_early_intent_even_while_held_without_affecting_other_slots() {
     let mut c = prepare_client(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -6673,15 +6672,37 @@ fn dispatch_wires_drops_walk_while_hold_but_keeps_chat() {
         Vec::new(),
     );
     let snap = GameSnapshot::new();
-    dispatch_wires(
-        &mut c,
-        &snap,
-        vec![WireCmd::Walk {
-            x: 3220,
-            z: 3221,
-            level: 0,
-        }],
-        true,
+    let input = SlotInput::new();
+    let step = WireCmd::Walk {
+        x: 3220,
+        z: 3221,
+        level: 0,
+    };
+    let queues = Mutex::new(HashMap::from([
+        (
+            "alice".to_string(),
+            VecDeque::from([WireCmd::Continue, step, WireCmd::Answer(1), step]),
+        ),
+        ("bob".to_string(), VecDeque::from([step])),
+    ]));
+    let (frame, wires) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, true);
+    assert_eq!(
+        frame.manual_move_count(),
+        2,
+        "count each gesture, not its eventual movement"
+    );
+    assert!(frame.hold);
+    assert_eq!(
+        wires,
+        VecDeque::from([WireCmd::Continue, step, WireCmd::Answer(1), step])
+    );
+    assert_eq!(queues.lock().unwrap()["bob"], VecDeque::from([step]));
+    dispatch_wires(&mut c, &snap, wires.into(), frame.hold);
+    let (frame, _) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false);
+    assert_eq!(
+        frame.manual_move_count(),
+        0,
+        "never replay a drained gesture"
     );
     assert_eq!(c.out.pos, 0, "hold drops the walk send");
 }
