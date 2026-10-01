@@ -72,7 +72,10 @@
           {
             "id": "scan-message-bank", "kind": "bank", "version": 1,
             "args": { "op": "scan", "at": "quest_bank" },
-            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } }
+            ] },
             "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
           },
           {
@@ -139,6 +142,7 @@
             "id": "scan-potion-bank", "kind": "bank", "version": 1,
             "args": { "op": "scan", "at": "quest_bank" },
             "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } }
             ] },
