@@ -235,6 +235,208 @@ fn make_button_publishes_the_posted_component_key() {
     assert!(!button.contains("com_id"), "{button}");
 }
 
+/// Slice-A gather declarations are rendered from the card's own tables, not
+/// copied: every settings-schema key is an optional `GatherSettings` member
+/// with the card's TS kind, and every published status key is a required
+/// `GatherStatus` member with its table kind. This probes typed key/value
+/// behavior of the rendered declarations, not table order.
+#[test]
+fn gather_declarations_render_from_card_schema_and_status_table() {
+    use script::gatherer::settings::schema;
+    use script::gatherer::status::{FieldKind, KEYS};
+
+    let src = render_host_js_dts();
+    let settings = interface_block(&src, "GatherSettings");
+    let mut schema_len = 0;
+    for def in schema() {
+        schema_len += 1;
+        let want_ty = match def.ty.as_str() {
+            "boolean" => "boolean".to_string(),
+            "number" => "number".to_string(),
+            "tile" => "WorldTile".to_string(),
+            "list" => "string[]".to_string(),
+            "string" if !def.options.is_empty() => def
+                .options
+                .iter()
+                .map(|option| format!("'{option}'"))
+                .collect::<Vec<_>>()
+                .join(" | "),
+            _ => "string".to_string(),
+        };
+        assert!(
+            settings.contains(&format!("{}?: {want_ty};", def.id)),
+            "schema key {} must render as optional {want_ty}: {settings}",
+            def.id,
+        );
+    }
+    assert!(schema_len > 0, "the card schema must render a member");
+
+    let status = interface_block(&src, "GatherStatus");
+    assert_eq!(KEYS.len(), 22, "the gatherer publishes 22 status keys");
+    for (key, kind) in KEYS {
+        let want_ty = match kind {
+            FieldKind::Text => "string",
+            FieldKind::Integer => "number",
+        };
+        assert!(
+            status.contains(&format!("{key}: {want_ty};")),
+            "status key {key} must render as {want_ty}: {status}",
+        );
+    }
+
+    let session = interface_block(&src, "GatherSession");
+    assert!(session.contains("token: number;"), "{session}");
+    assert!(
+        session.contains("phase: 'preparing' | 'running';"),
+        "{session}"
+    );
+    assert!(session.contains("status: GatherStatus | null;"), "{session}");
+    let end = type_block(&src, "GatherEnd");
+    for terminal in ["'stopped'", "'blocked'", "'refused'", "'failed'"] {
+        assert!(end.contains(terminal), "missing terminal {terminal}: {end}");
+    }
+    let outcome = type_block(&src, "GatherOutcome");
+    assert!(outcome.contains("{ kind: 'done'; value: GatherEnd }"), "{outcome}");
+    assert!(outcome.contains("{ kind: 'refused'; reason: string }"), "{outcome}");
+
+    let snapshot = interface_block(&src, "NativeSnapshot");
+    assert!(
+        snapshot.contains("gather: GatherSession | null;"),
+        "{snapshot}"
+    );
+    let api = interface_block(&src, "NativeApi");
+    assert!(
+        api.contains("run(settings?: GatherSettings): Promise<GatherOutcome>;"),
+        "{api}"
+    );
+    assert!(api.contains("stop(): HelperResult<null>;"), "{api}");
+
+    // Slice A is gather only: quest progress reads belong to slice B.
+    assert!(!src.contains("questPaths"), "slice B quest API leaks into A");
+    assert!(
+        !src.contains("questProgress"),
+        "slice B quest API leaks into A"
+    );
+}
+
+/// Gather-only consumer compile gate (pinned TypeScript 5.8.3): a temporary
+/// consumer exercises every slice-A member positively and pins one
+/// `@ts-expect-error` invalid-settings case. The full sample/quest consumer
+/// belongs to slice C, where its dependencies exist.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_gather_consumer_uses_every_slice_a_member() {
+    use std::process::Command;
+
+    let dir =
+        std::env::temp_dir().join(format!("host-js-gather-consumer-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear gather consumer dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create gather consumer dir");
+    std::fs::write(dir.join("gather.d.ts"), render_host_js_dts())
+        .expect("write gather declarations");
+    std::fs::write(dir.join("consumer.ts"), GATHER_CONSUMER).expect("write gather consumer");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(dir.join("consumer.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc gather consumer failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove gather consumer dir");
+    assert!(
+        output.status.success(),
+        "gather consumer failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// Temporary slice-A consumer fixture: uses `api.gather.run/stop`,
+/// `api.snapshot.gather`, and every session/status/outcome type, plus one
+/// rejected invalid-settings row.
+const GATHER_CONSUMER: &str = r#"
+import type {
+  GatherCounts,
+  GatherEnd,
+  GatherFailure,
+  GatherOutcome,
+  GatherSession,
+  GatherSettings,
+  GatherStatus,
+  NativeApi,
+} from "./gather";
+
+declare const api: NativeApi;
+
+async function drive(): Promise<GatherOutcome> {
+  const full: GatherSettings = {
+    skill: 'Mining',
+    woodcuttingResources: ['normal'],
+    miningResources: ['copper', 'tin'],
+    fishingMethod: 'fishing.saltfish.op1',
+    targetPreference: 'Nearest',
+    location: 'Custom',
+    customTile: { x: 1, z: 2, level: 0 },
+    radius: 12,
+    disposition: 'Power',
+    allowTeleports: false,
+    allowWilderness: false,
+    deathPolicy: 'Stop',
+    maxDeaths: 2,
+  };
+  const outcome = await api.gather.run(full);
+  const defaults = await api.gather.run();
+  void defaults;
+  const stopped = api.gather.stop();
+  if (!stopped.ok) {
+    throw new Error(stopped.error);
+  }
+  const session: GatherSession | null = api.snapshot.gather;
+  const status: GatherStatus | null = session?.status ?? null;
+  if (status !== null) {
+    const yielded: number = status.yielded;
+    const skill: string = status.skill;
+    const hourly: number = status.xp_per_hour;
+    void yielded;
+    void skill;
+    void hourly;
+  }
+  return outcome;
+}
+
+function narrow(outcome: GatherOutcome): string {
+  if (outcome.kind === 'done') {
+    const end: GatherEnd = outcome.value;
+    if (end.end === 'blocked') {
+      const failure: GatherFailure = end.failure;
+      const counts: GatherCounts = end.counts;
+      return `${failure.code}:${counts.yielded}`;
+    }
+    return end.end;
+  }
+  return outcome.reason;
+}
+
+void drive;
+void narrow;
+
+// @ts-expect-error radius is a number, not a string
+const invalid: GatherSettings = { radius: 'wide' };
+void invalid;
+"#;
+
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]

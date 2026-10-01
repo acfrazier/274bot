@@ -67,6 +67,15 @@ value applies; omission is not proof of no requirement.
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
+A Load slot can also host one API seat: `api.gather.run` prepares and ticks
+the genuine Gatherer card inside the slot with the slot's own ledger, and
+`api.snapshot.gather` reports its live session. While the seat is live the
+host owns the slot's foreground: the script's game rows are drained and
+dropped at admission exactly as under the watchdog recovery hold — never
+dispatched, never deferred — while control rows (`gather.stop`, run-policy)
+still pass. `questProgress` reads are refused `busy` for the same reason.
+When the session ends the seat is torn down and ordinary dispatch resumes.
+
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
 re-evaluated on every title-loop pass), unless the operator logged the slot

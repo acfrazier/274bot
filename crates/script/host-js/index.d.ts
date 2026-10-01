@@ -423,6 +423,8 @@ export interface NativeSnapshot {
   self_target_kind: number;
   /** -1 when kind is 0. 0 is a legal NPC index. */
   self_target_index: number;
+  /** Live API gather session; null when none. */
+  gather: GatherSession | null;
 }
 
 /** Typed settings access over the per-identity host bag. */
@@ -776,6 +778,13 @@ export interface NativeApi {
   questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;
   /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal inside a bounded observation window. */
   questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;
+  /** Native gathering: the Gatherer card the operator starts from Browse, driven by this script. One session per slot. While a session is live the host owns the slot's foreground: this script's game ops are dropped, not deferred. */
+  gather: {
+    /** One awaited session. Settles at its terminal (`value.end`). Refused `busy` until the previous session's promise has settled. */
+    run(settings?: GatherSettings): Promise<GatherOutcome>;
+    /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */
+    stop(): HelperResult<null>;
+  };
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
@@ -920,5 +929,96 @@ export type QuestJournalRunValue =
   | { kind: 'aborted'; token: number; reason: string };
 export type QuestJournalOutcome =
   | { kind: 'done'; value: QuestJournalRunValue }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
+
+/** The Gatherer card's own settings schema (crates/script/src/gatherer/settings.rs), rendered row by row. Every key is optional and takes the card default. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>` (the card's own keyed ConfigError). */
+export interface GatherSettings {
+  /** default "Woodcutting" */
+  skill?: 'Woodcutting' | 'Mining' | 'Fishing';
+  /** default ["normal"] */
+  woodcuttingResources?: string[];
+  /** default ["copper","tin"] */
+  miningResources?: string[];
+  /** default "fishing.saltfish.op1" */
+  fishingMethod?: string;
+  /** default "Best tier" */
+  targetPreference?: 'Best tier' | 'Nearest';
+  /** default "Start" */
+  location?: 'Start' | 'Custom' | 'Auto';
+  /** no card default, only when its card show-if holds */
+  customTile?: WorldTile;
+  /** 2..64, default 12 */
+  radius?: number;
+  /** default "Power" */
+  disposition?: 'Power';
+  /** default false */
+  allowTeleports?: boolean;
+  /** default false */
+  allowWilderness?: boolean;
+  /** default "Stop" */
+  deathPolicy?: 'Stop';
+  /** 0..255, default 2 */
+  maxDeaths?: number;
+}
+
+/** The Gatherer's published status, keyed exactly as the card publishes it (gatherer::status::KEYS). `xp_per_hour` is -1 below five minutes elapsed. */
+export interface GatherStatus {
+  skill: string;
+  method: string;
+  phase: string;
+  area: string;
+  target: string;
+  tool: string;
+  bait: number;
+  food: number;
+  coins: number;
+  yielded: number;
+  dropped: number;
+  deposited: number;
+  trips: number;
+  xp: number;
+  xp_per_hour: number;
+  bank: string;
+  last_progress: number;
+  deaths: number;
+  absent: number;
+  zone_gated: number;
+  excluded_targets: string;
+  last_event: string;
+}
+
+/** The slot's live API session; `null` when none. Host-owned, read only. */
+export interface GatherSession {
+  token: number;
+  /** 'preparing' while the host prepares the card off-pump; 'running' once installed */
+  phase: 'preparing' | 'running';
+  /** `null` until the card publishes its first status (preparation and the install tick) */
+  status: GatherStatus | null;
+}
+
+export interface GatherFailure {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface GatherCounts {
+  yielded: number;
+  dropped: number;
+  deposited: number;
+  trips: number;
+  xp: number;
+}
+
+/** How a session ended (the `value` of a `done` outcome). `blocked` keeps the slot's retained anchor/counters so the next `run` resumes; `stopped` clears them (operator-Stop semantics). */
+export type GatherEnd =
+  | { end: 'stopped'; token: number; counts: GatherCounts }
+  | { end: 'blocked'; token: number; failure: GatherFailure; counts: GatherCounts }
+  | { end: 'refused'; token: number; reason: string }
+  | { end: 'failed'; token: number; reason: string; counts: GatherCounts };
+
+export type GatherOutcome =
+  | { kind: 'done'; value: GatherEnd }
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
