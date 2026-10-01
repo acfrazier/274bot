@@ -512,6 +512,7 @@ fn walk_near_req(tile: Tile, radius: i32) -> InteractReq {
         allow_bank_fetch: true,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 
@@ -706,6 +707,7 @@ mod tests {
             allow_bank_fetch: true,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }
     }
 
@@ -860,6 +862,7 @@ mod tests {
                 allow_bank_fetch: true,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             }],
             "a new dest re-walks inside the same bound"
         );

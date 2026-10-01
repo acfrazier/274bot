@@ -16,14 +16,14 @@ fn manifest_content_id_mismatch_rejects_the_pack() {
             .collect(),
     };
     let mut manifest =
-        NavManifest::capture(revision, &cache, &bytes, None, None, None, None).unwrap();
+        NavManifest::capture(revision, &cache, &bytes, None, None, None, None, 0, 0).unwrap();
     assert!(
         manifest.content_id.is_none(),
         "capture without a decoded identity stays unset"
     );
     let nav_hash = super::hash_bytes(&bytes);
     assert!(manifest
-        .verify(revision, &cache, &bytes, None, None, None, None)
+        .verify(revision, &cache, &bytes, None, None, None, None, 0, 0)
         .is_ok());
     assert!(manifest
         .verify_pack(revision, &cache, &nav_hash, None)
@@ -67,6 +67,29 @@ fn manifest_content_id_mismatch_rejects_the_pack() {
         .is_ok());
     assert!(manifest
         .verify_pack(revision, &cache, &nav_hash, Some("other"))
+        .is_err());
+}
+
+#[test]
+fn manifest_verification_binds_decoded_zone_counts() {
+    let revision = 289;
+    let cache = CacheManifest {
+        revision,
+        archives: [("versionlist".to_string(), "6dcb".repeat(16))]
+            .into_iter()
+            .collect(),
+    };
+    let bytes = b"nav";
+    let manifest =
+        NavManifest::capture(revision, &cache, bytes, None, None, None, None, 3, 2).unwrap();
+
+    assert_eq!(manifest.zone_count, 3);
+    assert_eq!(manifest.zone_npc_count, 2);
+    assert!(manifest
+        .verify(revision, &cache, bytes, None, None, None, None, 3, 2)
+        .is_ok());
+    assert!(manifest
+        .verify(revision, &cache, bytes, None, None, None, None, 2, 2)
         .is_err());
 }
 

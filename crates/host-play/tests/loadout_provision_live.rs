@@ -676,7 +676,8 @@ fn run_cell() -> Result<(), String> {
         true,
         vec![],
         |_| (None, None),
-        move |client, username, hold| {
+        move |client, username, frame| {
+            let hold = frame.hold;
             let mut state = frame_state.lock().unwrap();
             if username == state.account {
                 state.frame(client, hold);

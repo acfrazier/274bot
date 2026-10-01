@@ -21,6 +21,7 @@ load = ["dep:rustyscript", "dep:v8", "dep:deno_core", "deno_ast/transpiling", "d
 [dependencies]
 ab_glyph = "=0.2.32"
 api = { path = "../api" }
+nav = { path = "../nav" }
 # TS parse for import scans (always, V8-free); `load` adds the TS -> JS
 # strip for the catalog shape. `transpiling` unifies with the features
 # rustyscript already enables, so no new build graph.
@@ -47,9 +48,6 @@ script = { path = ".", features = ["test-hooks"] }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
 # never touches `client`.
 client = { workspace = true }
-# Catalog geometry fixtures use the native resolver; the compiled crate
-# itself never depends on nav.
-nav = { path = "../nav" }
 [[test]]
 name = "load_isolate"
 required-features = ["load"]

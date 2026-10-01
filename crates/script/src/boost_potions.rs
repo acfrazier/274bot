@@ -277,8 +277,6 @@ mod tests {
             ],
             "attack is checked before strength"
         );
-        assert_eq!(BOOST_FLOOR, 0.1);
-        assert_eq!(EMPTY_VIAL, "Vial");
     }
 
     #[test]

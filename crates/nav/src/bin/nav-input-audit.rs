@@ -72,15 +72,6 @@ fn run() -> Result<(), String> {
     let pois_path = nav_path.with_extension("navpois");
     let pois_bytes = std::fs::read(&pois_path).ok();
     let nav_manifest: NavManifest = read_json(&nav_manifest_path(nav_path))?;
-    nav_manifest.verify(
-        revision,
-        &cache_manifest,
-        &nav_bytes,
-        Some(&flags_bytes),
-        reach_bytes.as_deref(),
-        canlight_bytes.as_deref(),
-        pois_bytes.as_deref(),
-    )?;
 
     let config_bytes =
         std::fs::read(cache_dir.join("config")).map_err(|e| format!("cache config: {e}"))?;
@@ -89,6 +80,32 @@ fn run() -> Result<(), String> {
     let cache = Cache::unpack(&JagFile::new(config_bytes));
     let (ifaces, ifaces_mut) = IfType::unpack(&JagFile::new(interface_bytes));
     let world = NavWorld::load_pack(nav_path).map_err(|e| format!("navigation decode: {e}"))?;
+    let (zone_count, zone_npc_count) = if let Some(table) = world.graph.zones.as_ref() {
+        let zone_count = u32::try_from(table.zones().len())
+            .map_err(|_| "zone count exceeds the manifest range".to_string())?;
+        let zone_npc_count = u32::try_from(
+            table
+                .zones()
+                .iter()
+                .filter(|zone| table.kinds()[usize::from(zone.kind)].npc_id >= 0)
+                .count(),
+        )
+        .map_err(|_| "NPC zone count exceeds the manifest range".to_string())?;
+        (zone_count, zone_npc_count)
+    } else {
+        (0, 0)
+    };
+    nav_manifest.verify(
+        revision,
+        &cache_manifest,
+        &nav_bytes,
+        Some(&flags_bytes),
+        reach_bytes.as_deref(),
+        canlight_bytes.as_deref(),
+        pois_bytes.as_deref(),
+        zone_count,
+        zone_npc_count,
+    )?;
 
     let bank_inventory = find_inventory(&ifaces, BANK_ROOT, "withdraw");
     let controls = component(&ifaces, &ifaces_mut, CONTROLS_ROOT);

@@ -2,6 +2,9 @@
 //! Snapshot fields, [`crate::shim::InteractReq`] ops, and nav
 //! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is 0.2.5.
 
+use crate::gatherer::settings::schema;
+use crate::gatherer::status::{FieldKind, KEYS};
+use crate::SettingDef;
 use std::path::{Path, PathBuf};
 
 struct TsField {
@@ -602,6 +605,19 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal inside a bounded observation window. */\n");
     out.push_str("  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n");
+    out.push_str("  /** Native gathering: the Gatherer card the operator starts from Browse, driven by this script. One session per slot. While a session is live the host owns the slot's foreground: this script's game ops are dropped, not deferred. */\n");
+    out.push_str("  gather: {\n");
+    out.push_str("    /** One awaited session. Settles at its terminal (`value.end`). Refused `busy` until the previous session's promise has settled. */\n");
+    out.push_str("    run(settings?: GatherSettings): Promise<GatherOutcome>;\n");
+    out.push_str("    /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */\n");
+    out.push_str("    stop(): HelperResult<null>;\n");
+    out.push_str("  };\n");
+    out.push_str(
+        "  /** Sync read of the release Path index. Not a Promise and not a request op. */\n",
+    );
+    out.push_str("  questPaths(): HelperResult<{ rows: QuestPathRow[] }>;\n");
+    out.push_str("  /** One awaited owned progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */\n");
+    out.push_str("  questProgress(input: { quest: string }): Promise<QuestProgressOutcome>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
@@ -771,6 +787,176 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
     out.push_str("export type QuestJournalOutcome =\n");
     out.push_str("  | { kind: 'done'; value: QuestJournalRunValue }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
+    out.push('\n');
+    render_gather_settings(out);
+    out.push('\n');
+    render_gather_status(out);
+    out.push('\n');
+    render_gather_session(out);
+    out.push('\n');
+    render_quest_progress(out);
+}
+
+/// `QuestPathRow`, `Truth3`, `Known`, `QuestProgressRow`,
+/// `QuestProgressEnd` and `QuestProgressOutcome`: the release Path index
+/// and one owned progress read (design section 2, slice B).
+fn render_quest_progress(out: &mut String) {
+    out.push_str(
+        "/** One released quest path from the Quester release index; stages and journal availability come from its Path document. */\n",
+    );
+    out.push_str("export interface QuestPathRow {\n");
+    out.push_str("  id: string;\n");
+    out.push_str("  display: string;\n");
+    out.push_str("  journal: boolean;\n");
+    out.push_str("  stages: string[];\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Three-valued truth used by progress rows and their flags. */\n");
+    out.push_str("export type Truth3 = 'true' | 'false' | 'unknown';\n\n");
+    out.push_str("/** A resolved value or the content gap behind an unknown one. */\n");
+    out.push_str("export type Known<T> =\n");
+    out.push_str("  | { state: 'known'; value: T }\n");
+    out.push_str("  | { state: 'unknown'; gap: string };\n\n");
+    out.push_str("/** One owned quest progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */\n");
+    out.push_str("export interface QuestProgressRow {\n");
+    out.push_str("  quest: string;\n");
+    out.push_str("  display: string;\n");
+    out.push_str("  colour: 'notStarted' | 'inProgress' | 'complete' | 'unknown';\n");
+    out.push_str("  stage: Known<string>;\n");
+    out.push_str("  complete: Truth3;\n");
+    out.push_str("  rule: Known<string>;\n");
+    out.push_str("  flags: Array<{ flag: string; truth: Truth3; count: number | null }>;\n");
+    out.push_str("  evidence: { run: number; session: number; tick: number; sequence: number };\n");
+    out.push_str("  journal_read: boolean;\n");
+    out.push_str("  binding: string;\n");
+    out.push_str("  role: string | null;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>` or `failed:<why>` and no row was produced. */\n");
+    out.push_str("export type QuestProgressEnd =\n");
+    out.push_str("  | { end: 'done'; token: number; row: QuestProgressRow }\n");
+    out.push_str("  | { end: 'refused'; token: number; reason: string };\n\n");
+    out.push_str("export type QuestProgressOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: QuestProgressEnd }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
+}
+
+/// `GatherSettings`, rendered row by row from the Gatherer card's own
+/// settings schema (`gatherer::settings::schema`).
+fn render_gather_settings(out: &mut String) {
+    out.push_str("/** The Gatherer card's own settings schema (crates/script/src/gatherer/settings.rs), rendered row by row. Every key is optional and takes the card default. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>` (the card's own keyed ConfigError). */\n");
+    out.push_str("export interface GatherSettings {\n");
+    for def in schema() {
+        out.push_str("  /** ");
+        out.push_str(&gather_setting_doc(def));
+        out.push_str(" */\n");
+        out.push_str("  ");
+        out.push_str(&def.id);
+        out.push_str("?: ");
+        out.push_str(&gather_setting_ts(def));
+        out.push_str(";\n");
+    }
+    out.push_str("}\n");
+}
+
+fn gather_setting_ts(def: &SettingDef) -> String {
+    match def.ty.as_str() {
+        "boolean" => "boolean".to_string(),
+        "number" => "number".to_string(),
+        "tile" => "WorldTile".to_string(),
+        "list" => "string[]".to_string(),
+        "string" if !def.options.is_empty() => def
+            .options
+            .iter()
+            .map(|option| format!("'{option}'"))
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ => "string".to_string(),
+    }
+}
+
+fn gather_setting_doc(def: &SettingDef) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let (Some(min), Some(max)) = (def.min.as_deref(), def.max.as_deref()) {
+        parts.push(format!("{min}..{max}"));
+    }
+    match def.default.as_deref() {
+        Some(default) => {
+            if def.ty == "list" && !default.starts_with('[') {
+                parts.push(format!("default [\"{default}\"]"));
+            } else if def.ty == "string" {
+                parts.push(format!("default \"{default}\""));
+            } else {
+                parts.push(format!("default {default}"));
+            }
+        }
+        None => parts.push("no card default".to_string()),
+    }
+    if def.show_if.is_some() {
+        parts.push("only when its card show-if holds".to_string());
+    }
+    parts.join(", ")
+}
+
+/// `GatherStatus`, keyed exactly as the card publishes it
+/// (`gatherer::status::KEYS`).
+fn render_gather_status(out: &mut String) {
+    out.push_str("/** The Gatherer's published status, keyed exactly as the card publishes it (gatherer::status::KEYS). `xp_per_hour` is -1 below five minutes elapsed. */\n");
+    out.push_str("export interface GatherStatus {\n");
+    for (key, kind) in KEYS {
+        out.push_str("  ");
+        out.push_str(key);
+        out.push_str(": ");
+        out.push_str(match kind {
+            FieldKind::Text => "string",
+            FieldKind::Integer => "number",
+        });
+        out.push_str(";\n");
+    }
+    out.push_str("}\n");
+}
+
+/// `GatherSession`, `GatherFailure`, `GatherCounts`, `GatherEnd` and
+/// `GatherOutcome`: the slot's live API session and how a session ended.
+/// Quest progress reads (`QuestPathRow`, `Truth3`, `Known`,
+/// `QuestProgressRow`, `QuestProgressEnd`, `QuestProgressOutcome`) are
+/// rendered by `render_quest_progress` beside it.
+fn render_gather_session(out: &mut String) {
+    out.push_str("/** The slot's live API session; `null` when none. Host-owned, read only. */\n");
+    out.push_str("export interface GatherSession {\n");
+    out.push_str("  token: number;\n");
+    out.push_str("  /** 'preparing' while the host prepares the card off-pump; 'running' once installed */\n");
+    out.push_str("  phase: 'preparing' | 'running';\n");
+    out.push_str("  /** `null` until the card publishes its first status (preparation and the install tick) */\n");
+    out.push_str("  status: GatherStatus | null;\n");
+    out.push_str("}\n\n");
+    out.push_str("export interface GatherFailure {\n");
+    out.push_str("  code: string;\n");
+    out.push_str("  message: string;\n");
+    out.push_str("  retryable: boolean;\n");
+    out.push_str("}\n\n");
+    out.push_str("export interface GatherCounts {\n");
+    out.push_str("  yielded: number;\n");
+    out.push_str("  dropped: number;\n");
+    out.push_str("  deposited: number;\n");
+    out.push_str("  trips: number;\n");
+    out.push_str("  xp: number;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** How a session ended (the `value` of a `done` outcome). `blocked` keeps the slot's retained anchor/counters so the next `run` resumes; `stopped` clears them (operator-Stop semantics). */\n");
+    out.push_str("export type GatherEnd =\n");
+    out.push_str("  | { end: 'stopped'; token: number; counts: GatherCounts }\n");
+    out.push_str(
+        "  | { end: 'blocked'; token: number; failure: GatherFailure; counts: GatherCounts }\n",
+    );
+    out.push_str("  | { end: 'refused'; token: number; reason: string }\n");
+    out.push_str("  | { end: 'failed'; token: number; reason: string; counts: GatherCounts };\n\n");
+    out.push_str("export type GatherOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: GatherEnd }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
     out.push_str(
         "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
@@ -2812,6 +2998,12 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         ty: "number",
         optional: false,
         doc: Some("-1 when kind is 0. 0 is a legal NPC index."),
+    },
+    TsField {
+        name: "gather",
+        ty: "GatherSession | null",
+        optional: false,
+        doc: Some("Live API gather session; null when none."),
     },
 ];
 

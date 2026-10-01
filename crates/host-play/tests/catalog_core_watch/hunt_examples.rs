@@ -106,6 +106,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_bank_fetch,
             request_id,
             avoid: _,
+            cross: _,
         } => (
             x,
             z,
@@ -127,6 +128,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_bank_fetch,
             request_id,
             avoid: _,
+            cross: _,
         } => (
             x,
             z,

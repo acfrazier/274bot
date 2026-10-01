@@ -48,14 +48,35 @@ pub struct CountCapture {
     pub max_digits: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressRuleDiagnostic {
+    pub index: usize,
+    pub stage: FactKey,
+    pub varp: Option<i32>,
+}
 impl CompiledProgress {
+    /// Return the authored rule for a resolved stage, preserving authored
+    /// newest-first order.
+    pub fn rule_for_stage(&self, stage: &FactKey) -> Option<&CompiledProgressRule> {
+        self.rules.iter().find(|rule| &rule.stage == stage)
+    }
+
     /// The fixture/status diagnostic attached to a stage rule. This is never
     /// consulted while resolving predicates or selecting a stage.
-    pub fn varp_hint(&self, stage: &FactKey) -> Option<i32> {
+    pub fn rule_diagnostic(&self, stage: &FactKey) -> Option<ProgressRuleDiagnostic> {
         self.rules
             .iter()
-            .find(|rule| &rule.stage == stage)
-            .and_then(|rule| rule.varp)
+            .enumerate()
+            .find(|(_, rule)| &rule.stage == stage)
+            .map(|(index, rule)| ProgressRuleDiagnostic {
+                index,
+                stage: rule.stage.clone(),
+                varp: rule.varp,
+            })
+    }
+
+    pub fn varp_hint(&self, stage: &FactKey) -> Option<i32> {
+        self.rule_for_stage(stage).and_then(|rule| rule.varp)
     }
 }
 
@@ -892,5 +913,30 @@ mod tests {
         assert_eq!(progress.complete, Truth::True);
         assert!(progress.flags.is_empty());
         assert!(progress.signals.is_empty());
+    }
+
+    #[test]
+    fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let bytes = crate::quester::card::released_path("romeojuliet").unwrap();
+        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let completed = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                1,
+                &[
+                    "I went to the Apothecary regarding making this cadava potion, and he told me to bring him some cadava berries.",
+                    "I was rewarded for all of my help regardless.",
+                ],
+            ),
+            None,
+        );
+        assert!(matches!(
+            &completed.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "romeojuliet:100"
+        ));
+        assert_eq!(completed.complete, Truth::True);
     }
 }

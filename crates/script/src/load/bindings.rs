@@ -577,6 +577,8 @@ pub(super) fn wire_runtime(
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
+    super::progress_methods_v8::install(runtime)
+        .map_err(|e| format!("progress methods v8: {e}"))?;
     super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
     super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
     super::clue_logic_v8::install(runtime).map_err(|e| format!("clue logic v8: {e}"))?;
@@ -683,7 +685,7 @@ return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e))
 /// and returns void. Async single-flight is observed by the Rust isolate.
 const NATIVE_V2_MAIN: &str = r#"
 import { tick } from './bot.js';
-import { runMachine } from '../../shim/_kernel.js';
+import { machineNow, runMachine } from '../../shim/_kernel.js';
 const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
   'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
@@ -701,7 +703,7 @@ const SNAPSHOT_KEYS = new Set([
   'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
   'route_inspect_replaced_id','route_inspect_replaced_prev_id',
   'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
-  'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index',
+  'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index','gather',
 ]);
 const V2_OPS = {
   'held': ['name','action'],
@@ -873,6 +875,29 @@ const api = {
   },
   inspectValue(token) {
     return globalThis.rustyscript.functions.__rs2b0t_inspect({ op: 'value', token });
+  },
+  gather: {
+    run(settings) {
+      if (settings != null && (typeof settings !== 'object' || Array.isArray(settings))) {
+        return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+      }
+      return runMachine('gather', settings == null ? {} : settings, {});
+    },
+    stop() {
+      const out = machineNow('gather-stop', {});
+      return out.kind === 'done' ? helperOk(null) : helperErr(out.reason);
+    },
+  },
+  questPaths() {
+    return globalThis.__rs2b0t_progress_methods_v2();
+  },
+  questProgress(input) {
+    if (arguments.length === 0 || input == null
+        || typeof input !== 'object' || Array.isArray(input)
+        || typeof input.quest !== 'string' || input.quest.trim() === '') {
+      return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+    }
+    return runMachine('quest-progress', { quest: input.quest }, {});
   },
 };
 globalThis.__rs_api = api;

@@ -925,6 +925,7 @@ export default class T extends LoopingBot {
                 allow_bank_fetch: false,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )),
         "{drained:?}"
@@ -1056,6 +1057,7 @@ fn approach_walk(drained: &[InteractReq]) -> bool {
                 allow_bank_fetch: false,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )
     })

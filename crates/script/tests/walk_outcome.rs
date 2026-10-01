@@ -157,6 +157,7 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -248,6 +249,7 @@ fn isolate_nopath_delta_snapshot_returns_false_promptly() {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -429,6 +431,7 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_bank_fetch: true,
             request_id: first,
             avoid: _,
+            cross: _,
         }, InteractReq::WalkNear {
             x: 2820,
             z: 3556,
@@ -439,6 +442,7 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_bank_fetch: true,
             request_id: second,
             avoid: _,
+            cross: _,
         }] => {
             assert_ne!(*first, 0);
             assert_ne!(*second, 0);
@@ -630,6 +634,7 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_bank_fetch: true,
                 request_id,
                 avoid: _,
+                cross: _,
             }] => *request_id,
             other => panic!("expected WalkNear radius 2 for world dest: {other:?}"),
         }
@@ -644,6 +649,7 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_bank_fetch: true,
                 request_id,
                 avoid: _,
+                cross: _,
             }] => *request_id,
             other => panic!("expected Walk (radius 0) for world dest: {other:?}"),
         }
@@ -716,6 +722,7 @@ fn walk_to_stays_pending_until_posted_arrival() {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(*request_id, 0),
         other => panic!("walkTo radius 1 must queue WalkNear: {other:?}"),
     }
@@ -757,6 +764,7 @@ fn walk_to_same_coord_wrong_plane_is_not_arrival() {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(*request_id, 0),
         other => panic!("wrong-plane dest must still queue native Walk: {other:?}"),
     }

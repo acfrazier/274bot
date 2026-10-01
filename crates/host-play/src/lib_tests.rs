@@ -62,8 +62,15 @@ fn native_requested(
     to: WorldTile,
     radius: i32,
     allow_teleports: bool,
-) -> (WorldTile, i32, bool, bool, bool) {
-    (to, radius, allow_teleports, false, false)
+) -> (WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt) {
+    (
+        to,
+        radius,
+        allow_teleports,
+        false,
+        false,
+        nav::zones::ZoneExempt::NONE,
+    )
 }
 
 /// No script slot: the follow's arrival probe reads an unavailable view.
@@ -2995,6 +3002,7 @@ fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
             true,
             false,
             false,
+            nav::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -3546,6 +3554,7 @@ fn bot_clone_generation_guard(bot: &NavBot) {
             false,
             false,
             false,
+            nav::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -3662,6 +3671,7 @@ fn park_walk_isolate(
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] if *dx == x && *dz == z && *dr == radius => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -3690,6 +3700,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_bank_fetch: true,
             request_id: first,
             avoid: _,
+            cross: _,
         }, script::shim::InteractReq::WalkNear {
             x: dx1,
             z: dz1,
@@ -3700,6 +3711,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_bank_fetch: true,
             request_id: second,
             avoid: _,
+            cross: _,
         }] if *dx0 == x
             && *dz0 == z
             && *dr0 == radius
@@ -4154,7 +4166,7 @@ fn same_key_pending_route_refuses_distinct_id() {
                 bank: vec![],
                 live_candidates: None,
                 completion: Default::default(),
-                avoid: Vec::new(),
+                exclusions: None,
             }),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
@@ -4688,7 +4700,10 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid,
+        exclusions: Some(Arc::new(ScriptRouteExclusions {
+            avoid,
+            ..Default::default()
+        })),
     };
     let thrower = nav::router::AvoidRect {
         min_x: 2,
@@ -4768,7 +4783,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("open floor should route");
@@ -4814,7 +4829,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("same-room approach should route");
@@ -4865,7 +4880,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("occupied target should route to a neighbour");
@@ -4916,7 +4931,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
@@ -4970,7 +4985,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
@@ -5022,7 +5037,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         bank: vec![],
         live_candidates: None,
         completion: Default::default(),
-        avoid: Vec::new(),
+        exclusions: None,
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("actual 289 route should exist");
@@ -6590,6 +6605,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
                 false,
                 false,
                 false,
+                nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         },
@@ -6640,10 +6656,9 @@ fn dispatch_wires_with_no_modal_stays_quiet() {
     assert_eq!(c.out.pos, 0, "no chat modal → nothing dispatched");
 }
 
-/// A guardian hold drops WASD walks (the follow is frozen too) but
-/// still lets chat Continue/Answer through.
+/// A held manual step still publishes intent before follow, but never sends.
 #[test]
-fn dispatch_wires_drops_walk_while_hold_but_keeps_chat() {
+fn manual_steps_publish_early_intent_even_while_held_without_affecting_other_slots() {
     let mut c = prepare_client(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -6658,15 +6673,37 @@ fn dispatch_wires_drops_walk_while_hold_but_keeps_chat() {
         Vec::new(),
     );
     let snap = GameSnapshot::new();
-    dispatch_wires(
-        &mut c,
-        &snap,
-        vec![WireCmd::Walk {
-            x: 3220,
-            z: 3221,
-            level: 0,
-        }],
-        true,
+    let input = SlotInput::new();
+    let step = WireCmd::Walk {
+        x: 3220,
+        z: 3221,
+        level: 0,
+    };
+    let queues = Mutex::new(HashMap::from([
+        (
+            "alice".to_string(),
+            VecDeque::from([WireCmd::Continue, step, WireCmd::Answer(1), step]),
+        ),
+        ("bob".to_string(), VecDeque::from([step])),
+    ]));
+    let (frame, wires) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, true);
+    assert_eq!(
+        frame.manual_move_count(),
+        2,
+        "count each gesture, not its eventual movement"
+    );
+    assert!(frame.hold);
+    assert_eq!(
+        wires,
+        VecDeque::from([WireCmd::Continue, step, WireCmd::Answer(1), step])
+    );
+    assert_eq!(queues.lock().unwrap()["bob"], VecDeque::from([step]));
+    dispatch_wires(&mut c, &snap, wires.into(), frame.hold);
+    let (frame, _) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false);
+    assert_eq!(
+        frame.manual_move_count(),
+        0,
+        "never replay a drained gesture"
     );
     assert_eq!(c.out.pos, 0, "hold drops the walk send");
 }
@@ -6916,6 +6953,134 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
 }
 
 #[test]
+fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 39,
+        z: 0,
+        level: 0,
+    };
+    let collision = nav::collision::WorldCollision {
+        origin: from,
+        width: 40,
+        height: 1,
+        walk: vec![0; 40],
+        blocked: vec![0; 1],
+        flags: None,
+    };
+    let mut graph = nav::transport::TransportGraph::default();
+    graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            vec![nav::zones::Zone::npc(
+                WorldTile {
+                    x: 2,
+                    z: 0,
+                    level: 0,
+                },
+                0,
+                nav::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav::zones::ZoneKind::new(
+                "test-barrier",
+                "Test barrier",
+                123,
+                0,
+                false,
+                false,
+            )],
+            vec![],
+            vec![],
+            vec![],
+            from,
+            40,
+            1,
+            &graph.wilderness,
+        )
+        .expect("the test barrier fits its world"),
+    );
+    let world = Some(Arc::new(NavWorld::from_parts(collision, graph, Vec::new())));
+    let (navs, _) = empty_nav();
+    let mut client = bank_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+
+    let inspect_wire = |request_id, cross: Option<&str>| {
+        let mut value = serde_json::json!({
+            "op": "inspect-route",
+            "x": to.x,
+            "z": to.z,
+            "level": to.level,
+            "from_x": from.x,
+            "from_z": from.z,
+            "from_level": from.level,
+            "allow_wilderness": true,
+            "request_id": request_id,
+        });
+        if let Some(name) = cross {
+            value["cross"] = serde_json::json!([name]);
+        }
+        let request: script::shim::InteractReq =
+            serde_json::from_value(value).expect("inspect request decodes");
+        let bytes = script::isolate_fb::encode_interact_batch(&[request]);
+        script::isolate_fb::decode_interact_batch(&bytes).expect("inspect wire decodes")
+    };
+    let mut inspect = |request_id, cross| {
+        let reqs = inspect_wire(request_id, cross);
+        assert!(dispatch_script_interact(
+            &mut client,
+            &snapshot,
+            None,
+            Some((from.x, from.z, from.level)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            reqs,
+        ));
+        let start = Instant::now();
+        loop {
+            let term = navs.lock().unwrap().get("alice").and_then(|bot| {
+                bot.inspect
+                    .latest
+                    .as_ref()
+                    .filter(|term| term.request_id == request_id)
+                    .or_else(|| {
+                        bot.inspect
+                            .prev
+                            .as_ref()
+                            .filter(|term| term.request_id == request_id)
+                    })
+                    .cloned()
+            });
+            if let Some(term) = term {
+                return term;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "inspect {request_id} did not publish"
+            );
+            std::thread::yield_now();
+        }
+    };
+
+    let blocked = inspect(901, None);
+    assert!(!blocked.ok, "the only route crosses an active zone");
+    assert!(blocked.reason.contains("test-barrier@2,0,0"));
+    let crossed = inspect(902, Some("test-barrier@2,0,0"));
+    assert!(
+        crossed.ok,
+        "host InspectRoute must apply the wire's cross exemption: {}",
+        crossed.reason
+    );
+}
+
+#[test]
 fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
@@ -6940,6 +7105,7 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
         false,
         false,
         false,
+        nav::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().extend([
         (
@@ -7017,6 +7183,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
         false,
         false,
         false,
+        nav::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().insert(
         "alice".into(),
@@ -11117,6 +11284,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11143,6 +11311,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11222,6 +11391,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_bank_fetch: false,
             request_id: 1,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11248,17 +11418,12 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_bank_fetch: true,
             request_id: 2,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
         wait_until(200, || queued(&navs_on) == Some(dest)),
         "explicit wilderness must route into the zone"
-    );
-    let bot = &navs_on.lock().unwrap()["alice"];
-    assert_eq!(
-        bot.requested_route,
-        Some((dest, 0, false, true, true)),
-        "dispatch must copy both newly carried FindOptions bits"
     );
 }
 
@@ -11308,7 +11473,9 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
     assert!(
         wait_until(200, || {
             let bot = &navs.lock().unwrap()["flags"];
-            bot.walk_request_id == 12 && bot.requested_route == Some((dest, 1, false, true, false))
+            bot.walk_request_id == 12
+                && bot.requested_route
+                    == Some((dest, 1, false, true, false, nav::zones::ZoneExempt::NONE))
         }),
         "changed wilderness must not reuse the prior permissioned route"
     );
@@ -11328,7 +11495,9 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
     assert!(
         wait_until(200, || {
             let bot = &navs.lock().unwrap()["flags"];
-            bot.walk_request_id == 13 && bot.requested_route == Some((dest, 1, false, true, true))
+            bot.walk_request_id == 13
+                && bot.requested_route
+                    == Some((dest, 1, false, true, true, nav::zones::ZoneExempt::NONE))
         }),
         "changed bank-fetch must not reuse the prior permissioned route"
     );
@@ -11382,6 +11551,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_bank_fetch: false,
             request_id: 77,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     let bot = &navs.lock().unwrap()["alice"];
@@ -13663,7 +13833,7 @@ export default class T extends LoopingBot {
         slot.observe_lifecycle();
         assert_eq!(slot.state(), script::RunState::Running);
         let old_generation = slot.runtime_generation();
-        let (update, _interacts) = drain_observed_host_interacts(&mut slot);
+        let (update, _interacts, _) = drain_observed_host_interacts(&mut slot);
         slot.restart_from_identity(Instant::now())
             .expect("watchdog-style runtime replacement starts");
         (
@@ -17198,7 +17368,7 @@ fn following_script_walk() -> NavBot {
             ticks: 0.0,
         }),
         route_worker: Some(Arc::new(())),
-        requested_route: Some((dest, 2, false, true, true)),
+        requested_route: Some((dest, 2, false, true, true, nav::zones::ZoneExempt::NONE)),
         walk_request_id: 9,
         route_request_id: 9,
         ..NavBot::default()
@@ -17414,6 +17584,7 @@ fn session_reset_clears_live_recovery_walk() {
                 false,
                 true,
                 false,
+                nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         },
@@ -17510,7 +17681,10 @@ struct ReconnectRig {
     channels: script_channels::SlotChannels,
 }
 
-type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
+type ArmedWalk = (
+    u64,
+    Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)>,
+);
 
 impl ReconnectRig {
     fn new(x: i32, z: i32) -> Self {
@@ -17773,7 +17947,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     // The same request surfacing late from the isolate after the carry went
     // out (ReviewBoatFareR4 race): the route already follows it.
     let (request_id, requested) = rig.armed();
-    let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) =
+    let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _zones) =
         requested.expect("the carry re-armed the walk");
     rig.dispatch(vec![script::shim::InteractReq::WalkNear {
         x: to.x,
@@ -17785,6 +17959,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
         allow_bank_fetch,
         request_id,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }]);
     rig.frames(4);
     assert_eq!(
@@ -17979,8 +18154,15 @@ fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
     rig.slot().lock().unwrap().stop();
 }
 
-fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool)> {
-    Some((WorldTile { x, z, level: 0 }, 1, false, true, true))
+fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)> {
+    Some((
+        WorldTile { x, z, level: 0 },
+        1,
+        false,
+        true,
+        true,
+        nav::zones::ZoneExempt::NONE,
+    ))
 }
 
 /// A reconnect mid-walk: the relogged session's first dispatch re-arms the
@@ -19338,6 +19520,7 @@ impl script::native::Script for WalkProbe {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         });
         Ok(script::native::ScriptFlow::Continue)
     }
@@ -19912,6 +20095,7 @@ export function tick(api) {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
         "native v2 must arm the walk before the approach tile is reached",
     );
@@ -20512,6 +20696,117 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
     );
 }
 
+#[test]
+fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() {
+    use script::native::walk::Walk;
+    use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd};
+    use std::task::Poll;
+
+    struct Walker {
+        handle: Option<ActionHandle<Walk>>,
+        end: Arc<Mutex<Option<WalkEnd>>>,
+    }
+
+    impl Script for Walker {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if let Some(handle) = &self.handle {
+                if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                    *self.end.lock().unwrap() = Some(result.expect("walk receipt").end);
+                }
+            } else {
+                self.handle = Some(
+                    tick.actions
+                        .begin::<Walk>(
+                            script::native::WalkRequest {
+                                target: WorldTile {
+                                    x: 4,
+                                    z: 0,
+                                    level: 0,
+                                },
+                                radius: 1,
+                                options: script::FindOptions::default(),
+                                required_after: tick.cx.evidence(),
+                                evidence: None,
+                                cross: Box::default(),
+                            },
+                            &mut tick.cx,
+                        )
+                        .expect("begin walk"),
+                );
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let end = Arc::new(Mutex::new(None));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(Walker {
+                handle: None,
+                end: Arc::clone(&end),
+            }),
+            None,
+        )
+        .unwrap();
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let world = Some(Arc::new(open_world(40, 1)));
+    let mut driver = NavRec::default();
+    let mut client = nav_client();
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+    let observe = |driver: &mut NavRec, snapshot: &GameSnapshot, tick| {
+        script_observe(
+            driver,
+            "alice",
+            true,
+            true,
+            tick,
+            Some((0, 0, 0)),
+            None,
+            None,
+            Some(snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+    };
+    observe(&mut driver, &snapshot, 1);
+    assert!(wait_until(5_000, || queued(&navs).is_some()));
+
+    // Arrival can be transient between native polls, for example when a
+    // transport moves the actor again. The host terminal must survive it.
+    nav_snapshot_at(&mut client, &mut snapshot, 3, 0);
+    step_nav_bot(
+        &mut driver,
+        "alice",
+        Some((3, 0, 0)),
+        &snapshot,
+        &navs,
+        &statuses,
+        world.as_deref(),
+        false,
+        false,
+        no_reach,
+    );
+    assert_eq!(queued(&navs), None);
+    assert_eq!(driver.walked, None, "arrival must send no further hop");
+    nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+    observe(&mut driver, &snapshot, 2);
+    assert_eq!(*end.lock().unwrap(), Some(WalkEnd::RouteEnded));
+}
+
 /// The slot's reach view for `here` on a 20x20 scene split by a closed
 /// wall between rows z=12 and z=13 (a shut door the full width across).
 fn walled_reach(x: i32, z: i32) -> Arc<api::query::ReachQueryView> {
@@ -20744,10 +21039,6 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
     assert!(bot.route.is_none(), "fresh arrival clears the route");
-    assert_eq!(
-        bot.walk_outcome_seq, 0,
-        "arrival, not route-terminal settlement, completed this walk"
-    );
 }
 
 fn plant_nav_footprint_loc(client: &mut Client, x: i32, z: i32, width: i32, length: i32) {

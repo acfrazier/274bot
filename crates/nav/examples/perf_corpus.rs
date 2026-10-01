@@ -6,9 +6,12 @@
 //! precision for `HashMap` buckets.
 
 use api::snapshot::WorldTile;
-use nav::router::{find_first_with, find_many_with, FindOptions, SearchCapacities};
+use nav::router::{
+    find_blocking_zones, find_first_with, find_many_with, FindOptions, RouteError, SearchCapacities,
+};
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
+use nav::zones::ZoneExempt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -22,6 +25,7 @@ struct PeakScratch {
     heap: usize,
     reverse: usize,
     reverse_queue: usize,
+    zone_mask_words: usize,
 }
 
 impl PeakScratch {
@@ -32,6 +36,7 @@ impl PeakScratch {
         self.heap = self.heap.max(value.heap);
         self.reverse = self.reverse.max(value.reverse);
         self.reverse_queue = self.reverse_queue.max(value.reverse_queue);
+        self.zone_mask_words = self.zone_mask_words.max(value.zone_mask_words);
     }
 
     fn to_json(self) -> Value {
@@ -43,8 +48,9 @@ impl PeakScratch {
             "heap": self.heap,
             "reverse": self.reverse,
             "reverse_queue": self.reverse_queue,
+            "zone_mask_words": self.zone_mask_words,
             "sum_entries": self.distances + self.predecessors + self.settled
-                + self.heap + self.reverse + self.reverse_queue,
+                + self.heap + self.reverse + self.reverse_queue + self.zone_mask_words,
         })
     }
 }
@@ -101,6 +107,7 @@ fn measure_case(name: &str, iterations: usize, mut run: impl FnMut() -> Observat
 fn rich_289_state() -> WorldState {
     WorldState {
         map_members: true,
+        combat_level: Some(126),
         quests: HashSet::from([
             "Prince Ali Rescue".into(),
             "Rune Mysteries".into(),
@@ -158,6 +165,10 @@ fn main() -> Result<(), String> {
         .map_err(|error| format!("bind named bank facts: {error:?}"))?;
     let empty = WorldState::empty();
     let rich = rich_289_state();
+    let legacy = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
 
     let reachable_target = [tile(2965, 3379, 0)];
     let reachable = measure_case("reachable_lumbridge_falador", iterations, || {
@@ -166,7 +177,7 @@ fn main() -> Result<(), String> {
             &world.graph,
             tile(3222, 3218, 0),
             &reachable_target,
-            FindOptions::default(),
+            legacy,
             &empty,
         );
         Observation {
@@ -193,7 +204,7 @@ fn main() -> Result<(), String> {
             &world.graph,
             tile(3016, 9840, 0),
             &bank_targets,
-            FindOptions::default(),
+            legacy,
             &rich,
         );
         let reached = search
@@ -224,7 +235,7 @@ fn main() -> Result<(), String> {
             &world.graph,
             tile(2615, 3332, 0),
             &radius_targets,
-            FindOptions::default(),
+            legacy,
             &rich,
         );
         Observation {
@@ -243,7 +254,7 @@ fn main() -> Result<(), String> {
             &teleport_target,
             FindOptions {
                 allow_teleports: true,
-                ..FindOptions::default()
+                ..legacy
             },
             &rich,
         );
@@ -261,7 +272,7 @@ fn main() -> Result<(), String> {
             &world.graph,
             tile(3222, 3218, 0),
             &unreachable_target,
-            FindOptions::default(),
+            legacy,
             &empty,
         );
         Observation {
@@ -271,15 +282,152 @@ fn main() -> Result<(), String> {
         }
     });
 
+    let mut zone_cases = Vec::new();
+    for level in [126, 3] {
+        let mut state = rich_289_state();
+        state.combat_level = Some(level);
+        zone_cases.push(measure_case(
+            &format!("reachable_lumbridge_falador_zones_l{level}"),
+            iterations,
+            || {
+                let search = find_many_with(
+                    &world.collision,
+                    &world.graph,
+                    tile(3222, 3218, 0),
+                    &reachable_target,
+                    FindOptions::default(),
+                    &state,
+                );
+                Observation {
+                    outcome: format!("{:?}", search.results()[0]),
+                    settled: search.settled(),
+                    scratch: search.scratch_capacities(),
+                }
+            },
+        ));
+    }
+    let mut low = rich_289_state();
+    low.combat_level = Some(3);
+    zone_cases.push(measure_case(
+        "bank_pick_all_stands_zones_l3",
+        iterations,
+        || {
+            let search = find_many_with(
+                &world.collision,
+                &world.graph,
+                tile(3016, 9840, 0),
+                &bank_targets,
+                FindOptions::default(),
+                &low,
+            );
+            let reached = search.results().iter().filter(|r| r.is_ok()).count();
+            assert_eq!(
+                (reached, bank_targets.len(), search.completion_partitions()),
+                (17, 19, 0)
+            );
+            Observation {
+                outcome: format!("reached:{reached}/{}", bank_targets.len()),
+                settled: search.settled(),
+                scratch: search.scratch_capacities(),
+            }
+        },
+    ));
+    zone_cases.push(measure_case(
+        "radius_walk_candidates_zones_l3",
+        iterations,
+        || {
+            let search = find_first_with(
+                &world.collision,
+                &world.graph,
+                tile(2615, 3332, 0),
+                &radius_targets,
+                FindOptions::default(),
+                &low,
+            );
+            Observation {
+                outcome: format!("{:?}", search.route().map(|route| route.dest)),
+                settled: search.settled(),
+                scratch: search.scratch_capacities(),
+            }
+        },
+    ));
+    zone_cases.push(measure_case(
+        "lumbridge_rellekka_refused_zones_l126",
+        iterations,
+        || {
+            let from = tile(3222, 3218, 0);
+            let to = tile(2664, 3664, 0);
+            let search = find_first_with(
+                &world.collision,
+                &world.graph,
+                from,
+                &[to],
+                FindOptions::default(),
+                &rich,
+            );
+            assert_eq!(search.route().unwrap_err(), RouteError::NoPath);
+            let blocked = find_blocking_zones(
+                &world.collision,
+                &world.graph,
+                from,
+                to,
+                FindOptions::default(),
+                &rich,
+                &[],
+            )
+            .expect("zone refusal witness");
+            let table = world.graph.zones.as_ref().expect("v12 zones");
+            let names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
+            assert_eq!(names, ["white-wolf-mountain", "wolf@2647,3584,0"]);
+            Observation {
+                outcome: format!("NoPath blocked:{names:?}"),
+                settled: search.settled(),
+                scratch: search.scratch_capacities(),
+            }
+        },
+    ));
+    zone_cases.push(measure_case(
+        "taverley_catherby_zones_l126",
+        iterations,
+        || {
+            let target = [tile(2809, 3440, 0)];
+            let search = find_many_with(
+                &world.collision,
+                &world.graph,
+                tile(2895, 3450, 0),
+                &target,
+                FindOptions::default(),
+                &rich,
+            );
+            let route = search.route(0).expect("rich-state mountain detour");
+            let tiles: usize = route
+                .legs
+                .iter()
+                .map(|leg| match leg {
+                    nav::router::Leg::Walk { tiles } => tiles.len(),
+                    nav::router::Leg::Transport { .. } => 1,
+                })
+                .sum();
+            assert_eq!((route.ticks, tiles), (341.0, 683));
+            Observation {
+                outcome: format!("{:?}", search.results()[0]),
+                settled: search.settled(),
+                scratch: search.scratch_capacities(),
+            }
+        },
+    ));
+    let mut cases = vec![reachable, bank_pick, radius, teleport, unreachable];
+    cases.extend(zone_cases);
+
     println!(
         "{}",
         json!({
-            "schema": "274bot-nav-perf-v1",
+            "schema": "274bot-nav-perf-v2",
             "revision": 289,
             "pack": pack,
             "pack_decode_ms_excluded_from_find": decode_ms,
             "cold_warm_disclosure": "first search per case is cold; p50/p95 use subsequent searches on the same decoded world",
-            "cases": [reachable, bank_pick, radius, teleport, unreachable],
+            "cases": cases,
         })
     );
     Ok(())
