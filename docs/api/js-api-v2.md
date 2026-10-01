@@ -341,7 +341,7 @@ and `stages` `["cook:0", "cook:1", "cook:2"]`.
 | `api.questPaths()` | `{ rows: QuestPathRow[] }` | sync `HelperResult` errors only |
 | `await api.questProgress({ quest })` | one `QuestProgressOutcome` settlement | sync `invalid-args`; host `unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`, or a machine abort |
 
-A non-object input, or a non-string `quest`, is `invalid-args`. A quest
+A non-object input, or a non-string or blank `quest`, is `invalid-args`. A quest
 without a released Path is `done{end:'refused', reason:'unknown-path'}`:
 nothing is synthesized. A read while a gather session is live — and a
 gather `run` while a read is live — is `done{end:'refused',
@@ -352,6 +352,17 @@ reason:'busy'}`. The terminal is the nested `value` of the unchanged
 (`unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`) and never
 ran. Synchronous refusals are top-level `refused`; resets, supersessions
 and terminations are `aborted`.
+
+A newer read supersedes the previous waiter (`aborted: superseded`).
+Before the journal opens, the host replaces the old read. After it opens,
+the newer read is refused `busy` while the old owned read finishes and
+closes its journal; its abandoned result does not replace the refusal.
+A subsequent read can then proceed. Reads make one journal attempt, not
+a retry loop. An unmatched journal rule gives `stage` unknown with gap
+`journal-no-match`; it does not fall back to a colour-derived stage.
+Missing quest colour is refused `unavailable:quest colour` after eight
+active seconds. A reconnect invalidates an open journal handle and
+returns host refusal `stale`; an explicit session reset aborts the waiter.
 
 While a session or read is live the host owns the slot's foreground:
 the script's game rows are dropped, not deferred (see

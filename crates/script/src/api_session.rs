@@ -2,6 +2,7 @@
 //!
 //! The `GatherSession` row owns the isolate-local admission record. Its Drop
 //! clears Busy on every terminal and abort path, including ordinary Done.
+use crate::api_gather::GatherEnd;
 use crate::api_progress::ProgressPage;
 use crate::gatherer::GathererSettings;
 use crate::machine::{Begin, Cx, Family, Step};

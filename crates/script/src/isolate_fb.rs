@@ -2416,9 +2416,7 @@ fn encode_snapshot_masked_into(
     // A progress page is present only when supplied and changed. Unlike the
     // live Gatherer page, there is no request-id-zero clear table.
     let api_progress_slot = if mask.api_progress {
-        native
-            .api_progress
-            .map(|page| api_progress_off(b, page))
+        native.api_progress.map(|page| api_progress_off(b, page))
     } else {
         None
     };
@@ -3208,10 +3206,9 @@ fn progress_colour_code(colour: api::snapshot::QuestListStatus) -> u8 {
 fn knowledge_parts(value: &api::selected::Knowledge<Arc<str>>) -> (&str, &str) {
     match value {
         api::selected::Knowledge::Known(value) => (value, ""),
-        api::selected::Knowledge::Partial { known, gaps } => (
-            known,
-            gaps.first().map_or("", |gap| gap.code.as_ref()),
-        ),
+        api::selected::Knowledge::Partial { known, gaps } => {
+            (known, gaps.first().map_or("", |gap| gap.code.as_ref()))
+        }
         api::selected::Knowledge::Unknown(gap) => ("", gap.code.as_ref()),
     }
 }

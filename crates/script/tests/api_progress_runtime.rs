@@ -7,9 +7,7 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{ProgressPage, QuestProgressRow};
-use script::isolate_fb::{
-    encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput,
-};
+use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
@@ -149,9 +147,7 @@ fn take_single_read(requests: &[InteractReq]) -> (u64, String) {
     let reads: Vec<_> = requests
         .iter()
         .filter_map(|request| match request {
-            InteractReq::ProgressRead { request_id, name } => {
-                Some((*request_id, name.clone()))
-            }
+            InteractReq::ProgressRead { request_id, name } => Some((*request_id, name.clone())),
             _ => None,
         })
         .collect();

@@ -101,7 +101,11 @@ fn progress_pages_round_trip_and_public_json_uses_the_design_shape() {
     );
     let flags = wire_row.flags().expect("flag vector present");
     assert_eq!(flags.len(), 2);
-    assert_eq!(flags.get(0).count(), -1, "no count uses the -1 wire sentinel");
+    assert_eq!(
+        flags.get(0).count(),
+        -1,
+        "no count uses the -1 wire sentinel"
+    );
     assert_eq!(flags.get(1).count(), 999_999_999, "nine-digit bound fits");
 
     observed::on_reset();
@@ -166,7 +170,10 @@ fn progress_page_deltas_omit_keep_replace_and_reset_as_a_keyframe() {
     let (terminal, next) = encode_page(3, Some(&done), Some(&fingerprint));
     fingerprint = next;
     let terminal = Snapshot::from_bytes(&terminal).expect("terminal replacement verifies");
-    assert!(terminal.has_api_progress(), "kind change replaces reading page");
+    assert!(
+        terminal.has_api_progress(),
+        "kind change replaces reading page"
+    );
     assert_eq!(terminal.api_progress().unwrap().kind(), 2);
     observed::apply(&terminal);
 
@@ -200,9 +207,15 @@ fn progress_page_deltas_omit_keep_replace_and_reset_as_a_keyframe() {
     observed::on_reset();
     let (new_keyframe, _) = encode_page(6, None, None);
     let new_keyframe = Snapshot::from_bytes(&new_keyframe).expect("empty keyframe verifies");
-    assert!(!new_keyframe.has_api_progress(), "absent page stays absent on keyframe");
+    assert!(
+        !new_keyframe.has_api_progress(),
+        "absent page stays absent on keyframe"
+    );
     observed::apply(&new_keyframe);
-    assert!(observed::with(|scene| scene.since_login().api_progress().is_none()));
+    assert!(observed::with(|scene| scene
+        .since_login()
+        .api_progress()
+        .is_none()));
 }
 
 #[test]

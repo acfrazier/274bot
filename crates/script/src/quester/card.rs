@@ -54,6 +54,44 @@ fn cook_released(index_json: &str) -> bool {
 static COOK_RELEASED: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| cook_released(INDEX_JSON));
 
+/// The released document gate shared by the card and script progress API.
+pub fn released_path(id: &str) -> Option<&'static [u8]> {
+    (id == "cook" && *COOK_RELEASED).then(cook_bytes)
+}
+
+#[cfg(feature = "load")]
+pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
+    static ROWS: std::sync::LazyLock<Vec<crate::api_progress::QuestPathRow>> =
+        std::sync::LazyLock::new(|| {
+            let Some(bytes) = released_path("cook") else {
+                return Vec::new();
+            };
+            let document: super::path::PathDocument =
+                serde_json::from_slice(bytes).expect("released Cook Path document");
+            let progress = document.roles[0]
+                .progress
+                .as_ref()
+                .expect("released Cook progress");
+            vec![crate::api_progress::QuestPathRow {
+                id: Arc::clone(&document.id.0),
+                display: document.display_name.into(),
+                journal: !progress.rules.is_empty(),
+                stages: [
+                    &progress.colour.not_started,
+                    &progress.colour.in_progress,
+                    &progress.colour.complete,
+                ]
+                .into_iter()
+                .chain(progress.rules.iter().map(|rule| &rule.stage))
+                .map(|stage| Arc::clone(&stage.0))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            }]
+        });
+    &ROWS
+}
+
 struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
@@ -83,11 +121,11 @@ fn prepare(
         bag.iter().map(|(key, value)| (key.as_str(), value)),
     ))
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
-    if !*COOK_RELEASED {
+    if released_path("cook").is_none() {
         return Err(StartError::Unavailable("release index missing cook".into()));
     }
     let quest = settings.quest.unwrap_or_else(|| "cook".into());
-    if quest != "cook" {
+    if released_path(&quest).is_none() {
         return Err(StartError::Config(ConfigError::new(
             "quest",
             "unknown-path",
@@ -118,8 +156,13 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let path = compile_path(cook_bytes(), &prepared.selected, &prepared.quests)
-        .map_err(|err| StartError::Unavailable(Arc::from(format!("compile: {}", err.code))))?;
+    let path = compile_path(
+        released_path(&prepared._quest)
+            .ok_or_else(|| StartError::Unavailable("release Path unavailable".into()))?,
+        &prepared.selected,
+        &prepared.quests,
+    )
+    .map_err(|err| StartError::Unavailable(Arc::from(format!("compile: {}", err.code))))?;
     Ok(Box::new(Quester::new(
         run,
         path,

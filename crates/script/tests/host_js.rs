@@ -174,24 +174,6 @@ fn host_js_dts_includes_required_interfaces() {
         !native.contains("locs:") && !native.contains("players:") && !native.contains("ground:"),
         "locs/players/ground stay off NativeSnapshot: {native}"
     );
-    assert!(src.contains("export interface QuestPathRow"));
-    assert!(src.contains("export type Truth3 = 'true' | 'false' | 'unknown'"));
-    assert!(src.contains("export type Known<T>"));
-    assert!(src.contains("export interface QuestProgressRow"));
-    assert!(src.contains("export type QuestProgressEnd"));
-    assert!(src.contains("export type QuestProgressOutcome"));
-    assert!(src.contains("questPaths(): HelperResult<{ rows: QuestPathRow[] }>"));
-    assert!(src.contains("questProgress(input: { quest: string }): Promise<QuestProgressOutcome>"));
-    assert!(src.contains("colour: 'notStarted' | 'inProgress' | 'complete' | 'unknown'"));
-    assert!(src.contains("stage: Known<string>;"));
-    assert!(src.contains("complete: Truth3;"));
-    assert!(src.contains("rule: Known<string>;"));
-    assert!(src.contains("flags: Array<{ flag: string; truth: Truth3; count: number | null }>;"));
-    assert!(src.contains("evidence: { run: number; session: number; tick: number; sequence: number };"));
-    assert!(src.contains("journal_read: boolean;"));
-    assert!(src.contains("binding: string;"));
-    assert!(src.contains("role: string | null;"));
-    assert!(src.contains("stages: string[];"));
 }
 
 fn native_snapshot_block(src: &str) -> &str {

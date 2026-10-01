@@ -612,7 +612,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("    /** Ends the live session; its `run` resolves `stopped`. Idempotent. Refused `no-session`. */\n");
     out.push_str("    stop(): HelperResult<null>;\n");
     out.push_str("  };\n");
-    out.push_str("  /** Sync read of the release Path index. Not a Promise and not a request op. */\n");
+    out.push_str(
+        "  /** Sync read of the release Path index. Not a Promise and not a request op. */\n",
+    );
     out.push_str("  questPaths(): HelperResult<{ rows: QuestPathRow[] }>;\n");
     out.push_str("  /** One awaited owned progress read: tab colour first; the quiet host journal read only when the colour is in-progress and the released Path has journal rules. */\n");
     out.push_str("  questProgress(input: { quest: string }): Promise<QuestProgressOutcome>;\n");
@@ -803,7 +805,9 @@ fn render_native_v2(out: &mut String) {
 /// `QuestProgressEnd` and `QuestProgressOutcome`: the release Path index
 /// and one owned progress read (design section 2, slice B).
 fn render_quest_progress(out: &mut String) {
-    out.push_str("/** One released quest path of the release index. The release index is Cook only. */\n");
+    out.push_str(
+        "/** One released quest path of the release index. The release index is Cook only. */\n",
+    );
     out.push_str("export interface QuestPathRow {\n");
     out.push_str("  id: string;\n");
     out.push_str("  display: string;\n");
@@ -837,7 +841,9 @@ fn render_quest_progress(out: &mut String) {
     out.push_str("export type QuestProgressOutcome =\n");
     out.push_str("  | { kind: 'done'; value: QuestProgressEnd }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
-    out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
 }
 
 /// `GatherSettings`, rendered row by row from the Gatherer card's own
