@@ -28,6 +28,7 @@
     "progress": {
       "colour": { "not_started": "romeojuliet:0", "in_progress": "romeojuliet:10", "complete": "romeojuliet:100" },
       "rules": [
+        { "stage": "romeojuliet:100", "all": ["i was rewarded for all of my help regardless"], "any": [], "not": [], "varp": null },
         { "stage": "romeojuliet:60", "all": ["i have to find romeo", "tell him what's happened"], "any": [], "not": [], "varp": null },
         { "stage": "romeojuliet:50", "all": ["i went to the apothecary regarding making this", "potion, and he told me to bring him some"], "any": [], "not": [], "varp": null },
         { "stage": "romeojuliet:40", "all": ["i need to find the apothecary"], "any": [], "not": [], "varp": null },

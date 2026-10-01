@@ -5,14 +5,22 @@ use crate::native::{ScriptStatus, SettingsBag, StartError, StatusValue};
 use api::selected::RunKey;
 use std::sync::Mutex;
 
+#[path = "progress.rs"]
+mod progress;
+use progress::ProgressSeat;
+
 #[derive(Default)]
 pub(super) struct ApiSeat {
     gather: GatherSeat,
     pub(super) page: Option<Arc<GatherPage>>,
     pub(super) terminal: Option<GatherEnd>,
     pub(super) retiring: Vec<Preparation>,
+    progress: ProgressSeat,
+    pub(super) progress_page: Option<crate::api_progress::ProgressPage>,
+    progress_retiring: Vec<progress::ProgressJob>,
     dropped_rows: usize,
     reported_drops: usize,
+    dropped_owner: Option<DropOwner>,
 }
 
 #[derive(Default)]
@@ -34,6 +42,21 @@ impl GatherSeat {
         match self {
             Self::Idle => None,
             Self::Preparing { token, .. } | Self::Running { token, .. } => Some(*token),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DropOwner {
+    Gather,
+    Progress,
+}
+
+impl DropOwner {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gather => "gather",
+            Self::Progress => "progress",
         }
     }
 }
@@ -78,6 +101,23 @@ impl ApiSeat {
                 index += 1;
             }
         }
+        let mut index = 0;
+        while index < self.progress_retiring.len() {
+            if self.progress_retiring[index].is_finished() {
+                let _ = self.progress_retiring.swap_remove(index).join();
+            } else {
+                index += 1;
+            }
+        }
+    }
+    fn foreground_owner(&self) -> Option<DropOwner> {
+        if self.gather.token().is_some() {
+            Some(DropOwner::Gather)
+        } else if self.progress.token().is_some() {
+            Some(DropOwner::Progress)
+        } else {
+            None
+        }
     }
 }
 
@@ -85,7 +125,7 @@ impl SlotScript {
     pub fn api_owns_foreground(&self) -> bool {
         self.api
             .as_ref()
-            .is_some_and(|seat| seat.gather.token().is_some())
+            .is_some_and(|seat| seat.gather.token().is_some() || seat.progress.token().is_some())
     }
 
     pub(super) fn api_status(&self) -> Option<Arc<ScriptStatus>> {
@@ -95,7 +135,7 @@ impl SlotScript {
     pub(super) fn api_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         match &self.api.as_ref()?.gather {
             GatherSeat::Running { run, .. } => Some(Arc::clone(&run.selected)),
-            _ => None,
+            _ => self.api.as_ref()?.progress.selected(),
         }
     }
 
@@ -110,8 +150,9 @@ impl SlotScript {
             crate::shim::InteractReq::GatherStop { request_id } => {
                 self.stop_api_gather(*request_id)
             }
-            // Reserved wire operation only. Slice B owns its admission and machine.
-            crate::shim::InteractReq::ProgressRead { .. } => {}
+            crate::shim::InteractReq::ProgressRead { request_id, name } => {
+                self.start_api_progress(*request_id, name);
+            }
             _ => unreachable!("API control admission"),
         }
     }
@@ -130,7 +171,10 @@ impl SlotScript {
         {
             return;
         }
-        if seat.gather.token().is_some() || seat.retiring.len() >= 4 {
+        if seat.gather.token().is_some()
+            || seat.progress.token().is_some()
+            || seat.retiring.len() + seat.progress_retiring.len() >= 4
+        {
             // Genuine callers keep their family Busy until consuming the old
             // terminal; this also fails closed if a reserved control races it.
             seat.terminal = Some(GatherEnd::Refused {
@@ -191,6 +235,7 @@ impl SlotScript {
                 self.control_generation = generation;
                 seat.dropped_rows = 0;
                 seat.reported_drops = 0;
+                seat.dropped_owner = None;
                 seat.page = Some(Arc::new(GatherPage {
                     token,
                     phase: GatherPhase::Preparing,
@@ -341,6 +386,7 @@ impl SlotScript {
                 seat.terminal = Some(terminal);
             }
         }
+        self.tick_api_progress(&mut seat, ctx);
         self.api = Some(seat);
         if !self.api_owns_foreground() {
             self.log_api_drop_total();
@@ -381,6 +427,7 @@ impl SlotScript {
                         Arc::make_mut(page).status = run.output.status.clone();
                     }
                 }
+                seat.progress.rekey(self.work_epoch);
             }
         } else if let Some(seat) = self.api.as_mut() {
             match std::mem::take(&mut seat.gather) {
@@ -392,6 +439,8 @@ impl SlotScript {
                 }
                 GatherSeat::Idle => {}
             }
+            seat.progress.reset(&mut seat.progress_retiring);
+            seat.progress_page = None;
             seat.page = None;
             seat.terminal = None;
         }
@@ -420,7 +469,11 @@ impl SlotScript {
         let Some(seat) = self.api.as_mut() else {
             return;
         };
-        if seat.dropped_rows == 0 {
+        let Some(owner) = seat.foreground_owner() else {
+            return;
+        };
+        if seat.dropped_rows == seat.reported_drops {
+            seat.dropped_owner = Some(owner);
             api::hostlog::emit(
                 api::hostlog::Emit {
                     category: api::hostlog::Category::ScriptLifecycle,
@@ -428,7 +481,10 @@ impl SlotScript {
                     slot: None,
                     always_stderr: false,
                 },
-                format_args!("gather foreground: dropped {count} script game rows"),
+                format_args!(
+                    "{} foreground: dropped {count} script game rows",
+                    owner.label()
+                ),
             );
         }
         seat.dropped_rows = seat.dropped_rows.saturating_add(count);
@@ -437,19 +493,23 @@ impl SlotScript {
     pub(super) fn log_api_drop_total(&mut self) {
         if let Some(seat) = self.api.as_mut() {
             if seat.dropped_rows != seat.reported_drops {
-                api::hostlog::emit(
-                    api::hostlog::Emit {
-                        category: api::hostlog::Category::ScriptLifecycle,
-                        level: api::hostlog::Level::Warn,
-                        slot: None,
-                        always_stderr: false,
-                    },
-                    format_args!(
-                        "gather foreground: dropped {} script game rows total",
-                        seat.dropped_rows
-                    ),
-                );
-                seat.reported_drops = seat.dropped_rows;
+                if let Some(owner) = seat.dropped_owner {
+                    let unreported = seat.dropped_rows.saturating_sub(seat.reported_drops);
+                    api::hostlog::emit(
+                        api::hostlog::Emit {
+                            category: api::hostlog::Category::ScriptLifecycle,
+                            level: api::hostlog::Level::Warn,
+                            slot: None,
+                            always_stderr: false,
+                        },
+                        format_args!(
+                            "{} foreground: dropped {unreported} script game rows total",
+                            owner.label()
+                        ),
+                    );
+                    seat.reported_drops = seat.dropped_rows;
+                    seat.dropped_owner = None;
+                }
             }
         }
     }

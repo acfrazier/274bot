@@ -42,7 +42,10 @@ struct ReleasePath {
     id: String,
     file: String,
 }
-fn released(index_json: &str, id: &str) -> bool {
+static RELEASE_INDEX: std::sync::LazyLock<ReleaseIndex> =
+    std::sync::LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
+
+fn released(index: &ReleaseIndex, id: &str) -> bool {
     let Some(expected) = (match id {
         "cook" => Some("cook.json"),
         "sheep" => Some("sheep.json"),
@@ -52,13 +55,61 @@ fn released(index_json: &str, id: &str) -> bool {
     }) else {
         return false;
     };
-    serde_json::from_str::<ReleaseIndex>(index_json).is_ok_and(|index| {
-        index.schema == 1
-            && index
+    index.schema == 1
+        && index
+            .paths
+            .iter()
+            .any(|path| path.id == id && path.file == expected)
+}
+
+/// The released document gate shared by the card and script progress API.
+pub fn released_path(id: &str) -> Option<&'static [u8]> {
+    released(&RELEASE_INDEX, id)
+        .then(|| path_bytes(id))
+        .flatten()
+}
+
+#[cfg(feature = "load")]
+pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
+    static ROWS: std::sync::LazyLock<Vec<crate::api_progress::QuestPathRow>> =
+        std::sync::LazyLock::new(|| {
+            RELEASE_INDEX
                 .paths
                 .iter()
-                .any(|path| path.id == id && path.file == expected)
-    })
+                .filter_map(|entry| released_path(&entry.id))
+                .map(|bytes| {
+                    let document: super::path::PathDocument =
+                        serde_json::from_slice(bytes).expect("released Path document");
+                    let progress = document.roles[0]
+                        .progress
+                        .as_ref()
+                        .expect("released Path progress");
+                    let mut stages = [
+                        &progress.colour.not_started,
+                        &progress.colour.in_progress,
+                        &progress.colour.complete,
+                    ]
+                    .into_iter()
+                    .chain(progress.rules.iter().map(|rule| &rule.stage))
+                    .map(|stage| Arc::clone(&stage.0))
+                    .collect::<Vec<_>>();
+                    stages.sort_unstable_by_key(|stage| {
+                        stage
+                            .rsplit_once(':')
+                            .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+                            .unwrap_or(u32::MAX)
+                    });
+                    stages.dedup();
+                    crate::api_progress::QuestPathRow {
+                        id: Arc::clone(&document.id.0),
+                        display: document.display_name.into(),
+                        journal: !progress.rules.is_empty(),
+                        stages: stages.into(),
+                    }
+                })
+                .collect()
+        });
+    &ROWS
 }
 
 struct Prepared {
@@ -91,7 +142,7 @@ fn prepare(
     ))
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
     let quest = settings.quest.unwrap_or_else(|| "cook".into());
-    if !released(INDEX_JSON, &quest) || path_bytes(&quest).is_none() {
+    if released_path(&quest).is_none() {
         return Err(StartError::Config(ConfigError::new(
             "quest",
             "unknown-path",
@@ -122,11 +173,11 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let bytes = path_bytes(&prepared.quest).ok_or_else(|| {
+    let bytes = released_path(&prepared.quest).ok_or_else(|| {
         StartError::Config(ConfigError::new(
             "quest",
             "unknown-path",
-            "Path is not embedded",
+            "Path is not released",
         ))
     })?;
     let path = compile_path(bytes, &prepared.selected, &prepared.quests).map_err(|err| {
@@ -147,6 +198,11 @@ fn create(
 mod tests {
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
+
+    fn released(index_json: &str, id: &str) -> bool {
+        serde_json::from_str::<ReleaseIndex>(index_json)
+            .is_ok_and(|index| super::released(&index, id))
+    }
 
     #[test]
     fn prepare_on_274_reports_289_only_without_creating_a_run() {

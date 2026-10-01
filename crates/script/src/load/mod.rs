@@ -57,6 +57,8 @@ mod paint_chrome;
 mod paint_jive;
 #[cfg(feature = "load")]
 mod partner_trade_v8;
+#[cfg(feature = "load")]
+mod progress_methods_v8;
 mod quest_facts_v8;
 #[cfg(feature = "load")]
 pub(crate) mod reach_query;
