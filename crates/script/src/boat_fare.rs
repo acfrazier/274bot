@@ -1166,7 +1166,7 @@ impl Family for WalkTo {
 
     fn begin(args: WalkToArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         if let Some(reason) = args.refusal() {
-            return Begin::Refuse(reason.into());
+            return Begin::Refuse(reason);
         }
         let dest = WorldTile {
             x: args.tile.x,

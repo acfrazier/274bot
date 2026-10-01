@@ -593,7 +593,7 @@ fn step_walk(
                         api::hostlog::Category::NavTrace,
                         api::hostlog::Level::Warn,
                         "{}",
-                        crate::script_nav::compat_zone_no_route_line(table, keys)
+                        super::script_nav::compat_zone_no_route_line(table, keys)
                     );
                 }
                 return (false, StepEnd::Abort("no route to a bank access tile"));
@@ -786,18 +786,16 @@ fn arm_access_fallback(
     .into_route()
     {
         Ok(route) => Ok(route),
-        Err(RouteError::NoPath) => Err(
-            find_first_blocking_zones(
-                &world.collision,
-                &world.graph,
-                from,
-                &targets,
-                opts,
-                state,
-                avoid,
-            )
-            .filter(|keys| !keys.is_empty()),
-        ),
+        Err(RouteError::NoPath) => Err(find_first_blocking_zones(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            opts,
+            state,
+            avoid,
+        )
+        .filter(|keys| !keys.is_empty())),
         Err(_) => Err(None),
     }
 }

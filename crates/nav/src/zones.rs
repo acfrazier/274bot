@@ -120,7 +120,6 @@ impl ZoneExempt {
         Ok(result)
     }
 
-
     /// Whether this request bypasses all table work.
     pub const fn is_all(&self) -> bool {
         self.all
@@ -354,17 +353,28 @@ impl ZoneTable {
         rows: u32,
         wilderness: &WildernessRules,
     ) -> Result<Self, ZoneTableError> {
-        validate_table_parts(&zones, &kinds, &groups, &carves, &shapes, origin, cols, rows)?;
+        if origin.level != 0
+            || cols == 0
+            || rows == 0
+            || cols > MAX_GRID_SIDE
+            || rows > MAX_GRID_SIDE
+            || i64::from(origin.x) + i64::from(cols) > i64::from(i32::MAX) + 1
+            || i64::from(origin.z) + i64::from(rows) > i64::from(i32::MAX) + 1
+        {
+            return Err(ZoneTableError("invalid zone index bounds"));
+        }
+        validate_table_parts(&zones, &kinds, &groups, &carves, &shapes)?;
         let mut expected = 0usize;
-        let canonical_shape_order = zones
-            .iter()
-            .filter(|zone| zone.shape != NO_SHAPE)
-            .all(|zone| {
-                let canonical = usize::from(zone.shape) == expected;
-                expected += 1;
-                canonical
-            })
-            && expected == shapes.len();
+        let canonical_shape_order =
+            zones
+                .iter()
+                .filter(|zone| zone.shape != NO_SHAPE)
+                .all(|zone| {
+                    let canonical = usize::from(zone.shape) == expected;
+                    expected += 1;
+                    canonical
+                })
+                && expected == shapes.len();
         if !canonical_shape_order {
             let mut ordered = Vec::with_capacity(shapes.len());
             for zone in &mut zones {
@@ -391,7 +401,11 @@ impl ZoneTable {
         carves.sort_unstable_by_key(|(zone, rect)| {
             (*zone, rect.min_z, rect.min_x, rect.max_z, rect.max_x)
         });
-        let (present, buckets, entries) = build_index(&zones, origin, cols, rows)?;
+        let BucketIndex {
+            present,
+            buckets,
+            entries,
+        } = build_index(&zones, origin, cols, rows)?;
         Ok(Self {
             zones: zones.into_boxed_slice(),
             kinds: kinds.into_boxed_slice(),
@@ -458,15 +472,21 @@ impl ZoneTable {
             let matches = if kind.npc_id < 0 {
                 kind.id.as_ref() == id
             } else {
-                format!("{}@{},{},{}", kind.id, zone.spawn_x, zone.spawn_z, zone.level) == id
+                format!(
+                    "{}@{},{},{}",
+                    kind.id, zone.spawn_x, zone.spawn_z, zone.level
+                ) == id
             };
-            matches.then(|| u16::try_from(index).ok()).flatten().map(|index| {
-                if zone.group == NO_GROUP {
-                    ZoneKey::Zone(index)
-                } else {
-                    ZoneKey::Group(zone.group)
-                }
-            })
+            matches
+                .then(|| u16::try_from(index).ok())
+                .flatten()
+                .map(|index| {
+                    if zone.group == NO_GROUP {
+                        ZoneKey::Zone(index)
+                    } else {
+                        ZoneKey::Group(zone.group)
+                    }
+                })
         })
     }
 
@@ -477,19 +497,23 @@ impl ZoneTable {
                 .groups
                 .get(usize::from(index))
                 .map_or_else(String::new, |group| group.id.to_string()),
-            ZoneKey::Zone(index) => self.zones.get(usize::from(index)).map_or_else(
-                String::new,
-                |zone| {
-                    let Some(kind) = self.kinds.get(usize::from(zone.kind)) else {
-                        return String::new();
-                    };
-                    if kind.npc_id < 0 {
-                        kind.id.to_string()
-                    } else {
-                        format!("{}@{},{},{}", kind.id, zone.spawn_x, zone.spawn_z, zone.level)
-                    }
-                },
-            ),
+            ZoneKey::Zone(index) => {
+                self.zones
+                    .get(usize::from(index))
+                    .map_or_else(String::new, |zone| {
+                        let Some(kind) = self.kinds.get(usize::from(zone.kind)) else {
+                            return String::new();
+                        };
+                        if kind.npc_id < 0 {
+                            kind.id.to_string()
+                        } else {
+                            format!(
+                                "{}@{},{},{}",
+                                kind.id, zone.spawn_x, zone.spawn_z, zone.level
+                            )
+                        }
+                    })
+            }
         }
     }
 
@@ -500,22 +524,23 @@ impl ZoneTable {
                 .groups
                 .get(usize::from(index))
                 .map_or_else(String::new, |group| group.label.to_string()),
-            ZoneKey::Zone(index) => self.zones.get(usize::from(index)).map_or_else(
-                String::new,
-                |zone| {
-                    let Some(kind) = self.kinds.get(usize::from(zone.kind)) else {
-                        return String::new();
-                    };
-                    if kind.npc_id < 0 {
-                        kind.label.to_string()
-                    } else {
-                        format!(
-                            "{} at {},{} level {}",
-                            kind.label, zone.spawn_x, zone.spawn_z, zone.level
-                        )
-                    }
-                },
-            ),
+            ZoneKey::Zone(index) => {
+                self.zones
+                    .get(usize::from(index))
+                    .map_or_else(String::new, |zone| {
+                        let Some(kind) = self.kinds.get(usize::from(zone.kind)) else {
+                            return String::new();
+                        };
+                        if kind.npc_id < 0 {
+                            kind.label.to_string()
+                        } else {
+                            format!(
+                                "{} at {},{} level {}",
+                                kind.label, zone.spawn_x, zone.spawn_z, zone.level
+                            )
+                        }
+                    })
+            }
         }
     }
 
@@ -587,10 +612,17 @@ impl ZoneTable {
             return &[];
         };
         let word = usize::try_from(key / 64).expect("bucket word index fits usize");
-        if self.present.get(word).is_none_or(|bits| bits & (1 << (key & 63)) == 0) {
+        if self
+            .present
+            .get(word)
+            .is_none_or(|bits| bits & (1 << (key & 63)) == 0)
+        {
             return &[];
         }
-        let Ok(position) = self.buckets.binary_search_by_key(&key, |(bucket, _)| *bucket) else {
+        let Ok(position) = self
+            .buckets
+            .binary_search_by_key(&key, |(bucket, _)| *bucket)
+        else {
             return &[];
         };
         let start = self.buckets[position].1 as usize;
@@ -780,26 +812,15 @@ fn validate_table_parts(
     groups: &[ZoneGroup],
     carves: &[(u16, AvoidRect)],
     shapes: &[u64],
-    origin: WorldTile,
-    cols: u32,
-    rows: u32,
 ) -> Result<(), ZoneTableError> {
     if zones.len() > 32_767
         || groups.len() > 32_767
         || kinds.len() > u16::MAX as usize
         || shapes.len() > u16::MAX as usize
     {
-        return Err(ZoneTableError("zone, group, kind, or shape count exceeds packed limit"));
-    }
-    if origin.level != 0
-        || cols == 0
-        || rows == 0
-        || cols > MAX_GRID_SIDE
-        || rows > MAX_GRID_SIDE
-        || i64::from(origin.x) + i64::from(cols) > i64::from(i32::MAX) + 1
-        || i64::from(origin.z) + i64::from(rows) > i64::from(i32::MAX) + 1
-    {
-        return Err(ZoneTableError("invalid zone index bounds"));
+        return Err(ZoneTableError(
+            "zone, group, kind, or shape count exceeds packed limit",
+        ));
     }
     if kinds
         .iter()
@@ -813,7 +834,12 @@ fn validate_table_parts(
             || group.label.trim().is_empty()
             || !identities.insert(group.id.to_string())
             || group.members.is_empty()
-            || !valid_rect(group.rect.min_x, group.rect.min_z, group.rect.max_x, group.rect.max_z)
+            || !valid_rect(
+                group.rect.min_x,
+                group.rect.min_z,
+                group.rect.max_x,
+                group.rect.max_z,
+            )
             || !(-1..=3).contains(&group.rect.level.unwrap_or(-1))
         {
             return Err(ZoneTableError("malformed or empty zone group"));
@@ -822,8 +848,7 @@ fn validate_table_parts(
     let mut kind_ids = HashSet::with_capacity(kinds.len());
     let mut npc_ids = HashSet::with_capacity(kinds.len());
     for kind in kinds {
-        if !kind_ids.insert(kind.id.as_ref())
-            || (kind.npc_id >= 0 && !npc_ids.insert(kind.npc_id))
+        if !kind_ids.insert(kind.id.as_ref()) || (kind.npc_id >= 0 && !npc_ids.insert(kind.npc_id))
         {
             return Err(ZoneTableError("duplicate kind identity"));
         }
@@ -833,7 +858,6 @@ fn validate_table_parts(
         if !valid_rect(zone.min_x, zone.min_z, zone.max_x, zone.max_z)
             || zone.level > 3
             || usize::from(zone.kind) >= kinds.len()
-            || !rect_in_grid(zone, origin, cols, rows)
         {
             return Err(ZoneTableError("malformed zone geometry or kind index"));
         }
@@ -861,11 +885,11 @@ fn validate_table_parts(
                     || west != north
                     || !(0..=u8::MAX as i64).contains(&west))
             {
-                return Err(ZoneTableError("unshaped NPC zone bounds do not match its radius"));
+                return Err(ZoneTableError(
+                    "unshaped NPC zone bounds do not match its radius",
+                ));
             }
-            if zone.shape != NO_SHAPE
-                && (!(1..=6).contains(&east) || !(1..=6).contains(&north))
-            {
+            if zone.shape != NO_SHAPE && (!(1..=6).contains(&east) || !(1..=6).contains(&north)) {
                 return Err(ZoneTableError("shaped NPC extent exceeds pack bounds"));
             }
         }
@@ -877,7 +901,10 @@ fn validate_table_parts(
                 return Err(ZoneTableError("duplicate zone identity"));
             }
         } else {
-            let id = format!("{}@{},{},{}", kind.id, zone.spawn_x, zone.spawn_z, zone.level);
+            let id = format!(
+                "{}@{},{},{}",
+                kind.id, zone.spawn_x, zone.spawn_z, zone.level
+            );
             if kind.id.contains('@') || !identities.insert(id) {
                 return Err(ZoneTableError("malformed or duplicate NPC zone identity"));
             }
@@ -888,7 +915,9 @@ fn validate_table_parts(
         if zone.shape != NO_SHAPE {
             let shape_index = usize::from(zone.shape);
             if kind.npc_id < 0 || shape_index >= shapes.len() || seen_shapes[shape_index] {
-                return Err(ZoneTableError("malformed, duplicate, or non-NPC shape index"));
+                return Err(ZoneTableError(
+                    "malformed, duplicate, or non-NPC shape index",
+                ));
             }
             seen_shapes[shape_index] = true;
             let width = i64::from(zone.max_x) - i64::from(zone.min_x) + 1;
@@ -901,7 +930,9 @@ fn validate_table_parts(
                 || zone.max_x <= zone.spawn_x
                 || zone.max_z <= zone.spawn_z
             {
-                return Err(ZoneTableError("shape bounds do not preserve the spawn footprint"));
+                return Err(ZoneTableError(
+                    "shape bounds do not preserve the spawn footprint",
+                ));
             }
             let cells = (width * height) as u32;
             let bits = shapes[shape_index];
@@ -952,7 +983,9 @@ fn validate_table_parts(
             || rect.max_x > owner.max_x
             || rect.min_z < owner.min_z
             || rect.max_z > owner.max_z
-            || rect.level.is_some_and(|level| level != i32::from(owner.level))
+            || rect
+                .level
+                .is_some_and(|level| level != i32::from(owner.level))
         {
             return Err(ZoneTableError("malformed zone carve"));
         }
@@ -962,15 +995,6 @@ fn validate_table_parts(
 
 fn valid_rect(min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> bool {
     min_x <= max_x && min_z <= max_z
-}
-
-fn rect_in_grid(zone: &Zone, origin: WorldTile, cols: u32, rows: u32) -> bool {
-    let max_x = i64::from(origin.x) + i64::from(cols);
-    let max_z = i64::from(origin.z) + i64::from(rows);
-    i64::from(zone.min_x) >= i64::from(origin.x)
-        && i64::from(zone.min_z) >= i64::from(origin.z)
-        && i64::from(zone.max_x) < max_x
-        && i64::from(zone.max_z) < max_z
 }
 
 fn rect_meets_wilderness(zone: &Zone, wilderness: &[WildernessZone]) -> bool {
@@ -987,12 +1011,19 @@ fn rect_meets_wilderness(zone: &Zone, wilderness: &[WildernessZone]) -> bool {
     })
 }
 
+#[derive(Default)]
+struct BucketIndex {
+    present: Vec<u64>,
+    buckets: Vec<(u32, u32)>,
+    entries: Vec<u16>,
+}
+
 fn build_index(
     zones: &[Zone],
     origin: WorldTile,
     cols: u32,
     rows: u32,
-) -> Result<(Vec<u64>, Vec<(u32, u32)>, Vec<u16>), ZoneTableError> {
+) -> Result<BucketIndex, ZoneTableError> {
     let bucket_cols = cols.div_ceil(BUCKET_SIDE as u32);
     let bucket_rows = rows.div_ceil(BUCKET_SIDE as u32);
     let per_level = bucket_cols
@@ -1002,16 +1033,25 @@ fn build_index(
         .checked_mul(4)
         .ok_or(ZoneTableError("zone bucket count overflows"))?;
     if zones.is_empty() {
-        return Ok((Vec::new(), Vec::new(), Vec::new()));
+        return Ok(BucketIndex::default());
     }
     let mut present = vec![0u64; bucket_count.div_ceil(64) as usize];
     let mut pairs = Vec::new();
     for (index, zone) in zones.iter().enumerate() {
         let index = u16::try_from(index).map_err(|_| ZoneTableError("too many zones"))?;
-        let x0 = ((zone.min_x - origin.x) as u32) / BUCKET_SIDE as u32;
-        let x1 = ((zone.max_x - origin.x) as u32) / BUCKET_SIDE as u32;
-        let z0 = ((zone.min_z - origin.z) as u32) / BUCKET_SIDE as u32;
-        let z1 = ((zone.max_z - origin.z) as u32) / BUCKET_SIDE as u32;
+        // Keep the full geometric identity, but index only routable cells.
+        // Hunter reach can overhang the baked map's outer boundary.
+        let min_x = i64::from(zone.min_x).max(i64::from(origin.x));
+        let min_z = i64::from(zone.min_z).max(i64::from(origin.z));
+        let max_x = i64::from(zone.max_x).min(i64::from(origin.x) + i64::from(cols) - 1);
+        let max_z = i64::from(zone.max_z).min(i64::from(origin.z) + i64::from(rows) - 1);
+        if min_x > max_x || min_z > max_z {
+            continue;
+        }
+        let x0 = ((min_x - i64::from(origin.x)) as u32) / BUCKET_SIDE as u32;
+        let x1 = ((max_x - i64::from(origin.x)) as u32) / BUCKET_SIDE as u32;
+        let z0 = ((min_z - i64::from(origin.z)) as u32) / BUCKET_SIDE as u32;
+        let z1 = ((max_z - i64::from(origin.z)) as u32) / BUCKET_SIDE as u32;
         let base = u32::from(zone.level) * per_level;
         for bz in z0..=z1 {
             for bx in x0..=x1 {
@@ -1032,7 +1072,11 @@ fn build_index(
         }
         entries.push(zone);
     }
-    Ok((present, buckets, entries))
+    Ok(BucketIndex {
+        present,
+        buckets,
+        entries,
+    })
 }
 
 #[cfg(test)]

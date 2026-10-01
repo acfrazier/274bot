@@ -61,8 +61,7 @@ static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 const ROUTE_THROUGH_ZONES_LABEL: &str = "Route through danger zones";
-const ROUTE_THROUGH_ZONES_TOOLTIP: &str =
-    "Allows routes past monsters that may kill your bot.";
+const ROUTE_THROUGH_ZONES_TOOLTIP: &str = "Allows routes past monsters that may kill your bot.";
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
 /// `None` detaches when the play is dropped. The picker never decodes the

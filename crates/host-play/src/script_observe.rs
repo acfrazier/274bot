@@ -1514,8 +1514,8 @@ pub(crate) fn script_observe_cached_with_channels(
 /// or abort that ended the follow), and the published outcome of the route
 /// the owner still holds. A revoked owner receives neither.
 fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
-    let receipt = |owner: &script::native::HostAuthority, end, blocked, detail| {
-        script::native::WalkReceipt {
+    let receipt =
+        |owner: &script::native::HostAuthority, end, blocked, detail| script::native::WalkReceipt {
             request_id: owner.request_id().get(),
             evidence: api::quest_progress::EvidenceStamp {
                 run: owner.run(),
@@ -1525,8 +1525,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             end,
             blocked,
             detail,
-        }
-    };
+        };
     if let Some((owner, end)) = bot.native_end.take() {
         let request_id = owner.request_id().get();
         let detail = (bot.walk_outcome_request_id == request_id)

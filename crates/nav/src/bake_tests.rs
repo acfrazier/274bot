@@ -189,8 +189,7 @@ fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
         level: 0,
     };
     let north_wall = collision_with_flags(8, 8, &[(4, 3, CollisionFlag::W_N as u32)]);
-    let north_wall_shape =
-        stationary_melee_shape(&north_wall, spawn, 1, &HashSet::new()).unwrap();
+    let north_wall_shape = stationary_melee_shape(&north_wall, spawn, 1, &HashSet::new()).unwrap();
     assert_ne!(north_wall_shape & (1u64 << 3), 0);
     assert_eq!(north_wall_shape & (1u64 << 7), 0);
 

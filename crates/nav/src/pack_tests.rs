@@ -16,11 +16,11 @@ use crate::quest_gates::tests::{
     family as gate_family, family_schema as gate_family_schema, window as gate_window,
 };
 use crate::quest_gates::QuestGates;
-use crate::tile::Tile;
 use crate::router::AvoidRect;
+use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules};
-use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
 use crate::world::NavWorld;
+use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
 use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
@@ -957,8 +957,10 @@ fn zone_table_pack_fixture() -> (Vec<u8>, ZoneTable) {
         blocked,
         flags: None,
     };
-    let mut graph = TransportGraph::default();
-    graph.zones = Some(table.clone());
+    let graph = TransportGraph {
+        zones: Some(table.clone()),
+        ..Default::default()
+    };
     (encode(&collision, &graph, &[]), table)
 }
 
@@ -1079,8 +1081,10 @@ fn v12_shape_rows_preserve_square_and_rectangular_bounds() {
         blocked,
         flags: None,
     };
-    let mut graph = TransportGraph::default();
-    graph.zones = Some(table.clone());
+    let graph = TransportGraph {
+        zones: Some(table.clone()),
+        ..Default::default()
+    };
 
     assert_eq!(super::zones::wire_size(Some(&table)), 97);
     let bytes = encode(&collision, &graph, &[]);
@@ -1134,8 +1138,7 @@ fn v12_decode_rejects_malformed_zone_rows_and_shapes() {
     let zone_count_at = kind_1_start + 15 + "lava-bridge".len() + "Lava bridge".len();
 
     let mut too_many_zones = bytes.clone();
-    too_many_zones[zone_count_at..zone_count_at + 4]
-        .copy_from_slice(&32_768u32.to_le_bytes());
+    too_many_zones[zone_count_at..zone_count_at + 4].copy_from_slice(&32_768u32.to_le_bytes());
     assert!(matches!(
         decode(&too_many_zones),
         Err(PackError::BadLength(_))

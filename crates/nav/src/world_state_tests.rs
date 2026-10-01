@@ -591,6 +591,9 @@ fn combat_level_uses_ready_base_rows_not_boosts() {
         c.bump_gens(ServerProt::UPDATE_STAT);
         snapshot.rebuild(&c);
         let expected = if levels[0] == 99 { 126 } else { 50 };
-        assert_eq!(WorldState::from_snapshot(&snapshot).combat_level, Some(expected));
+        assert_eq!(
+            WorldState::from_snapshot(&snapshot).combat_level,
+            Some(expected)
+        );
     }
 }

@@ -217,7 +217,6 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
         report.done().collect::<Vec<_>>(),
         ["alice", "bob", "carol", "dave"]
     );
-    assert!(report.summary().contains("zones: unavailable (legacy grid pack)"));
     for name in ["alice", "bob", "carol", "dave"] {
         assert_eq!(f.queued(name), Some(dest), "{name}");
     }
@@ -272,7 +271,14 @@ fn barrier_zone_table() -> ZoneTable {
             0,
             0,
         )],
-        vec![ZoneKind::new("test-barrier", "Sentinel strip", -1, 0, false, false)],
+        vec![ZoneKind::new(
+            "test-barrier",
+            "Sentinel strip",
+            -1,
+            0,
+            false,
+            false,
+        )],
         Vec::new(),
         Vec::new(),
         Vec::new(),

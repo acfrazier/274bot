@@ -316,6 +316,7 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         allow_bank_fetch: false,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 

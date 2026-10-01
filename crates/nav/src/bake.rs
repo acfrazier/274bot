@@ -265,8 +265,7 @@ fn derive_zone_table(
     npc_types: &[client::config::NpcType],
     door_ids: &HashSet<i32>,
 ) -> Result<DerivedZones, String> {
-    let inputs =
-        crate::map::services::collect_hunter_inputs(content_root, npc_types, door_ids)?;
+    let inputs = crate::map::services::collect_hunter_inputs(content_root, npc_types, door_ids)?;
     let definitions: HashMap<_, _> = inputs
         .definitions
         .iter()
@@ -298,7 +297,10 @@ fn derive_zone_table(
             format!("{} (L{})", definition.display_name, definition.vislevel),
             definition.npc_id,
             vislevel,
-            definition.find_newmode.to_ascii_lowercase().starts_with("applayer"),
+            definition
+                .find_newmode
+                .to_ascii_lowercase()
+                .starts_with("applayer"),
             definition.vis_off,
         ));
     }
@@ -307,17 +309,16 @@ fn derive_zone_table(
     let mut pending = Vec::with_capacity(used_ids.len());
     for spawn in &inputs.spawns {
         let Some(definition) = definitions.get(&spawn.npc_id).copied() else {
-            return Err(format!("map spawn references hunter id {} without a config", spawn.npc_id));
+            return Err(format!(
+                "map spawn references hunter id {} without a config",
+                spawn.npc_id
+            ));
         };
         if definition.huntrange < 1 {
             continue;
         }
-        if spawn.link_below {
-            return Err(format!(
-                "hunter spawn {}@{},{},{} stands on a link-below tile",
-                definition.id, spawn.x, spawn.z, spawn.level
-            ));
-        }
+        // NPCs hunt on their raw spawn plane even on link-below tiles.
+        // The engine remaps loc/land collision, not GameMap::loadNpcs.
         let class = match definition.check_nottoostrong.to_ascii_lowercase().as_str() {
             "off" => ZoneClass::Always,
             "outside_wilderness" => ZoneClass::LevelRule,
@@ -357,7 +358,10 @@ fn derive_zone_table(
         };
         let size = definition.size;
         if size < 1 {
-            return Err(format!("hunter NPC {} has invalid size {size}", definition.id));
+            return Err(format!(
+                "hunter NPC {} has invalid size {size}",
+                definition.id
+            ));
         }
         let (zone, shape_bits) = if definition.stationary && !ap {
             let width = u8::try_from(size)
@@ -376,13 +380,9 @@ fn derive_zone_table(
                 Some(bits),
             )
         } else if definition.stationary && ap {
-            let (min_x, min_z, max_x, max_z) = stationary_ranged_bounds(
-                tile,
-                size,
-                definition.huntrange,
-                definition.attackrange,
-            )
-            .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
+            let (min_x, min_z, max_x, max_z) =
+                stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
+                    .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
             let mut zone = Zone::npc(tile, 0, class, cap, kind);
             zone.min_x = min_x;
             zone.min_z = min_z;
@@ -395,14 +395,10 @@ fn derive_zone_table(
             } else {
                 definition.wanderrange
             };
-            let acquisition = wander
-                .checked_add(definition.huntrange)
-                .ok_or_else(|| format!("hunter NPC {} acquisition radius overflows", definition.id))?;
-            let tether_range = if ap {
-                definition.attackrange
-            } else {
-                1
-            };
+            let acquisition = wander.checked_add(definition.huntrange).ok_or_else(|| {
+                format!("hunter NPC {} acquisition radius overflows", definition.id)
+            })?;
+            let tether_range = if ap { definition.attackrange } else { 1 };
             let tether = definition
                 .maxrange
                 .checked_add(tether_range)
@@ -474,7 +470,10 @@ fn derive_zone_table(
             }
         }
         if members.is_empty() {
-            return Err(format!("curated zone group {} matched no hunter spawn", spec.id));
+            return Err(format!(
+                "curated zone group {} matched no hunter spawn",
+                spec.id
+            ));
         }
         groups.push(ZoneGroup::new(
             spec.id,
@@ -513,7 +512,6 @@ fn derive_zone_table(
         table,
     })
 }
-
 
 fn stationary_ranged_bounds(
     spawn: WorldTile,
@@ -704,7 +702,11 @@ fn collision_walk_byte(collision: &WorldCollision, x: i32, z: i32, level: i32) -
     }
     let Some(index) = plane
         .checked_mul(collision.width.saturating_mul(collision.height))
-        .and_then(|base| local_z.checked_mul(collision.width).and_then(|row| base.checked_add(row)))
+        .and_then(|base| {
+            local_z
+                .checked_mul(collision.width)
+                .and_then(|row| base.checked_add(row))
+        })
         .and_then(|row| row.checked_add(local_x))
     else {
         return 0;
@@ -721,30 +723,18 @@ fn openable_door_faces(
             continue;
         }
         let (tile_flag, opposite_flag, dx, dz) = match i32::from(door.rotation) {
-            angle if angle == LocAngle::WEST => (
-                CollisionFlag::W_W as u8,
-                CollisionFlag::W_E as u8,
-                -1,
-                0,
-            ),
-            angle if angle == LocAngle::NORTH => (
-                CollisionFlag::W_N as u8,
-                CollisionFlag::W_S as u8,
-                0,
-                1,
-            ),
-            angle if angle == LocAngle::EAST => (
-                CollisionFlag::W_E as u8,
-                CollisionFlag::W_W as u8,
-                1,
-                0,
-            ),
-            angle if angle == LocAngle::SOUTH => (
-                CollisionFlag::W_S as u8,
-                CollisionFlag::W_N as u8,
-                0,
-                -1,
-            ),
+            angle if angle == LocAngle::WEST => {
+                (CollisionFlag::W_W as u8, CollisionFlag::W_E as u8, -1, 0)
+            }
+            angle if angle == LocAngle::NORTH => {
+                (CollisionFlag::W_N as u8, CollisionFlag::W_S as u8, 0, 1)
+            }
+            angle if angle == LocAngle::EAST => {
+                (CollisionFlag::W_E as u8, CollisionFlag::W_W as u8, 1, 0)
+            }
+            angle if angle == LocAngle::SOUTH => {
+                (CollisionFlag::W_S as u8, CollisionFlag::W_N as u8, 0, -1)
+            }
             _ => continue,
         };
         faces.insert((door.x, door.z, door.level, tile_flag));
@@ -833,8 +823,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;
     require_members_guards(content_root, &graph)?;
-    let derived_zones =
-        derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
+    let derived_zones = derive_zone_table(content_root, &collision, &graph, &npc_types, &door_ids)?;
     let zone_count = u32::try_from(derived_zones.table.zones().len())
         .map_err(|_| "zone count exceeds the manifest range".to_string())?;
     let zone_npc_count = u32::try_from(derived_zones.npc_count)

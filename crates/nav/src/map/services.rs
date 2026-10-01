@@ -897,7 +897,6 @@ pub(crate) struct HunterSpawn {
     pub x: i32,
     pub z: i32,
     pub level: u8,
-    pub link_below: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -955,10 +954,13 @@ pub(crate) fn collect_hunter_inputs(
     let mut seen_ids = HashSet::with_capacity(candidates.len());
     for (npc_id, alias, config, mode) in candidates {
         if !seen_ids.insert(npc_id) {
-            return Err(format!("multiple hunter configs resolve to NPC id {npc_id}"));
+            return Err(format!(
+                "multiple hunter configs resolve to NPC id {npc_id}"
+            ));
         }
-        let npc = entity_npc(npc_types, npc_id)
-            .ok_or_else(|| format!("hunter NPC {alias} ({npc_id}) is absent from the client cache"))?;
+        let npc = entity_npc(npc_types, npc_id).ok_or_else(|| {
+            format!("hunter NPC {alias} ({npc_id}) is absent from the client cache")
+        })?;
         if npc.vislevel < 0 {
             return Err(format!(
                 "hunter NPC {alias} ({npc_id}) has no client combat level"
@@ -979,7 +981,8 @@ pub(crate) fn collect_hunter_inputs(
         };
         let huntrange = range("huntrange", config.huntrange.as_ref(), 0)?;
         let wanderrange = range("wanderrange", config.wanderrange.as_ref(), 5)?;
-        let maxrange = range("maxrange", config.maxrange.as_ref(), 7)?;
+        let maxrange =
+            range("maxrange", config.maxrange.as_ref(), wanderrange + 2)?.max(wanderrange);
         let attackrange = range("attackrange", config.attackrange.as_ref(), 0)?;
         let stationary = config
             .moverestrict
@@ -1015,10 +1018,7 @@ pub(crate) fn collect_hunter_inputs(
                 .check_nottoostrong
                 .clone()
                 .unwrap_or_else(|| "off".into()),
-            find_newmode: mode
-                .find_newmode
-                .clone()
-                .unwrap_or_else(|| "none".into()),
+            find_newmode: mode.find_newmode.clone().unwrap_or_else(|| "none".into()),
         });
         hunter_ids.insert(npc_id);
     }
@@ -1033,7 +1033,6 @@ pub(crate) fn collect_hunter_inputs(
                 x: hit.x,
                 z: hit.z,
                 level: hit.plane,
-                link_below: hit.link_below,
             })
         })
         .collect();
@@ -1060,10 +1059,7 @@ pub(crate) fn collect_hunter_inputs(
 }
 
 fn load_unpacked_zone_configs(content_root: &Path, tree: &mut ScriptTree) -> Result<(), String> {
-    fn visit(
-        dir: &Path,
-        tree: &mut ScriptTree,
-    ) -> Result<(), String> {
+    fn visit(dir: &Path, tree: &mut ScriptTree) -> Result<(), String> {
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1095,7 +1091,6 @@ fn load_unpacked_zone_configs(content_root: &Path, tree: &mut ScriptTree) -> Res
 
     visit(&content_root.join("scripts").join("_unpack"), tree)
 }
-
 
 fn parse_rs2_blocks(text: &str) -> Vec<ScriptBlock> {
     let mut blocks = Vec::new();
@@ -1651,6 +1646,7 @@ struct NpcHit {
     x: i32,
     z: i32,
     plane: u8,
+    #[cfg(test)]
     link_below: bool,
 }
 
@@ -1779,11 +1775,13 @@ fn collect_hits_from_map(
         }
     }
     for (plane, lx, lz, id) in pending_npcs {
+        #[cfg(test)]
         let linked = link_below[lz as usize] & (1u64 << lx as usize) != 0;
         npc_hits.entry(id).or_default().push(NpcHit {
             x: mx * 64 + lx,
             z: mz * 64 + lz,
             plane,
+            #[cfg(test)]
             link_below: linked,
         });
     }
@@ -1803,7 +1801,6 @@ fn collect_hits_from_map(
     }
     total_npc_spawns
 }
-
 
 fn loc_line_id(line: &str) -> Option<i32> {
     line.split_once(':')?

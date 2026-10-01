@@ -667,7 +667,10 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
 
     app.map_route_through_zones = true;
     assert_eq!(app.map_open(), AppAction::MapOpen);
-    assert!(!app.map_route_through_zones, "MapOpen also resets stale state");
+    assert!(
+        !app.map_route_through_zones,
+        "MapOpen also resets stale state"
+    );
 }
 
 #[test]

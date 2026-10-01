@@ -178,7 +178,6 @@ impl NavManifest {
         Ok(())
     }
 
-
     /// Compare revision, cache identity and pack digest only. Flags stay
     /// optional and are checked later at paint-on against `flags_sha256`.
     /// `content_id` is the decoded identity the running cache must present:
