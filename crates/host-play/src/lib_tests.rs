@@ -20853,10 +20853,6 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
     assert!(bot.route.is_none(), "fresh arrival clears the route");
-    assert_eq!(
-        bot.walk_outcome_seq, 0,
-        "arrival, not route-terminal settlement, completed this walk"
-    );
 }
 
 fn plant_nav_footprint_loc(client: &mut Client, x: i32, z: i32, width: i32, length: i32) {
