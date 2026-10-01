@@ -658,3 +658,483 @@ fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
     );
     cell.lock().unwrap().stop();
 }
+
+const RECONNECT_SOURCE: &str = r#"
+export const apiVersion = 2;
+globalThis.__settleCount = 0;
+export function tick(api) {
+  const page = api.snapshot.gather;
+  globalThis.__page = page;
+  if (globalThis.__launch && !globalThis.__run) {
+    globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
+    globalThis.__run.then(value => {
+      globalThis.__settleCount++;
+      globalThis.__runResult = value;
+    });
+  }
+  if (globalThis.__pair && !globalThis.__run) {
+    globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
+    globalThis.__run.then(value => {
+      globalThis.__settleCount++;
+      globalThis.__runResult = value;
+    });
+    api.gather.stop();
+  }
+  if (globalThis.__stop && page && !globalThis.__stopSent) {
+    globalThis.__stopSent = true;
+    api.gather.stop();
+  }
+}
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatherControl {
+    Run(u64),
+    Stop(u64),
+}
+
+struct GatherReconnectRig {
+    tile: WorldTile,
+    snapshot: GameSnapshot,
+    client: Client,
+    _listener: TcpListener,
+    cache: Arc<Cache>,
+    names: Arc<api::obj_names::ObjNames>,
+    scripts: ScriptWall,
+    cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    policy: host::ScriptRunPolicy,
+    tick: u64,
+}
+
+impl GatherReconnectRig {
+    fn new() -> Self {
+        let (selected, tree_id, tile) = selected_tree();
+        let snapshot = gather_snapshot(tree_id, tile);
+        let (client, listener) = attached_client(tile);
+        let cache = Arc::clone(&client.cache);
+        let names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let navs: Arc<Mutex<HashMap<String, NavBot>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        start_source(&scripts, selected, RECONNECT_SOURCE);
+        Self {
+            tile,
+            snapshot,
+            client,
+            _listener: listener,
+            cache,
+            names,
+            scripts,
+            cheats,
+            navs,
+            policy: host::ScriptRunPolicy::default(),
+            tick: 1,
+        }
+    }
+
+    fn slot(&self) -> Arc<Mutex<script::SlotScript>> {
+        script_slot(&self.scripts, SLOT).expect("reconnect Load slot")
+    }
+
+    fn probe(&self, expression: &str) -> serde_json::Value {
+        probe(&self.scripts, expression)
+    }
+
+    fn assert_probe_true(&self, expression: &str) {
+        assert!(
+            self.probe(expression).as_bool().unwrap_or(false),
+            "probe was not true: {expression}"
+        );
+    }
+
+    /// Let the real isolate tick after a host keyframe, but leave its emitted
+    /// batch queued. This is the reconnect seam: the boundary, not a mock,
+    /// drops the queued rows before the next host drain.
+    fn isolate_tick_without_host_drain(&mut self) {
+        let tick = self.tick;
+        self.tick += 1;
+        let tile = self.tile;
+        let snapshot = &self.snapshot;
+        let names = Arc::clone(&self.names);
+        let cell = self.slot();
+        let mut slot = cell.lock().unwrap();
+        let bytes = with_script_snapshot_input(
+            tick,
+            Some((tile.x, tile.z, tile.level)),
+            true,
+            None,
+            Some(snapshot),
+            Some(names.as_ref()),
+            None,
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            PostedWalkOutcome::default(),
+            route_inspect::PostedInspect::default(),
+            |input, native| slot.encode_snapshot_delta_with_native(input, native, false),
+        );
+        assert!(
+            slot.post_snapshot(bytes),
+            "reconnect keyframe is accepted by the real isolate"
+        );
+        let mut context = script::ScriptCtx {
+            driver: &mut self.client,
+            tick,
+            here: Some((tile.x, tile.z, tile.level)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(snapshot),
+            obj_names: Some(names.as_ref()),
+            compiled: script::CompiledTick {
+                hold: true,
+                ..Default::default()
+            },
+        };
+        slot.on_game_tick(&mut context);
+        drop(slot);
+        self.assert_probe_true("true");
+    }
+
+    fn frame(&mut self) {
+        let _ = observe_frame(
+            &mut self.client,
+            self.tick,
+            self.tile,
+            &self.snapshot,
+            &self.scripts,
+            &self.cheats,
+            &self.navs,
+            &self.cache,
+            &self.names,
+            &mut self.policy,
+        );
+        self.tick += 1;
+        self.assert_probe_true("true");
+    }
+
+    /// Capture actual isolate output for assertions, then restore that exact
+    /// batch so the reconnect boundary can be the operation that loses it.
+    fn queued_controls(&self) -> Vec<GatherControl> {
+        let cell = self.slot();
+        let mut slot = cell.lock().unwrap();
+        let batch = slot.drain_interacts();
+        let controls = batch
+            .iter()
+            .map(|request| match request {
+                script::shim::InteractReq::GatherRun { request_id, .. } => {
+                    GatherControl::Run(*request_id)
+                }
+                script::shim::InteractReq::GatherStop { request_id } => {
+                    GatherControl::Stop(*request_id)
+                }
+                other => panic!("unexpected row in Gather waiter batch: {other:?}"),
+            })
+            .collect();
+        slot.restore_interacts(batch);
+        controls
+    }
+
+    fn wait_for_controls(&self) -> Vec<GatherControl> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let controls = self.queued_controls();
+            if !controls.is_empty() {
+                return controls;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "real Gather waiter did not emit a host control"
+            );
+            let _ = self.probe("true");
+            std::thread::yield_now();
+        }
+    }
+
+    fn drain_host(&self) -> (Vec<script::shim::InteractReq>, bool) {
+        let cell = self.slot();
+        let mut slot = cell.lock().unwrap();
+        let (policy, requests, owned) = drain_observed_host_interacts(&mut slot);
+        assert!(policy.is_none(), "fixture emits no run-policy update");
+        (requests, owned)
+    }
+
+    fn reconnect(&self) {
+        let cell = self.slot();
+        let mut slot = cell.lock().unwrap();
+        assert!(
+            slot.reconnect_session_work(),
+            "active Load work survives an unexpected reconnect"
+        );
+        slot.on_is_up(true);
+        assert_eq!(slot.state(), script::RunState::Running);
+    }
+
+    fn native_run(&self) -> api::selected::RunKey {
+        self.slot()
+            .lock()
+            .unwrap()
+            .native_status()
+            .expect("installed Gatherer status")
+            .run
+            .clone()
+    }
+
+    fn expect_running_page(&mut self, token: u64) {
+        let expression = format!(
+            "!!globalThis.__page && globalThis.__page.phase === 'running' && globalThis.__page.token === {token}"
+        );
+        for _ in 0..48 {
+            self.frame();
+            if self.probe(&expression) == true
+                && self.slot().lock().unwrap().native_status().is_some()
+            {
+                return;
+            }
+        }
+        panic!(
+            "Gatherer page for token {token} did not install: {:?}",
+            self.probe("globalThis.__page")
+        );
+    }
+
+    fn start_un_drained(&mut self) -> u64 {
+        self.assert_probe_true("globalThis.__launch = true");
+        self.isolate_tick_without_host_drain();
+        self.assert_probe_true("globalThis.__run !== undefined");
+        match self.wait_for_controls().as_slice() {
+            [GatherControl::Run(token)] => *token,
+            controls => panic!("initial real GatherRun batch: {controls:?}"),
+        }
+    }
+
+    fn settled_result(&self, token: u64) -> serde_json::Value {
+        assert_eq!(self.probe("globalThis.__settleCount"), 1);
+        let result = self.probe("globalThis.__runResult");
+        assert_eq!(result["kind"], "done", "Gather waiter settled: {result}");
+        assert_eq!(result["value"]["end"], "stopped", "terminal: {result}");
+        assert_eq!(result["value"]["token"], token, "terminal token: {result}");
+        result
+    }
+
+    fn stop_and_settle(&mut self, token: u64) {
+        self.assert_probe_true("globalThis.__stop = true");
+        for _ in 0..32 {
+            self.frame();
+            if self.probe("globalThis.__settleCount") == 1 {
+                self.settled_result(token);
+                return;
+            }
+        }
+        panic!("Gather stop did not settle waiter: {:?}", self.probe("globalThis.__page"));
+    }
+}
+
+#[test]
+fn gather_reconnect_before_start_drain_reemits_same_token_once() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+
+    rig.reconnect();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty(), "reconnect discarded the queued pre-start row");
+    assert!(!owned);
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(
+        rig.wait_for_controls(),
+        vec![GatherControl::Run(token)],
+        "the real waiter carries its unacknowledged start with the same token"
+    );
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned, "the re-emitted control is admitted through host drain");
+    rig.expect_running_page(token);
+    rig.stop_and_settle(token);
+}
+
+#[test]
+fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    {
+        let slot = rig.slot();
+        let slot = slot.lock().unwrap();
+        assert!(slot.api_owns_foreground());
+        assert!(
+            slot.native_status().is_none(),
+            "the real host seat has admitted GatherRun but has not installed its preparation"
+        );
+    }
+
+    rig.reconnect();
+    {
+        let slot = rig.slot();
+        let slot = slot.lock().unwrap();
+        assert!(slot.api_owns_foreground(), "preparation survives reconnect");
+        assert!(slot.native_status().is_none());
+    }
+    rig.frame();
+    let controls = rig.queued_controls();
+    assert!(
+        controls.is_empty() || controls == vec![GatherControl::Run(token)],
+        "preparing page acknowledges the same token, or an unacknowledged waiter replays it once: {controls:?}"
+    );
+    if !controls.is_empty() {
+        let (rows, owned) = rig.drain_host();
+        assert!(rows.is_empty());
+        assert!(owned);
+    }
+    rig.expect_running_page(token);
+    assert_eq!(rig.probe("globalThis.__settleCount"), 0);
+    rig.stop_and_settle(token);
+}
+
+#[test]
+fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    rig.expect_running_page(token);
+    assert_eq!(rig.probe("globalThis.__page.token"), token);
+    let before = rig.native_run();
+
+    rig.reconnect();
+    let after = rig.native_run();
+    assert_eq!((before.slot, before.run), (after.slot, after.run));
+    assert_ne!(before.session, after.session, "installed run rekeys on reconnect");
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(rig.probe("globalThis.__page.token"), token);
+    assert_eq!(rig.probe("globalThis.__settleCount"), 0);
+    assert!(
+        rig.queued_controls().is_empty(),
+        "an acknowledged waiter does not re-emit GatherRun or settle on reconnect"
+    );
+    let (rows, _) = rig.drain_host();
+    assert!(rows.is_empty());
+    rig.stop_and_settle(token);
+}
+
+#[test]
+fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    rig.expect_running_page(token);
+
+    rig.assert_probe_true("globalThis.__stop = true");
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(rig.queued_controls(), vec![GatherControl::Stop(token)]);
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned, "the host admits the real Stop before the boundary");
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    assert_eq!(rig.probe("globalThis.__settleCount"), 0);
+
+    rig.reconnect();
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(rig.probe("globalThis.__settleCount"), 1);
+    rig.settled_result(token);
+    for _ in 0..2 {
+        rig.reconnect();
+        rig.isolate_tick_without_host_drain();
+        rig.settled_result(token);
+    }
+}
+
+#[test]
+fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_un_drained();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned);
+    rig.expect_running_page(token);
+    let before = rig.native_run();
+
+    rig.assert_probe_true("globalThis.__stop = true");
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(
+        rig.queued_controls(),
+        vec![GatherControl::Stop(token)],
+        "the actual Stop row is queued but not admitted"
+    );
+    rig.reconnect();
+    assert_eq!(rig.native_run().session, before.session.wrapping_add(1));
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty(), "reconnect dropped the old Stop row");
+    assert!(owned, "the running Gatherer seat survives the lost Stop");
+
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(
+        rig.wait_for_controls(),
+        vec![GatherControl::Stop(token)],
+        "the acknowledged waiter carries only Stop, with the same token"
+    );
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned, "the re-emitted Stop tears down the seat through host drain");
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    rig.isolate_tick_without_host_drain();
+    rig.settled_result(token);
+}
+
+#[test]
+fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
+    let mut rig = GatherReconnectRig::new();
+    rig.assert_probe_true("globalThis.__pair = true");
+    rig.isolate_tick_without_host_drain();
+    rig.assert_probe_true("globalThis.__run !== undefined");
+    let first = rig.wait_for_controls();
+    let [GatherControl::Run(token), GatherControl::Stop(stop_token)] = first.as_slice() else {
+        panic!("initial real GatherRun+GatherStop batch: {first:?}");
+    };
+    let token = *token;
+    assert_eq!(*stop_token, token, "paired Stop targets its real start token");
+
+    rig.reconnect();
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty(), "boundary loses both pre-drain controls");
+    assert!(!owned);
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.isolate_tick_without_host_drain();
+    assert_eq!(
+        rig.wait_for_controls(),
+        vec![GatherControl::Run(token), GatherControl::Stop(token)],
+        "the live waiter replays its same-token Run+Stop pair in order"
+    );
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(owned, "the host drain observes the transient ownership edge");
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+
+    rig.isolate_tick_without_host_drain();
+    rig.settled_result(token);
+    for _ in 0..2 {
+        rig.reconnect();
+        rig.isolate_tick_without_host_drain();
+        rig.settled_result(token);
+    }
+}
