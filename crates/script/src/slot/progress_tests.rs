@@ -416,6 +416,69 @@ fn unavailable_colour_waits_eight_active_seconds_and_hold_does_not_read() {
     );
     slot.stop();
 }
+
+#[test]
+fn foreign_quest_journal_refuses_busy_without_quiet_lease_or_click() {
+    let mut slot = load();
+    let mut snapshot = snapshot(0xf8f800);
+    snapshot.seed_main_modal(
+        crate::quest_journal::ROOT_289,
+        vec![
+            crate::quest_journal::test_widget(8144, "@dre@Rune Mysteries"),
+            crate::quest_journal::test_widget(8145, "This is another quest's journal."),
+        ],
+    );
+    journal_fixture(&mut slot, 25);
+    drive(&mut slot, &snapshot, 1, false);
+    assert!(
+        matches!(&slot.api.as_ref().unwrap().progress_page, Some(ProgressPage::Refused { reason, .. }) if reason.as_ref() == "busy")
+    );
+    assert!(!slot.has_native_actions());
+    assert!(slot.native_runtime.ledger.is_none());
+    slot.stop();
+}
+
+#[test]
+fn preparation_compile_refusal_preserves_specific_detail() {
+    let reason = compile_error_reason(
+        crate::quester::compile::CompileError::code("invalid-args")
+            .with_detail("walk: cross needs protected walk (combat slice)"),
+    );
+    assert_eq!(
+        reason.as_ref(),
+        "failed:invalid-args: walk: cross needs protected walk (combat slice)"
+    );
+}
+
+#[test]
+fn established_load_progress_post_read_idle_polls_allocate_nothing() {
+    let mut slot = load();
+    let snapshot = snapshot(0x00f800);
+    read(&mut slot, 26, "cook");
+    settle_read(&mut slot, &snapshot);
+    assert!(matches!(
+        &slot.api.as_ref().unwrap().progress_page,
+        Some(ProgressPage::Done { token: 26, .. })
+    ));
+    assert!(matches!(
+        slot.api.as_ref().unwrap().progress,
+        ProgressSeat::Idle
+    ));
+
+    let idle = allocation_counter::measure(|| {
+        for tick in 1..1001 {
+            drive(&mut slot, &snapshot, tick, false);
+        }
+    });
+    assert_eq!(idle.count_total, 0);
+    assert_eq!(idle.bytes_total, 0);
+    assert!(!slot.api_owns_foreground());
+    println!(
+        "progress post-read idle: polls=1000 allocations={} bytes={}",
+        idle.count_total, idle.bytes_total
+    );
+    slot.stop();
+}
 #[test]
 fn occupied_modal_refuses_busy_without_quiet_lease_or_click() {
     let mut slot = load();

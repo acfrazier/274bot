@@ -834,7 +834,7 @@ fn render_quest_progress(out: &mut String) {
     out.push_str("  binding: string;\n");
     out.push_str("  role: string | null;\n");
     out.push_str("}\n\n");
-    out.push_str("/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `unavailable:<why>` or `failed:<why>` and never ran. */\n");
+    out.push_str("/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>` or `failed:<why>` and no row was produced. */\n");
     out.push_str("export type QuestProgressEnd =\n");
     out.push_str("  | { end: 'done'; token: number; row: QuestProgressRow }\n");
     out.push_str("  | { end: 'refused'; token: number; reason: string };\n\n");

@@ -340,11 +340,12 @@ journal rules. Cook has `journal: false` and stages `cook:0`, `cook:1`, `cook:2`
 the other three have `journal: true`. Romeo & Juliet includes the six journal
 stages `romeojuliet:10` through `romeojuliet:60`, plus its not-started and
 complete stages (`romeojuliet:0` and `romeojuliet:100`).
+Stages are returned in ascending numeric stage order.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `api.questPaths()` | `{ rows: QuestPathRow[] }` | sync `HelperResult` errors only |
-| `await api.questProgress({ quest })` | one `QuestProgressOutcome` settlement | sync `invalid-args`; host `unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`, or a machine abort |
+| `await api.questProgress({ quest })` | one `QuestProgressOutcome` settlement | sync `invalid-args`; host `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>`, `failed:<why>`, or a machine abort |
 
 A non-object input, or a non-string or blank `quest`, is `invalid-args`. A quest
 without a released Path is `done{end:'refused', reason:'unknown-path'}`:
@@ -354,9 +355,9 @@ reason:'busy'}`. The terminal is the nested `value` of the unchanged
 `done` envelope: `done` carries the `QuestProgressRow` (`quest`,
 `display`, `colour`, `stage`, `complete`, `rule`, `flags`, `evidence`,
 `journal_read`, `binding`, `role`); `refused` carries the host reason
-(`unknown-path`, `busy`, `unavailable:<why>`, `failed:<why>`) and never
-ran. Synchronous refusals are top-level `refused`; resets, supersessions
-and terminations are `aborted`.
+(`unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>`,
+`failed:<why>`); no progress row was produced. Synchronous refusals are top-level
+`refused`; resets, supersessions and terminations are `aborted`.
 
 A newer read supersedes the previous waiter (`aborted: superseded`).
 Before the journal opens, the host replaces the old read. After it opens,

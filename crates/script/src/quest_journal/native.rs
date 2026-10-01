@@ -8,8 +8,8 @@ use std::{sync::Arc, task::Poll, time::Duration};
 
 // Selected 289 interface.pack: questjournal_scroll and :ifquestname. The
 // generic player/quest_journal.rs2 opens this root for every roster journal.
-const ROOT_289: i32 = 8134;
-const TITLE_289: i32 = 8144;
+pub(crate) const ROOT_289: i32 = 8134;
+pub(crate) const TITLE_289: i32 = 8144;
 const WINDOW: Duration = Duration::from_secs(3);
 const OVERALL: Duration = Duration::from_secs(8);
 pub struct JournalRequest {
@@ -43,7 +43,7 @@ fn failure(reason: &'static str) -> ActionError {
     ActionError::Failed(Arc::from(reason))
 }
 
-fn title_matches(actual: &str, expected: &str) -> bool {
+pub(crate) fn title_matches(actual: &str, expected: &str) -> bool {
     // The selected server prefixes the title with @dre@. Do not infer a title
     // from body position or accept a different quest on the same root.
     actual.strip_prefix("@dre@").unwrap_or(actual).trim() == expected
@@ -51,10 +51,6 @@ fn title_matches(actual: &str, expected: &str) -> bool {
 
 fn strictly_later(actual: EvidenceStamp, before: EvidenceStamp) -> bool {
     actual.meets(before) && actual != before
-}
-
-fn display_title(actual: &str) -> &str {
-    actual.strip_prefix("@dre@").unwrap_or(actual).trim()
 }
 
 fn foreign_modal_failure(root: i32, texts: &[String]) -> Option<ActionError> {
@@ -97,12 +93,7 @@ impl NativeMachine for JournalMachine {
         } else if pair.value.root == ROOT_289 {
             match snapshot.journal_widgets(ROOT_289, TITLE_289) {
                 Some(page) if title_matches(page.value.title, title) => Some(page.stamp),
-                Some(page) => {
-                    return Err(ActionError::Failed(Arc::from(format!(
-                        "journal blocked by quest journal '{}'",
-                        display_title(page.value.title)
-                    ))));
-                }
+                Some(_) => return Err(ActionError::Busy),
                 None => return Err(ActionError::Busy),
             }
         } else if pair.value.root != -1 || !pair.value.texts.is_empty() {

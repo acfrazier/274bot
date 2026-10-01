@@ -914,4 +914,29 @@ mod tests {
         assert!(progress.flags.is_empty());
         assert!(progress.signals.is_empty());
     }
+
+    #[test]
+    fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let bytes = crate::quester::card::released_path("romeojuliet").unwrap();
+        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let completed = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                1,
+                &[
+                    "I went to the Apothecary regarding making this cadava potion, and he told me to bring him some cadava berries.",
+                    "I was rewarded for all of my help regardless.",
+                ],
+            ),
+            None,
+        );
+        assert!(matches!(
+            &completed.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "romeojuliet:100"
+        ));
+        assert_eq!(completed.complete, Truth::True);
+    }
 }
