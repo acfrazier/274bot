@@ -578,6 +578,7 @@ fn pause_resume_before_escape_dispatch_reissues_walk_without_hazard_click() {
                 sequence: 1,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
 
@@ -732,6 +733,7 @@ fn gas_replacement_cancels_the_queued_mine_with_a_walk_when_no_other_target_is_l
                 sequence: 1,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
     let catalog = api::gather_methods::cached(&selected).unwrap();
@@ -857,6 +859,7 @@ fn observed_ent_replacing_the_only_live_tree_cancels_chopping_with_a_walk() {
                 sequence: 1,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
     let mut locs = frame.locs().to_vec();
@@ -931,6 +934,7 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
                         sequence: 1,
                     },
                     accepted: true,
+                    chat_since: 0,
                 },
             );
         }
@@ -968,6 +972,7 @@ fn drain(slot: &mut SlotScript, tick: u64) -> Vec<i32> {
                     sequence: tick,
                 },
                 accepted: true,
+                chat_since: 0,
             },
         );
     }
@@ -1040,6 +1045,7 @@ fn chained_level_up_pages_receive_separate_continues() {
                         sequence: t,
                     },
                     accepted: true,
+                    chat_since: 0,
                 },
             );
             if continues == 1 {

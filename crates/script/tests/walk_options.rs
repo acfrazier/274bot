@@ -242,7 +242,6 @@ fn walk_to_distance_before_teleport_gates_teleports_on_the_span() {
 #[test]
 fn walk_to_refuses_options_the_host_cannot_honour() {
     for (opts, name) in [
-        ("{ avoidZones: ['white-wolf-mountain'] }", "avoidZones"),
         (
             "{ policy: { allowTeleportIds: ['varrock'] } }",
             "allowTeleportIds",

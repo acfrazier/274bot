@@ -27,6 +27,7 @@ use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
@@ -407,6 +408,8 @@ pub struct TuiApp {
     pub settings: vault::ProfileSettings,
     /// Walk-confirm find opt-ins (teleports / wilderness / BankBudget).
     pub nav: NavFindSettings,
+    /// Per-Map-open route-through-danger-zones opt-out; never persisted.
+    pub map_route_through_zones: bool,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
     /// Profile the settings popup was opened for and stays bound to: focus
@@ -531,6 +534,7 @@ impl TuiApp {
             chat: ChatState::default(),
             settings: vault::ProfileSettings::default(),
             nav: NavFindSettings::default(),
+            map_route_through_zones: false,
             settings_state: SettingsState::default(),
             settings_dirty: false,
             settings_profile: None,
@@ -1016,6 +1020,7 @@ impl TuiApp {
 
     pub(crate) fn map_open(&mut self) -> AppAction {
         self.map_active = true;
+        self.map_route_through_zones = false;
         if self.map_catalogue_status == MapCatalogueStatus::Inactive {
             self.map_catalogue_status = MapCatalogueStatus::Unavailable;
             self.map_coverage =
@@ -1027,6 +1032,7 @@ impl TuiApp {
 
     pub(crate) fn map_close(&mut self) -> AppAction {
         self.map_active = false;
+        self.map_route_through_zones = false;
         self.map_search_open = false;
         self.map_search.clear();
         self.map_search_results.clear();
@@ -1041,6 +1047,18 @@ impl TuiApp {
         self.map_catalogue_status = MapCatalogueStatus::Inactive;
         self.map_coverage = "coverage: unavailable until Map is opened".into();
         AppAction::MapClose
+    }
+    /// Map-specific route options: dangerous zones are exempt only until
+    /// this Map tab closes.
+    pub fn map_find_options(&self) -> FindOptions {
+        FindOptions {
+            zones: if self.map_route_through_zones {
+                ZoneExempt::all()
+            } else {
+                ZoneExempt::NONE
+            },
+            ..self.nav.find_options()
+        }
     }
 
     /// Shared model adapters may publish a ready catalogue after activation.
@@ -1087,7 +1105,7 @@ impl TuiApp {
 
     /// The Map tab's own keys (after the router tried the `MAP_KEYS`
     /// commands and Esc-to-leave): plane, diagnostic layers, the group
-    /// toggle for the selected bot, Enter select/confirm, pan and zoom.
+    /// toggle for the selected bot, zone crossing, Enter select/confirm, pan and zoom.
     pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
@@ -1097,6 +1115,9 @@ impl TuiApp {
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
             KeyCode::Char(' ') => self.toggle_walk_send_focused(),
+            KeyCode::Char('z') => {
+                self.map_route_through_zones = !self.map_route_through_zones;
+            }
             KeyCode::Enter => return self.map_enter(),
             _ => return self.map_on_key(key),
         }
@@ -1639,7 +1660,7 @@ impl TuiApp {
         let [map_area, button_area, info_area] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(inner.height.min(1)),
-            Constraint::Length(inner.height.saturating_sub(2).min(4)),
+            Constraint::Length(inner.height.saturating_sub(2).min(5)),
         ])
         .areas(inner);
         self.regions.map = map_area;
@@ -1697,7 +1718,15 @@ impl TuiApp {
             }
         };
         let mut info = vec![
-            Line::from(send),
+            Line::from(format!(
+                "{send} · {}",
+                if self.map_route_through_zones {
+                    "zones: crossing (z)"
+                } else {
+                    "zones: avoided"
+                }
+            )),
+            Line::from("z: Allows routes past monsters that may kill your bot."),
             Line::from(if let Some(err) = &self.error {
                 format!("status: {err}")
             } else {

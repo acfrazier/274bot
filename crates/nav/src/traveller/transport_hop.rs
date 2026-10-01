@@ -869,9 +869,14 @@ impl FollowRun {
         let mut approach = hop.approach.take().expect("approach hop present");
         let here = here(snapshot);
         // NPC-backed approaches use poll_npc_approach and one leg clock.
-        if approach.retry_pending
-            && (here.level != approach.at.level || cheb(here, approach.at) > 1)
-        {
+        let edge = match &hop.leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("transport approach holds a transport leg"),
+        };
+        let at = approach.at;
+        let ready = loc_transport_ready(snapshot, edge, here)
+            .unwrap_or(here.level == at.level && cheb(here, at) <= 1);
+        if approach.retry_pending && !ready {
             let mut ix = Interactions::new(snapshot, d);
             let result = ix.walk(approach.tile);
             report_walk(options, snapshot, here, approach.tile, &result);
@@ -895,7 +900,10 @@ impl FollowRun {
                 }
             }
         }
-        let arms = [("arrived", arrived(approach.at, 1))];
+        let arms: [(&str, Evidence<'static>); 1] = [(
+            "arrived",
+            Box::new(move |_now: &ReadContext<'_>, _before: &ReadContext<'_>| ready),
+        )];
         let mut settle = Settle::new(
             SettleOptions {
                 arms: &arms,

@@ -80,7 +80,14 @@ pub fn walk_marked<Io>(
         .as_ref()
         .map_or(&WorldMembersFact::Unknown, |p| p.world_members());
     let refuse = |error: ActionError, mut rows: Vec<BulkRow>| {
-        WalkRequest::refuse_group(play, &names, walk.destination, walk.options, members, error);
+        WalkRequest::refuse_group(
+            play,
+            &names,
+            walk.destination,
+            walk.options,
+            members,
+            error.clone(),
+        );
         rows.extend(
             names
                 .iter()
@@ -107,15 +114,32 @@ pub fn walk_marked<Io>(
         })
         .collect();
     let report = play.map_walk_group(plan, &context, &requests, walk.arms);
-    rows.extend(report.outcomes.into_iter().map(|outcome| {
-        let reason = outcome.kind.reason().unwrap_or("not eligible");
-        let result = match outcome.kind {
-            WalkSlotOutcomeKind::Walking => BulkOutcome::Done,
-            WalkSlotOutcomeKind::Excluded(_) => BulkOutcome::skipped(reason),
-            WalkSlotOutcomeKind::Failed(_) => BulkOutcome::failed(reason),
-        };
-        BulkRow::new(outcome.name, result)
-    }));
+    let legacy_zones_unavailable = report.legacy_zones_unavailable;
+    rows.extend(
+        report
+            .outcomes
+            .into_iter()
+            .enumerate()
+            .map(|(index, outcome)| {
+                let reason = outcome.kind.reason().unwrap_or("not eligible");
+                let (result, detail) = match outcome.kind {
+                    WalkSlotOutcomeKind::Walking => (BulkOutcome::Done, None),
+                    WalkSlotOutcomeKind::Excluded(_) => (BulkOutcome::skipped(reason), None),
+                    WalkSlotOutcomeKind::Failed(ActionError::BlockedByZones { detail }) => {
+                        (BulkOutcome::failed(reason), detail)
+                    }
+                    WalkSlotOutcomeKind::Failed(_) => (BulkOutcome::failed(reason), None),
+                };
+                let row = BulkRow::new(outcome.name, result);
+                match detail {
+                    Some(detail) => row.with_detail(detail),
+                    None if legacy_zones_unavailable && index == 0 => {
+                        row.with_detail("zones: unavailable (legacy grid pack)")
+                    }
+                    None => row,
+                }
+            }),
+    );
     BulkReport::new(LABEL, DONE, rows, None)
 }
 

@@ -1,4 +1,5 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
+use super::bank_memo::BankMemo;
 use super::compile::{CompiledPath, CompiledStep, PredicateContext, StepContext, StepRun};
 use super::death::DeathLatch;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
@@ -36,6 +37,7 @@ pub struct Quester {
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
+    bank: BankMemo,
     last_read: Option<Arc<JournalRead>>,
     journal_text: Option<Arc<str>>,
     read_requested: bool,
@@ -78,6 +80,7 @@ impl Quester {
             stage: None,
             progress: None,
             journal: None,
+            bank: BankMemo::default(),
             last_read: None,
             journal_text: None,
             read_requested: false,
@@ -625,6 +628,7 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
                     outcome: None,
+                    bank: &self.bank,
                 };
                 self.current_step()
                     .map(|step| step.settle.evaluate(&pred))
@@ -669,6 +673,7 @@ impl Script for Quester {
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
                     outcome: None,
+                    bank: &self.bank,
                 };
                 match select(&self.path, self.seq_index, &pred) {
                     SelectionDecision::Selected(sel) => {
@@ -721,6 +726,7 @@ impl Script for Quester {
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after,
+                bank: &self.bank,
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
@@ -750,6 +756,7 @@ impl Script for Quester {
                     .map(std::slice::from_ref)
                     .unwrap_or(&[]),
                 required_after,
+                bank: &self.bank,
             };
             self.step
                 .as_mut()
@@ -767,7 +774,14 @@ impl Script for Quester {
                     self.dirty = true;
                 }
             }
-            Poll::Ready(Ok(_)) => {
+            Poll::Ready(Ok(outcome)) => {
+                if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
+                    receipt
+                        .as_any()
+                        .downcast_ref::<crate::native_bank::BankReceipt>()
+                }) {
+                    self.bank.update(receipt);
+                }
                 if self.advances {
                     self.needs_read = true;
                 }
@@ -882,8 +896,10 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        eprintln!("Quester size_of={bytes}");
+        let bank_bytes = std::mem::size_of::<BankMemo>();
+        eprintln!("Quester size_of={bytes}; BankMemo size_of={bank_bytes}, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
+        assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
 
     #[test]

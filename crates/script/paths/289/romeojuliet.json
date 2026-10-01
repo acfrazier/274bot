@@ -1,0 +1,221 @@
+{
+  "schema": 2,
+  "id": "romeojuliet",
+  "display_name": "Romeo & Juliet",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 5,
+    "requirements": [],
+    "items": [
+      { "obj": "julietmessage", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "cadavaberries", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "cadava", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": { "tile": [3185, 3438, 0], "source": "289 Varrock West public-side tile beside bank booth 2213 at [3186,3438,0]" },
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:julietmessage", "obj:cadavaberries", "obj:cadava"],
+    "owns_inventory": true
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:romeojuliet",
+    "progress": {
+      "colour": { "not_started": "romeojuliet:0", "in_progress": "romeojuliet:10", "complete": "romeojuliet:100" },
+      "rules": [
+        { "stage": "romeojuliet:100", "all": ["i was rewarded for all of my help regardless"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:60", "all": ["i have to find romeo", "tell him what's happened"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:50", "all": ["i went to the apothecary regarding making this", "potion, and he told me to bring him some"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:40", "all": ["i need to find the apothecary"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:30", "all": ["i should find father lawrence"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:20", "all": ["i should take the message", "to romeo"], "any": [], "not": [], "varp": null },
+        { "stage": "romeojuliet:10", "all": ["i should go and speak to juliet"], "any": [], "not": [], "varp": null }
+      ],
+      "flags": [],
+      "monotonic": true
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "romeojuliet:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start-romeo", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "romeo",
+            "anchor": { "tile": [3211, 3425, 0], "source": "A defs/romeojuliet.ts:31-36" },
+            "leash": 8, "prefer": ["Can I help find her for you?"]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:10"] } } }
+        }]
+      },
+      {
+        "stage": "romeojuliet:10", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "talk-juliet-message", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "juliet",
+            "anchor": { "tile": [3158, 3425, 1], "source": "A defs/romeojuliet.ts:37-42" },
+            "leash": 6, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:20"] } } }
+        }]
+      },
+      {
+        "stage": "romeojuliet:20", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-message-bank", "kind": "bank", "version": 1,
+            "args": { "op": "scan", "at": "quest_bank" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-message", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "julietmessage", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "julietmessage" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } }
+          },
+          {
+            "id": "replace-message", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "juliet",
+              "anchor": { "tile": [3158, 3425, 1], "source": "A defs/romeojuliet.ts:199-218" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "julietmessage" } } }
+          },
+          {
+            "id": "deliver-message", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "romeo",
+              "anchor": { "tile": [3211, 3425, 0], "source": "A defs/romeojuliet.ts:199-218" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:30"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "romeojuliet:30", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "father-lawrence", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "father_lawrence",
+            "anchor": { "tile": [3254, 3475, 0], "source": "A defs/romeojuliet.ts:43-48" },
+            "leash": 6, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:40"] } } }
+        }]
+      },
+      {
+        "stage": "romeojuliet:40", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "ask-apothecary", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "apothecary",
+            "anchor": { "tile": [3195, 3404, 0], "source": "A defs/romeojuliet.ts:49-54" },
+            "leash": 6, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:50"] } } }
+        }]
+      },
+      {
+        "stage": "romeojuliet:50", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-potion-bank", "kind": "bank", "version": 1,
+            "args": { "op": "scan", "at": "quest_bank" },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } }
+            ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-potion", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "cadava", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "cadava" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } }
+          },
+          {
+            "id": "withdraw-berries", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "cadavaberries", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "cadavaberries" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } }
+          },
+          {
+            "id": "take-berries", "kind": "interact", "version": 1,
+            "args": {
+              "target": { "ground": "cadavaberries" }, "op": "Take",
+              "anchor": { "tile": [3272, 3369, 0], "source": "A defs/romeojuliet.ts:57-58,147-197" },
+              "radius": 2, "wait_if_missing": true, "settle_ms": 90000
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadavaberries" } } }
+          },
+          {
+            "id": "make-potion", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "apothecary",
+              "anchor": { "tile": [3195, 3404, 0], "source": "A defs/romeojuliet.ts:220-252" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cadava" } } }
+          },
+          {
+            "id": "deliver-potion", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "juliet",
+              "anchor": { "tile": [3158, 3425, 1], "source": "A defs/romeojuliet.ts:220-252" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "romeojuliet", "any": ["romeojuliet:60"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "romeojuliet:60", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "finish-romeo", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "romeo",
+            "anchor": { "tile": [3211, 3425, 0], "source": "A defs/romeojuliet.ts:253-267" },
+            "leash": 8, "prefer": []
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "romeojuliet", "is": "complete" } } }
+        }]
+      },
+      { "stage": "romeojuliet:100", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

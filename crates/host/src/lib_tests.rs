@@ -964,6 +964,62 @@ fn client_frame_applies_click_only_when_input_enabled() {
 }
 
 #[test]
+fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
+    use client::client::MiniMenuAction;
+    for (x, y, expected) in [
+        (30, 51, Some(ManualMoveIntent::WorldMenu)),
+        (30, 20, None),
+        (648, 83, Some(ManualMoveIntent::Minimap)),
+    ] {
+        let mut c = Client::new(cfg());
+        ingame_scene2(&mut c);
+        c.is_menu_open = true;
+        c.menu_area = 0;
+        c.menu_x = 20;
+        c.menu_y = 20;
+        c.menu_width = 100;
+        c.menu_num_entries = 1;
+        c.menu_action[0] = MiniMenuAction::CANCEL;
+        let input = SlotInput::new();
+        input.set_enabled(true);
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        tx.send(InputEv::Down { button: 1, x, y }).unwrap();
+        tx.send(InputEv::Up).unwrap();
+        let mut slot = SlotLoop::new();
+        let mut sends = 0;
+        Host::client_frame_observed(
+            &mut c,
+            &mut slot,
+            "alice",
+            Some(&input),
+            None,
+            &mut sends,
+            None,
+            &mut |client, _, _, _, _| {
+                assert!(
+                    !client.is_menu_open,
+                    "mainloop must have consumed the actual click"
+                );
+                assert_eq!(input.take_manual_move_intent(), expected, "click ({x},{y})");
+                assert_eq!(input.take_manual_move_intent(), None);
+                assert_eq!(client.shell.mouse_button, 0, "Down+Up remains released");
+                if expected == Some(ManualMoveIntent::Minimap) {
+                    assert_eq!(client.out.data()[0], ClientProt::MOVE_MINIMAPCLICK.id as u8);
+                    assert_eq!(
+                        client.out.pos, 21,
+                        "retain the real minimap packet and extras"
+                    );
+                } else {
+                    assert_eq!(client.out.pos, 0, "menu Cancel/dismissal sends no walk");
+                }
+                false
+            },
+        );
+    }
+}
+
+#[test]
 fn host_owned_session_does_not_emit_automatic_idle_request() {
     for revision in [
         client::client::ClientRevision::R274,

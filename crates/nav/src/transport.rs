@@ -195,12 +195,15 @@ pub struct TransportEdge {
     pub quest_gates: Option<QuestGates>,
 }
 
-/// All transport edges, indexed by interact target (`graph.at[tile]` lists
-/// indexes into [`TransportGraph::edges`]).
+/// Transport edges indexed by operable footprint stands or radius-one
+/// interact anchors (`graph.at[tile]` lists indexes into `edges`).
 #[derive(Debug, Default)]
 pub struct TransportGraph {
     pub edges: Vec<TransportEdge>,
     pub at: HashMap<WorldTile, Vec<usize>>,
+    /// Rotated footprint geometry aligned with `edges`. Absent geometry,
+    /// including an empty vector on synthetic graphs, retains radius one.
+    pub approaches: Vec<Option<api::query::loc_approach::LocApproach>>,
     /// Any-tile teleport edges (spells + jewellery rubs), kept out of
     /// `edges`/`at` so the default [`crate::router::find`] never sees
     /// them. [`crate::router::find_allow_teleports`] unions them in from
@@ -210,10 +213,83 @@ pub struct TransportGraph {
     /// `wilderness_levels.rs2` / `wilderness_zones.dbrow`. Empty on graphs
     /// that did not see those sources (fixtures).
     pub wilderness: WildernessRules,
+    /// Optional packed exclusion-zone table. `None` for legacy grids and
+    /// intentionally synthetic worlds.
+    pub zones: Option<crate::zones::ZoneTable>,
     /// The selected quest family the bake consumed stage signals from
     /// (digest + extractor schema). `None` when it consumed none; then no
     /// edge carries [`TransportEdge::quest_gates`].
     pub quest_family: Option<QuestFamilyId>,
+}
+
+impl TransportGraph {
+    /// The same footprint/face predicate used by live loc interactions.
+    pub fn admissible_from(
+        &self,
+        collision: &WorldCollision,
+        index: usize,
+        from: WorldTile,
+    ) -> bool {
+        let edge = &self.edges[index];
+        if !collision.standable(from) || from.level != edge.at.level {
+            return false;
+        }
+        match self.approaches.get(index).copied().flatten() {
+            Some(approach) => approach.can_operate(
+                edge.at,
+                from,
+                collision.walkable_word(from.x, from.z, from.level) as i32,
+            ),
+            None => (from.x - edge.at.x).abs().max((from.z - edge.at.z).abs()) <= 1,
+        }
+    }
+
+    pub(crate) fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
+        let at = self.edges[index].at;
+        let approach = self.approaches.get(index).copied().flatten();
+        (
+            WorldTile {
+                x: at.x - 1,
+                z: at.z - 1,
+                level: at.level,
+            },
+            WorldTile {
+                x: at.x + approach.map_or(1, |shape| i32::from(shape.width)),
+                z: at.z + approach.map_or(1, |shape| i32::from(shape.length)),
+                level: at.level,
+            },
+        )
+    }
+
+    /// Index footprint edges at their operable stands; other transports keep
+    /// their target anchor. This index is shared by all router callers.
+    pub fn rebuild_index(&mut self, collision: &WorldCollision) {
+        self.at.clear();
+        for (index, edge) in self.edges.iter().enumerate() {
+            if self.approaches.get(index).copied().flatten().is_none() {
+                self.at.entry(edge.at).or_default().push(index);
+                continue;
+            }
+            let (min, max) = self.takeoff_bounds(index);
+            for x in min.x..=max.x {
+                for z in min.z..=max.z {
+                    let from = WorldTile {
+                        x,
+                        z,
+                        level: min.level,
+                    };
+                    if self.admissible_from(collision, index, from) {
+                        self.at.entry(from).or_default().push(index);
+                    }
+                }
+            }
+        }
+        // Nearly every router probe misses this sparse index. Footprint
+        // stands can fill the last slots of a hash-table size class, making
+        // those misses scan multiple control groups. Keep spare capacity
+        // once at load/bake time instead of paying that cost for every tile.
+        self.at.reserve(self.at.len());
+    }
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
@@ -393,9 +469,38 @@ fn derive_transports_with_audit(
     // its inputs, so edges are put in a canonical order before indexing.
     graph.edges.sort_by(edge_order);
     graph.teleports.sort_by(edge_order);
-    for (i, e) in graph.edges.iter().enumerate() {
-        graph.at.entry(e.at).or_default().push(i);
-    }
+    graph.approaches = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            if !matches!(
+                edge.kind,
+                TransportKind::Ladder
+                    | TransportKind::Stairs
+                    | TransportKind::AgilityShortcut
+                    | TransportKind::SpiritTree
+            ) {
+                return None;
+            }
+            let placement = positions.get(&edge.loc_id)?.iter().find(|loc| {
+                loc.x == edge.at.x
+                    && loc.z == edge.at.z
+                    && loc.level == edge.at.level
+                    && matches!(loc.shape, 10 | 11 | 22)
+            })?;
+            let def = loc_defs.loc(edge.loc_id)?;
+            Some(
+                api::query::loc_approach::LocApproach::from_loc_def(
+                    def.width,
+                    def.length,
+                    placement.angle,
+                    def.force_approach,
+                )
+                .expect("cache footprint dimensions fit in a byte"),
+            )
+        })
+        .collect();
+    graph.rebuild_index(collision);
 
     (graph, skipped, audit)
 }

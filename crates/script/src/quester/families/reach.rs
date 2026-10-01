@@ -471,14 +471,18 @@ pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
 }
 
 fn saw_cant_reach(cx: &ActionContext<'_>, since: i32) -> bool {
+    saw_game_message(cx, since, CANT_REACH)
+}
+
+pub(super) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str) -> bool {
     cx.snapshot().chat_lines(since).is_some_and(|lines| {
         lines.value.iter().any(|line| {
             line.username.is_none()
                 && line.type_ == 0
                 && line
                     .text
-                    .get(..CANT_REACH.len())
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(CANT_REACH))
+                    .get(..message.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(message))
         })
     })
 }
@@ -497,6 +501,7 @@ pub fn walk_request(tile: WorldTile, radius: u16, required_after: EvidenceStamp)
         options: crate::FindOptions::default(),
         required_after,
         evidence: None,
+        cross: Vec::new().into_boxed_slice(),
     }
 }
 

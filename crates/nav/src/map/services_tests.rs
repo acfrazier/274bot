@@ -417,3 +417,43 @@ fn generator_identity_tracks_source_bytes() {
     assert_ne!(a, b);
     assert_eq!(a.len(), 64);
 }
+
+#[test]
+fn bridge_flags_do_not_remap_npc_spawn_planes() {
+    let fix = Fixture::new();
+    fix.write(
+        "maps/m48_61.jm2",
+        "==== MAP ====\n1 28 23: f2\n==== NPC ====\n0 28 23: 1\n1 28 23: 1\n",
+    );
+    let (.., hits, _) = scan_maps(&fix.0, &HashSet::from([1]), &HashSet::new()).unwrap();
+    let spawns = &hits[&1];
+    assert_eq!(
+        spawns
+            .iter()
+            .map(|hit| (hit.x, hit.z, hit.plane))
+            .collect::<Vec<_>>(),
+        [(3100, 3927, 0), (3100, 3927, 1)],
+    );
+    assert!(spawns.iter().all(|hit| hit.link_below));
+}
+
+#[test]
+fn hunter_tether_defaults_to_wander_plus_two_and_never_below_wander() {
+    for (configured, expected) in [(None, 14), (Some(2), 12), (Some(20), 20)] {
+        let fix = Fixture::new();
+        fix.write("pack/npc.pack", "1=hunter\n");
+        fix.write(
+            "scripts/configs/hunter.hunt",
+            "[aggressive]\ntype=player\ncheck_nottoostrong=off\nfind_newmode=opplayer2\n",
+        );
+        let maxrange = configured.map_or(String::new(), |value| format!("maxrange={value}\n"));
+        fix.write(
+            "scripts/configs/hunter.npc",
+            &format!("[hunter]\nhuntmode=aggressive\nhuntrange=5\nwanderrange=12\n{maxrange}"),
+        );
+        let mut hunter = npc(1, "Hunter", &["Attack"]);
+        hunter.vislevel = 54;
+        let inputs = collect_hunter_inputs(&fix.0, &[hunter], &HashSet::new()).unwrap();
+        assert_eq!(inputs.definitions[0].maxrange, expected);
+    }
+}

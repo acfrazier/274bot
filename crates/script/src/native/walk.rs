@@ -77,6 +77,8 @@ impl NativeMachine for Walk {
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Failed,
+                blocked: None,
+                detail: None,
             }));
         }
         if !cx.evidence().meets(self.required_after) {
@@ -108,6 +110,8 @@ impl NativeMachine for Walk {
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
             }));
         }
         match receipt {
