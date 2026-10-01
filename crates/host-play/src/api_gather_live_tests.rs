@@ -150,7 +150,10 @@ fn tile_from_env() -> WorldTile {
         z: parse(parts.next()),
         level: parse(parts.next()),
     };
-    assert!(parts.next().is_none(), "GATHERER_WC_TILE must have exactly three values");
+    assert!(
+        parts.next().is_none(),
+        "GATHERER_WC_TILE must have exactly three values"
+    );
     tile
 }
 
@@ -207,14 +210,14 @@ fn live_frame(
                 Ok(())
             }
             SeedPhase::WaitTutorial => {
-                if snapshot
-                    .chat_lines()
+                if snapshot.chat_lines().iter().any(|line| {
+                    line.text
+                        .to_ascii_lowercase()
+                        .contains("get tutorial: 1000")
+                }) || snapshot
+                    .chat_modal_texts()
                     .iter()
-                    .any(|line| line.text.to_ascii_lowercase().contains("get tutorial: 1000"))
-                    || snapshot
-                        .chat_modal_texts()
-                        .iter()
-                        .any(|text| text.to_ascii_lowercase().contains("get tutorial: 1000"))
+                    .any(|text| text.to_ascii_lowercase().contains("get tutorial: 1000"))
                 {
                     state.phase = SeedPhase::Logout;
                 }
@@ -267,7 +270,10 @@ fn live_frame(
                 Ok(())
             }
             SeedPhase::SeedTeleport => {
-                send_cheat(client, &api::interact::tele_args(tile.level, tile.x, tile.z))?;
+                send_cheat(
+                    client,
+                    &api::interact::tele_args(tile.level, tile.x, tile.z),
+                )?;
                 state.phase = SeedPhase::WaitSeed;
                 Ok(())
             }
@@ -283,7 +289,11 @@ fn live_frame(
                     .stats()
                     .iter()
                     .any(|stat| stat.name.eq_ignore_ascii_case("woodcutting") && stat.base >= 1);
-                if snapshot.ingame() && snapshot.scene_state() == 2 && on_tile && has_axe && has_skill
+                if snapshot.ingame()
+                    && snapshot.scene_state() == 2
+                    && on_tile
+                    && has_axe
+                    && has_skill
                 {
                     state.phase = SeedPhase::Ready;
                 }
@@ -297,17 +307,16 @@ fn live_frame(
     }
 }
 
-fn wait_until(
-    label: &str,
-    timeout: Duration,
-    mut ready: impl FnMut() -> bool,
-) {
+fn wait_until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     loop {
         if ready() {
             return;
         }
-        assert!(Instant::now() < deadline, "{label} timed out after {timeout:?}");
+        assert!(
+            Instant::now() < deadline,
+            "{label} timed out after {timeout:?}"
+        );
         thread::sleep(Duration::from_millis(50));
     }
 }
@@ -373,9 +382,8 @@ fn wire_shadow_lengths(
                 api_gather: Some(&page),
                 ..native
             };
-            let (bytes, fingerprint) = encoder.encode_snapshot_delta_with_native(
-                None, input, native, false,
-            );
+            let (bytes, fingerprint) =
+                encoder.encode_snapshot_delta_with_native(None, input, native, false);
             (bytes.len(), fingerprint)
         },
     );
@@ -405,9 +413,8 @@ fn wire_shadow_lengths(
                 api_gather: Some(&page),
                 ..native
             };
-            let (bytes, _) = encoder.encode_snapshot_delta_with_native(
-                Some(&fingerprint), input, native, false,
-            );
+            let (bytes, _) =
+                encoder.encode_snapshot_delta_with_native(Some(&fingerprint), input, native, false);
             bytes.len()
         },
     );
@@ -425,7 +432,10 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let evidence_dir = PathBuf::from(
         std::env::var_os("BOT_EVIDENCE_DIR").expect("LIVE receipt requires BOT_EVIDENCE_DIR"),
     );
-    assert!(evidence_dir.is_absolute(), "BOT_EVIDENCE_DIR must be absolute");
+    assert!(
+        evidence_dir.is_absolute(),
+        "BOT_EVIDENCE_DIR must be absolute"
+    );
     std::fs::create_dir_all(&evidence_dir).expect("create receipt directory");
     let home = ThrowawayHome::enter("receipt");
     let options = live_options(&home.path);
@@ -437,11 +447,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let names = mint_live_names(1);
     let credentials = mint_live_entries(&names);
     let account = names.first().expect("minted account").clone();
-    let password = credentials
-        .first()
-        .expect("minted credentials")
-        .1
-        .clone();
+    let password = credentials.first().expect("minted credentials").1.clone();
     let setup = Arc::new(Mutex::new(LiveSetup::default()));
     let frame_setup = Arc::clone(&setup);
     let frame_account = account.clone();
@@ -468,17 +474,24 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     )
     .expect("spawn minted live account");
 
-    wait_until("Gather API fixture readiness", Duration::from_secs(240), || {
-        let (error, ready) = {
-            let state = setup.lock().expect("live setup lock");
-            (state.error.clone(), state.phase == SeedPhase::Ready)
-        };
-        assert!(error.is_none(), "Gather API fixture setup failed: {error:?}");
-        ready
-            && play.statuses().iter().any(|status| {
-                status.username == account && status.ingame && status.scene_state == 2
-            })
-    });
+    wait_until(
+        "Gather API fixture readiness",
+        Duration::from_secs(240),
+        || {
+            let (error, ready) = {
+                let state = setup.lock().expect("live setup lock");
+                (state.error.clone(), state.phase == SeedPhase::Ready)
+            };
+            assert!(
+                error.is_none(),
+                "Gather API fixture setup failed: {error:?}"
+            );
+            ready
+                && play.statuses().iter().any(|status| {
+                    status.username == account && status.ingame && status.scene_state == 2
+                })
+        },
+    );
 
     play.script_start_load(
         &account,
@@ -504,10 +517,14 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         .memory_script_metrics(&account)
         .expect("real Play memory metrics before API session");
     slot_probe(&play, &account, "globalThis.__start = true");
-    wait_until("Gather API installed with a published status", Duration::from_secs(180), || {
-        let page = slot_probe(&play, &account, "globalThis.__page");
-        page["phase"] == "running" && page["status"]["phase"].as_str().is_some()
-    });
+    wait_until(
+        "Gather API installed with a published status",
+        Duration::from_secs(180),
+        || {
+            let page = slot_probe(&play, &account, "globalThis.__page");
+            page["phase"] == "running" && page["status"]["phase"].as_str().is_some()
+        },
+    );
     let live_page = slot_probe(&play, &account, "globalThis.__page");
     let token = run_session(&live_page);
     let session_before = run_session_epoch(&play, &account);
@@ -550,8 +567,8 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     slot_probe(&play, &account, "globalThis.__stop = true");
     wait_until("Gather API Stop terminal", Duration::from_secs(30), || {
         let page = slot_probe(&play, &account, "globalThis.__page");
-        page.is_null() && slot_probe(&play, &account, "globalThis.__result")["value"]["end"]
-            == "stopped"
+        page.is_null()
+            && slot_probe(&play, &account, "globalThis.__result")["value"]["end"] == "stopped"
     });
     let metrics_after = play
         .memory_script_metrics(&account)
@@ -585,5 +602,8 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     )
     .expect("write live receipt");
     println!("api-gather-live-receipt={}", receipt_path.display());
-    println!("{}", serde_json::to_string_pretty(&receipt).expect("format receipt"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt).expect("format receipt")
+    );
 }
