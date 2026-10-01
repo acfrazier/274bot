@@ -632,6 +632,120 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
 }
 
 #[test]
+fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state() {
+    use script::shim::InteractReq;
+    use script_channels::{BrokerWorld, ChannelBroker};
+
+    for owned in [false, true] {
+        for (up, hold, has_snapshot) in [
+            (false, false, false),
+            (true, true, true),
+            (true, false, false),
+            (true, false, true),
+        ] {
+            let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
+            rig.isolate_tick_without_host_drain();
+            rig.frame();
+            let cell = rig.slot();
+            cell.lock().unwrap().pause();
+            if owned {
+                cell.lock()
+                    .unwrap()
+                    .restore_interacts(vec![InteractReq::GatherRun {
+                        request_id: 7,
+                        settings: Arc::new(serde_json::Map::new()),
+                    }]);
+                rig.drain_host();
+            }
+            assert_eq!(cell.lock().unwrap().api_owns_foreground(), owned);
+
+            let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
+            let rows = vec![
+                InteractReq::ChannelOpen {
+                    channel_id: 1,
+                    name: channel.into(),
+                },
+                InteractReq::ChannelPost {
+                    channel_id: 1,
+                    name: channel.into(),
+                    data: script::channel::encode(&serde_json::json!({"proof": "paused"})).unwrap(),
+                },
+                InteractReq::ChannelClose {
+                    channel_id: 1,
+                    name: channel.into(),
+                },
+                InteractReq::InspectRoute {
+                    x: rig.tile.x + 1,
+                    z: rig.tile.z,
+                    level: rig.tile.level,
+                    from_x: rig.tile.x,
+                    from_z: rig.tile.z,
+                    from_level: rig.tile.level,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    avoid: vec![],
+                    request_id: 9,
+                },
+                InteractReq::InspectAck {
+                    seq: 1,
+                    generation: cell.lock().unwrap().work_epoch(),
+                },
+                InteractReq::SetCameraYaw { yaw: 777 },
+            ];
+            cell.lock().unwrap().restore_interacts(rows.clone());
+            let broker = ChannelBroker::default();
+            let sender = broker.slot(SLOT);
+            let before_yaw = rig.client.orbit_camera_yaw;
+            script_observe_cached_with_channels(
+                &mut rig.client,
+                SLOT,
+                up,
+                true,
+                true,
+                rig.tick,
+                Some((rig.tile.x, rig.tile.z, rig.tile.level)),
+                None,
+                None,
+                has_snapshot.then_some(&rig.snapshot),
+                None,
+                Some(rig.names.as_ref()),
+                &rig.scripts,
+                &rig.cheats,
+                &rig.navs,
+                &None,
+                hold,
+                false,
+                None,
+                None,
+                Some(Arc::clone(&rig.cache)),
+                Some(Arc::clone(&rig.names)),
+                Some(&sender),
+                BrokerWorld::Local,
+                Some(&mut rig.policy),
+                None,
+            );
+            assert_eq!(cell.lock().unwrap().state(), script::RunState::Paused);
+            assert_eq!(rig.client.orbit_camera_yaw, before_yaw);
+            let retained = cell.lock().unwrap().drain_interacts();
+            assert_eq!(
+                retained, rows,
+                "Pause must retain channel, inspect and camera rows in order: \
+                 owned={owned}, up={up}, hold={hold}, snapshot={has_snapshot}"
+            );
+            cell.lock().unwrap().restore_interacts(retained);
+            cell.lock().unwrap().resume();
+            rig.frame();
+            assert_eq!(
+                rig.client.orbit_camera_yaw, 777,
+                "the retained camera write must dispatch after Resume"
+            );
+            cell.lock().unwrap().stop();
+        }
+    }
+}
+
+#[test]
 fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
     let mut rig = GatherReconnectRig::with_source(QUIET_SOURCE);
     rig.isolate_tick_without_host_drain();

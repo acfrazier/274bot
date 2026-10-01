@@ -183,7 +183,8 @@ impl ActionContext<'_> {
 
 /// Whether `emit` may queue `request`: a game interaction the host dispatches
 /// once, not a route (the typed walk owns those), broker channel, script
-/// mouse, host run policy or isolate lifecycle marker.
+/// mouse, inspect request/ack, SetCameraYaw, host run policy, GatherRun,
+/// GatherStop, ProgressRead or isolate lifecycle marker.
 fn native_interaction(request: &InteractReq) -> bool {
     request.is_game()
         && !matches!(
