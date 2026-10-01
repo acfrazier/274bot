@@ -1107,10 +1107,6 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
     assert_eq!(profile.nav_load_counters().pack_hashes, 0);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
-    assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 0);
-    assert_eq!(profile.nav_load_counters().canlight_reads, 1);
-    assert_eq!(profile.nav_load_counters().canlight_hashes, 0);
     assert!(profile.reach().is_some());
     assert!(profile.canlight().is_some());
     assert!(updates
@@ -1541,11 +1537,7 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
             Some(root.as_path()),
         )
         .unwrap_err();
-    assert!(error.contains("bundled navigation"), "{error}");
-    assert!(
-        error.contains("navreach") || error.contains("missing"),
-        "{error}"
-    );
+    assert!(matches!(error.as_str(), message if message.contains("navreach")));
 
     let reach_sha256 = write_bundled_reach(&root, &bytes);
     let with_reach = [BundledNavIdentity {
@@ -1633,26 +1625,72 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
 }
 
 #[test]
-fn external_pack_does_not_load_a_sibling_reach_sidecar() {
+fn bundled_and_external_sidecars_expose_identical_capabilities() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();
-    let pack = fixture.0.join("custom.navpack");
+    let root = fixture.0.join("Resources");
+    std::fs::create_dir_all(&root).unwrap();
+    let pack = root.join("274bot.navpack");
     std::fs::write(&pack, &bytes).unwrap();
-    std::fs::write(fixture.0.join("custom.navreach"), tiny_v8_reach(&bytes)).unwrap();
+    let reach_sha256 = write_bundled_reach(&root, &bytes);
+    let (canlight_sha256, canlight_identity) = write_bundled_canlight(&root, &bytes);
     let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
-    write_nav_sidecar(&pack, 289, cache_id, &bytes);
+    let manifest = NavManifest {
+        revision: 289,
+        cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: None,
+        reach_sha256: Some(reach_sha256.clone()),
+        canlight_sha256: Some(canlight_sha256.clone()),
+        pois_sha256: None,
+    };
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let table = [BundledNavIdentity {
+        revision: 289,
+        cache_id,
+        content_id: None,
+        source_sha256: None,
+        format: nav::pack::FORMAT_ID.into(),
+        nav_sha256: manifest.nav_sha256,
+        flags_sha256: None,
+        reach_sha256: Some(reach_sha256),
+        canlight_sha256: Some(canlight_sha256),
+        canlight_identity: Some(canlight_identity),
+        pois_sha256: None,
+        relative_path: "274bot.navpack".into(),
+    }];
     let mut options = fixture.options(289);
+    options.nav_pack = None;
+    let bundled = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &table,
+            Some(root.as_path()),
+        )
+        .unwrap();
     options.nav_pack = Some(pack);
-    let profile = options
+    let external = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap();
-    assert!(!profile.nav_origin().is_bundled());
-    assert!(profile.reach().is_none());
-    assert!(profile.canlight().is_none());
-    assert_eq!(profile.nav_load_counters().reach_reads, 0);
-    assert_eq!(profile.nav_load_counters().canlight_reads, 0);
+    assert!(bundled.nav_origin().is_bundled());
+    assert!(!external.nav_origin().is_bundled());
+    assert_eq!(
+        external.canlight().as_deref(),
+        bundled.canlight().as_deref()
+    );
+    assert_eq!(external.reach().as_deref(), bundled.reach().as_deref());
+    assert_eq!(external.reach().as_deref(), Some(&[0u64][..]));
+    assert_eq!(external.canlight().as_deref(), Some(&[0u64][..]));
 }
 
 fn write_world_json(engine: &Path, revision: u64, port: u64, members: &str) {

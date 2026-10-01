@@ -491,6 +491,27 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 }
 
 #[test]
+fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
+    let _guard = crate::picker::lock_nav_statics();
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = preparation_only_session();
+    session.install_prepared_template(template);
+    let world = profile.world().unwrap();
+    let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
+    assert_eq!(&*map_bits, &[0u64]);
+    assert!(Arc::ptr_eq(&map_bits, &profile.reach().unwrap()));
+    session.release_walk_map();
+    assert!(Arc::ptr_eq(
+        &map_bits,
+        &crate::picker::map_reach_bitset(&world).unwrap()
+    ));
+    crate::picker::set_pack(None);
+    assert!(crate::picker::map_reach_bitset(&world).is_none());
+}
+
+#[test]
 fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
     let mut session = Session::new();

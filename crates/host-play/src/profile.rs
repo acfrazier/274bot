@@ -297,7 +297,7 @@ pub struct ServerProfile {
     nav_identity: Option<NavManifest>,
     nav_load: NavLoadCounters,
     world: SharedWorld,
-    reach: Option<Arc<[u64]>>,
+    reach: Option<Arc<binding::DeferredReach>>,
     canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
@@ -389,13 +389,14 @@ impl ServerProfile {
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.0.clone()
     }
-    /// Bundled paint-reach bitset decoded at bind. `None` on the external
-    /// path, which keeps its one-time `bake_reach`.
+    /// Verified paint-reach sidecar, decoded once on the first panel request.
+    /// Routing never requests these words. Missing legacy identities or a file
+    /// changed after preparation return `None`; no unverified bits are exposed.
     pub fn reach(&self) -> Option<Arc<[u64]>> {
-        self.reach.clone()
+        self.reach.as_ref().and_then(|reach| reach.get())
     }
-    /// Bundled static canlight bitset decoded at bind. `None` on the external
-    /// / legacy path (Fire fail-closed; no runtime bake).
+    /// Verified static canlight plane shared by both navigation origins.
+    /// Legacy packs without a sidecar identity keep Fire explicitly unavailable.
     pub fn canlight(&self) -> Option<Arc<[u64]>> {
         self.canlight.clone()
     }

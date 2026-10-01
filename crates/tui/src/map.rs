@@ -67,8 +67,8 @@ const PATH_GLYPH: &str = "*";
 const SELECTION_GLYPH: &str = "+";
 const OBSERVED_GLYPH: &str = "N";
 
-/// Optional map layers. The dot layer is the useful default; collision and
-/// reach are explicit diagnostics and never trigger a provider load here.
+/// Optional map layers. Reach consumes the bound verified paint bitset,
+/// never a runtime flood or terrain-image provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapLayers {
     pub dots: bool,
@@ -168,6 +168,8 @@ impl Default for MapView {
 
 pub struct Map<'a, F> {
     pub world: &'a NavWorld,
+    /// Verified paint-reach words shared with the panel map.
+    pub reach: Option<&'a [u64]>,
     /// The player's observed tile; `None` before the first snapshot.
     pub here: Option<WorldTile>,
     /// The armed route whose remaining tiles paint `*` (optional).
@@ -190,6 +192,7 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
     pub fn new(world: &'a NavWorld, view: &'a mut MapView, walk: F) -> Self {
         Self {
             world,
+            reach: None,
             here: None,
             route: None,
             pois: &[],
@@ -199,6 +202,11 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
             view,
             walk,
         }
+    }
+
+    pub fn reach(mut self, reach: Option<&'a [u64]>) -> Self {
+        self.reach = reach;
+        self
     }
 
     /// Attach the shared POI projection. Records remain compact and
@@ -350,7 +358,29 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
                 if self.view.layers.dots || self.view.layers.collision {
                     put(buf, area, col, row, glyph);
                 }
+                if self.view.layers.reach {
+                    if let Some(bits) = self.reach {
+                        let tile = WorldTile {
+                            x,
+                            z,
+                            level: c.level,
+                        };
+                        if walkable && !nav::paint::reached(bits, &self.world.collision, tile) {
+                            let point = (area.x + col as u16, area.y + row as u16);
+                            buf[point].set_bg(Color::Rgb(64, 24, 24));
+                        }
+                    }
+                }
             }
+        }
+        if self.view.layers.reach && self.reach.is_none() {
+            buf.set_stringn(
+                area.x,
+                area.y,
+                "reach unavailable",
+                area.width as usize,
+                ratatui::style::Style::default(),
+            );
         }
 
         // Paint area membership after the terrain field so one wilderness
@@ -579,6 +609,64 @@ mod tests {
         assert_eq!(&buf_text[5 * 9 + 5..5 * 9 + 6], ".");
         // Blocked (off-grid) cells stay blank.
         assert_eq!(&buf_text[0..1], " ");
+    }
+
+    #[test]
+    fn reach_layer_snapshots_at_standard_and_compact_sizes() {
+        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let bits = [1u64 << 4];
+        for (width, height) in [(120, 40), (80, 24)] {
+            let mut view = MapView::new();
+            let off = render_buffer(
+                Map::new(&world, &mut view, |_| {})
+                    .here(wtile(1, 1, 0))
+                    .reach(Some(&bits)),
+                width,
+                height,
+            );
+            view.layers.reach = true;
+            let on = render_buffer(
+                Map::new(&world, &mut view, |_| {})
+                    .here(wtile(1, 1, 0))
+                    .reach(Some(&bits)),
+                width,
+                height,
+            );
+            for dz in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let point = (
+                        (width as i32 / 2 + dx) as u16,
+                        (height as i32 / 2 - dz) as u16,
+                    );
+                    assert_eq!(
+                        on[point].symbol(),
+                        if dx == 0 && dz == 0 { "@" } else { "." }
+                    );
+                    assert_eq!(off[point].symbol(), on[point].symbol());
+                    assert_eq!(off[point].bg, ratatui::style::Color::Reset);
+                    assert_eq!(
+                        on[point].bg,
+                        if dx == 0 && dz == 0 {
+                            ratatui::style::Color::Reset
+                        } else {
+                            ratatui::style::Color::Rgb(64, 24, 24)
+                        },
+                        "{width}x{height} cell {dx},{dz}",
+                    );
+                }
+            }
+            let missing = render_buffer(
+                Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0)),
+                width,
+                height,
+            );
+            let first_row: String = (0..width).map(|x| missing[(x, 0)].symbol()).collect();
+            assert!(first_row.starts_with("reach unavailable"));
+            assert!(missing
+                .content()
+                .iter()
+                .all(|cell| cell.bg != ratatui::style::Color::Rgb(64, 24, 24)));
+        }
     }
 
     #[test]
