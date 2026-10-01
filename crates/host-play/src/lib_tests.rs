@@ -6931,6 +6931,137 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
 }
 
 #[test]
+fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 39,
+        z: 0,
+        level: 0,
+    };
+    let collision = nav::collision::WorldCollision {
+        origin: from,
+        width: 40,
+        height: 1,
+        walk: vec![0; 40],
+        blocked: vec![0; 1],
+        flags: None,
+    };
+    let mut graph = nav::transport::TransportGraph::default();
+    graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            vec![nav::zones::Zone::npc(
+                WorldTile {
+                    x: 2,
+                    z: 0,
+                    level: 0,
+                },
+                0,
+                nav::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav::zones::ZoneKind::new(
+                "test-barrier",
+                "Test barrier",
+                123,
+                0,
+                false,
+                false,
+            )],
+            vec![],
+            vec![],
+            vec![],
+            from,
+            40,
+            1,
+            &graph.wilderness,
+        )
+        .expect("the test barrier fits its world"),
+    );
+    let world = Some(Arc::new(NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    )));
+    let (navs, _) = empty_nav();
+    let mut client = bank_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+
+    let inspect_wire = |request_id, cross: Option<&str>| {
+        let mut value = serde_json::json!({
+            "op": "inspect-route",
+            "x": to.x,
+            "z": to.z,
+            "level": to.level,
+            "from_x": from.x,
+            "from_z": from.z,
+            "from_level": from.level,
+            "allow_wilderness": true,
+            "request_id": request_id,
+        });
+        if let Some(name) = cross {
+            value["cross"] = serde_json::json!([name]);
+        }
+        let request: script::shim::InteractReq =
+            serde_json::from_value(value).expect("inspect request decodes");
+        let bytes = script::isolate_fb::encode_interact_batch(&[request]);
+        script::isolate_fb::decode_interact_batch(&bytes).expect("inspect wire decodes")
+    };
+    let mut inspect = |request_id, cross| {
+        let reqs = inspect_wire(request_id, cross);
+        assert!(dispatch_script_interact(
+            &mut client,
+            &snapshot,
+            None,
+            Some((from.x, from.z, from.level)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            reqs,
+        ));
+        let start = Instant::now();
+        loop {
+            let term = navs.lock().unwrap().get("alice").and_then(|bot| {
+                bot.inspect
+                    .latest
+                    .as_ref()
+                    .filter(|term| term.request_id == request_id)
+                    .or_else(|| {
+                        bot.inspect
+                            .prev
+                            .as_ref()
+                            .filter(|term| term.request_id == request_id)
+                    })
+                    .cloned()
+            });
+            if let Some(term) = term {
+                return term;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "inspect {request_id} did not publish"
+            );
+            std::thread::yield_now();
+        }
+    };
+
+    let blocked = inspect(901, None);
+    assert!(!blocked.ok, "the only route crosses an active zone");
+    let crossed = inspect(902, Some("test-barrier"));
+    assert!(
+        crossed.ok,
+        "host InspectRoute must apply the wire's cross exemption: {}",
+        crossed.reason
+    );
+}
+
+#[test]
 fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();

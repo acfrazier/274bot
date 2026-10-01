@@ -122,8 +122,12 @@ pub enum InteractReq {
         allow_wilderness: bool,
         #[serde(default)]
         allow_bank_fetch: bool,
+        /// Frozen rectangle and catalog avoid entries.
         #[serde(default)]
         avoid: Vec<InspectAvoidWire>,
+        /// Per-request named danger-zone exemptions.
+        #[serde(default)]
+        cross: Vec<String>,
         #[serde(default)]
         request_id: u64,
     },

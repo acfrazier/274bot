@@ -339,7 +339,10 @@ the host's shared `nav::router::find` and the slot pump's
 `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walk operations
-are not installed by the registration cutover.
+are not installed by the registration cutover. Authored Path `walk` steps do
+not yet implement protected walking: a nonempty `cross` is rejected during
+Path compilation with code `invalid-args` and detail
+`walk: cross needs protected walk (combat slice)`.
 
 ## Catalog walking and recovery (compat v1)
 
@@ -356,18 +359,21 @@ arguments and awaits one completion.
   must reach it). A settled blocked route end returns true. `maxBudget` is
   accepted: it bounds frozen's PathFinder, and the host router searches
   every walk and the probe to its own 4,000,000-node bound, never less.
-  `avoidZones` rectangles ride the walk and the probe, and every host search
-  of the walk keeps out of them; a catalog zone id (not a host table), an
-  inverted rectangle or more than 16 fail with `not impl`.
-  `bankItemCounts` is not an input (the host bank fetch reads the bank).
+  `avoidZones` accepts up to 16 rectangles or the known catalog ids
+  `white-wolf-mountain` and `draynor-jail-guards`; unknown ids, invalid
+  rectangles or too many entries are refused by the host. `crossZones`
+  accepts up to eight named danger zones to exempt for this walk and its
+  verify probe; unknown names, excessive counts or an unavailable zone
+  catalog are refused as well. `bankItemCounts` is not an input (the host
+  bank fetch reads the bank).
 - **`Traversal.walkTo`** is one Rust walk: radius 2 and 300 s by default,
-  the same teleport rules and `avoidZones` as `walkResilient`,
-  `maxExpansions` accepted as `maxBudget` is, and the card's `Sustain` hook
-  once a tick while it walks. A random event ends it false and stops its
-  route. Walking off Karamja without the 30-coin fare (the navigator names
-  only the fare as missing), it earns the fare at Luthas's plantation and
-  walks once more. Teleport id lists, ship or shortcut exclusion,
-  `pathFollow` and `forceRepath` fail with `not impl`.
+  the same teleport, `avoidZones` and `crossZones` rules as
+  `walkResilient`, `maxExpansions` accepted as `maxBudget` is, and the
+  card's `Sustain` hook once a tick while it walks. A random event ends it
+  false and stops its route. Walking off Karamja without the 30-coin fare
+  (the navigator names only the fare as missing), it earns the fare at
+  Luthas's plantation and walks once more. Teleport id lists, ship or
+  shortcut exclusion, `pathFollow` and `forceRepath` fail with `not impl`.
 - The host owns a script's active route. Operator Pause ends the follow
   and keeps the route as carried state, as a reconnect does; the first
   dispatch after Resume sends it once more under its own request id,

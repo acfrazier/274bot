@@ -3302,6 +3302,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -3792,7 +3796,9 @@ fn interact_off<'b>(
         _ => None,
     };
     let cross_off = match req {
-        InteractReq::Walk { cross, .. } | InteractReq::WalkNear { cross, .. }
+        InteractReq::Walk { cross, .. }
+        | InteractReq::WalkNear { cross, .. }
+        | InteractReq::InspectRoute { cross, .. }
             if !cross.is_empty() =>
         {
             let names: Vec<_> = cross.iter().map(|name| b.create_string(name)).collect();

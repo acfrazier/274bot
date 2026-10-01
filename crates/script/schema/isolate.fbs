@@ -560,7 +560,8 @@ table Interact {
   // Optional energy: 0 absent, 1 integer floor, 2 JavaScript NaN.
   run_energy_kind: ubyte = 0;
   run_energy_min: int = 0;
-  // Appended native walk exemption names. JSON wire deliberately has no field.
+  // Per-request named zone exemptions for world walks and inspect-route. The
+  // compat JSON surface has no wire field.
   cross: [string];
 }
 
