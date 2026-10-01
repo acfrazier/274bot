@@ -6053,6 +6053,69 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
 }
 
 #[test]
+fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let edge = world.graph.edges.iter().find(|edge| {
+        edge.loc_id == 1738 && edge.at == WorldTile { x: 3204, z: 3207, level: 0 }
+    }).expect("real Lumbridge south staircase").clone();
+    let mut c = scene_client();
+    plant_loc_sized(&mut c, 1738, "Staircase", "Climb-up", 4, 7, 2, 2, 0);
+    for x in 0..104 {
+        for z in 0..104 {
+            c.collision[0].flags[x][z] =
+                world.collision.walkable_word(3200 + x as i32, 3200 + z as i32, 0) as i32;
+        }
+    }
+    let mut snap = snap_at(&mut c, 5, 6);
+    let mut loc = snap.locs().iter().find(|loc| loc.id == 1738).unwrap().clone();
+    loc.shape = 10;
+    loc.footprint_width = 2;
+    loc.footprint_length = 2;
+    snap.seed_locs(vec![loc.clone()]);
+    let from = WorldTile { x: 3205, z: 3206, level: 0 };
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(&loc, snap.scene(), from),
+        Some(false),
+        "the south castle wall separates the Chebyshev-near stand from the stairs"
+    );
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(from)).flood_reach().unwrap();
+    let approach = api::query::loc_approach::booth_approach(&loc, snap.scene(), from, &flood)
+        .unwrap().dest.expect("castle entrance connects an operable stair side");
+    eprintln!("real stairs from={from:?} loc={loc:?} approach={approach:?}");
+    assert_eq!(api::query::loc_approach::can_operate_from(&loc, snap.scene(), approach), Some(true));
+    let route = Route {
+        legs: vec![Leg::Transport { edge: edge.clone() }],
+        dest: edge.to,
+        ticks: edge.ticks as f64,
+    };
+    let mut rec = FollowRec { route: Some((5, 6)), ..FollowRec::default() };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions { close_enough: 0, ..TravelOptions::default() };
+    assert!(traveller.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+    assert_eq!(rec.loc_ops, 0, "do not send a stairs op through the castle wall");
+    assert_eq!(rec.walked.last(), Some(&(approach.x - 3200, approach.z - 3200)));
+    // A near-anchor tile still behind the wall must not finish the approach.
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![loc.clone()]);
+    assert!(traveller.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+    assert_eq!(rec.loc_ops, 0);
+    plant_player(&mut c, approach.x - 3200, approach.z - 3200);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![loc]);
+    assert!(traveller.follow(&mut rec, &snap, route.clone(), &mut options).is_none());
+    assert_eq!(rec.loc_ops, 1, "the operable footprint stand can send Climb-up");
+    c.minusedlevel = 1;
+    plant_player(&mut c, edge.to.x - 3200, edge.to.z - 3200);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(matches!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at }) if at == edge.to
+    ));
+}
+
+#[test]
 fn door_tile_is_the_edge_at() {
     // A door with `to` 2 tiles away: the door's own tile is the
     // edge's `at` (the loc tile), never the midpoint of `at`/`to`.
