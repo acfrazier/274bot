@@ -41,6 +41,7 @@ pub mod loadouts_store;
 mod module_imports;
 /// Typed compiled cards, preparation, execution and output.
 pub mod native;
+pub mod combat;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -172,7 +173,6 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-#[cfg(feature = "load")]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
