@@ -20511,6 +20511,116 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
     );
 }
 
+#[test]
+fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() {
+    use script::native::walk::Walk;
+    use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd};
+    use std::task::Poll;
+
+    struct Walker {
+        handle: Option<ActionHandle<Walk>>,
+        end: Arc<Mutex<Option<WalkEnd>>>,
+    }
+
+    impl Script for Walker {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if let Some(handle) = &self.handle {
+                if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                    *self.end.lock().unwrap() = Some(result.expect("walk receipt").end);
+                }
+            } else {
+                self.handle = Some(
+                    tick.actions
+                        .begin::<Walk>(
+                            script::native::WalkRequest {
+                                target: WorldTile {
+                                    x: 4,
+                                    z: 0,
+                                    level: 0,
+                                },
+                                radius: 1,
+                                options: script::FindOptions::default(),
+                                required_after: tick.cx.evidence(),
+                                evidence: None,
+                            },
+                            &mut tick.cx,
+                        )
+                        .expect("begin walk"),
+                );
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let end = Arc::new(Mutex::new(None));
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(Walker {
+                handle: None,
+                end: Arc::clone(&end),
+            }),
+            None,
+        )
+        .unwrap();
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let world = Some(Arc::new(open_world(40, 1)));
+    let mut driver = NavRec::default();
+    let mut client = nav_client();
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+    let observe = |driver: &mut NavRec, snapshot: &GameSnapshot, tick| {
+        script_observe(
+            driver,
+            "alice",
+            true,
+            true,
+            tick,
+            Some((0, 0, 0)),
+            None,
+            None,
+            Some(snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+    };
+    observe(&mut driver, &snapshot, 1);
+    assert!(wait_until(5_000, || queued(&navs).is_some()));
+
+    // Arrival can be transient between native polls, for example when a
+    // transport moves the actor again. The host terminal must survive it.
+    nav_snapshot_at(&mut client, &mut snapshot, 3, 0);
+    step_nav_bot(
+        &mut driver,
+        "alice",
+        Some((3, 0, 0)),
+        &snapshot,
+        &navs,
+        &statuses,
+        world.as_deref(),
+        false,
+        false,
+        no_reach,
+    );
+    assert_eq!(queued(&navs), None);
+    assert_eq!(driver.walked, None, "arrival must send no further hop");
+    nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+    observe(&mut driver, &snapshot, 2);
+    assert_eq!(*end.lock().unwrap(), Some(WalkEnd::RouteEnded));
+}
+
 /// The slot's reach view for `here` on a 20x20 scene split by a closed
 /// wall between rows z=12 and z=13 (a shut door the full width across).
 fn walled_reach(x: i32, z: i32) -> Arc<api::query::ReachQueryView> {
