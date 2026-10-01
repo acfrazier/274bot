@@ -785,7 +785,7 @@ fn panel_font_covers_non_ascii_source_string_literals() {
 }
 
 /// The 3270 cell advance at [`PANEL_FONT_SIZE`] stays within 5% of
-/// ProggyClean's old 6 px advance at 1×, natively (no minimum-advance
+/// ProggyClean's old 7 px advance at 13 px, natively (no minimum-advance
 /// padding), so the panel's existing horizontal layout still fits.
 #[test]
 fn panel_font_advance_stays_within_five_percent_of_old_layout() {
@@ -793,14 +793,15 @@ fn panel_font_advance_stays_within_five_percent_of_old_layout() {
     let (mut ctx, glyphs_present) = panel_font_test_context();
     assert!(glyphs_present, "panel's required glyphs are in the atlas");
 
-    let (advance, size) = {
+    let (advance, size, line_height) = {
         let ui = ctx.frame();
         let size = ui.current_font_size();
+        let line_height = ui.text_line_height();
         let advance = ui
             .current_font()
             .calc_text_size(size, f32::MAX, 0.0, "00000000")[0]
             / 8.0;
-        (advance, size)
+        (advance, size, line_height)
     };
     ctx.render();
     assert!(
@@ -808,8 +809,12 @@ fn panel_font_advance_stays_within_five_percent_of_old_layout() {
         "font size at 1× must stay {PANEL_FONT_SIZE} px, got {size:.3}"
     );
     assert!(
-        (advance - 6.0).abs() <= 0.3,
-        "3270 cell advance {advance:.3} at size {size:.3} must stay within 5% of 6.0 px"
+        (line_height - 14.0).abs() <= 0.01,
+        "ImGui line height at the selected size must be 14 px, got {line_height:.3}"
+    );
+    assert!(
+        (advance - 7.0).abs() <= 0.35,
+        "3270 cell advance {advance:.3} at size {size:.3} must stay within 5% of ProggyClean's 7 px baseline"
     );
 }
 

@@ -809,8 +809,8 @@ impl AppWindow {
             cb(&mut context);
         }
 
-        // Keep one bundled base font at its logical 14 px size. Dear ImGui
-        // 1.92 applies display density when baking it; do not multiply here.
+        // Keep one bundled base font at its logical 14 px size (`PANEL_FONT_SIZE`).
+        // Dear ImGui 1.92 applies display density when baking it; do not multiply here.
         let glyphs_present = add_panel_font(&mut context);
         assert!(
             glyphs_present,
@@ -1389,10 +1389,10 @@ fn align_up(n: u32, align: u32) -> u32 {
     n.div_ceil(align) * align
 }
 
-/// Subset of 3270 Nerd Font Condensed: panel text, rail controls and Nerd
+/// Subset of 3270 Nerd Font Regular: panel text, rail controls and Nerd
 /// Fonts' Font Awesome icons. Recreate the asset with this exact command:
-/// `python3 -m fontTools.subset /Volumes/dev-scratch/274bot-evidence/PANEL-FONT-3270-1/nf-3270NerdFont-Condensed.ttf --output-file=/Volumes/dev-scratch/274bot-worktrees/panel-font-3270/crates/panel/assets/3270NerdFont-Condensed-subset.ttf '--unicodes=U+0020-007E,U+00A0-00FF,U+2013-2014,U+2026,U+2192,U+2194,U+2212,U+2264,U+2265,U+2582-2585,U+2605,U+2715,U+2717,U+F005,U+F006,U+F015,U+F019,U+F054,U+F07B,U+F108,U+F15B,U+F15C' --no-ignore-missing-unicodes`
-const PANEL_FONT_BYTES: &[u8] = include_bytes!("../assets/3270NerdFont-Condensed-subset.ttf");
+/// `python3 -m fontTools.subset /Volumes/dev-scratch/274bot-evidence/PANEL-FONT-3270-1/nf-3270NerdFont-Regular.ttf --output-file=/Volumes/dev-scratch/274bot-worktrees/panel-font-3270/crates/panel/assets/3270NerdFont-Regular-subset.ttf '--unicodes=U+0020-007E,U+00A0-00FF,U+2013-2014,U+2026,U+2192,U+2194,U+2212,U+2264,U+2265,U+2582-2585,U+2605,U+2715,U+2717,U+F005,U+F006,U+F015,U+F019,U+F054,U+F07B,U+F108,U+F15B,U+F15C' --no-ignore-missing-unicodes`
+const PANEL_FONT_BYTES: &[u8] = include_bytes!("../assets/3270NerdFont-Regular-subset.ttf");
 
 /// Non-ASCII codepoints the panel renders as text (status is drawn geometry).
 const PANEL_REQUIRED_GLYPHS: &[char] = &[
@@ -1402,9 +1402,9 @@ const PANEL_REQUIRED_GLYPHS: &[char] = &[
 ];
 
 /// Base UI font size. ImGui sizes a font by its ascent-to-descent height,
-/// not its em: at 15 px this 3270 cut advances ~6.0 px natively, the old
-/// ProggyClean text grid, with no glyph padding.
-const PANEL_FONT_SIZE: f32 = 15.0;
+/// not its em. The Regular face measures about 6.94 px per cell at 14 px,
+/// matching ProggyClean's 7 px grid at 13 px without glyph padding.
+const PANEL_FONT_SIZE: f32 = 14.0;
 
 /// Add the 3270 subset as the atlas's only, base font at [`PANEL_FONT_SIZE`].
 /// Dear ImGui 1.92 owns density scaling; the input size stays fixed.
@@ -1414,10 +1414,10 @@ fn add_panel_font(ctx: &mut imgui::Context) -> bool {
         .add_font_from_memory_ttf(
             PANEL_FONT_BYTES,
             PANEL_FONT_SIZE,
-            Some(&imgui::FontConfig::new().name("3270 Nerd Font Condensed")),
+            Some(&imgui::FontConfig::new().name("3270 Nerd Font Regular")),
             None,
         )
-        .expect("embedded 3270 Nerd Font Condensed subset is a valid TTF");
+        .expect("embedded 3270 Nerd Font Regular subset is a valid TTF");
     PANEL_REQUIRED_GLYPHS
         .iter()
         .all(|&glyph| font.is_glyph_in_font(glyph))

@@ -63,6 +63,7 @@ pub fn light_rgb(light: Light) -> [f32; 4] {
 }
 /// Draw five filled squares in the U+2059 pattern for a member's light.
 /// The marker consumes one text line and does not depend on font coverage.
+/// Its size and origin are snapped in framebuffer pixels at any scale.
 pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
     const DOT_CENTERS: [[f32; 2]; 5] = [
         [0.28, 0.28],
@@ -74,20 +75,25 @@ pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
 
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
-    let half = line_h * 0.11;
+    let framebuffer_scale = ui.io().display_framebuffer_scale();
+    let scale_x = framebuffer_scale[0].max(0.01);
+    let scale_y = framebuffer_scale[1].max(0.01);
+    let size_px = (line_h * 0.22 * scale_x.min(scale_y)).round().max(1.0);
     let colour = light_rgb(light);
     {
         let draw_list = ui.get_window_draw_list();
         for [cx, cy] in DOT_CENTERS {
-            let center = [x + width * cx, y + line_h * cy];
-            draw_list
-                .add_rect(
-                    [center[0] - half, center[1] - half],
-                    [center[0] + half, center[1] + half],
-                    colour,
-                )
-                .filled(true)
-                .build();
+            let center_px = [(x + width * cx) * scale_x, (y + line_h * cy) * scale_y];
+            let min_px = [
+                (center_px[0] - size_px * 0.5).round(),
+                (center_px[1] - size_px * 0.5).round(),
+            ];
+            let min = [min_px[0] / scale_x, min_px[1] / scale_y];
+            let max = [
+                (min_px[0] + size_px) / scale_x,
+                (min_px[1] + size_px) / scale_y,
+            ];
+            draw_list.add_rect(min, max, colour).filled(true).build();
         }
     }
     ui.dummy([width, line_h]);
@@ -220,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn status_dot_draws_five_light_colored_squares_inside_one_line() {
+    fn status_dot_draws_five_pixel_aligned_squares_at_every_framebuffer_scale() {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         let _ = ctx.font_atlas_mut().build();
@@ -229,74 +235,97 @@ mod tests {
 
         let light = Light::Yellow;
         let width = 18.0;
-        let mut row = None;
-        {
-            let ui = ctx.frame();
-            ui.window("##status-dot-test")
-                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
-                .size([80.0, 48.0], dear_imgui_rs::Condition::Always)
-                .flags(
-                    dear_imgui_rs::WindowFlags::NO_TITLE_BAR
-                        | dear_imgui_rs::WindowFlags::NO_RESIZE
-                        | dear_imgui_rs::WindowFlags::NO_MOVE
-                        | dear_imgui_rs::WindowFlags::NO_SAVED_SETTINGS
-                        | dear_imgui_rs::WindowFlags::NO_BACKGROUND,
-                )
-                .build(|| {
-                    row = Some((ui.cursor_screen_pos(), ui.text_line_height()));
-                    super::draw_status_dot(ui, light, width);
-                });
-        }
-        let (origin, line_h) = row.expect("the status-dot test window was drawn");
-        let draw_data = ctx.render();
-        let vertices: Vec<_> = draw_data
-            .draw_lists()
-            .flat_map(|list| list.vtx_buffer().iter())
-            .collect();
-        let indices = draw_data
-            .draw_lists()
-            .map(|list| list.idx_buffer().len())
-            .sum::<usize>();
-        assert_eq!(vertices.len(), 5 * 4, "five rectangle quads are drawn");
-        assert_eq!(indices, 5 * 6, "five rectangles have six indices each");
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            ctx.io_mut().set_display_framebuffer_scale([scale, scale]);
+            let mut row = None;
+            {
+                let ui = ctx.frame();
+                ui.window("##status-dot-test")
+                    .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                    .size([80.0, 48.0], dear_imgui_rs::Condition::Always)
+                    .flags(
+                        dear_imgui_rs::WindowFlags::NO_TITLE_BAR
+                            | dear_imgui_rs::WindowFlags::NO_RESIZE
+                            | dear_imgui_rs::WindowFlags::NO_MOVE
+                            | dear_imgui_rs::WindowFlags::NO_SAVED_SETTINGS
+                            | dear_imgui_rs::WindowFlags::NO_BACKGROUND,
+                    )
+                    .build(|| {
+                        row = Some((ui.cursor_screen_pos(), ui.text_line_height()));
+                        super::draw_status_dot(ui, light, width);
+                    });
+            }
+            let (origin, line_h) = row.expect("the status-dot test window was drawn");
+            let draw_data = ctx.render();
+            assert_eq!(draw_data.framebuffer_scale(), [scale, scale]);
+            let vertices: Vec<_> = draw_data
+                .draw_lists()
+                .flat_map(|list| list.vtx_buffer().iter())
+                .collect();
+            let indices = draw_data
+                .draw_lists()
+                .map(|list| list.idx_buffer().len())
+                .sum::<usize>();
+            assert_eq!(vertices.len(), 5 * 4, "five rectangle quads are drawn");
+            assert_eq!(indices, 5 * 6, "five rectangles have six indices each");
 
-        let expected_colour = super::light_rgb(light);
-        for rectangle in vertices.as_chunks::<4>().0 {
+            let expected_colour = super::light_rgb(light);
+            let mut physical_sizes = Vec::with_capacity(5);
+            for rectangle in vertices.as_chunks::<4>().0 {
+                assert!(
+                    rectangle.iter().all(|vertex| {
+                        let actual = dear_imgui_rs::Color::from_imgui_u32(vertex.col).to_array();
+                        actual
+                            .into_iter()
+                            .zip(expected_colour)
+                            .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
+                    }),
+                    "every square uses Light::rgb"
+                );
+                let min_y = rectangle
+                    .iter()
+                    .map(|vertex| vertex.pos[1])
+                    .fold(f32::INFINITY, f32::min);
+                let max_y = rectangle
+                    .iter()
+                    .map(|vertex| vertex.pos[1])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                    min_y >= origin[1] && max_y <= origin[1] + line_h,
+                    "square y range {min_y}..{max_y} stays inside line {origin_y}..{}",
+                    origin[1] + line_h,
+                    origin_y = origin[1]
+                );
+                let min_x = rectangle
+                    .iter()
+                    .map(|vertex| vertex.pos[0])
+                    .fold(f32::INFINITY, f32::min);
+                let max_x = rectangle
+                    .iter()
+                    .map(|vertex| vertex.pos[0])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let physical_bounds = [min_x * scale, min_y * scale, max_x * scale, max_y * scale];
+                assert!(
+                    physical_bounds
+                        .iter()
+                        .all(|coordinate| (*coordinate - coordinate.round()).abs() < 0.001),
+                    "all square origins and edges must be integer framebuffer pixels at {scale}×: {physical_bounds:?}"
+                );
+                let physical_width = (max_x - min_x) * scale;
+                let physical_height = (max_y - min_y) * scale;
+                assert!(
+                    (physical_width - physical_height).abs() < 0.001,
+                    "each square must stay square in framebuffer pixels at {scale}×: {physical_width}×{physical_height}"
+                );
+                assert!(
+                    (physical_width - physical_width.round()).abs() < 0.001,
+                    "square size must be an integer framebuffer width at {scale}×: {physical_width}"
+                );
+                physical_sizes.push(physical_width.round() as i32);
+            }
             assert!(
-                rectangle.iter().all(|vertex| {
-                    let actual = dear_imgui_rs::Color::from_imgui_u32(vertex.col).to_array();
-                    actual
-                        .into_iter()
-                        .zip(expected_colour)
-                        .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
-                }),
-                "every square uses Light::rgb"
-            );
-            let min_y = rectangle
-                .iter()
-                .map(|vertex| vertex.pos[1])
-                .fold(f32::INFINITY, f32::min);
-            let max_y = rectangle
-                .iter()
-                .map(|vertex| vertex.pos[1])
-                .fold(f32::NEG_INFINITY, f32::max);
-            assert!(
-                min_y >= origin[1] && max_y <= origin[1] + line_h,
-                "square y range {min_y}..{max_y} stays inside line {origin_y}..{}",
-                origin[1] + line_h,
-                origin_y = origin[1]
-            );
-            let min_x = rectangle
-                .iter()
-                .map(|vertex| vertex.pos[0])
-                .fold(f32::INFINITY, f32::min);
-            let max_x = rectangle
-                .iter()
-                .map(|vertex| vertex.pos[0])
-                .fold(f32::NEG_INFINITY, f32::max);
-            assert!(
-                ((max_x - min_x) - (max_y - min_y)).abs() < 0.01,
-                "each marker rectangle is square"
+                physical_sizes.iter().all(|size| *size == physical_sizes[0]),
+                "all five squares must have equal physical sizes at {scale}×: {physical_sizes:?}"
             );
         }
     }
