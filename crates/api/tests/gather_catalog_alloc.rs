@@ -71,12 +71,6 @@ fn borrowed_placement_and_resource_queries_allocate_nothing() {
         let world = region(0, 16383);
         let local = region(3200, 3263);
 
-        let pin = data.selected_pin().unwrap();
-        let yew = api::snapshot::WorldTile {
-            x: 3085,
-            z: 3468,
-            level: 0,
-        };
         // Behavior first: the lazy walk still yields exactly the region's spots, ascending by id.
         let all: Vec<_> = catalog.spots(method, &world).unwrap().collect();
         assert!(all.len() > 100, "{revision:?}: world has many placements");
@@ -136,16 +130,10 @@ fn borrowed_placement_and_resource_queries_allocate_nothing() {
             taken += catalog.methods_for_resource(" normal ").count();
         }
         let resource = events() - before;
-        let before = events();
-        for _ in 0..CALLS {
-            std::hint::black_box(api::gather_methods::loc_footprint_at(&pin, yew));
-        }
-        let footprint = events() - before;
 
         assert!(taken >= CALLS * 2);
         assert_eq!(world_take_one, 0, "{revision:?} world spots(..).take(1)");
         assert_eq!(local_full, 0, "{revision:?} local spots");
         assert_eq!(resource, 0, "{revision:?} methods_for_resource");
-        assert_eq!(footprint, 0, "{revision:?} cache-only loc footprint");
     }
 }

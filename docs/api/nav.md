@@ -377,14 +377,18 @@ landings from multi-tile stairs without accepting the opposite side, a
 distant tile, or the old plane. Other transport arrival rules are unchanged.
 
 Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
-centered on the requested tile. For a loc-backed goal, distance is measured
-to its full rotated footprint rectangle, not its south-west anchor; a legal
-perimeter stand is included only when that distance is within the requested
-margin. Arrival also requires the shared live loc-operability rule, including
-wall flags, force-approach sides, and a walkable stand. Off-scene packed
-footprints only estimate an approach: the host revalidates and, when necessary,
-rederives the same owned walk against the observed loc before publishing
-`Arrived`. Exact tile walks are unchanged.
+centered on the requested tile, even when a loc or decoration occupies it.
+A goal is loc-backed only when the caller explicitly supplies loc identity
+(native `WalkRequest.loc_id`, as used by Gatherer and loc interaction recovery).
+Compat `walkTo(x,z,r)`, Quester stand tiles and bank stands are plain tile goals.
+For an identified loc in scene with a known footprint, distance is measured
+to its full rotated footprint rectangle, not its south-west anchor. A legal
+stand must fit that margin and pass the shared live wall/force-approach rule.
+Off-scene or unknown loc footprints use the plain anchor-radius estimate;
+they never flood connected solids. The same owned walk is re-planned only
+when its target enters the scene or its footprint becomes known, not on
+every tick at an unchanged estimate. Only live operability proves loc arrival.
+Exact tile walks are unchanged.
 
 ## Traveller (`nav::traveller`)
 

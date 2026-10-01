@@ -546,6 +546,7 @@ impl Script for Relog {
                         z: 1,
                         level: 0,
                     },
+                    loc_id: None,
                     radius: 0,
                     options: crate::FindOptions::default(),
                     required_after: first,

@@ -9,7 +9,7 @@ mod cache;
 mod catalog;
 mod wire;
 
-pub use cache::{cached, loc_footprint_at, prepare};
+pub use cache::{cached, prepare};
 pub use catalog::{
     first_gap, known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     GatherTarget, GatherYield, LooseClass, LooseEntity, Nearest, RespawnFact, RespawnScale,

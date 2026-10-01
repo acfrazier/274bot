@@ -4150,6 +4150,7 @@ fn same_key_pending_route_refuses_distinct_id() {
         NavBot {
             route_generation: 1,
             pending_route: Some(ScriptRouteRequest {
+                loc_id: None,
                 generation: 1,
                 request_id: 7,
                 world: Arc::clone(&world),
@@ -4665,13 +4666,14 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
         },
         target,
         1,
+        false,
     );
     assert_eq!(candidates.len(), 8);
     assert!(candidates
         .iter()
         .all(|t| *t != target && (t.x - 3).abs() <= 1 && (t.z - 3).abs() <= 1));
     assert_eq!(candidates[0].x, 2);
-    assert!(approach_tiles(&world, target, target, 0).is_empty());
+    assert!(approach_tiles(&world, target, target, 0, false).is_empty());
 }
 
 /// Frozen `WalkOptions.avoidZones` (Death Plateau `walkSecretPath` passes
@@ -4680,6 +4682,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::new(open_world(12, 8)),
@@ -4763,6 +4766,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
 fn radius_calculate_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world,
@@ -4809,6 +4813,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -4864,6 +4869,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
     };
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -4915,6 +4921,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -4969,6 +4976,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5017,6 +5025,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         .expect("actual 289 navpack"),
     );
     let request = ScriptRouteRequest {
+        loc_id: None,
         generation: 0,
         request_id: 0,
         world: Arc::clone(&world),
@@ -12164,6 +12173,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
             1,
             true,
             71,
+            None,
         )
         .expect("solid-target route accepted");
     worker_done
@@ -20723,6 +20733,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     level: 0,
                                 },
                                 radius: 1,
+                                loc_id: None,
                                 options: script::FindOptions::default(),
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
@@ -20986,6 +20997,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
             3,
             true,
             17,
+            None,
         )
         .expect("route worker spawned");
     worker_done
@@ -21077,6 +21089,7 @@ fn arm_snapshot_route(
     from: WorldTile,
     to: WorldTile,
     radius: i32,
+    loc_id: Option<i32>,
 ) -> nav::router::Route {
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
     let arm = ScriptWalkArm {
@@ -21097,6 +21110,7 @@ fn arm_snapshot_route(
             radius,
             true,
             29,
+            loc_id,
         )
         .expect("route worker spawned");
     worker_done
@@ -21217,7 +21231,7 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
         "the live flood cannot cross the shut door"
     );
 
-    let route = arm_snapshot_route(world, &snapshot, from, booth, 1);
+    let route = arm_snapshot_route(world, &snapshot, from, booth, 1, Some(loc.id));
     assert_eq!(route.dest, stand);
     assert!(
         route.legs.iter().any(
@@ -21284,9 +21298,15 @@ fn modeled_two_by_two_loc_routes_to_a_full_footprint_arrival_stand() {
     let mut snapshot = GameSnapshot::new();
     nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
 
-    let route = arm_snapshot_route(world, &snapshot, from, target, 1);
+    let loc_id = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == target)
+        .unwrap()
+        .id;
+    let route = arm_snapshot_route(world, &snapshot, from, target, 1, Some(loc_id));
     assert_eq!(
-        api::query::loc_approach::arrived_at(&snapshot, route.dest, target, 1),
+        api::query::loc_approach::arrived_at(&snapshot, route.dest, target, 1, loc_id),
         Some(true),
         "the endpoint must be a real operable footprint stand inside the radius"
     );
@@ -21322,9 +21342,18 @@ fn walkable_loc_arrival_uses_footprint_distance_but_plain_tiles_keep_anchor_radi
         sequence: 1,
     };
     let view = api::snapshot::SnapshotView::new(Some(&snapshot), stamp);
-    assert!(view.walk_arrived(from, target, 1));
+    let loc_id = snapshot.locs()[0].id;
+    assert!(view.walk_loc_arrived(from, target, 1, loc_id));
     assert!(
-        !view.walk_arrived(from, target, 0),
+        !view.walk_arrived(from, target, 1),
+        "no loc intent means anchor radius even on an interactive loc"
+    );
+    assert!(
+        !view.walk_loc_arrived(from, target, 1, loc_id + 1),
+        "another loc on the tile cannot satisfy the requested identity"
+    );
+    assert!(
+        !view.walk_loc_arrived(from, target, 0, loc_id),
         "a perimeter stand still has to fit the requested footprint margin"
     );
     snapshot.seed_locs(Vec::new());
@@ -21399,7 +21428,7 @@ fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
         component_id: -1,
     }]);
     assert_eq!(
-        api::query::loc_approach::arrived_at(&snapshot, from, target, 1),
+        api::query::loc_approach::arrived_at(&snapshot, from, target, 1, 1309),
         Some(true),
         "the test player must already be on an engine-operable far perimeter"
     );
@@ -21499,6 +21528,7 @@ fn assert_snapshot_route_no_path(
         radius,
         true,
         29,
+        None,
     )
     .expect("route worker spawned")
     .recv_timeout(Duration::from_secs(2))
@@ -21578,7 +21608,7 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
         "the packed target must be offscene at arm time"
     );
 
-    let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 4);
+    let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 4, None);
     assert_ne!(
         route.dest, from,
         "radius four must not settle on the source side of the wall"
@@ -21602,188 +21632,6 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
         api::query::is_arrived(route.dest, target, 4, || &view),
         "the selected endpoint must be able to reach the offscene solid target"
     );
-}
-
-#[test]
-fn offscene_multi_tile_target_routes_to_its_open_perimeter() {
-    use client::dash3d::CollisionFlag;
-
-    const SIZE: usize = 64;
-    let target = WorldTile {
-        x: 16,
-        z: 32,
-        level: 0,
-    };
-    let from = WorldTile {
-        x: 20,
-        z: 32,
-        level: 0,
-    };
-    let mut flags = vec![0u32; SIZE * SIZE];
-    for x in 16..=18usize {
-        for z in 32..=34usize {
-            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
-        }
-    }
-    // Neither neighbour of the south-west origin is a legal stand, but the
-    // west side one tile north is usable and remains within radius one.
-    flags[32 * SIZE + 15] |= CollisionFlag::SQ_BLOCKED as u32;
-    flags[31 * SIZE + 16] |= CollisionFlag::SQ_BLOCKED as u32;
-    let world = Arc::new(raw_flags_world(
-        &flags,
-        SIZE,
-        TransportGraph::default(),
-        Vec::new(),
-    ));
-    let snapshot = raw_flags_scene(&flags, SIZE, (20, 0), from);
-    assert!(
-        !api::query::SceneQuery::new(snapshot.scene(), Some(from)).contains(target),
-        "the packed target must be offscene at arm time"
-    );
-
-    let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 1);
-    assert!(
-        world.collision.standable(route.dest)
-            && api::query::loc_approach::LocApproach {
-                width: 3,
-                length: 3,
-                blocked_sides: 0,
-            }
-            .can_operate(
-                target,
-                route.dest,
-                world
-                    .collision
-                    .walkable_word(route.dest.x, route.dest.z, route.dest.level)
-                    as i32,
-            ),
-        "radius arrival must use a usable full-footprint side, got {:?}",
-        route.dest
-    );
-}
-
-#[test]
-fn offscene_large_radius_solid_estimate_advances_instead_of_stalling() {
-    use client::dash3d::CollisionFlag;
-
-    const SIZE: usize = 128;
-    let target = WorldTile {
-        x: 16,
-        z: 32,
-        level: 0,
-    };
-    let from = WorldTile {
-        x: 56,
-        z: 32,
-        level: 0,
-    };
-    let mut flags = vec![0u32; SIZE * SIZE];
-    flags[target.z as usize * SIZE + target.x as usize] = CollisionFlag::SQ_BLOCKED as u32;
-    let world = Arc::new(raw_flags_world(
-        &flags,
-        SIZE,
-        TransportGraph::default(),
-        Vec::new(),
-    ));
-    let snapshot = raw_flags_scene(&flags, SIZE, (40, 0), from);
-    assert!(!api::query::SceneQuery::new(snapshot.scene(), None).contains(target));
-    let route = arm_snapshot_route(Arc::clone(&world), &snapshot, from, target, 64);
-    let first_distance = route
-        .dest
-        .x
-        .abs_diff(target.x)
-        .max(route.dest.z.abs_diff(target.z));
-    assert!(
-        first_distance <= 20 && route.dest != from,
-        "a provisional solid goal must advance into observable range, not end at {from:?}"
-    );
-
-    // If the first estimate is still offscene, the same original radius must
-    // continue progressing rather than treating that provisional stand as final.
-    let snapshot = raw_flags_scene(&flags, SIZE, (route.dest.x - 4, 0), route.dest);
-    assert!(!api::query::SceneQuery::new(snapshot.scene(), None).contains(target));
-    let next = arm_snapshot_route(world, &snapshot, route.dest, target, 64);
-    let next_distance = next
-        .dest
-        .x
-        .abs_diff(target.x)
-        .max(next.dest.z.abs_diff(target.z));
-    assert!(next_distance <= first_distance / 2);
-}
-
-#[test]
-fn offscene_fully_enclosed_footprint_returns_no_path() {
-    use client::dash3d::CollisionFlag;
-    const SIZE: usize = 64;
-    let target = WorldTile {
-        x: 16,
-        z: 32,
-        level: 0,
-    };
-    let from = WorldTile {
-        x: 20,
-        z: 32,
-        level: 0,
-    };
-    let mut flags = vec![0u32; SIZE * SIZE];
-    for x in 16..=17usize {
-        for z in 32..=33usize {
-            flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
-        }
-        flags[31 * SIZE + x] |= CollisionFlag::W_N as u32;
-        flags[32 * SIZE + x] |= CollisionFlag::W_S as u32;
-        flags[33 * SIZE + x] |= CollisionFlag::W_N as u32;
-        flags[34 * SIZE + x] |= CollisionFlag::W_S as u32;
-    }
-    for z in 32..=33usize {
-        flags[z * SIZE + 15] |= CollisionFlag::W_E as u32;
-        flags[z * SIZE + 16] |= CollisionFlag::W_W as u32;
-        flags[z * SIZE + 17] |= CollisionFlag::W_E as u32;
-        flags[z * SIZE + 18] |= CollisionFlag::W_W as u32;
-    }
-    let world = Arc::new(raw_flags_world(
-        &flags,
-        SIZE,
-        TransportGraph::default(),
-        Vec::new(),
-    ));
-    let snapshot = raw_flags_scene(&flags, SIZE, (20, 0), from);
-    assert_snapshot_route_no_path(world, &snapshot, from, target, 4);
-}
-
-#[test]
-#[ignore = "requires the real 289 WORLD_NAV_PACK"]
-fn real_pack_multi_tile_radius_goals_and_wheel_control() {
-    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK");
-    let world = NavWorld::load_pack(std::path::Path::new(&pack)).expect("289 pack");
-    for (label, (x, z), (fx, fz)) in [
-        ("Lumbridge north staircase", (3204, 3229), (3210, 3225)),
-        ("Lumbridge south staircase", (3204, 3207), (3210, 3212)),
-        ("Edgeville yew", (3085, 3468), (3093, 3470)),
-        ("Varrock staircase 1722", (3188, 3355), (3194, 3360)),
-        ("Barbarian wheel", (3081, 3430), (3077, 3426)),
-    ] {
-        let to = WorldTile { x, z, level: 0 };
-        let from = WorldTile {
-            x: fx,
-            z: fz,
-            level: 0,
-        };
-        for radius in [1, 4] {
-            let goals = approach_tiles(&world, from, to, radius);
-            eprintln!("{label} radius={radius} goals={goals:?}");
-            assert!(
-                !goals.is_empty(),
-                "{label} radius {radius} must have usable goals"
-            );
-            if label == "Barbarian wheel" {
-                assert!(
-                    !goals.contains(&from) && goals.iter().all(|goal| goal.z >= 3427),
-                    "wheel goals must stay inside the room"
-                );
-            }
-        }
-    }
 }
 
 #[test]
@@ -21886,10 +21734,12 @@ fn arm_route_outcome(
         state,
         bank,
     };
-    arm.queue_route_in_snapshot_synced(snapshot, to.x, to.z, to.level, opts, radius, true, 43)
-        .expect("route worker spawned")
-        .recv_timeout(Duration::from_secs(60))
-        .expect("route worker completed");
+    arm.queue_route_in_snapshot_synced(
+        snapshot, to.x, to.z, to.level, opts, radius, true, 43, None,
+    )
+    .expect("route worker spawned")
+    .recv_timeout(Duration::from_secs(60))
+    .expect("route worker completed");
     let all = navs.lock().unwrap();
     let bot = &all["alice"];
     (bot.route.clone(), bot.bank_fetch.clone())

@@ -109,6 +109,10 @@ pub(crate) struct NavBot {
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
+    /// Explicit loc identity; tile walks never infer it from scene contents.
+    pub(crate) route_loc_id: Option<i32>,
+    /// Arm-time estimate inputs: target in scene, footprint modeled.
+    pub(crate) route_loc_geometry: (bool, bool),
     /// Request exclusions retained for reconnect carry and retransmission gates.
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
@@ -424,6 +428,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             exclusions,
             Some(authority),
+            request.loc_id,
         )
     }
 
@@ -440,6 +445,7 @@ impl ScriptWalkArm {
         request_id: u64,
         exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
+        loc_id: Option<i32>,
     ) -> bool {
         self.queue_route_impl(
             to.x,
@@ -453,6 +459,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             exclusions,
             authority,
+            loc_id,
         )
     }
 
@@ -556,6 +563,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             ScriptRouteExclusions::default(),
             None,
+            None,
         )
     }
 
@@ -591,6 +599,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             ScriptRouteExclusions::default(),
             None,
+            None,
         )
     }
 
@@ -616,6 +625,7 @@ impl ScriptWalkArm {
             None,
             RouteCompletion::default(),
             exclusions,
+            None,
             None,
         )
     }
@@ -645,6 +655,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             exclusions,
             None,
+            None,
         )
     }
 
@@ -660,6 +671,7 @@ impl ScriptWalkArm {
         radius: i32,
         retarget: bool,
         request_id: u64,
+        loc_id: Option<i32>,
     ) -> Option<std::sync::mpsc::Receiver<()>> {
         let (completion, receiver) = RouteCompletion::channel();
         self.queue_route_impl(
@@ -674,6 +686,7 @@ impl ScriptWalkArm {
             completion,
             ScriptRouteExclusions::default(),
             None,
+            loc_id,
         )
         .then_some(receiver)
     }
@@ -689,6 +702,7 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
         native: Option<&script::native::HostAuthority>,
+        loc_id: Option<i32>,
     ) -> Option<bool> {
         if native.is_some() && bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             // The owner cancelled or replaced its previous walk: that follow
@@ -716,6 +730,7 @@ impl ScriptWalkArm {
         }
         if bot.requested_route == Some(key)
             && bot.requested_exclusions.as_deref() == exclusions.as_deref()
+            && bot.route_loc_id == loc_id
             && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
@@ -758,6 +773,7 @@ impl ScriptWalkArm {
         completion: RouteCompletion,
         exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
+        loc_id: Option<i32>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -843,6 +859,7 @@ impl ScriptWalkArm {
                 retarget,
                 request_id,
                 authority.as_ref(),
+                loc_id,
             ) {
                 return result;
             }
@@ -851,10 +868,23 @@ impl ScriptWalkArm {
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
         let live_candidates = if radius > 0 {
-            snapshot.and_then(|snapshot| loc_target_approach_tiles(snapshot, to, radius))
+            snapshot.and_then(|snapshot| {
+                loc_id.and_then(|id| loc_target_approach_tiles(snapshot, to, radius, id))
+            })
         } else {
             None
         };
+        let loc_geometry = (
+            loc_id.is_some()
+                && snapshot.is_some_and(|snapshot| {
+                    api::query::SceneQuery::new(snapshot.scene(), None).contains(to)
+                }),
+            snapshot.is_some_and(|snapshot| {
+                loc_id.is_some_and(|id| {
+                    api::query::loc_approach::arrived_at(snapshot, from, to, radius, id).is_some()
+                })
+            }),
+        );
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
@@ -867,6 +897,7 @@ impl ScriptWalkArm {
                 retarget,
                 request_id,
                 authority.as_ref(),
+                loc_id,
             ) {
                 return result;
             }
@@ -890,6 +921,8 @@ impl ScriptWalkArm {
             bot.native_walk_blocked = None;
             bot.walk_outcome_detail = None;
             bot.requested_route = Some(key);
+            bot.route_loc_id = loc_id;
+            bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
             bot.native_walk_failure = None;
@@ -900,6 +933,7 @@ impl ScriptWalkArm {
                 from,
                 to,
                 radius,
+                loc_id,
                 opts,
                 state: self.state.clone(),
                 bank: self.bank.clone(),
@@ -1125,159 +1159,40 @@ impl ScriptWalkArm {
     }
 }
 
-/// Arm-time legal stands for the whole live footprint, clipped to the requested
-/// radius. The existing operable-tile producer owns shape/rotation/force sides.
-pub(crate) enum LiveCandidates {
-    Modeled(Vec<WorldTile>),
-    Cardinal { tiles: [WorldTile; 4], len: usize },
-}
-
-impl LiveCandidates {
-    fn as_slice(&self) -> &[WorldTile] {
-        match self {
-            Self::Modeled(tiles) => tiles,
-            Self::Cardinal { tiles, len } => &tiles[..*len],
-        }
-    }
-
-    fn modeled(&self) -> bool {
-        matches!(self, Self::Modeled(_))
-    }
-}
-
-/// Do not filter by the current-scene flood: the baked graph may cross a shut
-/// door or transport to a legal stand. Modeled live footprints have no fallback
-/// to proximity-only goals; unknown solids use the wall-aware radius estimate.
+/// Legal full-footprint stands for the caller's explicitly identified live loc.
+/// Do not filter by the scene flood: the baked graph can cross a shut door.
 fn loc_target_approach_tiles(
     snapshot: &GameSnapshot,
     to: WorldTile,
     radius: i32,
-) -> Option<LiveCandidates> {
+    loc_id: i32,
+) -> Option<Vec<WorldTile>> {
     let query = api::query::SceneQuery::new(snapshot.scene(), None);
     if !query.contains(to) {
         return None;
     }
-    let mut tiles: Option<Vec<WorldTile>> = None;
-    for loc in snapshot.locs().iter().filter(|loc| loc.tile == to) {
-        let Some(mut operable) = query.operable_tiles(loc) else {
-            continue;
-        };
-        operable.retain(|stand| {
-            api::query::loc_approach::distance_from(loc, *stand)
-                .is_some_and(|distance| distance <= radius.clamp(0, 104) as u32)
-        });
-        if let Some(tiles) = tiles.as_mut() {
-            for stand in operable {
-                if !tiles.contains(&stand) {
-                    tiles.push(stand);
-                }
-            }
-        } else {
-            tiles = Some(operable);
-        }
-    }
-    Some(match tiles {
-        Some(tiles) => LiveCandidates::Modeled(tiles),
-        None => {
-            if query.walkable(to) {
-                return None;
-            }
-            let mut tiles = [to; 4];
-            let mut len = 0;
-            for stand in query.arrival_stands(to) {
-                tiles[len] = stand;
-                len += 1;
-            }
-            LiveCandidates::Cardinal { tiles, len }
-        }
-    })
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == to && loc.id == loc_id)?;
+    api::query::loc_approach::distance_from(loc, to)?;
+    let mut tiles = query.operable_tiles(loc)?;
+    tiles.retain(|stand| {
+        api::query::loc_approach::distance_from(loc, *stand)
+            .is_some_and(|distance| distance <= radius.clamp(0, 104) as u32)
+    });
+    Some(tiles)
 }
 
-/// Packed goals are approach estimates until a live loc supplies its true
-/// force-approach rule. Prefer generated rotated dimensions when already
-/// loaded; otherwise inspect only the bounded solid component containing `to`.
-fn packed_solid_stands(world: &NavWorld, to: WorldTile, mut emit: impl FnMut(WorldTile)) {
-    use api::query::loc_approach::LocApproach;
-    let flags = |tile: WorldTile| world.collision.walkable_word(tile.x, tile.z, tile.level) as i32;
-    if let Some((width, length)) = world.loc_footprint_at(to) {
-        // The catalog already rotates dimensions; force sides are not
-        // generated here, so only live geometry owns final admission.
-        let geometry = LocApproach::from_loc_def(i32::from(width), i32::from(length), 0, 0)
-            .expect("u8 catalog footprint dimensions are representable");
-        let mut side = |x, z| {
-            let stand = WorldTile {
-                x,
-                z,
-                level: to.level,
-            };
-            if world.collision.standable(stand) && geometry.can_operate(to, stand, flags(stand)) {
-                emit(stand);
-            }
-        };
-        for x in to.x..to.x + i32::from(width) {
-            side(x, to.z - 1);
-            side(x, to.z + i32::from(length));
-        }
-        for z in to.z..to.z + i32::from(length) {
-            side(to.x - 1, z);
-            side(to.x + i32::from(width), z);
-        }
-        return;
-    }
-    // Without a placed model, use an open anchor edge when one exists.
-    // Flooding every touching solid can merge unrelated furniture into a
-    // building wall and admit the wrong side (the wheel-room control).
-    let mut has_anchor_stand = false;
-    for stand in api::query::arrival_stands(
-        to,
-        |stand| world.collision.standable(stand),
-        |stand| Some(flags(stand)),
-    ) {
-        emit(stand);
-        has_anchor_stand = true;
-    }
-    if has_anchor_stand {
-        return;
-    }
-    // Unknown connected footprints can extend beyond the anchor's radius.
-    // Bound the one discovery flood to a scene, not to the requested margin.
-    let bound = 104;
-    let mut solid = vec![to];
-    let mut visited = std::collections::HashSet::from([to]);
-    let mut next = 0;
-    while next < solid.len() {
-        let tile = solid[next];
-        next += 1;
-        for stand in api::query::arrival_stands(
-            tile,
-            |stand| world.collision.standable(stand),
-            |stand| Some(flags(stand)),
-        ) {
-            emit(stand);
-        }
-        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-            let neighbour = WorldTile {
-                x: tile.x + dx,
-                z: tile.z + dz,
-                level: to.level,
-            };
-            if neighbour.x.abs_diff(to.x).max(neighbour.z.abs_diff(to.z)) <= bound
-                && flags(neighbour) & client::dash3d::CollisionFlag::SQ_BLOCKED != 0
-                && visited.insert(neighbour)
-            {
-                solid.push(neighbour);
-            }
-        }
-    }
-}
-
-/// Candidate destinations for an explicit radius request. Exact walks retain
-/// their old routing behavior. Bound enumeration to the loaded scene size.
+/// Anchor-radius destinations. Unknown/off-scene explicit locs need only a
+/// standable approach estimate; plain tile walks retain target-side filtering.
+/// Neither estimate admission nor scene proximity proves loc arrival.
 pub(crate) fn approach_tiles(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
     radius: i32,
+    estimate: bool,
 ) -> Vec<WorldTile> {
     let r = radius.clamp(0, 104);
     let mut tiles = Vec::new();
@@ -1293,24 +1208,23 @@ pub(crate) fn approach_tiles(
             }
         }
     }
-    if r > 0 {
+    if r > 0 && !estimate {
         if world.collision.standable(to) {
             let connected = nav::router::local_step_component(&world.collision, to, r);
             tiles.retain(|tile| connected.contains(tile));
         } else {
             let mut connected = std::collections::HashSet::new();
-            packed_solid_stands(world, to, |seed| {
-                if !connected.contains(&seed) {
-                    if seed.x.abs_diff(to.x).max(seed.z.abs_diff(to.z)) > r as u32 {
-                        tiles.push(seed);
-                    }
-                    connected.extend(nav::router::local_step_component(
-                        &world.collision,
-                        seed,
-                        r + 1,
-                    ));
-                }
-            });
+            for seed in api::query::arrival_stands(
+                to,
+                |stand| world.collision.standable(stand),
+                |stand| Some(world.collision.walkable_word(stand.x, stand.z, stand.level) as i32),
+            ) {
+                connected.extend(nav::router::local_step_component(
+                    &world.collision,
+                    seed,
+                    r + 1,
+                ));
+            }
             tiles.retain(|tile| connected.contains(tile));
         }
     }
@@ -1332,62 +1246,31 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) from: WorldTile,
     pub(crate) to: WorldTile,
     pub(crate) radius: i32,
+    pub(crate) loc_id: Option<i32>,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Arm-time full-footprint goals derived from the borrowed live scene.
-    /// Unknown solids retain a wall-aware radius fallback; modeled locs don't.
-    pub(crate) live_candidates: Option<LiveCandidates>,
+    /// Explicit live-loc footprint goals; otherwise use the plain anchor radius.
+    pub(crate) live_candidates: Option<Vec<WorldTile>>,
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
-    /// An off-scene solid endpoint is provisional. For a large radius, make
-    /// progress toward the target instead of repeatedly choosing the current
-    /// unobservable stand; the armed request's original radius is unchanged.
-    fn estimated_radius(&self) -> i32 {
-        if self.live_candidates.is_none() && !self.world.collision.standable(self.to) {
-            let distance = self
-                .from
-                .x
-                .abs_diff(self.to.x)
-                .max(self.from.z.abs_diff(self.to.z));
-            self.radius.min((distance / 2).max(1) as i32)
-        } else {
-            self.radius
-        }
-    }
-
-    fn packed_targets(&self) -> Vec<WorldTile> {
-        let mut targets = approach_tiles(&self.world, self.from, self.to, self.estimated_radius());
-        if matches!(self.live_candidates, Some(LiveCandidates::Cardinal { .. })) {
-            // The live scene has no modeled loc behind this tile. Its radius
-            // remains anchor-based, even if an offscene solid estimate was wider.
-            targets.retain(|tile| {
-                tile.x.abs_diff(self.to.x).max(tile.z.abs_diff(self.to.z))
-                    <= self.radius.clamp(0, 104) as u32
-            });
-        }
-        targets
-    }
-
     fn diagnostic_targets(&self) -> Vec<WorldTile> {
         if self.radius <= 0 {
             vec![self.to]
-        } else if let Some(stands) = self
-            .live_candidates
-            .as_ref()
-            .filter(|stands| stands.modeled())
-        {
-            stands.as_slice().to_vec()
+        } else if let Some(stands) = self.live_candidates.as_ref() {
+            stands.clone()
         } else {
-            let mut targets = self.packed_targets();
-            if let Some(stands) = &self.live_candidates {
-                targets.extend_from_slice(stands.as_slice());
-            }
-            targets
+            approach_tiles(
+                &self.world,
+                self.from,
+                self.to,
+                self.radius,
+                self.loc_id.is_some(),
+            )
         }
     }
 
@@ -1763,34 +1646,39 @@ impl ScriptRouteRequest {
             );
         }
 
-        // Off-scene radius goals are only an approach estimate. Live modeled
-        // footprints route solely to real operable stands; unknown targets keep
-        // the wall-aware bounded radius fallback, which may correctly be empty.
-        if let Some(stands) = self
-            .live_candidates
-            .as_ref()
-            .filter(|stands| stands.modeled())
-        {
+        // Only explicitly identified live footprints use operable stands.
+        // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
+        if let Some(stands) = self.live_candidates.as_ref() {
             return self.calculate_solid(stands.as_slice(), &[], state);
         }
-        let generated = self.packed_targets();
-        match self.live_candidates.as_ref() {
-            Some(stands) => self.calculate_solid(stands.as_slice(), &generated, state),
-            None => {
-                if debug_enabled() {
-                    let slot = walk_arm_worker_slot();
-                    log_walk_arm(&slot, || {
-                        format!(
-                            "approach fallback dest={:?} r={} candidates={}",
-                            self.to,
-                            self.radius,
-                            generated.len()
-                        )
-                    });
-                }
-                self.calculate_in_order(&generated, state, "approach fallback")
+        let generated = approach_tiles(
+            &self.world,
+            self.from,
+            self.to,
+            self.radius,
+            self.loc_id.is_some(),
+        );
+        if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
+            let mut stands = [self.to; 4];
+            let mut len = 0;
+            for stand in api::query::arrival_stands(
+                self.to,
+                |stand| self.world.collision.standable(stand),
+                |stand| {
+                    Some(
+                        self.world
+                            .collision
+                            .walkable_word(stand.x, stand.z, stand.level)
+                            as i32,
+                    )
+                },
+            ) {
+                stands[len] = stand;
+                len += 1;
             }
+            return self.calculate_solid(&stands[..len], &generated, state);
         }
+        self.calculate_in_order(&generated, state, "approach estimate")
     }
 }
 impl NavBot {

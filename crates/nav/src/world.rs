@@ -34,7 +34,6 @@ pub struct NavWorld {
     pub graph: TransportGraph,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
-    selected_pin: OnceLock<Arc<api::selected::SelectedPin>>,
 }
 
 impl NavWorld {
@@ -48,13 +47,6 @@ impl NavWorld {
     /// never initializes it: a later profile bind must still resolve geometry.
     pub fn named_bank_facts(&self) -> Option<&Arc<api::named_banks::NamedBankFacts>> {
         self.named_banks.get()
-    }
-
-    /// Content-derived rotated footprint, only while a consumer has the
-    /// gathering family loaded. Reuses its shared buckets without pinning it.
-    /// Force-approach is absent from that family, so this is an estimate only.
-    pub fn loc_footprint_at(&self, origin: WorldTile) -> Option<(u8, u8)> {
-        api::gather_methods::loc_footprint_at(self.selected_pin.get()?, origin)
     }
 
     /// Bind selected-content placements once. A repeated bind is rejected,
@@ -75,9 +67,6 @@ impl NavWorld {
         self.named_banks
             .set(facts)
             .map_err(|_| "bank facts already bound")?;
-        if let Ok(pin) = data.selected_pin() {
-            let _ = self.selected_pin.set(pin);
-        }
         Ok(())
     }
 
@@ -125,7 +114,6 @@ impl NavWorld {
             graph,
             banks,
             named_banks: OnceLock::new(),
-            selected_pin: OnceLock::new(),
         }
     }
 
@@ -226,7 +214,6 @@ impl NavWorld {
             graph,
             banks: Vec::new(),
             named_banks: OnceLock::new(),
-            selected_pin: OnceLock::new(),
         }
     }
 }

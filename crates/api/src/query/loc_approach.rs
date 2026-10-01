@@ -182,17 +182,16 @@ pub fn distance_from(loc: &LocView, from: WorldTile) -> Option<u32> {
     Some(from.x.abs_diff(nearest_x).max(from.z.abs_diff(nearest_z)))
 }
 
-/// Live footprint arrival for a radius walk. An off-scene collision estimate
-/// is not an interaction proof: once the loc is visible, only its real rotated
-/// footprint, force-approach sides and live wall flags may settle the walk.
-/// The Chebyshev distance to that full rectangle must be within `radius`;
-/// perimeter stands are not admitted independently of the requested margin.
-/// `None` preserves ordinary walk arrival for an unmodeled destination.
+/// Live footprint arrival for an explicitly identified loc radius walk.
+/// Off-scene or unknown footprints return `None`, not interaction proof.
+/// The full rotated rectangle, force-approach sides and live wall flags
+/// determine arrival; unrelated locs on the destination tile are ignored.
 pub fn arrived_at(
     snapshot: &GameSnapshot,
     from: WorldTile,
     to: WorldTile,
     radius: i32,
+    loc_id: i32,
 ) -> Option<bool> {
     let scene = snapshot.scene();
     let query = super::SceneQuery::new(scene, None);
@@ -200,7 +199,14 @@ pub fn arrived_at(
         return None;
     }
     let mut modeled = false;
-    for loc in snapshot.locs().iter().filter(|loc| loc.tile == to) {
+    for loc in snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.tile == to && loc.id == loc_id)
+    {
+        if distance_from(loc, to).is_none() {
+            continue;
+        }
         let Some(can_operate) = can_operate_from(loc, scene, from) else {
             continue;
         };
