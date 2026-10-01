@@ -851,7 +851,7 @@ impl ScriptWalkArm {
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
         let live_candidates = if radius > 0 {
-            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to, radius))
+            snapshot.and_then(|snapshot| loc_target_approach_tiles(snapshot, to, radius))
         } else {
             None
         };
@@ -1148,13 +1148,13 @@ impl LiveCandidates {
 /// Do not filter by the current-scene flood: the baked graph may cross a shut
 /// door or transport to a legal stand. Modeled live footprints have no fallback
 /// to proximity-only goals; unknown solids use the wall-aware radius estimate.
-fn solid_target_approach_tiles(
+fn loc_target_approach_tiles(
     snapshot: &GameSnapshot,
     to: WorldTile,
     radius: i32,
 ) -> Option<LiveCandidates> {
     let query = api::query::SceneQuery::new(snapshot.scene(), None);
-    if !query.contains(to) || query.walkable(to) {
+    if !query.contains(to) {
         return None;
     }
     let mut tiles: Option<Vec<WorldTile>> = None;
@@ -1179,6 +1179,9 @@ fn solid_target_approach_tiles(
     Some(match tiles {
         Some(tiles) => LiveCandidates::Modeled(tiles),
         None => {
+            if query.walkable(to) {
+                return None;
+            }
             let mut tiles = [to; 4];
             let mut len = 0;
             for stand in query.arrival_stands(to) {
@@ -1566,8 +1569,8 @@ impl ScriptRouteRequest {
             .collect()
     }
 
-    /// A solid in-scene target: legal stands first, then an optional wall-aware
-    /// radius fallback for unmodeled solids only. In order: a strict route to a
+    /// A modeled live loc or an unmodeled solid: legal stands first, then an
+    /// optional wall-aware radius fallback for unmodeled solids only. In order: a strict route to a
     /// stand, a BankBudget session to a stand, a strict route to a radius tile, a
     /// session to a radius tile. The strict search for the stands also
     /// answers for the tiles as a search over them alone would, where that

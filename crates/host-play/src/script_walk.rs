@@ -26,7 +26,7 @@ struct LiveRouteRefresh {
     radius: i32,
     options: FindOptions,
     request_id: u64,
-    exclusions: Option<Arc<crate::script_nav::ScriptRouteExclusions>>,
+    exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
     authority: Option<script::native::HostAuthority>,
     quest_evidence: Option<nav::quest_gates::QuestEvidence>,
 }
@@ -437,6 +437,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     allow_wilderness,
                     allow_bank_fetch,
                     zones,
+                    ..FindOptions::default()
                 },
                 request_id: bot.walk_request_id,
                 exclusions: bot.requested_exclusions.clone(),
