@@ -69,7 +69,7 @@ label in its border. Everything is plain text as well as colour.
 | --- | --- |
 | Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world) and inventory / stats / nearest locs |
-| Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Search hit rows use display names (`/` line-breaks become spaces). The map draws one-cell glyphs, not overlapping text labels. The catalogue is requested only while this tab is open. |
+| Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
@@ -97,7 +97,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 | --- | --- |
 | Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
-| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` layers, `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
+| Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` layers, `z` route through danger zones for this Map open, `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
 | Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`) |
 | Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
 | Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
@@ -122,8 +122,12 @@ many unmarked bots stay unchanged, and nothing is written until you confirm).
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
 from its own position. Each of these prints one report with every marked bot
 counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:
-running a script, gwalk3: not logged in`); bots that are logged out, have no
-position yet or run a script are skipped with that reason.
+running a script, gwalk3: not logged in`); zone refusals include the danger
+zone names for each affected bot. On legacy grid packs `z` cannot enable
+checks and the report says `zones: unavailable (legacy grid pack)`. Bots that
+are logged out, have no position yet or run a script are skipped with that
+reason. The `z` choice starts with zones avoided and resets whenever Map
+closes or opens; it is not persisted.
 
 **Mouse** (optional; every workflow works from the keyboard): left click
 focuses the pane, selects a fleet row (its checkbox column ticks the row

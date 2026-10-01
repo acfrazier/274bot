@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
-use nav::router::{find_first_with_avoid, find_with_avoid, FindOptions, Route};
+use nav::router::{
+    find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
+    RouteError,
+};
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -572,7 +575,7 @@ fn step_walk(
             route
         }
         Err(_) => match arm_access_fallback(w, from, dest, opts, &state, &pending.avoid) {
-            Some(route) => {
+            Ok(route) => {
                 let reached = route.dest;
                 if let Some(BankStep::Walk { x, z, level }) =
                     bot.bank_fetch.as_mut().and_then(|p| p.steps.front_mut())
@@ -584,7 +587,17 @@ fn step_walk(
                 log_walk_arm_bot(|| format!("bank_fetch Walk fallback access dest={reached:?}"));
                 route
             }
-            None => return (false, StepEnd::Abort("no route to a bank access tile")),
+            Err(blocked) => {
+                if let (Some(keys), Some(table)) = (blocked.as_deref(), w.graph.zones.as_ref()) {
+                    api::host_log!(
+                        api::hostlog::Category::NavTrace,
+                        api::hostlog::Level::Warn,
+                        "{}",
+                        super::script_nav::compat_zone_no_route_line(table, keys)
+                    );
+                }
+                return (false, StepEnd::Abort("no route to a bank access tile"));
+            }
         },
     };
     bot.route = Some(route);
@@ -738,7 +751,7 @@ fn arm_access_fallback(
     opts: FindOptions,
     state: &WorldState,
     avoid: &[nav::router::AvoidRect],
-) -> Option<nav::router::Route> {
+) -> Result<Route, Option<Vec<nav::zones::ZoneKey>>> {
     let mut targets: Vec<WorldTile> = world
         .banks()
         .iter()
@@ -759,9 +772,9 @@ fn arm_access_fallback(
             .collect();
     }
     if targets.is_empty() {
-        return None;
+        return Err(None);
     }
-    find_first_with_avoid(
+    match find_first_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -771,7 +784,20 @@ fn arm_access_fallback(
         avoid,
     )
     .into_route()
-    .ok()
+    {
+        Ok(route) => Ok(route),
+        Err(RouteError::NoPath) => Err(find_first_blocking_zones(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            opts,
+            state,
+            avoid,
+        )
+        .filter(|keys| !keys.is_empty())),
+        Err(_) => Err(None),
+    }
 }
 
 impl BankFetchFlight {
@@ -854,4 +880,101 @@ fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
 
 fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {
     worn(snapshot).any(|got| got == id)
+}
+
+#[cfg(test)]
+mod zone_diagnostic_tests {
+    use super::*;
+    use nav::collision::{pack_walk, WorldCollision};
+    use nav::pack::{BankAccess, BankStand};
+    use nav::transport::TransportGraph;
+    use nav::zones::{Zone, ZoneClass, ZoneKey, ZoneKind, ZoneTable};
+
+    fn world_with_bank_access_barrier() -> NavWorld {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let flags = vec![0u32; 40 * 4];
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin,
+            width: 40,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let mut graph = TransportGraph::default();
+        graph.zones = Some(
+            ZoneTable::from_parts(
+                vec![Zone::npc(
+                    WorldTile {
+                        x: 2,
+                        z: 0,
+                        level: 0,
+                    },
+                    0,
+                    ZoneClass::Always,
+                    u16::MAX,
+                    0,
+                )],
+                vec![ZoneKind::new(
+                    "test-barrier",
+                    "Test barrier",
+                    123,
+                    0,
+                    false,
+                    false,
+                )],
+                vec![],
+                vec![],
+                vec![],
+                origin,
+                40,
+                1,
+                &graph.wilderness,
+            )
+            .unwrap(),
+        );
+        NavWorld::from_parts(
+            collision,
+            graph,
+            vec![BankStand {
+                name: "Test bank".into(),
+                tile: WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
+                access: BankAccess::Booth { op: 2 },
+            }],
+        )
+    }
+
+    #[test]
+    fn bank_access_fallback_returns_its_zone_witness() {
+        let world = world_with_bank_access_barrier();
+        let result = arm_access_fallback(
+            &world,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            FindOptions::default(),
+            &WorldState::empty(),
+            &[],
+        );
+        match result {
+            Err(Some(keys)) => assert_eq!(keys, vec![ZoneKey::Zone(0)]),
+            other => panic!("expected a bank-access zone witness, got {other:?}"),
+        }
+    }
 }

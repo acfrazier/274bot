@@ -191,6 +191,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         teleports: vec![],
         wilderness: crate::transport::WildernessRules::default(),
         quest_family: None,
+        zones: None,
     };
     let from = WorldTile {
         x: 2 * at.x - toll.to.x,
@@ -292,6 +293,7 @@ fn allows_requires_every_req_kind() {
         quests: HashSet::from(["Rune Mysteries".to_string()]),
         map_members: false,
         quest_evidence: None,
+        combat_level: None,
     };
     assert!(s.allows(&e), "all facts present");
     // One missing fact at a time, each failing closed.
@@ -560,4 +562,38 @@ fn members_req_refuses_until_map_members_is_true() {
         WorldState::empty().allows(&e),
         "existing edges stay ungated"
     );
+}
+
+#[test]
+fn combat_level_uses_ready_base_rows_not_boosts() {
+    let mut c = client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    assert_eq!(WorldState::from_snapshot(&snapshot).combat_level, None);
+
+    // Fresh account: attack/defence/strength/ranged/prayer/magic 1, HP 10.
+    c.stat_base_level[..7].copy_from_slice(&[1, 1, 1, 10, 1, 1, 1]);
+    c.stat_effective_level[..7].fill(99);
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    snapshot.rebuild(&c);
+    assert_eq!(WorldState::from_snapshot(&snapshot).combat_level, Some(3));
+
+    for missing in 0..7 {
+        let saved = c.stat_base_level[missing];
+        c.stat_base_level[missing] = 0;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        snapshot.rebuild(&c);
+        assert_eq!(WorldState::from_snapshot(&snapshot).combat_level, None);
+        c.stat_base_level[missing] = saved;
+    }
+    for levels in [[99; 7], [1, 1, 1, 10, 99, 1, 1], [1, 1, 1, 10, 1, 1, 99]] {
+        c.stat_base_level[..7].copy_from_slice(&levels);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        snapshot.rebuild(&c);
+        let expected = if levels[0] == 99 { 126 } else { 50 };
+        assert_eq!(
+            WorldState::from_snapshot(&snapshot).combat_level,
+            Some(expected)
+        );
+    }
 }

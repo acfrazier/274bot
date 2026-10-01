@@ -441,15 +441,21 @@ Optional map-owned overlay toggles (not per-tile quads), vector route
 and destination (pending selection vs armed dest are distinct), wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
 header plane/zoom/search/layer controls that wrap at the default Game pane
-and narrower widths, footer **Recentre** / **Walk** / **Send**, and
-**Teleport** (Local target on a loopback host, guarded by
-`host_play::walk_map`). Walk needs a snapped walkable target. The map
-selection is a destination (tile/POI, plane, nav identity), not a bot.
+and narrower widths, footer **Route through danger zones** / **Recentre** /
+**Walk** / **Send**, and **Teleport** (Local target on a loopback host,
+guarded by `host_play::walk_map`). Walk needs a snapped walkable target. The
+zone checkbox starts unchecked and resets every time WalkTo opens; its hover
+text is `Allows routes past monsters that may kill your bot.` It applies only
+to that WalkTo's focused or group Walk confirmation and is not saved in Nav
+config. On a legacy grid pack the toggle cannot enable zone checks, and the
+report says `zones: unavailable (legacy grid pack)`.
+The map selection is a destination (tile/POI, plane, nav identity), not a bot.
 **Send** chooses **Focused bot** (default) or **Group** — a checklist of
 wall bots with **All eligible / None**. Ineligible bots stay listed,
 greyed, with a host reason (not logged in, no position yet, running a
 script). Group confirm reads **Walk N bots**; each eligible bot gets its
-own command and a Start-all-style summary. Debug **Teleport** uses the
+own command and a Start-all-style summary. A refusal names the dangerous
+zones for each bot that could not route. Debug **Teleport** uses the
 clicked tile even when blocked, stays focused-only, and is enabled
 whenever there is a selection and Teleport is authorized. Confirmations
 consume the pending `MapModel` selection once and act on the bot focused

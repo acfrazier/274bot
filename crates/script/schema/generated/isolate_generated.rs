@@ -6461,6 +6461,7 @@ impl<'a> AvoidRect<'a> {
   pub const VT_MIN_Z: ::flatbuffers::VOffsetT = 8;
   pub const VT_MAX_Z: ::flatbuffers::VOffsetT = 10;
   pub const VT_LEVEL: ::flatbuffers::VOffsetT = 12;
+  pub const VT_CATALOG_ID: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6469,9 +6470,10 @@ impl<'a> AvoidRect<'a> {
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
     _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args AvoidRectArgs
+    args: &'args AvoidRectArgs<'args>
   ) -> ::flatbuffers::WIPOffset<AvoidRect<'bldr>> {
     let mut builder = AvoidRectBuilder::new(_fbb);
+    if let Some(x) = args.catalog_id { builder.add_catalog_id(x); }
     builder.add_level(args.level);
     builder.add_max_z(args.max_z);
     builder.add_min_z(args.min_z);
@@ -6516,6 +6518,13 @@ impl<'a> AvoidRect<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(AvoidRect::VT_LEVEL, Some(-1)).unwrap()}
   }
+  #[inline]
+  pub fn catalog_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AvoidRect::VT_CATALOG_ID, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for AvoidRect<'_> {
@@ -6529,18 +6538,20 @@ impl ::flatbuffers::Verifiable for AvoidRect<'_> {
      .visit_field::<i32>("min_z", Self::VT_MIN_Z, false)?
      .visit_field::<i32>("max_z", Self::VT_MAX_Z, false)?
      .visit_field::<i32>("level", Self::VT_LEVEL, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("catalog_id", Self::VT_CATALOG_ID, false)?
      .finish();
     Ok(())
   }
 }
-pub struct AvoidRectArgs {
+pub struct AvoidRectArgs<'a> {
     pub min_x: i32,
     pub max_x: i32,
     pub min_z: i32,
     pub max_z: i32,
     pub level: i32,
+    pub catalog_id: Option<::flatbuffers::WIPOffset<&'a str>>,
 }
-impl<'a> Default for AvoidRectArgs {
+impl<'a> Default for AvoidRectArgs<'a> {
   #[inline]
   fn default() -> Self {
     AvoidRectArgs {
@@ -6549,6 +6560,7 @@ impl<'a> Default for AvoidRectArgs {
       min_z: 0,
       max_z: 0,
       level: -1,
+      catalog_id: None,
     }
   }
 }
@@ -6579,6 +6591,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AvoidRectBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<i32>(AvoidRect::VT_LEVEL, level, -1);
   }
   #[inline]
+  pub fn add_catalog_id(&mut self, catalog_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AvoidRect::VT_CATALOG_ID, catalog_id);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AvoidRectBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     AvoidRectBuilder {
@@ -6601,6 +6617,7 @@ impl ::core::fmt::Debug for AvoidRect<'_> {
       ds.field("min_z", &self.min_z());
       ds.field("max_z", &self.max_z());
       ds.field("level", &self.level());
+      ds.field("catalog_id", &self.catalog_id());
       ds.finish()
   }
 }
@@ -6660,6 +6677,7 @@ impl<'a> Interact<'a> {
   pub const VT_RUN_AUTO_KIND: ::flatbuffers::VOffsetT = 78;
   pub const VT_RUN_ENERGY_KIND: ::flatbuffers::VOffsetT = 80;
   pub const VT_RUN_ENERGY_MIN: ::flatbuffers::VOffsetT = 82;
+  pub const VT_CROSS: ::flatbuffers::VOffsetT = 84;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6680,6 +6698,7 @@ impl<'a> Interact<'a> {
     if let Some(x) = args.xf { builder.add_xf(x); }
     builder.add_request_id(args.request_id);
     if let Some(x) = args.bank_generation { builder.add_bank_generation(x); }
+    if let Some(x) = args.cross { builder.add_cross(x); }
     builder.add_run_energy_min(args.run_energy_min);
     if let Some(x) = args.data { builder.add_data(x); }
     if let Some(x) = args.avoid { builder.add_avoid(x); }
@@ -6995,6 +7014,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(Interact::VT_RUN_ENERGY_MIN, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn cross(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(Interact::VT_CROSS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -7043,6 +7069,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<u8>("run_auto_kind", Self::VT_RUN_AUTO_KIND, false)?
      .visit_field::<u8>("run_energy_kind", Self::VT_RUN_ENERGY_KIND, false)?
      .visit_field::<i32>("run_energy_min", Self::VT_RUN_ENERGY_MIN, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("cross", Self::VT_CROSS, false)?
      .finish();
     Ok(())
   }
@@ -7088,6 +7115,7 @@ pub struct InteractArgs<'a> {
     pub run_auto_kind: u8,
     pub run_energy_kind: u8,
     pub run_energy_min: i32,
+    pub cross: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -7133,6 +7161,7 @@ impl<'a> Default for InteractArgs<'a> {
       run_auto_kind: 0,
       run_energy_kind: 0,
       run_energy_min: 0,
+      cross: None,
     }
   }
 }
@@ -7303,6 +7332,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<i32>(Interact::VT_RUN_ENERGY_MIN, run_energy_min, 0);
   }
   #[inline]
+  pub fn add_cross(&mut self, cross: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Interact::VT_CROSS, cross);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -7360,6 +7393,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("run_auto_kind", &self.run_auto_kind());
       ds.field("run_energy_kind", &self.run_energy_kind());
       ds.field("run_energy_min", &self.run_energy_min());
+      ds.field("cross", &self.cross());
       ds.finish()
   }
 }
