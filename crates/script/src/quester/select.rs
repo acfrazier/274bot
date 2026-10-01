@@ -139,4 +139,50 @@ mod tests {
             "unknown inventory must wait, never select an action on login"
         );
     }
+
+    #[test]
+    fn romeo_known_empty_bank_advances_to_missing_item_acquisition() {
+        let data = selected();
+        let quests = quests(&data);
+        let document =
+            serde_json::from_str(crate::quester::compile::ROMEO_AND_JULIET_JSON).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        for (stage, scan, acquire) in [
+            ("romeojuliet:20", "scan-message-bank", "replace-message"),
+            ("romeojuliet:50", "scan-potion-bank", "take-berries"),
+        ] {
+            let sequence = sequence_for_stage(&path, stage).unwrap();
+            let mut bank = crate::quester::bank_memo::BankMemo::default();
+            let mut ledger = None;
+            let selected_id =
+                |bank: &crate::quester::bank_memo::BankMemo,
+                 ledger: &mut Option<Box<crate::native::ledger::Ledger>>| {
+                    crate::quester::families::tests::with_tick(&snapshot, ledger, 1, |tick| {
+                        let pred = PredicateContext {
+                            cx: &tick.cx,
+                            quests: &quests,
+                            progress: &[],
+                            required_after: stamp(),
+                            chat_since: 0,
+                            outcome: None,
+                            bank,
+                        };
+                        let SelectionDecision::Selected(picked) = select(&path, sequence, &pred)
+                        else {
+                            panic!("observed inventory and bank state must select a step");
+                        };
+                        picked.step.id.0.to_string()
+                    })
+                };
+            assert_eq!(selected_id(&bank, &mut ledger), scan);
+            bank.update(&crate::native_bank::BankReceipt {
+                counts: vec![],
+                complete: true,
+            });
+            assert_eq!(selected_id(&bank, &mut ledger), acquire);
+        }
+    }
 }
