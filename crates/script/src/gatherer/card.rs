@@ -12,9 +12,9 @@ use std::sync::Arc;
 pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Gatherer"),
     name: "Gatherer",
-    description: "Gather selected woodcutting and mining resources from live observation.",
+    description: "Gather selected woodcutting, mining and fishing resources from live observation.",
     category: "Gathering",
-    schema_version: 1,
+    schema_version: 2,
     schema,
     per_account_settings: &[],
     prepare,
@@ -28,6 +28,7 @@ pub struct Prepared {
     pub method_bits: u64,
     pub methods: Arc<[usize]>,
     pub excluded_targets: Arc<str>,
+    pub products: Arc<[i32]>,
 }
 
 pub fn prepare(
@@ -56,6 +57,16 @@ pub fn prepare(
         .collect::<Vec<_>>()
         .join(", ")
         .into();
+    let mut products: Vec<i32> = methods
+        .iter()
+        .flat_map(|&index| api::gather_methods::known_rows(&catalog.methods()[index].products))
+        .map(|product| product.item)
+        .collect();
+    if settings.skill_kind() == super::settings::Skill::Mining {
+        products.extend_from_slice(catalog.incidental_gem_ids());
+    }
+    products.sort_unstable();
+    products.dedup();
     Ok(PreparedConfig::new(
         CARD.id,
         CARD.schema_version,
@@ -68,6 +79,7 @@ pub fn prepare(
             method_bits,
             methods,
             excluded_targets,
+            products: products.into(),
         }),
     ))
 }

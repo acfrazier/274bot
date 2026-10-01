@@ -1,16 +1,15 @@
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
 use api::snapshot::ItemView;
+use std::sync::Arc;
 use std::task::Poll;
 
-const MAX_PRODUCTS: usize = 8;
 const MAX_PROTECTED: usize = 8;
 const MAX_BATCH: usize = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropBatchArgs {
-    pub products: [i32; MAX_PRODUCTS],
-    pub products_len: u8,
+    pub products: Arc<[i32]>,
     pub protected: [i32; MAX_PROTECTED],
     pub protected_len: u8,
 }
@@ -230,7 +229,7 @@ impl DropBatch {
     }
 
     fn is_product(&self, id: i32) -> bool {
-        self.args.products[..self.args.products_len as usize].contains(&id)
+        self.args.products.contains(&id)
     }
 
     fn is_protected(&self, id: i32) -> bool {

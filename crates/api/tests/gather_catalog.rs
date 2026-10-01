@@ -2,8 +2,8 @@
 //! content maps (`maps/m38_50.jm2:5131` is `0 38 55: 2090`, i.e. plane 0, local 38/55 of map square 38,50).
 use api::game_data::for_revision;
 use api::gather_methods::{
-    first_gap, known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSpot, SceneRegionInput,
-    SpotId, TargetClass,
+    first_gap, known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
+    SceneRegionInput, SpotId, TargetClass,
 };
 use api::selected::{ClientRevision, EntityId, FactError, FamilyPreparation, Knowledge, Truth};
 use api::WorldTile;
@@ -698,6 +698,70 @@ fn mining_products_are_partial_where_a_gem_roll_can_replace_the_ore() {
     assert!(tools
         .iter()
         .all(|tool| tool.use_gate.is_some() && tool.wield_gate.is_some()));
+}
+
+#[test]
+fn content_hazards_and_incidental_gems_are_typed_catalog_facts() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let catalog = prepare(revision);
+        let hazards = catalog.hazard_npcs();
+        assert!(!hazards.is_empty(), "{revision:?}");
+        assert!(
+            hazards.windows(2).all(|pair| pair[0] < pair[1]),
+            "{revision:?}"
+        );
+        let names: Vec<_> = hazards
+            .iter()
+            .map(|id| {
+                catalog
+                    .alias(EntityId::Npc(*id))
+                    .expect("hazard id joins to an NPC")
+            })
+            .collect();
+        assert!(
+            names.iter().any(|name| name.starts_with("macro_ent_")),
+            "{revision:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("macro_whirlpool_")),
+            "{revision:?}"
+        );
+
+        let fishing_hazards: Vec<_> = catalog
+            .methods()
+            .iter()
+            .filter(|method| method.skill == GatherSkill::Fishing)
+            .flat_map(|method| known_rows(&method.targets))
+            .filter_map(|target| match (target.class, target.entity) {
+                (TargetClass::Hazard, EntityId::Npc(id)) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert!(!fishing_hazards.is_empty(), "{revision:?}");
+        assert!(
+            fishing_hazards.iter().all(|id| hazards.contains(id)),
+            "{revision:?}"
+        );
+
+        let gems = catalog.incidental_gem_ids();
+        assert!(!gems.is_empty(), "{revision:?}");
+        assert!(
+            gems.windows(2).all(|pair| pair[0] < pair[1]),
+            "{revision:?}"
+        );
+        for id in gems {
+            assert!(
+                alias(&catalog, *id).starts_with("uncut_"),
+                "{revision:?}: {id}"
+            );
+        }
+        let copper = catalog.method("mining.copper").unwrap();
+        assert!(known_rows(&copper.products)
+            .iter()
+            .all(|product| !gems.contains(&product.item)));
+    }
 }
 
 /// The core's `mining_hazards` slice is exactly the family's mining hazard targets under the same pin, so the
