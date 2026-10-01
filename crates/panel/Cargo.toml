@@ -55,4 +55,6 @@ memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"
 
 [dev-dependencies]
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
+proc-macro2 = "1"
+syn = "2"
 parking_lot = "0.12"

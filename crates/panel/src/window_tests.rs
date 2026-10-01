@@ -752,24 +752,134 @@ fn visible_acquisition_captures_composed_frame_and_writes_the_image() {
     );
 }
 
-/// The merged glyph font must cover the two non-Latin-1 codepoints
-/// the rail draws as text: U+2059 (⁙ status dot) and U+2717 (✗
-/// remove). Without them the panel would render `?` again.
+/// The only embedded base font must cover every non-ASCII string literal
+/// in panel sources, including the file-dialog Nerd Font icons.
 #[test]
-fn glyph_font_merges_status_and_remove_codepoints() {
+fn panel_font_covers_non_ascii_source_string_literals() {
     let _guard = crate::test_support::imgui_context_guard();
+    let (mut ctx, required_glyphs_present) = panel_font_test_context();
+    let source_glyphs = panel_non_ascii_string_glyphs();
+    let missing = {
+        let ui = ctx.frame();
+        let font = ui.current_font();
+        source_glyphs
+            .into_iter()
+            .filter(|(_, glyph)| !font.is_glyph_in_font(*glyph))
+            .collect::<Vec<_>>()
+    };
+    ctx.render();
+
+    let missing_text = missing
+        .iter()
+        .map(|(path, glyph)| format!("{} U+{:04X}", path.display(), *glyph as u32))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert!(
+        missing.is_empty(),
+        "panel source string glyphs missing from the atlas: {missing_text}"
+    );
+    assert!(
+        required_glyphs_present,
+        "rail controls and Nerd Font icons must be in the atlas"
+    );
+}
+
+/// The 3270 cell advance at [`PANEL_FONT_SIZE`] stays within 5% of
+/// ProggyClean's old 7 px advance at 13 px, natively (no minimum-advance
+/// padding), so the panel's existing horizontal layout still fits.
+#[test]
+fn panel_font_advance_stays_within_five_percent_of_old_layout() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let (mut ctx, glyphs_present) = panel_font_test_context();
+    assert!(glyphs_present, "panel's required glyphs are in the atlas");
+
+    let (advance, size, line_height) = {
+        let ui = ctx.frame();
+        let size = ui.current_font_size();
+        let line_height = ui.text_line_height();
+        let advance = ui
+            .current_font()
+            .calc_text_size(size, f32::MAX, 0.0, "00000000")[0]
+            / 8.0;
+        (advance, size, line_height)
+    };
+    ctx.render();
+    assert!(
+        (size - PANEL_FONT_SIZE).abs() <= 0.01,
+        "font size at 1× must stay {PANEL_FONT_SIZE} px, got {size:.3}"
+    );
+    assert!(
+        (line_height - 14.0).abs() <= 0.01,
+        "ImGui line height at the selected size must be 14 px, got {line_height:.3}"
+    );
+    assert!(
+        (advance - 7.0).abs() <= 0.35,
+        "3270 cell advance {advance:.3} at size {size:.3} must stay within 5% of ProggyClean's 7 px baseline"
+    );
+}
+
+fn panel_font_test_context() -> (imgui::Context, bool) {
     let mut ctx = imgui::Context::create();
-    let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut ctx);
-    assert!(
-        quincunx,
-        "U+2059 (status dot) must resolve in the merged font"
-    );
-    assert!(ballot_x, "U+2717 (remove) must resolve in the merged font");
-    assert!(folds, "U+2582/U+2585 (fold/unfold) must resolve");
-    assert!(
-        fa,
-        "FA Free Solid PUA (home/desktop/docs/downloads/folder/file/chevron) must resolve"
-    );
+    let required_glyphs_present = add_panel_font(&mut ctx);
+    let _ = ctx.font_atlas_mut().build();
+    ctx.io_mut().set_display_size([128.0, 128.0]);
+    ctx.io_mut().set_delta_time(1.0 / 60.0);
+    (ctx, required_glyphs_present)
+}
+
+fn panel_non_ascii_string_glyphs() -> Vec<(std::path::PathBuf, char)> {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_panel_rust_files(&source_root, &mut files);
+    files.sort();
+
+    let mut glyphs = std::collections::BTreeSet::new();
+    for path in files {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
+        let tokens = source
+            .parse::<proc_macro2::TokenStream>()
+            .unwrap_or_else(|error| panic!("tokenizing {}: {error}", path.display()));
+        let mut literals = Vec::new();
+        collect_string_literals(tokens, &mut literals);
+        for literal in literals {
+            for glyph in literal.chars().filter(|glyph| !glyph.is_ascii()) {
+                glyphs.insert((path.clone(), glyph));
+            }
+        }
+    }
+    glyphs.into_iter().collect()
+}
+
+fn collect_panel_rust_files(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", directory.display()))
+    {
+        let path = entry
+            .unwrap_or_else(|error| panic!("reading {} entry: {error}", directory.display()))
+            .path();
+        if path.is_dir() {
+            collect_panel_rust_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn collect_string_literals(tokens: proc_macro2::TokenStream, literals: &mut Vec<String>) {
+    for token in tokens {
+        match token {
+            proc_macro2::TokenTree::Group(group) => {
+                collect_string_literals(group.stream(), literals)
+            }
+            proc_macro2::TokenTree::Literal(literal) => {
+                if let Ok(string) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+                    literals.push(string.value());
+                }
+            }
+            proc_macro2::TokenTree::Ident(_) | proc_macro2::TokenTree::Punct(_) => {}
+        }
+    }
 }
 
 /// M-003: an oversized request clamps to the work area. The default
