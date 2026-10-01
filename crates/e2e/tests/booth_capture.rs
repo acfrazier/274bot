@@ -7,7 +7,7 @@ mod common;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -140,6 +140,8 @@ fn dump_bank_locs() {
 
     let dumped = Arc::new(AtomicBool::new(false));
     let dumped_flag = Arc::clone(&dumped);
+    let booths_seen = Arc::new(Mutex::new(Vec::new()));
+    let booths_seen_hook = Arc::clone(&booths_seen);
     let mut play = run_with_io(
         &options(),
         profiles(&[("test", "test")]),
@@ -228,6 +230,11 @@ fn dump_bank_locs() {
                     angle_name(*bangle)
                 );
             }
+            booths_seen_hook.lock().unwrap().extend(
+                booths
+                    .iter()
+                    .map(|(id, x, z, level, _, _)| (*id, *x, *z, *level)),
+            );
         },
     );
 
@@ -236,6 +243,10 @@ fn dump_bank_locs() {
     thread::sleep(Duration::from_secs(2));
     if !dumped.load(Ordering::Relaxed) {
         eprintln!("WARN: loc dump did not run (scene never 2 in the hook)");
+    }
+    let booths_seen = booths_seen.lock().unwrap();
+    if dumped.load(Ordering::Relaxed) && booths_seen.is_empty() {
+        fail("dump_bank_locs: hook ran but saw no bank booths within radius 20");
     }
 
     if let Some(arm) = play.arm("test") {

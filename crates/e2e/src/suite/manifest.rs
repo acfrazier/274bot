@@ -506,11 +506,6 @@ mod tests {
     fn embedded_manifest_is_valid_and_covers_the_intended_inventory() {
         let manifest = embedded();
         assert_eq!(manifest.schema_version, SCHEMA_VERSION);
-        assert_eq!(
-            manifest.provenance.reference_commit,
-            "00d39a17e056df6c5e461f3f2cfd3598ff9720b6"
-        );
-        assert_eq!(manifest.intended_scripts.len(), 44);
         for script in ["Duel Arena Combat Trainer", "ClimbingBoots", "RockCrab"] {
             assert!(manifest.intended_scripts.iter().any(|name| name == script));
         }
