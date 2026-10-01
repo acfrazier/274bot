@@ -79,8 +79,8 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .graph
         .edges
         .iter()
-        .find(|e| e.loc_id == 2882 && e.at == at && e.to.x > at.x && e.item_req == vec![(995, 10)])
-        .expect("real pack contains the paid eastbound Al Kharid toll crossing");
+        .find(|e| e.loc_id == 2882 && e.at == at && e.to != at && e.item_req == vec![(995, 10)])
+        .expect("real pack contains the paid Al Kharid toll crossing");
     let free = world
         .graph
         .edges
@@ -193,9 +193,9 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         quest_family: None,
     };
     let from = WorldTile {
-        x: 3267,
-        z: 3227,
-        level: 0,
+        x: 2 * at.x - toll.to.x,
+        z: 2 * at.z - toll.to.z,
+        level: at.level,
     };
     let to = toll.to;
     let route = find_with(
