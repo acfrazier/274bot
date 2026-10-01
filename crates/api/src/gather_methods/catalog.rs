@@ -276,36 +276,6 @@ impl GatherCatalog {
         &self.methods
     }
 
-    /// Rotated loc dimensions at an exact placement origin. Reuses the prepared
-    /// catalog's map-square buckets; no placement index or result allocation.
-    /// Colocated definitions with different footprints are deliberately unknown.
-    pub fn loc_footprint_at(&self, origin: WorldTile) -> Option<(u8, u8)> {
-        let mut footprint = None;
-        for (method, extra) in self.methods.iter().zip(self.extras.iter()) {
-            let spots = known_rows(&method.spots);
-            for bucket in extra.buckets.iter().filter(|bucket| {
-                bucket.level == origin.level
-                    && bucket.mx == origin.x >> 6
-                    && bucket.mz == origin.z >> 6
-            }) {
-                for spot in &spots[bucket.start as usize..bucket.end as usize] {
-                    if spot.origin != origin || !matches!(spot.entity, EntityId::Loc(_)) {
-                        continue;
-                    }
-                    let dimensions = (
-                        u8::try_from(spot.width).ok()?,
-                        u8::try_from(spot.length).ok()?,
-                    );
-                    if footprint.is_some_and(|previous| previous != dimensions) {
-                        return None;
-                    }
-                    footprint = Some(dimensions);
-                }
-            }
-        }
-        footprint
-    }
-
     /// NPC type ids that can appear as skill hazards (tree ents and fishing whirlpools).
     pub fn hazard_npcs(&self) -> &[i32] {
         &self.hazard_npcs

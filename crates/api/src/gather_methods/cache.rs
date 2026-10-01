@@ -112,12 +112,6 @@ pub fn cached(data: &SelectedGameData) -> Option<Arc<GatherCatalog>> {
     CACHE.lookup(&Key::of(&pin))
 }
 
-/// Cache-only placement lookup. The temporary Arc cannot keep a catalog alive
-/// after this query; navigation never prepares or retains the gathering family.
-pub fn loc_footprint_at(pin: &SelectedPin, origin: crate::snapshot::WorldTile) -> Option<(u8, u8)> {
-    CACHE.lookup(&Key::of(pin))?.loc_footprint_at(origin)
-}
-
 /// Admit `family` against `manifest` and the pin, then decode it. Split from `prepare` so refusals are testable
 /// with tampered bytes and so both checks are one step that runs once per prepared catalog.
 fn load(

@@ -98,6 +98,19 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
         level: 0,
     };
     let mut snapshot = GameSnapshot::new();
+    let mut client = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 1,
+        cache_dir: String::new(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = here.x - 52;
+    client.map_build_base_z = here.z - 52;
+    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+    snapshot.rebuild(&client);
     snapshot.seed_ingame(2);
     snapshot.seed_npcs(Vec::new());
     snapshot.seed_world(WorldStateView {

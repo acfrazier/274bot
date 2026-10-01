@@ -24,6 +24,7 @@ const BANK_STEP_ATTEMPTS: u32 = 32;
 struct LiveRouteRefresh {
     to: WorldTile,
     radius: i32,
+    loc_id: Option<i32>,
     options: FindOptions,
     request_id: u64,
     exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
@@ -46,6 +47,8 @@ pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
     bot.pending_route = None;
     bot.requested_route = None;
     bot.end_native_walk(script::native::WalkEnd::Cancelled);
+    bot.route_loc_id = None;
+    bot.route_loc_geometry = (false, false);
     bot.route_quest_evidence = None;
     bot.walk_request_id = 0;
     bot.clear_walk_outcome();
@@ -361,7 +364,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     // Resolve arrival before the follow lock: the reach view lives behind
     // the script slot, and the slot locks before navs, never after.
-    let (armed, endpoint) = {
+    let (armed, endpoint, loc_id, estimated_geometry) = {
         let all = navs.lock().unwrap();
         all.get(name)
             .filter(|bot| bot.route.is_some() && bot.bank_fetch.is_none())
@@ -369,45 +372,40 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 (
                     bot.requested_route,
                     bot.route.as_ref().map(|route| route.dest),
+                    bot.route_loc_id,
+                    bot.route_loc_geometry,
                 )
             })
-            .unwrap_or((None, None))
+            .unwrap_or((None, None, None, (false, false)))
     };
-    let endpoint_arrival = armed.zip(endpoint).map(|((to, radius, ..), from)| {
-        api::query::loc_approach::arrived_at(snapshot, from, to, radius)
+    let endpoint_arrival = armed.zip(endpoint).and_then(|((to, radius, ..), from)| {
+        loc_id.and_then(|id| api::query::loc_approach::arrived_at(snapshot, from, to, radius, id))
     });
-    let offscene_solid = armed.is_some_and(|(to, radius, ..)| {
-        radius > 0
-            && !api::query::SceneQuery::new(snapshot.scene(), None).contains(to)
-            && world.is_some_and(|world| !world.collision.standable(to))
-    });
-    let estimated_endpoint = endpoint_arrival == Some(None) && offscene_solid;
+    let live_geometry = (
+        loc_id.is_some()
+            && armed.is_some_and(|(to, ..)| {
+                api::query::SceneQuery::new(snapshot.scene(), None).contains(to)
+            }),
+        endpoint_arrival.is_some(),
+    );
+    let estimated_endpoint = loc_id.is_some() && endpoint_arrival.is_none();
     let arrived = here
         .zip(armed)
         .is_some_and(|((x, z, level), (to, radius, ..))| {
             let from = WorldTile { x, z, level };
-            match api::query::loc_approach::arrived_at(snapshot, from, to, radius) {
-                Some(arrived) => arrived,
-                None if offscene_solid => false,
+            match loc_id {
+                Some(id) => {
+                    api::query::loc_approach::arrived_at(snapshot, from, to, radius, id)
+                        == Some(true)
+                }
                 None => api::query::is_arrived(from, to, radius, reach),
             }
         });
-    let reached_estimate = estimated_endpoint
-        && here.is_some_and(|(x, z, level)| {
-            let from = WorldTile { x, z, level };
-            endpoint == Some(from)
-                && api::query::SceneQuery::new(snapshot.scene(), None).contains(from)
-                && armed
-                    .is_some_and(|(to, ..)| from.x.abs_diff(to.x).max(from.z.abs_diff(to.z)) > 1)
-        });
-    let outside_plain_radius = endpoint_arrival == Some(None)
-        && !offscene_solid
-        && armed.zip(endpoint).is_some_and(|((to, radius, ..), from)| {
-            u32::try_from(radius)
-                .is_ok_and(|radius| from.x.abs_diff(to.x).max(from.z.abs_diff(to.z)) > radius)
-        });
+    // An unchanged estimate is never a reason to restart its worker. Only
+    // newly observable target/footprint inputs replace the owned route.
     let invalid_endpoint = !arrived
-        && (endpoint_arrival == Some(Some(false)) || reached_estimate || outside_plain_radius);
+        && ((live_geometry.0 && !estimated_geometry.0)
+            || (live_geometry.1 && !estimated_geometry.1));
     let (refresh, suppress_follow) = if invalid_endpoint {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
@@ -419,6 +417,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         let still_owns_endpoint = bot.route_request_id == bot.walk_request_id
             && bot.requested_route == armed
             && bot.route.as_ref().map(|route| route.dest) == endpoint
+            && bot.route_loc_id == loc_id
             && bot.bank_fetch.is_none();
         if !still_owns_endpoint {
             (None, false)
@@ -432,6 +431,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             let refresh = LiveRouteRefresh {
                 to,
                 radius,
+                loc_id,
                 options: FindOptions {
                     allow_teleports,
                     allow_wilderness,
@@ -477,6 +477,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             refresh.request_id,
             refresh.exclusions.as_deref().cloned().unwrap_or_default(),
             refresh.authority,
+            refresh.loc_id,
         );
     }
     let defer_estimated_end = estimated_endpoint;

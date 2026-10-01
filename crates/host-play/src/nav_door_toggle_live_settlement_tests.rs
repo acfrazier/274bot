@@ -66,6 +66,7 @@ impl Script for SettlementWalker {
             let request = WalkRequest {
                 target: TARGET,
                 radius: 1,
+                loc_id: Some(0),
                 options: script::FindOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
@@ -80,7 +81,7 @@ impl Script for SettlementWalker {
     }
 }
 
-fn packed_world() -> (Arc<NavWorld>, Arc<api::gather_methods::GatherCatalog>) {
+fn packed_world() -> Arc<NavWorld> {
     const SIZE: usize = 160;
     let origin = WorldTile {
         x: TARGET.x - 158,
@@ -110,7 +111,7 @@ fn packed_world() -> (Arc<NavWorld>, Arc<api::gather_methods::GatherCatalog>) {
         flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
     }
     let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let world = Arc::new(NavWorld::from_parts(
+    Arc::new(NavWorld::from_parts(
         nav::collision::WorldCollision {
             origin,
             width: SIZE,
@@ -121,20 +122,7 @@ fn packed_world() -> (Arc<NavWorld>, Arc<api::gather_methods::GatherCatalog>) {
         },
         nav::transport::TransportGraph::default(),
         Vec::new(),
-    ));
-
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let preparation_data = Arc::clone(&data);
-    let catalog = api::selected::FamilyPreparation::run(move |worker| {
-        preparation_data.prepare_gathering(worker)
-    })
-    .expect("gathering preparation worker")
-    .join()
-    .expect("gathering preparation thread")
-    .expect("selected gathering catalog");
-    world.bind_named_bank_facts(&data).unwrap();
-    assert_eq!(world.loc_footprint_at(TARGET), Some((3, 3)));
-    (world, catalog)
+    ))
 }
 
 struct SettlementRig {
@@ -288,7 +276,7 @@ fn live_owner_id(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> u64 {
 
 #[test]
 fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_owner() {
-    let (world, _catalog) = packed_world();
+    let world = packed_world();
     let mut rig = SettlementRig::new(world);
     rig.observe(1, START);
     let estimated = wait_for_route(&rig.navs, |_| true);
@@ -303,11 +291,12 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
         "the packed estimate picks the short west-side stand"
     );
     assert_eq!(
-        api::query::loc_approach::arrived_at(&rig.snapshot, estimated_endpoint, TARGET, 1),
+        api::query::loc_approach::arrived_at(&rig.snapshot, estimated_endpoint, TARGET, 1, 0),
         None,
         "the packed endpoint has no live footprint proof while the target is off-scene"
     );
     let request_id = live_owner_id(&rig.navs);
+    let initial_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
 
     rig.set_position(estimated_endpoint);
     rig.observe(2, estimated_endpoint);
@@ -329,10 +318,38 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
         Some(estimated_endpoint),
         "the estimated route remains armed until live footprint evidence arrives"
     );
+    for _ in 0..10 {
+        rig.pump(estimated_endpoint);
+    }
+    let unchanged_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+    assert_eq!(
+        unchanged_generation, initial_generation,
+        "an unchanged estimate is not refreshed"
+    );
 
+    // Scene entry and footprint discovery are separate estimate inputs.
+    rig.client.map_build_base_x = LIVE_BASE.x;
+    rig.client.map_build_base_z = LIVE_BASE.z;
+    rig.set_position(estimated_endpoint);
+    rig.pump(estimated_endpoint);
+    let _ = wait_for_route(&rig.navs, |_| true);
+    let entered_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+    assert_eq!(
+        entered_generation,
+        initial_generation + 1,
+        "scene entry refreshes once"
+    );
+    for _ in 0..10 {
+        rig.pump(estimated_endpoint);
+    }
+    let unchanged_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+    assert_eq!(
+        unchanged_generation, entered_generation,
+        "unknown footprint does not refresh every tick"
+    );
     rig.expose_live_footprint(estimated_endpoint);
     assert_eq!(
-        api::query::loc_approach::arrived_at(&rig.snapshot, estimated_endpoint, TARGET, 1),
+        api::query::loc_approach::arrived_at(&rig.snapshot, estimated_endpoint, TARGET, 1, 0),
         Some(false),
         "the real footprint rejects its forced-west side"
     );
@@ -349,6 +366,12 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
     );
 
     let refreshed = wait_for_route(&rig.navs, |dest| dest != estimated_endpoint);
+    let refreshed_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+    assert_eq!(
+        refreshed_generation,
+        entered_generation + 1,
+        "known footprint refreshes once more"
+    );
     assert!(
         (refreshed.dest
             == WorldTile {
@@ -366,7 +389,7 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
         refreshed.dest
     );
     assert_eq!(
-        api::query::loc_approach::arrived_at(&rig.snapshot, refreshed.dest, TARGET, 1),
+        api::query::loc_approach::arrived_at(&rig.snapshot, refreshed.dest, TARGET, 1, 0),
         Some(true),
         "the refreshed endpoint passes the live footprint predicate"
     );
@@ -389,5 +412,113 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
             .as_ref()
             .is_none_or(|owner| !owner.live()),
         "explicit cancellation revokes the original owner"
+    );
+}
+
+#[test]
+fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
+    const SIZE: usize = 160;
+    let origin = WorldTile {
+        x: TARGET.x - 140,
+        z: TARGET.z - 80,
+        ..TARGET
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for x in TARGET.x - 100..=TARGET.x + 1 {
+        for z in TARGET.z - 1..=TARGET.z + 1 {
+            flags[(z - origin.z) as usize * SIZE + (x - origin.x) as usize] |=
+                CollisionFlag::SQ_BLOCKED as u32;
+        }
+    }
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin,
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let start = WorldTile {
+        x: TARGET.x - 101,
+        ..TARGET
+    };
+    let mut rig = SettlementRig::new(world);
+    rig.client.map_build_base_x = start.x - 52;
+    rig.set_position(start);
+    rig.observe(1, start);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while rig.navs.lock().unwrap()[ALICE].route_worker.is_some() {
+        assert!(Instant::now() < deadline, "initial worker did not finish");
+        std::thread::yield_now();
+    }
+    rig.observe(2, start);
+    rig.pump(start);
+    assert!(
+        matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Failed),
+        "the impossible anchor estimate must fail promptly rather than livelock"
+    );
+    let generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+    for tick in 3..13 {
+        rig.observe(tick, start);
+        rig.pump(start);
+    }
+    let (after, route) = {
+        let all = rig.navs.lock().unwrap();
+        (all[ALICE].route_generation, all[ALICE].route.clone())
+    };
+    assert_eq!(
+        after, generation,
+        "unchanged inputs cannot restart the worker"
+    );
+    assert!(
+        route.is_none(),
+        "no anchor-radius stand exists inside this strip; never route to its remote perimeter"
+    );
+}
+
+#[test]
+fn plain_radius_walk_ignores_ground_decoration_on_target() {
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 13,
+        z: 11,
+        ..target
+    };
+    let mut client = crate::tests::nav_client();
+    crate::tests::plant_nav_footprint_loc(&mut client, target.x, target.z, 1, 1);
+    let mut snapshot = GameSnapshot::new();
+    crate::tests::nav_snapshot_at(&mut client, &mut snapshot, from.x, from.z);
+    let mut locs = snapshot.locs().to_vec();
+    let loc = locs
+        .iter_mut()
+        .find(|loc| loc.tile == target)
+        .expect("planted loc");
+    loc.shape = 22;
+    loc.name = Some("Daisies".into());
+    loc.actions.clear();
+    loc.block_walk = false;
+    snapshot.seed_locs(locs);
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let view = api::snapshot::SnapshotView::new(Some(&snapshot), stamp);
+    assert!(
+        view.walk_arrived(from, target, 5),
+        "a decoration cannot shrink a plain tile radius"
     );
 }

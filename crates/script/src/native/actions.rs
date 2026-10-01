@@ -766,6 +766,7 @@ mod tests {
                     z: 9,
                     level: 0,
                 },
+                loc_id: None,
                 radius: 0,
                 options: FindOptions::default(),
                 required_after: cx.evidence(),

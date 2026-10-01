@@ -77,11 +77,7 @@ impl<'a> SnapshotView<'a> {
             stamp: self.stamp,
         })
     }
-    /// Whether the current walk may settle at `from` for `to`.
-    ///
-    /// A destination outside this live scene is only an estimate, not proof
-    /// of arrival. Modeled locs use the shared full-footprint rule;
-    /// ordinary in-scene destinations retain the reach-aware walk rule.
+    /// Anchor-radius arrival for a plain tile walk, regardless of scene locs.
     pub fn walk_arrived(&self, from: super::WorldTile, to: super::WorldTile, radius: i32) -> bool {
         let Some(snapshot) = self.scene_ready() else {
             return false;
@@ -94,12 +90,23 @@ impl<'a> SnapshotView<'a> {
         if !query.contains(to) && !reach.is_some_and(|observed| observed.value.probeable(to)) {
             return false;
         }
-        if let Some(arrived) = crate::query::loc_approach::arrived_at(snapshot, from, to, radius) {
-            return arrived;
-        }
         let unavailable = crate::query::ReachQueryView::unavailable();
         crate::query::is_arrived(from, to, radius, || {
             reach.map_or(&unavailable, |observed| observed.value)
+        })
+    }
+
+    /// Arrival for a walk whose caller explicitly supplied loc identity.
+    /// An absent live footprint is only an approach estimate, never arrival.
+    pub fn walk_loc_arrived(
+        &self,
+        from: super::WorldTile,
+        to: super::WorldTile,
+        radius: i32,
+        loc_id: i32,
+    ) -> bool {
+        self.scene_ready().is_some_and(|snapshot| {
+            crate::query::loc_approach::arrived_at(snapshot, from, to, radius, loc_id) == Some(true)
         })
     }
 

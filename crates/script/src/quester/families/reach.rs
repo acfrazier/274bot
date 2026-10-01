@@ -294,7 +294,7 @@ impl Reach {
                 return self.open_door(door.id, door.tile, cx);
             }
         }
-        self.walk_to(door.tile, Some((door.id, door.tile)), cx)
+        self.walk_to(door.tile, None, Some((door.id, door.tile)), cx)
     }
 
     fn open_door(
@@ -349,8 +349,8 @@ impl Reach {
     }
 
     fn walk_to_target(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
-        let target = self
-            .clicked_loc
+        let clicked = self.clicked_loc;
+        let target = clicked
             .map(|(_, tile)| tile)
             .or_else(|| match &self.args.kind {
                 ReachKind::Npc { id, .. } => {
@@ -360,16 +360,31 @@ impl Reach {
                 _ => self.args.anchor,
             });
         let target = target.ok_or_else(|| ActionError::Failed(Arc::from("no reach target")))?;
-        self.walk_to(target, None, cx)
+        // A clicked loc only gets footprint intent when the shared approach
+        // model recognizes it. Doors and other non-footprint locs retain the
+        // tile-anchor fallback instead of waiting for a footprint that cannot exist.
+        let loc_id = clicked.and_then(|(id, tile)| {
+            let locs = cx.snapshot().locs()?;
+            let loc = locs
+                .value
+                .iter()
+                .find(|loc| loc.id == id && loc.tile == tile)?;
+            api::query::loc_approach::distance_from(loc, tile).map(|_| id)
+        });
+        self.walk_to(target, loc_id, None, cx)
     }
 
     fn walk_to(
         &mut self,
         target: WorldTile,
+        loc_id: Option<i32>,
         door: Option<(i32, WorldTile)>,
         cx: &mut ActionContext<'_>,
     ) -> Result<(), ActionError> {
-        self.walk = Some(Walk::begin(walk_request(target, 1, cx.evidence()), cx)?);
+        self.walk = Some(Walk::begin(
+            walk_request(target, 1, loc_id, cx.evidence()),
+            cx,
+        )?);
         self.phase = Phase::WaitWalk { door };
         Ok(())
     }
@@ -494,9 +509,17 @@ fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
-pub fn walk_request(tile: WorldTile, radius: u16, required_after: EvidenceStamp) -> WalkRequest {
+/// Build a walk request; `None` preserves tile-anchor arrival, while
+/// `Some(loc_id)` explicitly opts into that loc's footprint arrival rule.
+pub fn walk_request(
+    tile: WorldTile,
+    radius: u16,
+    loc_id: Option<i32>,
+    required_after: EvidenceStamp,
+) -> WalkRequest {
     WalkRequest {
         target: tile,
+        loc_id,
         radius,
         options: crate::FindOptions::default(),
         required_after,

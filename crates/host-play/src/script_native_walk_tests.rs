@@ -57,6 +57,7 @@ impl Script for WalkerScript {
                     level: 0,
                 },
                 radius: 0,
+                loc_id: None,
                 options: script::FindOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,

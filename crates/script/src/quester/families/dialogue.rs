@@ -213,6 +213,7 @@ impl Dialogue {
                     self.walk_request_id = cx.walk(reach::walk_request(
                         target.tile,
                         if reachable { 1 } else { 0 },
+                        None,
                         cx.evidence(),
                     ))?;
                     self.phase = Phase::Approach;

@@ -20,8 +20,10 @@
 //! id as failed. The end of the armed walk's route publishes it as not
 //! failed: frozen `WalkExecutor` returns true at the path terminal even when
 //! `isArrived` is false there (`WalkExecutor.ts:316-325`, `'closest'`).
-//! Arrival is [`api::query::is_arrived`], the frozen `isArrived` over the
-//! last posted reach view — the rule the host follow ends on too. Genuinely
+//! Arrival is [`api::query::is_arrived`] over the posted reach view. This
+//! isolate wait serves legacy/compat walks, which carry no loc identity and
+//! intentionally keep tile-anchor semantics; native Walk requests select
+//! their tile or explicit-loc predicate in the native Walk adapter. Genuinely
 //! pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::Snapshot;
