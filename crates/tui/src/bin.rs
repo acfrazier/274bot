@@ -2255,6 +2255,19 @@ impl TuiSession {
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
         app.world = self.nav_world.lock().unwrap().clone();
+        // This is the UI loop, not a client's snapshot/tick thread. The first
+        // explicit reach-layer request decodes the already verified sidecar.
+        app.map_reach = if app.map_active && app.map.layers.reach {
+            self.server_profile.as_ref().and_then(|profile| {
+                let world = app.world.as_ref()?;
+                let bound = profile.world()?;
+                Arc::ptr_eq(world, &bound)
+                    .then(|| profile.reach())
+                    .flatten()
+            })
+        } else {
+            None
+        };
         app.refresh();
         self.bind_map_context(app);
         if app.map_active {
@@ -3018,6 +3031,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::MapClose => {
             session.release_map_catalogue();
+            app.map_reach = None;
             app.map_model.close();
         }
         AppAction::ArmWalk(tile) => session.arm_walk_on(app, tile),
