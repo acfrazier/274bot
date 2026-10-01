@@ -255,3 +255,40 @@ fn persisting_a_relative_catalog_root_stores_it_absolute() {
     assert_eq!(stored, expected.to_string_lossy());
     assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(expected)));
 }
+
+#[test]
+fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not() {
+    let dir = scratch("start-result-stage");
+    let mut lib = library(&dir);
+    let path = bot_script(&dir, "bot.ts");
+    let card = lib.load(&path).expect("bot loads");
+    // A runtime setup failure is recorded against the attempted card with
+    // the RuntimeLoad stage, and the diagnostic reaches the caller.
+    let err = lib
+        .record_start_result(
+            &card,
+            Err(crate::StartLoadError::RuntimeLoad(
+                "isolate thread: boom".into(),
+            )),
+        )
+        .expect_err("runtime failure propagates");
+    assert_eq!(err, "isolate thread: boom");
+    let failures = lib.load_failures();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].stage, LoadStage::RuntimeLoad);
+    assert_eq!(failures[0].identity_key, card.identity_key());
+    // A refusal carries its diagnostic back without touching the record.
+    let err = lib
+        .record_start_result(&card, Err(crate::StartLoadError::Refused("busy".into())))
+        .expect_err("refusal propagates");
+    assert_eq!(err, "busy");
+    assert_eq!(
+        lib.load_failures().len(),
+        1,
+        "refusals leave diagnostics untouched"
+    );
+    // Success clears the recorded failure.
+    lib.record_start_result(&card, Ok(()))
+        .expect("success clears");
+    assert!(lib.load_failures().is_empty());
+}
