@@ -60,6 +60,9 @@ static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// True while the picker window was drawn last frame; drives the view reset
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
+const ROUTE_THROUGH_ZONES_LABEL: &str = "Route through danger zones";
+const ROUTE_THROUGH_ZONES_TOOLTIP: &str =
+    "Allows routes past monsters that may kill your bot.";
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
 /// `None` detaches when the play is dropped. The picker never decodes the
@@ -981,6 +984,7 @@ struct PickerLayout {
     canvas_inner_min: [f32; 2],
     canvas_inner_max: [f32; 2],
     canvas_item_max: [f32; 2],
+    route_zones_rect: [[f32; 2]; 2],
     footer_max: [f32; 2],
     footer_reserve: f32,
 }
@@ -993,6 +997,7 @@ fn record_picker_layout(
     toolbar: &ToolbarGeom,
     canvas_inner: Option<([f32; 2], [f32; 2])>,
     canvas_item_max: [f32; 2],
+    route_zones_rect: [[f32; 2]; 2],
     footer_reserve: f32,
 ) {
     #[cfg(test)]
@@ -1008,13 +1013,21 @@ fn record_picker_layout(
             canvas_inner_min: inner_min,
             canvas_inner_max: inner_max,
             canvas_item_max,
+            route_zones_rect,
             footer_max: ui.item_rect_max(),
             footer_reserve,
         });
     }
     #[cfg(not(test))]
     {
-        let _ = (ui, toolbar, canvas_inner, canvas_item_max, footer_reserve);
+        let _ = (
+            ui,
+            toolbar,
+            canvas_inner,
+            canvas_item_max,
+            route_zones_rect,
+            footer_reserve,
+        );
     }
 }
 
@@ -1567,6 +1580,7 @@ fn picker_map_body(
     // Reset the view when the picker opens fresh and restore the persisted
     // map-layer choice.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
+        session.route_through_zones = false;
         map.show_special_areas = session.ui.nav.show_special_areas;
         let observed = session
             .focused_tile()
@@ -1618,14 +1632,20 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
+    let route_checkbox = checkbox_w(ui, ROUTE_THROUGH_ZONES_LABEL);
+    let controls = route_checkbox + spacing + cluster;
     let status_text = format_walkto_status(
         walkto_selection_caption(session.map_model.pending(), teleport),
         &status,
     );
-    let status_max = (ui.content_region_avail()[0] - cluster - spacing).max(0.0);
+    let status_max = (ui.content_region_avail()[0] - controls - spacing).max(0.0);
     ui.text_disabled(ellipsize_to_width(ui, &status_text, status_max));
-    let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
+    let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], controls);
     ui.same_line_with_pos(x);
+    ui.checkbox(ROUTE_THROUGH_ZONES_LABEL, &mut session.route_through_zones);
+    let route_zones_rect = [ui.item_rect_min(), ui.item_rect_max()];
+    ui.set_item_tooltip(ROUTE_THROUGH_ZONES_TOOLTIP);
+    ui.same_line();
     if ui.button("recentre") {
         let observed = session
             .focused_tile()
@@ -1671,7 +1691,14 @@ fn picker_map_body(
             session.map_model.close();
         }
     }
-    record_picker_layout(ui, &toolbar, canvas_inner, canvas_item_max, footer_h);
+    record_picker_layout(
+        ui,
+        &toolbar,
+        canvas_inner,
+        canvas_item_max,
+        route_zones_rect,
+        footer_h,
+    );
 }
 
 fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {
