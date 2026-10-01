@@ -892,6 +892,8 @@ struct WalkArgs {
     source: String,
     #[serde(default)]
     radius: u16,
+    #[serde(default)]
+    cross: Vec<String>,
 }
 
 fn compile_walk(
@@ -900,6 +902,10 @@ fn compile_walk(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if !arg.cross.is_empty() {
+        return Err(CompileError::code("invalid-args")
+            .with_detail("walk: cross needs protected walk (combat slice)"));
+    }
     validate_tile(arg.tile, &arg.source)?;
     Ok(Arc::new(WalkPlan {
         tile: WorldTile {
@@ -952,6 +958,11 @@ impl StepRun for WalkRun {
             })) => Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
                 "walk needs live quest evidence: {gates:?}"
             ))))),
+            Poll::Ready(Ok(WalkReceipt {
+                end: WalkEnd::Refused,
+                detail: Some(detail),
+                ..
+            })) => Poll::Ready(Err(ActionError::Failed(detail))),
             Poll::Ready(Ok(_)) => Poll::Ready(Err(ActionError::Failed(Arc::from("walk failed")))),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
         }

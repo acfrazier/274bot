@@ -1375,7 +1375,7 @@ impl TuiSession {
             z: h.z,
             level: h.level,
         });
-        let options = app.nav.find_options();
+        let options = app.map_find_options();
         let profile = self.server_profile.clone();
         let state = self.focused_walk_state(&name);
         let request = host_play::walk_map::WalkRequest {
@@ -1452,7 +1452,7 @@ impl TuiSession {
             &world,
             from,
             dest,
-            app.nav.find_options(),
+            app.map_find_options(),
             &state,
             &bank,
             &self.travellers,
@@ -1483,7 +1483,7 @@ impl TuiSession {
             ActionKind::Teleport,
             &context,
             from,
-            app.nav.find_options(),
+            app.map_find_options(),
         ) {
             Ok(command) => command,
             Err(error) => {
@@ -1511,7 +1511,7 @@ impl TuiSession {
             app.error = Some("no bots selected".into());
             return;
         }
-        let options = app.nav.find_options();
+        let options = app.map_find_options();
         let destination = app
             .map_model
             .pending()

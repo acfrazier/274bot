@@ -685,6 +685,7 @@ fn paused_gather_seat_preserves_non_game_rows_until_resume_in_every_frame_state(
                     allow_wilderness: false,
                     allow_bank_fetch: false,
                     avoid: vec![],
+                    cross: vec![],
                     request_id: 9,
                 },
                 InteractReq::InspectAck {

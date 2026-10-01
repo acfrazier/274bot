@@ -210,6 +210,9 @@ pub struct TransportGraph {
     /// `wilderness_levels.rs2` / `wilderness_zones.dbrow`. Empty on graphs
     /// that did not see those sources (fixtures).
     pub wilderness: WildernessRules,
+    /// Optional packed exclusion-zone table. `None` for legacy grids and
+    /// intentionally synthetic worlds.
+    pub zones: Option<crate::zones::ZoneTable>,
     /// The selected quest family the bake consumed stage signals from
     /// (digest + extractor schema). `None` when it consumed none; then no
     /// edge carries [`TransportEdge::quest_gates`].

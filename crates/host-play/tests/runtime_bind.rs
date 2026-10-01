@@ -379,7 +379,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut manifest =
-        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None)
+        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None, 0, 0)
             .unwrap();
     manifest.content_id = Some(
         compute_decoded_content_identity(289, &retained, &retained)
@@ -414,6 +414,48 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
     server.join().unwrap();
     assert!(result.unwrap().world().is_some());
+    let sidecar = host_play::profile::nav_manifest_path(&pack);
+    manifest.zone_count = 1;
+    std::fs::write(&sidecar, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (port, server) = serve_packs(p.clone(), 0);
+    let mismatched = ProfileOptions {
+        http_port: Some(port),
+        ..options.clone()
+    };
+    let result = mismatched
+        .resolve_with_env(None, &env)
+        .unwrap()
+        .bind_runtime();
+    server.join().unwrap();
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("a mismatched decoded zone count must refuse the sidecar"),
+    };
+    assert!(
+        error.contains("zone counts differ from decoded zone table"),
+        "{error}"
+    );
+    manifest.zone_count = 0;
+    manifest.zone_npc_count = 1;
+    std::fs::write(&sidecar, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (port, server) = serve_packs(p, 0);
+    let mismatched = ProfileOptions {
+        http_port: Some(port),
+        ..options
+    };
+    let result = mismatched
+        .resolve_with_env(None, &env)
+        .unwrap()
+        .bind_runtime();
+    server.join().unwrap();
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("a mismatched decoded NPC zone count must refuse the sidecar"),
+    };
+    assert!(
+        error.contains("zone counts differ from decoded zone table"),
+        "{error}"
+    );
 }
 
 /// The offline explicit bind keeps its semantics: no `/crc` when every pack is

@@ -139,6 +139,7 @@ fn walk_near_anchor() -> InteractReq {
         allow_bank_fetch: true,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 
