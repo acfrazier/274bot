@@ -315,11 +315,19 @@ pub fn apply_amber_current(chrome: &ChromeColors) {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_amber, rgba_to_hex, ChromeColors, ACCENT};
+    use super::{apply_amber, rgba_to_hex, ChromeColors};
 
     #[test]
-    fn rgba_to_hex_roundtrips_accent() {
-        assert_eq!(rgba_to_hex(ACCENT), "#FFB000");
+    fn rgba_to_hex_maps_channels_to_hex() {
+        for (channels, hex) in [
+            ([0.0, 0.0, 0.0, 1.0], "#000000"),
+            ([1.0, 1.0, 1.0, 1.0], "#FFFFFF"),
+            ([1.0, 0.0, 0.0, 1.0], "#FF0000"),
+            ([0.0, 0.5, 1.0, 1.0], "#0080FF"),
+            ([1.0, 1.0, 1.0, 0.0], "#FFFFFF"),
+        ] {
+            assert_eq!(rgba_to_hex(channels), hex);
+        }
     }
 
     #[test]
