@@ -28,7 +28,6 @@ pub struct CompileContext<'a> {
     /// `None` means select the nearest eligible bank at step start.
     pub bank: Option<NamedBank>,
     pub bank_items: &'a [i32],
-    pub path_id: &'a FactKey,
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
 }
 #[derive(Debug, Clone)]
@@ -323,7 +322,6 @@ fn compile_uncached(
         recipes: &empty_recipes,
         bank,
         bank_items: &bank_items,
-        path_id: &document.id,
         loadouts: &loadouts,
     };
     let mut recipes = HashMap::new();
