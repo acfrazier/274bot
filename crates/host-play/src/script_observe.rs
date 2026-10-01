@@ -377,15 +377,13 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Paused
         ) && slot.load_active()
         {
-            let (update, queued, owned) = drain_observed_host_interacts(&mut slot);
+            let (update, queued, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
-            if !owned {
-                slot.restore_interacts(queued);
-            } else {
-                interact.extend(queued);
-            }
+            // Ownership already removed game rows; retained non-game rows
+            // follow the same pause rule as an unowned batch in every frame.
+            slot.restore_interacts(queued);
         }
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);

@@ -72,8 +72,11 @@ the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session. While the seat is live the
 host owns the slot's foreground: only the script's game rows are drained and
 dropped at admission — never dispatched, never deferred. Control rows
-(`gather.stop`, run-policy), BroadcastChannel open/post/close, inspect-route
-requests and acknowledgements, and host-local camera yaw writes still pass.
+(`gather.stop`, run-policy) still pass while paused. BroadcastChannel
+open/post/close, inspect-route requests and acknowledgements, and host-local
+camera yaw writes survive foreground admission, but stay queued while the Load
+slot is Starting or Paused, even offline, held, or without a snapshot. They
+follow ordinary dispatch after Resume.
 Held reconnect walks and the host's carried walk are discarded while the seat
 owns the slot, not saved for replay after it ends. This deliberately differs
 from design §3.6's held-walk deferral: an old route must not regain foreground

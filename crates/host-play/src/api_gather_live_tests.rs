@@ -497,7 +497,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare cold local-289 template");
-    let names = play_bootstrap::mint_live_names_with("sb", 2);
+    let names = play_bootstrap::mint_live_names(2);
     let credentials = mint_live_entries(&names);
     let account = names.first().expect("minted Gather account").clone();
     let receiver_account = names.get(1).expect("minted channel receiver").clone();
