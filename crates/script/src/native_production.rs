@@ -112,9 +112,8 @@ impl NativeMachine for MakeMachine {
                         };
                         let count_dialog_open =
                             snapshot.count_dialog_open().is_some_and(|open| open.value);
-                        let make_menu_open = products
-                            .as_ref()
-                            .is_none_or(|rows| !rows.value.is_empty());
+                        let make_menu_open =
+                            products.as_ref().is_none_or(|rows| !rows.value.is_empty());
                         (selection, count_dialog_open, make_menu_open)
                     };
                     if let Some(selection) = selection {
