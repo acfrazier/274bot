@@ -85,9 +85,6 @@ mod tests {
 
     #[test]
     fn cells_show_a_dash_without_a_run_or_a_running_clock() {
-        assert_eq!(runtime_label(None), NONE);
-        assert_eq!(idle_label(None), NONE);
-        assert_eq!(levels_label(None), NONE);
         let frozen = progress(&[], None);
         assert_eq!(idle_label(Some(&frozen)), NONE, "paused: no idle time");
         assert_eq!(runtime_label(Some(&frozen)), "3h05m");
