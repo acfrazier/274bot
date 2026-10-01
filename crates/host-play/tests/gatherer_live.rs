@@ -2706,17 +2706,6 @@ fn fixture_plan(
     };
     Ok((target, plan, task))
 }
-fn mint_g2_names(n: usize) -> Vec<String> {
-    host_play::mint_live_names(n)
-        .into_iter()
-        .map(|name| {
-            let suffix = name
-                .strip_prefix("live")
-                .expect("host-play live name prefix");
-            format!("g2{suffix}")
-        })
-        .collect()
-}
 
 fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, String> {
     let uid = SystemTime::now()
@@ -2820,7 +2809,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let temp = TempRoot::new(cell_name)?;
     let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
     let helper_needed = fixture_task.is_some();
-    let names = mint_g2_names(if helper_needed { 2 } else { 1 });
+    let names = host_play::mint_live_names(if helper_needed { 2 } else { 1 });
     let credentials = host_play::mint_live_entries(&names);
     let account = names.first().cloned().ok_or("failed to mint account")?;
     let password = credentials

@@ -306,6 +306,232 @@ fn resource_wait_deadline_does_not_slide_with_unchanged_observations() {
     assert!(!slot.has_native_actions());
     slot.stop();
 }
+#[test]
+fn runite_resource_wait_ends_at_eight_minutes_before_watchdog_wedge() {
+    let selected = selected();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["runite"]));
+    let mut slot = started_with(4265, &selected, bag);
+    let frame = mining_snapshot(&selected, "mining.runite", true);
+    let admission = 10_000;
+    for now in admission..admission + 5 {
+        tick(&mut slot, &frame, now);
+    }
+
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    let deadline = wait_until(&slot);
+    assert_eq!(deadline, admission + 800);
+    assert!(deadline < admission + 1_000);
+    slot.pause();
+    for now in admission + 5..admission + 50 {
+        tick(&mut slot, &frame, now);
+        assert!(!slot.has_native_actions());
+    }
+    slot.resume();
+    tick(&mut slot, &frame, admission + 50);
+    assert_eq!(
+        wait_until(&slot),
+        deadline,
+        "Resume must not slide the wait"
+    );
+    tick(&mut slot, &frame, deadline - 1);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    tick(&mut slot, &frame, deadline);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "resource-unavailable"
+    );
+    assert!(!slot.has_native_actions());
+    slot.stop();
+}
+
+#[test]
+fn recreated_gatherer_keeps_resource_wait_fresh_at_large_native_tick() {
+    let selected = selected();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["runite"]));
+    let mut slot = started_with(4266, &selected, bag);
+    let frame = mining_snapshot(&selected, "mining.runite", true);
+    let admission = 50_000;
+    for now in admission..admission + 5 {
+        tick(&mut slot, &frame, now);
+    }
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    assert!(wait_until(&slot) > admission);
+
+    slot.restart_from_identity(Instant::now()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while slot.state() == script::RunState::Starting {
+        assert!(Instant::now() < deadline, "compiled restart stalled");
+        slot.observe_lifecycle();
+        std::thread::yield_now();
+    }
+    for now in admission + 5..admission + 10 {
+        tick(&mut slot, &frame, now);
+    }
+
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    assert_eq!(wait_until(&slot), admission + 5 + 800);
+    slot.stop();
+}
+
+#[test]
+fn compiled_hold_at_idle_boundary_defers_dispatch_until_released() {
+    let selected = selected();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["copper"]));
+    let mut slot = started_with(4267, &selected, bag);
+    let frame = mining_snapshot(&selected, "mining.copper", false);
+
+    tick_with_hold(&mut slot, &frame, 1, true);
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert!(
+        !slot.has_native_actions(),
+        "a held idle boundary must not dispatch an action"
+    );
+
+    tick_with_hold(&mut slot, &frame, 2, false);
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    let action = slot
+        .take_native_action()
+        .expect("releasing hold resumes mining without Retry");
+    assert!(matches!(
+        action.effect,
+        HostEffect::Interaction(InteractReq::Loc { .. })
+    ));
+    slot.stop();
+}
+
+fn wait_until(slot: &SlotScript) -> u64 {
+    let status = slot.native_status().unwrap();
+    let area = status
+        .fields
+        .iter()
+        .find(|field| field.key == "area")
+        .and_then(|field| match &field.value {
+            script::native::StatusValue::Text(value) => Some(value.as_ref()),
+            _ => None,
+        })
+        .expect("Gatherer status includes the selected work area");
+    let (_, deadline) = area
+        .split_once("wait_until: ")
+        .expect("waiting status includes its deadline");
+    deadline.parse().expect("wait deadline is a native tick")
+}
+
+#[test]
+fn pause_resume_before_escape_dispatch_reissues_walk_without_hazard_click() {
+    use api::gather_methods::{known_rows, TargetClass};
+    use api::selected::EntityId;
+
+    let selected = selected();
+    let mut bag = SettingsBag::new();
+    bag.insert("skill".into(), serde_json::json!("Mining"));
+    bag.insert("miningResources".into(), serde_json::json!(["copper"]));
+    let mut slot = started_with(4268, &selected, bag);
+    let mut frame = mining_snapshot(&selected, "mining.copper", false);
+    tick(&mut slot, &frame, 1);
+    let action = slot.take_native_action().expect("initial mine");
+    let authority = action.authority();
+    slot.complete_native_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 1,
+                sequence: 1,
+            },
+            accepted: true,
+        },
+    );
+
+    let catalog = api::gather_methods::cached(&selected).unwrap();
+    let method = catalog.method("mining.copper").unwrap();
+    let EntityId::Loc(hazard) = known_rows(&method.targets)
+        .iter()
+        .find(|target| target.class == TargetClass::Hazard)
+        .expect("copper has a gas hazard")
+        .entity
+    else {
+        panic!("gas target is a loc")
+    };
+    let mut gas = frame.locs()[0].clone();
+    gas.id = hazard;
+    frame.seed_locs(vec![gas]);
+
+    let mut queued_walk = false;
+    for now in 2..8 {
+        tick(&mut slot, &frame, now);
+        if slot.has_native_actions() {
+            queued_walk = true;
+            break;
+        }
+    }
+    assert!(queued_walk, "hazard observation begins an escape walk");
+
+    slot.pause();
+    assert!(
+        !slot.has_native_actions(),
+        "Pause revokes the undrained escape walk"
+    );
+    slot.resume();
+    let mut resumed_walk = None;
+    for now in 10..20 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            match action.effect {
+                HostEffect::Walk(request) => resumed_walk = Some(request),
+                HostEffect::Interaction(InteractReq::Loc { .. }) => {
+                    panic!("resume must not click the hazard")
+                }
+                _ => panic!("resume must only reissue the escape walk"),
+            }
+        }
+        if resumed_walk.is_some() {
+            break;
+        }
+    }
+    let request = resumed_walk.expect("Resume reissues the cancelled escape walk");
+    let hazard_tile = frame.locs()[0].tile;
+    let player_tile = frame.local_player().unwrap().player.actor.tile;
+    let distance = |tile: WorldTile| {
+        tile.x
+            .abs_diff(hazard_tile.x)
+            .max(tile.z.abs_diff(hazard_tile.z))
+    };
+    assert!(
+        distance(request.target) > distance(player_tile),
+        "reissued escape walk must move farther from the hazard"
+    );
+    slot.stop();
+}
+
+fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hold: bool) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut Rec::default(),
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(snapshot),
+        obj_names: None,
+        compiled: CompiledTick {
+            hold,
+            ..CompiledTick::default()
+        },
+    });
+}
+
+fn tick(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
+    tick_with_hold(slot, snapshot, tick, false);
+}
 
 #[test]
 fn incidental_gems_are_dropped_and_held_tool_is_preserved() {
@@ -591,20 +817,6 @@ fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
     slot.stop();
 }
 
-fn tick(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
-    slot.on_game_tick(&mut ScriptCtx {
-        driver: &mut Rec::default(),
-        tick,
-        here: None,
-        walk: None,
-        walk_with: None,
-        inv: None,
-        snapshot: Some(snapshot),
-        obj_names: None,
-        compiled: CompiledTick::default(),
-    });
-}
-
 /// Drain the tick's outbox like the host: every drop is written and accepted.
 fn drain(slot: &mut SlotScript, tick: u64) -> Vec<i32> {
     let mut sent = Vec::new();
@@ -845,8 +1057,10 @@ fn unchanged_resource_wait_does_not_allocate() {
     }
     assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
     let info = allocation_counter::measure(|| {
-        for t in 30..1030 {
-            tick(&mut slot, &snapshot, t);
+        // Repeated polls of the same observation stay within the eight-minute
+        // wait. Expiry is a state transition, not an unchanged waiting poll.
+        for poll in 0..1000 {
+            tick(&mut slot, &snapshot, 30 + poll / 2);
         }
     });
     eprintln!(
@@ -857,6 +1071,7 @@ fn unchanged_resource_wait_does_not_allocate() {
         info.count_total, 0,
         "unchanged resource wait must not allocate"
     );
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
     slot.stop();
 }
 

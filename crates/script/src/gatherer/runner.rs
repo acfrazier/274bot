@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 const MAX_AVOID: usize = 8;
-const WAIT_GAMEPLAY_TICKS: u64 = 8 * 60 * 4;
+const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,9 +289,11 @@ impl Gatherer {
             }
         }
 
+        // Recreated instances retain their Start tile, but need a fresh
+        // gameplay baseline. An existing wait deadline remains fixed.
+        self.last_gameplay_tick = cx.evidence().tick;
         if self.retained.start_tile.is_none() {
             self.retained.start_tile = Some(here.value);
-            self.last_gameplay_tick = cx.evidence().tick;
             self.sync_retained_from_context(cx);
         }
         if self.settings().location.eq_ignore_ascii_case("auto") && self.retained.anchor.is_none() {
@@ -513,6 +515,9 @@ impl Gatherer {
     }
 
     fn action_failure(&mut self, error: ActionError) {
+        if matches!(error, ActionError::Held) {
+            return;
+        }
         let retryable = !matches!(error, ActionError::Stale | ActionError::Cancelled);
         self.fail(
             "action-error",
@@ -751,6 +756,7 @@ impl Gatherer {
             );
             return;
         }
+        self.hazard_escape = None;
         // A walk receipt is not resource evidence: the target may have
         // depleted while travelling. Select again from the arrival frame.
         self.target = None;
@@ -988,7 +994,6 @@ impl Gatherer {
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
                 self.active = Active::Walk(handle);
-                self.hazard_escape = None;
                 self.set_event("walking away from hazard");
             }
             Err(error) => self.action_failure(error),
@@ -1153,6 +1158,10 @@ impl Script for Gatherer {
             self.death = crate::quester::death::DeathLatch::from_watermark(self.retained.death_seq);
             self.set_event("run key changed; revalidating");
         }
+        if !tick.cx.eligible || self.paused {
+            self.publish(tick);
+            return Ok(ScriptFlow::Continue);
+        }
         if self.observe_death(tick) {
             self.cancel_active();
             self.retained.deaths = self.retained.deaths.saturating_add(1);
@@ -1166,10 +1175,6 @@ impl Script for Gatherer {
             return Ok(ScriptFlow::Blocked(self.failure.clone().unwrap()));
         }
         self.observe_progress(tick);
-        if self.paused {
-            self.publish(tick);
-            return Ok(ScriptFlow::Continue);
-        }
         if self.active_matches_none() {
             if let Some(revision) = self.apply_pending() {
                 tick.output.settings_applied(revision);
@@ -1233,7 +1238,11 @@ impl Script for Gatherer {
         if !failure.retryable {
             return Err(failure.clone());
         }
-        if self.settings().location.eq_ignore_ascii_case("auto") {
+        let exhausted_search =
+            failure.code.as_ref() == "resource-unavailable" && self.retained.anchor.is_none();
+        if self.settings().location.eq_ignore_ascii_case("auto")
+            && (failure.code.as_ref() == "widen-limit" || exhausted_search)
+        {
             self.tried_groups = [TriedGroup::default(); 4];
             self.widen.reset();
             self.retained.anchor = None;
@@ -1308,6 +1317,74 @@ mod tests {
         fence.observe(8);
         assert!(fence.reserve(5));
         assert!(!fence.reserve(1));
+    }
+
+    #[test]
+    fn auto_retry_preserves_groups_unless_search_is_exhausted() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut bag = crate::native::SettingsBag::new();
+        bag.insert("location".into(), serde_json::json!("Auto"));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let anchor = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        for (code, current_group, reset) in [
+            ("walk-failed", Some(anchor), false),
+            ("inventory-blocked", Some(anchor), false),
+            ("resource-unavailable", Some(anchor), false),
+            ("widen-limit", Some(anchor), true),
+            ("resource-unavailable", None, true),
+        ] {
+            let mut runner = Gatherer::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                Arc::clone(&config),
+                Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+                GatherRetained::default(),
+            );
+            runner.retained.anchor = current_group;
+            runner.area = current_group.map(|anchor| WorkArea {
+                mode: super::super::area::AreaMode::Auto,
+                anchor,
+                radius: 12,
+            });
+            assert!(remember_group(&mut runner.tried_groups, anchor, 1, 1000));
+            runner.fail(code, code, true);
+
+            runner.retry().unwrap();
+
+            assert!(runner.failure.is_none(), "{code}");
+            assert!(runner.needs_validate, "{code}");
+            assert_eq!(
+                runner.retained.anchor,
+                if reset { None } else { current_group },
+                "{code}"
+            );
+            assert_eq!(runner.area.is_none(), reset, "{code}");
+            assert_eq!(
+                runner.tried_groups[0].until,
+                if reset { 0 } else { 1000 },
+                "{code}"
+            );
+        }
     }
 
     #[test]

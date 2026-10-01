@@ -99,14 +99,19 @@ Fishing requires the selected method's tool and bait before gathering; missing
 bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
 identity. Depleted resources are not clicked: a live lower-tier resource can
 be selected while the higher tier respawns. Wait deadlines use the observed
-group's respawn bound and do not slide on unchanged observations.
+group's respawn bound, capped at eight minutes since gameplay progress, and do
+not slide on unchanged observations or Pause/Resume. A recreated card starts
+with a fresh wait baseline rather than immediately treating the wait as expired.
 
 Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
 anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
-`resource-unavailable`. Retry resets the search. Gas, ents and whirlpools are
-identified by generated IDs and trigger reselection or a walk away, not another
-gathering click on the hazard.
+`resource-unavailable`. Retry resets the search only for these search failures;
+other retryable failures keep the current area and temporarily skipped groups.
+Gas, ents and whirlpools are identified by generated IDs and trigger reselection
+or a walk away, not another gathering click on the hazard. Pause/Resume preserves
+an unfinished escape walk. A temporary hold defers actions and resumes on release
+without requiring Retry.
 
 Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
