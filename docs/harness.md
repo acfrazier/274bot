@@ -284,6 +284,12 @@ waits, preemption and contention; they are not CPU time. Retired slot counters
 remain in the per-username process totals across relogs, while
 `host_profile_slots` counts only active slots.
 
+Sample JSON serialization is buffered to avoid a file write for every JSON
+token, including on shared VM volumes. Each complete row is explicitly flushed
+before the sample poll returns, so the frontend's immediate process exit does
+not leave completed rows in a userspace buffer. This does not change the sample
+fields or exclude sample-writing work from the whole-panel frame timer.
+
 Panel samples include a cumulative one-millisecond frame histogram whose final
 bucket means “at least 250 ms”, cumulative `ui_frame_count` and
 `ui_frame_total_ns`, and a swap-reset `ui_frame_max_ns` for that sample
