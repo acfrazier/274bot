@@ -14,12 +14,13 @@ use nav::router::{
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
+use nav::zones::ZoneExempt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-const MAX_AVOID: usize = 16;
+pub(super) const MAX_AVOID: usize = 16;
 /// Isolate unsettled-waiter cap. Host published storage plus admission
 /// equal this bound: RING(2)+HELD(1)=3. Registered overflow posts a
 /// refuse identity; it does not accept a fourth terminal.
@@ -309,6 +310,7 @@ pub(super) struct InspectRequest {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    pub zones: ZoneExempt,
     pub avoid: Vec<AvoidRect>,
     pub request_id: u64,
     pub invalid_args: bool,
@@ -393,6 +395,7 @@ pub(super) fn queue_inspect(
             allow_teleports: req.allow_teleports,
             allow_wilderness: req.allow_wilderness,
             allow_bank_fetch: req.allow_bank_fetch,
+            zones: req.zones,
             ..FindOptions::default()
         };
         if let Some(ess) = bot.traveller.essence() {
@@ -586,7 +589,9 @@ pub(super) fn calculate(capture: &InspectCapture) -> InspectTerminal {
             InspectTerminal::refusal(capture.request_id, capture.generation, "BudgetExhausted")
         }
         Err(RouteError::NoPath) if !capture.opts.allow_bank_fetch => {
-            InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath")
+            let reason =
+                no_path_reason(capture, capture.from, capture.to, capture.opts, pre, avoid);
+            InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
         }
         Err(RouteError::NoPath) => calculate_bank(capture, pre, avoid),
     }
@@ -598,7 +603,8 @@ fn calculate_bank(
     avoid: &[AvoidRect],
 ) -> InspectTerminal {
     let Some(missing) = search_missing(capture, pre, avoid) else {
-        return InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath");
+        let reason = no_path_reason(capture, capture.from, capture.to, capture.opts, pre, avoid);
+        return InspectTerminal::refusal(capture.request_id, capture.generation, &reason);
     };
     let Some(plan) = plan_bank_fetch(
         &missing,
@@ -640,9 +646,14 @@ fn calculate_bank(
                 );
             }
             Err(RouteError::NoPath) => {
+                let opts = FindOptions {
+                    allow_bank_fetch: false,
+                    ..capture.opts
+                };
+                let reason = no_path_reason(capture, capture.from, stand, opts, pre, avoid);
                 return InspectTerminal {
                     bank_planned: false,
-                    ..InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath")
+                    ..InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
                 };
             }
         }
@@ -665,11 +676,48 @@ fn calculate_bank(
             bank_planned,
             ..InspectTerminal::refusal(capture.request_id, capture.generation, "BudgetExhausted")
         },
-        Err(RouteError::NoPath) => InspectTerminal {
-            bank_planned,
-            ..InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath")
-        },
+        Err(RouteError::NoPath) => {
+            let opts = FindOptions {
+                allow_bank_fetch: false,
+                ..capture.opts
+            };
+            let reason =
+                no_path_reason(capture, capture.from, capture.to, opts, &plan.state, avoid);
+            InspectTerminal {
+                bank_planned,
+                ..InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
+            }
+        }
     }
+}
+
+fn no_path_reason(
+    capture: &InspectCapture,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> String {
+    nav::router::find_blocking_zones(
+        &capture.world.collision,
+        &capture.world.graph,
+        from,
+        to,
+        opts,
+        state,
+        avoid,
+    )
+    .filter(|keys| !keys.is_empty())
+    .and_then(|keys| {
+        capture
+            .world
+            .graph
+            .zones
+            .as_ref()
+            .map(|table| crate::blocked_zone_detail(table, &keys))
+    })
+    .unwrap_or_else(|| "NoPath".into())
 }
 
 fn search_path(

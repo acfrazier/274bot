@@ -10,7 +10,10 @@ use nav::router::FindOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use super::{abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptWalkArm};
+use super::{
+    abort_script_walk, action_slot, all_slot, route_inspect, NavBot, ScriptRouteExclusions,
+    ScriptWalkArm,
+};
 use crate::catalog_core::ScriptAct;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -93,53 +96,41 @@ fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile 
     crate::catalog_core::LineOfSightTile { x, z, level }
 }
 
-/// A request's avoid entries as router rectangles, or `None` when one cannot
-/// route: a catalog zone id, inverted bounds, a level off 0–3, or more
-/// than the inspect bound ([`route_inspect::validate_request`]'s rules).
-fn avoid_rects(avoid: Vec<script::shim::InspectAvoidWire>) -> Option<Vec<nav::router::AvoidRect>> {
-    let rects = avoid
-        .into_iter()
-        .map(|zone| match zone {
-            script::shim::InspectAvoidWire::Rect {
-                min_x,
-                max_x,
-                min_z,
-                max_z,
-                level,
-            } => Some(nav::router::AvoidRect {
-                min_x,
-                max_x,
-                min_z,
-                max_z,
-                level,
-            }),
-            script::shim::InspectAvoidWire::Unsupported => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let here = WorldTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    };
-    route_inspect::validate_request(here, here, &rects)
-        .is_ok()
-        .then_some(rects)
+fn route_exclusions(
+    avoid: Vec<script::shim::InspectAvoidWire>,
+    cross: Vec<String>,
+) -> ScriptRouteExclusions {
+    ScriptRouteExclusions {
+        avoid_wire: avoid,
+        cross: cross.into_iter().map(Arc::<str>::from).collect(),
+        ..ScriptRouteExclusions::default()
+    }
 }
 
-/// The walk `request_id` asks for is the one the host already follows
-/// (same id, same route key): a retransmission, such as a request that
-/// surfaces from the isolate after the Resume carry re-armed it. It is not
-/// sent or recorded again.
+/// Same request after a reconnect carry was re-armed: preserve the frozen
+/// request and avoid recording its game action twice.
 fn already_following(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: u64,
     key: (WorldTile, i32, bool, bool, bool),
+    exclusions: &ScriptRouteExclusions,
 ) -> bool {
     request_id != 0
         && navs.lock().unwrap().get(name).is_some_and(|bot| {
             bot.walk_request_id == request_id
-                && bot.requested_route == Some(key)
+                && bot.requested_route.is_some_and(
+                    |(to, radius, teleports, wilderness, bank_fetch, _)| {
+                        (to, radius, teleports, wilderness, bank_fetch) == key
+                    },
+                )
+                && bot.requested_exclusions.as_deref().map_or(
+                    exclusions.avoid_wire.is_empty() && exclusions.cross.is_empty(),
+                    |requested| {
+                        requested.avoid_wire == exclusions.avoid_wire
+                            && requested.cross == exclusions.cross
+                    },
+                )
                 && bot.script_walk_armed()
         })
 }
@@ -331,6 +322,7 @@ where
                 allow_bank_fetch,
                 request_id,
                 avoid,
+                cross,
             } => {
                 let key = (
                     WorldTile { x, z, level },
@@ -339,7 +331,8 @@ where
                     allow_wilderness,
                     allow_bank_fetch,
                 );
-                if already_following(navs, name, request_id, key) {
+                let exclusions = route_exclusions(avoid, cross);
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
                 let bank_rows: Vec<(i32, i32)> = snapshot
@@ -355,30 +348,19 @@ where
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                let queued = match avoid_rects(avoid) {
-                    Some(avoid) => arm.queue_route_avoiding(
-                        x,
-                        z,
-                        level,
-                        FindOptions {
-                            allow_teleports,
-                            allow_wilderness,
-                            allow_bank_fetch,
-                            ..FindOptions::default()
-                        },
-                        request_id,
-                        avoid,
-                    ),
-                    None => {
-                        arm.publish_refusal(
-                            WorldTile { x, z, level },
-                            0,
-                            allow_teleports,
-                            request_id,
-                        );
-                        false
-                    }
-                };
+                let queued = arm.queue_route_avoiding(
+                    x,
+                    z,
+                    level,
+                    FindOptions {
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        ..FindOptions::default()
+                    },
+                    request_id,
+                    exclusions,
+                );
                 if queued {
                     record_script_act(
                         navs,
@@ -406,6 +388,7 @@ where
                 allow_bank_fetch,
                 request_id,
                 avoid,
+                cross,
             } => {
                 let key = (
                     WorldTile { x, z, level },
@@ -414,7 +397,8 @@ where
                     allow_wilderness,
                     allow_bank_fetch,
                 );
-                if already_following(navs, name, request_id, key) {
+                let exclusions = route_exclusions(avoid, cross);
+                if already_following(navs, name, request_id, key, &exclusions) {
                     continue;
                 }
                 let arm = ScriptWalkArm {
@@ -429,32 +413,21 @@ where
                         .map(|it| (it.def.id, it.count))
                         .collect(),
                 };
-                let queued = match avoid_rects(avoid) {
-                    Some(avoid) => arm.queue_route_in_snapshot_avoiding(
-                        snapshot,
-                        x,
-                        z,
-                        level,
-                        FindOptions {
-                            allow_teleports,
-                            allow_wilderness,
-                            allow_bank_fetch,
-                            ..FindOptions::default()
-                        },
-                        radius,
-                        request_id,
-                        avoid,
-                    ),
-                    None => {
-                        arm.publish_refusal(
-                            WorldTile { x, z, level },
-                            radius,
-                            allow_teleports,
-                            request_id,
-                        );
-                        false
-                    }
-                };
+                let queued = arm.queue_route_in_snapshot_avoiding(
+                    snapshot,
+                    x,
+                    z,
+                    level,
+                    FindOptions {
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        ..FindOptions::default()
+                    },
+                    radius,
+                    request_id,
+                    exclusions,
+                );
                 if queued {
                     record_script_act(
                         navs,
@@ -557,11 +530,46 @@ where
                 allow_wilderness,
                 allow_bank_fetch,
                 avoid,
+                cross,
                 request_id,
             } => {
-                let (rects, invalid_args) = match avoid_rects(avoid) {
-                    Some(rects) => (rects, false),
-                    None => (Vec::new(), true),
+                let from = WorldTile {
+                    x: from_x,
+                    z: from_z,
+                    level: from_level,
+                };
+                let to = WorldTile { x, z, level };
+                let empty_state = WorldState::empty();
+                let route_state = state.as_ref().unwrap_or(&empty_state);
+                let opts = FindOptions {
+                    allow_teleports,
+                    allow_wilderness,
+                    allow_bank_fetch,
+                    ..FindOptions::default()
+                };
+                let (zones, rects, invalid_args) = match world.as_ref() {
+                    Some(world) => {
+                        match super::script_nav::resolve_route_exclusions(
+                            opts,
+                            world,
+                            from,
+                            to,
+                            route_state,
+                            route_exclusions(avoid, cross),
+                        ) {
+                            Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
+                            Err(reason) => {
+                                host_log!(
+                                    Category::NavTrace,
+                                    Level::Warn,
+                                    slot = name,
+                                    "inspect route refused {reason}"
+                                );
+                                (nav::zones::ZoneExempt::NONE, Vec::new(), true)
+                            }
+                        }
+                    }
+                    None => (nav::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
@@ -577,15 +585,12 @@ where
                     cache.clone(),
                     obj_names_arc.clone(),
                     route_inspect::InspectRequest {
-                        from: WorldTile {
-                            x: from_x,
-                            z: from_z,
-                            level: from_level,
-                        },
-                        to: WorldTile { x, z, level },
+                        from,
+                        to,
                         allow_teleports,
                         allow_wilderness,
                         allow_bank_fetch,
+                        zones,
                         avoid: rects,
                         request_id,
                         invalid_args,

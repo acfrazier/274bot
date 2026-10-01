@@ -143,7 +143,7 @@ fn build_document(
         }
     }
 
-    let (map_count, npc_hits, loc_hits) =
+    let (map_count, _total_npc_spawns, npc_hits, loc_hits) =
         scan_maps(request.content_root, &interesting_npcs, &interesting_locs)?;
 
     let mut unresolved = Vec::new();
@@ -725,34 +725,33 @@ fn bind_pack_ids(cfgs: &mut HashMap<String, NamedConfig>, ids: &HashMap<String, 
     }
 }
 
+#[derive(Default)]
 struct NamedConfig {
     name: String,
     ops: [Option<String>; 5],
     category: Option<String>,
     packed_id: Option<i32>,
+    huntmode: Option<String>,
+    huntrange: Option<String>,
+    wanderrange: Option<String>,
+    maxrange: Option<String>,
+    attackrange: Option<String>,
+    moverestrict: Option<String>,
+    defaultmode: Option<String>,
+    vislevel: Option<String>,
+    hunt_type: Option<String>,
+    check_nottoostrong: Option<String>,
+    find_newmode: Option<String>,
 }
 
 fn ingest_named_config(text: &str, out: &mut HashMap<String, NamedConfig>) {
     let mut header: Option<String> = None;
-    let mut cur = NamedConfig {
-        name: String::new(),
-        ops: std::array::from_fn(|_| None),
-        category: None,
-        packed_id: None,
-    };
+    let mut cur = NamedConfig::default();
     let flush = |header: &mut Option<String>,
                  cur: &mut NamedConfig,
                  out: &mut HashMap<String, NamedConfig>| {
         if let Some(name) = header.take() {
-            out.entry(name).or_insert(std::mem::replace(
-                cur,
-                NamedConfig {
-                    name: String::new(),
-                    ops: std::array::from_fn(|_| None),
-                    category: None,
-                    packed_id: None,
-                },
-            ));
+            out.entry(name).or_insert(std::mem::take(cur));
         }
     };
     for raw in text.lines() {
@@ -771,6 +770,17 @@ fn ingest_named_config(text: &str, out: &mut HashMap<String, NamedConfig>) {
         match key.trim() {
             "name" => cur.name = value.to_string(),
             "category" => cur.category = Some(value.to_string()),
+            "huntmode" => cur.huntmode = Some(value.trim().to_string()),
+            "huntrange" => cur.huntrange = Some(value.trim().to_string()),
+            "wanderrange" => cur.wanderrange = Some(value.trim().to_string()),
+            "maxrange" => cur.maxrange = Some(value.trim().to_string()),
+            "attackrange" => cur.attackrange = Some(value.trim().to_string()),
+            "moverestrict" => cur.moverestrict = Some(value.trim().to_string()),
+            "defaultmode" => cur.defaultmode = Some(value.trim().to_string()),
+            "vislevel" => cur.vislevel = Some(value.trim().to_string()),
+            "type" => cur.hunt_type = Some(value.trim().to_string()),
+            "check_nottoostrong" => cur.check_nottoostrong = Some(value.trim().to_string()),
+            "find_newmode" => cur.find_newmode = Some(value.trim().to_string()),
             key if key.starts_with("op") && key.len() == 3 => {
                 if let Some(slot) = key.as_bytes().get(2).and_then(|b| {
                     let n = b.wrapping_sub(b'1');
@@ -811,12 +821,13 @@ struct ScriptBlock {
 struct ScriptTree {
     npc_cfg: HashMap<String, NamedConfig>,
     loc_cfg: HashMap<String, NamedConfig>,
+    hunt_cfg: HashMap<String, NamedConfig>,
     files: Vec<ScriptFile>,
 }
-
 fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
     let mut npc_cfg = HashMap::new();
     let mut loc_cfg = HashMap::new();
+    let mut hunt_cfg = HashMap::new();
     let mut files = Vec::new();
     visit_script_tree(
         content_root,
@@ -832,6 +843,11 @@ fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
                 Some("loc") => {
                     if let Ok(text) = std::fs::read_to_string(&path) {
                         ingest_named_config(&text, &mut loc_cfg);
+                    }
+                }
+                Some("hunt") => {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        ingest_named_config(&text, &mut hunt_cfg);
                     }
                 }
                 Some("rs2") => {
@@ -852,8 +868,228 @@ fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
     Ok(ScriptTree {
         npc_cfg,
         loc_cfg,
+        hunt_cfg,
         files,
     })
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HunterDefinition {
+    pub npc_id: i32,
+    pub id: String,
+    pub display_name: String,
+    pub size: i32,
+    pub vislevel: i32,
+    pub vis_off: bool,
+    pub huntrange: i32,
+    pub wanderrange: i32,
+    pub maxrange: i32,
+    pub attackrange: i32,
+    pub stationary: bool,
+    pub never_wanders: bool,
+    pub check_nottoostrong: String,
+    pub find_newmode: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HunterSpawn {
+    pub npc_id: i32,
+    pub x: i32,
+    pub z: i32,
+    pub level: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OpenableDoor {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub shape: u8,
+    pub rotation: u8,
+}
+
+#[derive(Debug)]
+pub(crate) struct HunterBakeInputs {
+    pub definitions: Vec<HunterDefinition>,
+    pub spawns: Vec<HunterSpawn>,
+    pub openable_doors: Vec<OpenableDoor>,
+    pub total_npc_spawns: usize,
+}
+
+pub(crate) fn collect_hunter_inputs(
+    content_root: &Path,
+    npc_types: &[NpcType],
+    door_ids: &HashSet<i32>,
+) -> Result<HunterBakeInputs, String> {
+    let mut tree = load_script_tree(content_root)?;
+    load_unpacked_zone_configs(content_root, &mut tree)?;
+    let npc_ids = pack_ids(content_root, "npc.pack");
+    bind_pack_ids(&mut tree.npc_cfg, &npc_ids);
+
+    let mut candidates = Vec::new();
+    for (alias, config) in &tree.npc_cfg {
+        let Some(npc_id) = config.packed_id else {
+            continue;
+        };
+        let Some(mode_name) = config.huntmode.as_deref() else {
+            continue;
+        };
+        let mode = tree.hunt_cfg.get(mode_name).ok_or_else(|| {
+            format!("hunter mode {mode_name} referenced by NPC {alias} is missing")
+        })?;
+        if mode
+            .hunt_type
+            .as_deref()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("player"))
+        {
+            candidates.push((npc_id, alias, config, mode));
+        }
+    }
+    candidates.sort_by(|(a_id, a_name, _, _), (b_id, b_name, _, _)| {
+        a_id.cmp(b_id).then_with(|| a_name.cmp(b_name))
+    });
+
+    let mut definitions = Vec::with_capacity(candidates.len());
+    let mut hunter_ids = HashSet::with_capacity(candidates.len());
+    let mut seen_ids = HashSet::with_capacity(candidates.len());
+    for (npc_id, alias, config, mode) in candidates {
+        if !seen_ids.insert(npc_id) {
+            return Err(format!(
+                "multiple hunter configs resolve to NPC id {npc_id}"
+            ));
+        }
+        let npc = entity_npc(npc_types, npc_id).ok_or_else(|| {
+            format!("hunter NPC {alias} ({npc_id}) is absent from the client cache")
+        })?;
+        if npc.vislevel < 0 {
+            return Err(format!(
+                "hunter NPC {alias} ({npc_id}) has no client combat level"
+            ));
+        }
+        let range = |field: &str, value: Option<&String>, default| {
+            let parsed = value.map_or(Ok(default), |value| {
+                value
+                    .parse::<i32>()
+                    .map_err(|_| format!("hunter NPC {alias} has invalid {field}={value:?}"))
+            })?;
+            if !(0..=32_767).contains(&parsed) {
+                return Err(format!(
+                    "hunter NPC {alias} has out-of-range {field}={parsed}"
+                ));
+            }
+            Ok(parsed)
+        };
+        let huntrange = range("huntrange", config.huntrange.as_ref(), 0)?;
+        let wanderrange = range("wanderrange", config.wanderrange.as_ref(), 5)?;
+        let maxrange =
+            range("maxrange", config.maxrange.as_ref(), wanderrange + 2)?.max(wanderrange);
+        let attackrange = range("attackrange", config.attackrange.as_ref(), 0)?;
+        let stationary = config
+            .moverestrict
+            .as_deref()
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("nomove"));
+        let never_wanders = stationary
+            || config
+                .defaultmode
+                .as_deref()
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("none"));
+        let display_name = if npc.name.is_empty() {
+            alias.clone()
+        } else {
+            npc.name.clone()
+        };
+        definitions.push(HunterDefinition {
+            npc_id,
+            id: alias.clone(),
+            display_name,
+            size: npc.size,
+            vislevel: npc.vislevel,
+            vis_off: config
+                .vislevel
+                .as_deref()
+                .is_some_and(|level| level.eq_ignore_ascii_case("hide")),
+            huntrange,
+            wanderrange,
+            maxrange,
+            attackrange,
+            stationary,
+            never_wanders,
+            check_nottoostrong: mode
+                .check_nottoostrong
+                .clone()
+                .unwrap_or_else(|| "off".into()),
+            find_newmode: mode.find_newmode.clone().unwrap_or_else(|| "none".into()),
+        });
+        hunter_ids.insert(npc_id);
+    }
+
+    let (.., total_npc_spawns, npc_hits, loc_hits) =
+        scan_maps(content_root, &hunter_ids, door_ids)?;
+    let spawns = npc_hits
+        .into_iter()
+        .flat_map(|(npc_id, hits)| {
+            hits.into_iter().map(move |hit| HunterSpawn {
+                npc_id,
+                x: hit.x,
+                z: hit.z,
+                level: hit.plane,
+            })
+        })
+        .collect();
+    let mut openable_doors = Vec::new();
+    for hits in loc_hits.into_values() {
+        for hit in hits {
+            let level = crate::collision::game_plane(i32::from(hit.plane), hit.link_below)
+                .ok_or_else(|| "openable door placement has an invalid game plane".to_string())?;
+            openable_doors.push(OpenableDoor {
+                x: hit.x,
+                z: hit.z,
+                level,
+                shape: hit.shape,
+                rotation: hit.rotation,
+            });
+        }
+    }
+    Ok(HunterBakeInputs {
+        definitions,
+        spawns,
+        openable_doors,
+        total_npc_spawns,
+    })
+}
+
+fn load_unpacked_zone_configs(content_root: &Path, tree: &mut ScriptTree) -> Result<(), String> {
+    fn visit(dir: &Path, tree: &mut ScriptTree) -> Result<(), String> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("scripts {}: {error}", dir.display())),
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = entry.file_name();
+                if name == "_test" || name == ".git" {
+                    continue;
+                }
+                visit(&path, tree)?;
+                continue;
+            }
+            let target = match path.extension().and_then(|ext| ext.to_str()) {
+                Some("npc") => &mut tree.npc_cfg,
+                Some("hunt") => &mut tree.hunt_cfg,
+                _ => continue,
+            };
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| format!("config {}: {error}", path.display()))?;
+            ingest_named_config(&text, target);
+        }
+        Ok(())
+    }
+
+    visit(&content_root.join("scripts").join("_unpack"), tree)
 }
 
 fn parse_rs2_blocks(text: &str) -> Vec<ScriptBlock> {
@@ -1410,6 +1646,8 @@ struct NpcHit {
     x: i32,
     z: i32,
     plane: u8,
+    #[cfg(test)]
+    link_below: bool,
 }
 
 struct LocHit {
@@ -1429,6 +1667,7 @@ fn scan_maps(
 ) -> Result<
     (
         usize,
+        usize,
         BTreeMap<i32, Vec<NpcHit>>,
         BTreeMap<i32, Vec<LocHit>>,
     ),
@@ -1442,6 +1681,7 @@ fn scan_maps(
     let mut npc_hits: BTreeMap<i32, Vec<NpcHit>> = BTreeMap::new();
     let mut loc_hits: BTreeMap<i32, Vec<LocHit>> = BTreeMap::new();
     let mut map_count = 0usize;
+    let mut total_npc_spawns = 0usize;
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
@@ -1453,7 +1693,7 @@ fn scan_maps(
         let text =
             std::fs::read_to_string(&path).map_err(|e| format!("map {}: {e}", path.display()))?;
         map_count += 1;
-        collect_hits_from_map(
+        total_npc_spawns += collect_hits_from_map(
             mx,
             mz,
             &text,
@@ -1469,7 +1709,7 @@ fn scan_maps(
     for hits in loc_hits.values_mut() {
         hits.sort_by_key(|hit| (hit.plane, hit.x, hit.z, hit.shape, hit.rotation));
     }
-    Ok((map_count, npc_hits, loc_hits))
+    Ok((map_count, total_npc_spawns, npc_hits, loc_hits))
 }
 
 fn collect_hits_from_map(
@@ -1480,10 +1720,12 @@ fn collect_hits_from_map(
     interesting_locs: &HashSet<i32>,
     npc_hits: &mut BTreeMap<i32, Vec<NpcHit>>,
     loc_hits: &mut BTreeMap<i32, Vec<LocHit>>,
-) {
+) -> usize {
     let mut section = None;
     let mut link_below = [0u64; 64];
+    let mut pending_npcs = Vec::new();
     let mut pending_locs = Vec::new();
+    let mut total_npc_spawns = 0usize;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() {
@@ -1495,7 +1737,7 @@ fn collect_hits_from_map(
         }
         match section {
             Some("MAP") => {
-                if interesting_locs.is_empty() || line.as_bytes().first() != Some(&b'1') {
+                if line.as_bytes().first() != Some(&b'1') {
                     continue;
                 }
                 let Some((level, x, z, flags)) = crate::pack::parse_map_line(line) else {
@@ -1509,12 +1751,9 @@ fn collect_hits_from_map(
                 let Some((plane, lx, lz, id)) = parse_npc_line(line) else {
                     continue;
                 };
+                total_npc_spawns += 1;
                 if interesting_npcs.contains(&id) {
-                    npc_hits.entry(id).or_default().push(NpcHit {
-                        x: mx * 64 + lx,
-                        z: mz * 64 + lz,
-                        plane,
-                    });
+                    pending_npcs.push((plane, lx, lz, id));
                 }
             }
             Some("LOC") => {
@@ -1535,10 +1774,19 @@ fn collect_hits_from_map(
             _ => {}
         }
     }
+    for (plane, lx, lz, id) in pending_npcs {
+        #[cfg(test)]
+        let linked = link_below[lz as usize] & (1u64 << lx as usize) != 0;
+        npc_hits.entry(id).or_default().push(NpcHit {
+            x: mx * 64 + lx,
+            z: mz * 64 + lz,
+            plane,
+            #[cfg(test)]
+            link_below: linked,
+        });
+    }
     for (plane, lx, lz, id, shape, rotation) in pending_locs {
-        let linked = (lx as usize) < 64
-            && (lz as usize) < 64
-            && link_below[lz as usize] & (1u64 << lx as usize) != 0;
+        let linked = link_below[lz as usize] & (1u64 << lx as usize) != 0;
         if crate::collision::game_plane(i32::from(plane), linked).is_none() {
             continue;
         }
@@ -1551,6 +1799,7 @@ fn collect_hits_from_map(
             link_below: linked,
         });
     }
+    total_npc_spawns
 }
 
 fn loc_line_id(line: &str) -> Option<i32> {
@@ -1631,7 +1880,7 @@ fn visit_script_tree(root: &Path, dir: &Path, cb: &mut impl FnMut(String, PathBu
             visit_script_tree(root, &path, cb);
         } else if matches!(
             path.extension().and_then(|s| s.to_str()),
-            Some("npc" | "loc" | "rs2")
+            Some("npc" | "loc" | "hunt" | "rs2")
         ) {
             cb(relative(root, &path), path);
         }

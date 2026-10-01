@@ -1092,6 +1092,7 @@ mod tests {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }
     }
 
@@ -1427,6 +1428,7 @@ mod tests {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: _,
+                cross: _,
             }] => (*x, *z, *level),
             other => panic!("the dig arm answers with one optionless walk: {other:?}"),
         };
