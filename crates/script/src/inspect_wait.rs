@@ -736,9 +736,7 @@ fn route_args_invalid(req: &InteractReq) -> bool {
     else {
         return false;
     };
-    !(0..=3).contains(from_level)
-        || !(0..=3).contains(level)
-        || avoid_refusal(avoid).is_some()
+    !(0..=3).contains(from_level) || !(0..=3).contains(level) || avoid_refusal(avoid).is_some()
 }
 
 /// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the

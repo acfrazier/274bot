@@ -5,9 +5,7 @@ use crate::router::AvoidRect;
 use crate::transport::WildernessRules;
 use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
 
-use super::{
-    read_i32, read_key, read_u16, read_u32, read_u64, read_u8, PackError, PackRead,
-};
+use super::{read_i32, read_key, read_u16, read_u32, read_u64, read_u8, PackError, PackRead};
 
 const MAX_PACKED_INDEX: usize = 32_767;
 
@@ -111,7 +109,9 @@ pub(super) fn write_table(out: &mut Vec<u8>, table: Option<&ZoneTable>) {
             Some(level) => panic!("zone group has invalid level {level}"),
         };
         out.push(level as u8);
-        out.extend_from_slice(&to_u32(group.members.len(), "zone group member count").to_le_bytes());
+        out.extend_from_slice(
+            &to_u32(group.members.len(), "zone group member count").to_le_bytes(),
+        );
         for member in group.members.iter() {
             out.extend_from_slice(&member.to_le_bytes());
         }
@@ -184,15 +184,15 @@ pub(super) fn read_table<R: PackRead>(
                 let class = read_class(read_u8(r)?)?;
                 let kind = read_u16(r)?;
                 if level > 3 {
-                    return Err(PackError::BadLength("NPC zone level is out of range".into()));
-                }
-                let kind_row = kinds
-                    .get(usize::from(kind))
-                    .ok_or_else(|| PackError::BadLength("zone kind index is out of range".into()))?;
-                if kind_row.npc_id < 0 {
                     return Err(PackError::BadLength(
-                        "NPC zone kind has npc_id -1".into(),
+                        "NPC zone level is out of range".into(),
                     ));
+                }
+                let kind_row = kinds.get(usize::from(kind)).ok_or_else(|| {
+                    PackError::BadLength("zone kind index is out of range".into())
+                })?;
+                if kind_row.npc_id < 0 {
+                    return Err(PackError::BadLength("NPC zone kind has npc_id -1".into()));
                 }
                 let cap = match class {
                     ZoneClass::Always => u16::MAX,
@@ -226,11 +226,13 @@ pub(super) fn read_table<R: PackRead>(
                 let class = read_class(read_u8(r)?)?;
                 let kind = read_u16(r)?;
                 if level > 3 || class != ZoneClass::Always {
-                    return Err(PackError::BadLength("invalid hazard zone class or level".into()));
+                    return Err(PackError::BadLength(
+                        "invalid hazard zone class or level".into(),
+                    ));
                 }
-                let kind_row = kinds
-                    .get(usize::from(kind))
-                    .ok_or_else(|| PackError::BadLength("zone kind index is out of range".into()))?;
+                let kind_row = kinds.get(usize::from(kind)).ok_or_else(|| {
+                    PackError::BadLength("zone kind index is out of range".into())
+                })?;
                 if kind_row.npc_id != -1 {
                     return Err(PackError::BadLength(
                         "hazard zone kind does not have npc_id -1".into(),
@@ -240,7 +242,9 @@ pub(super) fn read_table<R: PackRead>(
                 east_extents.push(0);
             }
             tag => {
-                return Err(PackError::BadLength(format!("zone tag {tag} is not 0 or 1")));
+                return Err(PackError::BadLength(format!(
+                    "zone tag {tag} is not 0 or 1"
+                )));
             }
         }
     }
@@ -277,11 +281,17 @@ pub(super) fn read_table<R: PackRead>(
                     "zone belongs to more than one group".into(),
                 ));
             }
-            zone.group = u16::try_from(group_index)
-                .map_err(|_| PackError::BadLength("zone group index exceeds packed limit".into()))?;
+            zone.group = u16::try_from(group_index).map_err(|_| {
+                PackError::BadLength("zone group index exceeds packed limit".into())
+            })?;
             members.push(member);
         }
-        groups.push(ZoneGroup::new(id.0, label.0, rect, members.into_boxed_slice()));
+        groups.push(ZoneGroup::new(
+            id.0,
+            label.0,
+            rect,
+            members.into_boxed_slice(),
+        ));
     }
 
     let carve_count = read_count(r, u32::MAX as usize, 18, "zone carve")?;
@@ -325,9 +335,9 @@ pub(super) fn read_table<R: PackRead>(
                 "zone shape is duplicated or belongs to a hazard".into(),
             ));
         }
-        let east_extent = *east_extents
-            .get(usize::from(zone_index))
-            .ok_or_else(|| PackError::BadLength("shape east-extent index is out of range".into()))?;
+        let east_extent = *east_extents.get(usize::from(zone_index)).ok_or_else(|| {
+            PackError::BadLength("shape east-extent index is out of range".into())
+        })?;
         if !(1..=6).contains(&east_extent) || !(1..=6).contains(&north_extent) {
             return Err(PackError::BadLength(
                 "zone shape footprint exceeds 8x8 bounds".into(),
@@ -349,15 +359,7 @@ pub(super) fn read_table<R: PackRead>(
     }
 
     ZoneTable::from_parts(
-        zones,
-        kinds,
-        groups,
-        carves,
-        shapes,
-        origin,
-        cols,
-        rows,
-        wilderness,
+        zones, kinds, groups, carves, shapes, origin, cols, rows, wilderness,
     )
     .map(Some)
     .map_err(|error| PackError::BadLength(format!("invalid zone table: {error}")))
@@ -411,7 +413,10 @@ fn npc_east_extent(zone: &Zone) -> u8 {
         u8::try_from(left).expect("NPC zone radius exceeds u8")
     } else {
         assert_eq!(left, 1, "shaped zone min x must be one tile west of spawn");
-        assert_eq!(south, 1, "shaped zone min z must be one tile south of spawn");
+        assert_eq!(
+            south, 1,
+            "shaped zone min z must be one tile south of spawn"
+        );
         assert!((1..=6).contains(&east));
         assert!((1..=6).contains(&north));
         u8::try_from(east).expect("shaped zone east extent exceeds u8")

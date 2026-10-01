@@ -25,9 +25,9 @@ use host_play::walk_map::{
 };
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
-use nav::zones::ZoneExempt;
 use nav::tile::Tile;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
@@ -1657,7 +1657,7 @@ impl TuiApp {
         let [map_area, button_area, info_area] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(inner.height.min(1)),
-            Constraint::Length(inner.height.saturating_sub(2).min(4)),
+            Constraint::Length(inner.height.saturating_sub(2).min(5)),
         ])
         .areas(inner);
         self.regions.map = map_area;
@@ -1722,6 +1722,7 @@ impl TuiApp {
                     "zones: avoided"
                 }
             )),
+            Line::from("z: Allows routes past monsters that may kill your bot."),
             Line::from(if let Some(err) = &self.error {
                 format!("status: {err}")
             } else {

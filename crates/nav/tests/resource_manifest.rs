@@ -66,8 +66,7 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
     fixture_cache(&dir.0);
     let cache = CacheManifest::capture(289, &dir.0).unwrap();
     let manifest =
-        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
-            .unwrap();
+        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0).unwrap();
     manifest
         .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .unwrap();
@@ -75,7 +74,17 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
         .verify(274, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .is_err());
     assert!(manifest
-        .verify(289, &cache, b"other", Some(b"flags"), None, None, None, 0, 0)
+        .verify(
+            289,
+            &cache,
+            b"other",
+            Some(b"flags"),
+            None,
+            None,
+            None,
+            0,
+            0
+        )
         .is_err());
     assert!(manifest
         .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 1, 0)

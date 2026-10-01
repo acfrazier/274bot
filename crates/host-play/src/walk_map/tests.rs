@@ -1460,11 +1460,6 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
 
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &dest_ctx, &reqs, &arms);
-    assert!(report.legacy_zones_unavailable);
-    assert!(
-        report.outcomes.iter().all(|outcome| outcome.detail.is_none()),
-        "legacy-zone availability belongs to the group report, not each bot"
-    );
     let kinds: Vec<(&str, WalkSlotOutcomeKind)> = report
         .outcomes
         .iter()
@@ -1544,13 +1539,12 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert!(!arms.contains_key("bot3"));
 }
 
-
 #[test]
 fn grouped_zone_refusal_keeps_its_named_detail() {
     let mut nav = world(t(3200, 3200, 0), 8, &[]);
     install_zone_wall(&mut nav);
     let fixture = MapFixture::new(&nav, "local-289");
-    let mut play = fixture.play(t(3201, 3201, 0));
+    let play = fixture.play(t(3201, 3201, 0));
     let dest_ctx = bound_context(&play);
     let baked = play.world().unwrap();
     let mut model = MapModel::default();

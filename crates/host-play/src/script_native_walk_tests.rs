@@ -507,7 +507,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
             .lock()
             .unwrap()
             .get("alice")
-            .is_some_and(|bot| bot.walk_outcome_seq >= 2)
+            .is_some_and(|bot| bot.native_walk_failure.is_some())
     }));
     rig.observe(4);
 
@@ -520,12 +520,10 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
         second.blocked.as_deref(),
         Some(&[nav::zones::ZoneKey::Zone(0)][..])
     );
-    assert!(
-        second
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("test-barrier@2,0,0"))
-    );
+    assert!(second
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("test-barrier@2,0,0")));
 }
 
 #[test]
@@ -544,11 +542,11 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
         level: 0,
     };
     let resolve_avoid = |from, state: &WorldState, id: &str| {
-        let mut exclusions = crate::script_nav::ScriptRouteExclusions::default();
+        let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
         exclusions
             .avoid_wire
             .push(InspectAvoidWire::Catalog(id.to_string()));
-        crate::script_nav::resolve_route_exclusions(
+        crate::script_runtime::resolve_route_exclusions(
             nav::router::FindOptions::default(),
             &world,
             from,
@@ -595,12 +593,12 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         level: 0,
     };
     let state = WorldState::empty();
-    let mut unknown = crate::script_nav::ScriptRouteExclusions::default();
+    let mut unknown = crate::script_runtime::ScriptRouteExclusions::default();
     unknown
         .avoid_wire
         .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
     assert_eq!(
-        crate::script_nav::resolve_route_exclusions(
+        crate::script_runtime::resolve_route_exclusions(
             nav::router::FindOptions::default(),
             &world,
             from,
@@ -612,10 +610,10 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         "avoidZones: unknown zone \"no-such-zone\""
     );
 
-    let mut unknown_cross = crate::script_nav::ScriptRouteExclusions::default();
-    unknown_cross.cross.push("no-such-zone".to_string());
+    let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
+    unknown_cross.cross.push(Arc::from("no-such-zone"));
     assert_eq!(
-        crate::script_nav::resolve_route_exclusions(
+        crate::script_runtime::resolve_route_exclusions(
             nav::router::FindOptions::default(),
             &world,
             from,
@@ -627,10 +625,12 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         "crossZones: unknown zone \"no-such-zone\""
     );
 
-    let mut too_many = crate::script_nav::ScriptRouteExclusions::default();
-    too_many.cross = (0..9).map(|_| "test-barrier@2,0,0".to_string()).collect();
+    let too_many = crate::script_runtime::ScriptRouteExclusions {
+        cross: (0..9).map(|_| Arc::from("test-barrier@2,0,0")).collect(),
+        ..Default::default()
+    };
     assert_eq!(
-        crate::script_nav::resolve_route_exclusions(
+        crate::script_runtime::resolve_route_exclusions(
             nav::router::FindOptions::default(),
             &world,
             from,
@@ -640,30 +640,5 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "crossZones: more than 8 zone names"
-    );
-}
-
-#[test]
-fn native_walk_receipt_marks_legacy_zone_catalog_unavailable() {
-    let mut rig = open_rig(false);
-    rig.observe(1);
-    rig.wait_routed();
-    crate::script_runtime::apply_nav_follow_outcome(
-        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
-            at: WorldTile {
-                x: 4,
-                z: 0,
-                level: 0,
-            },
-        }),
-        false,
-    );
-    rig.observe(2);
-    let shared = rig.shared.lock();
-    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
-    assert_eq!(
-        receipt.detail.as_deref(),
-        Some("zones: unavailable (legacy grid pack)")
     );
 }

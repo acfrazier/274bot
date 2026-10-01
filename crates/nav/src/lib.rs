@@ -21,11 +21,11 @@ pub mod quest_gates;
 pub mod router;
 pub mod tile;
 pub mod transport;
-pub mod zones;
 pub mod traveller;
 pub mod walk_destinations;
 pub mod world;
 pub mod world_state;
+pub mod zones;
 
 pub use world_state::WorldState;
 

@@ -102,7 +102,7 @@ fn route_exclusions(
 ) -> ScriptRouteExclusions {
     ScriptRouteExclusions {
         avoid_wire: avoid,
-        cross,
+        cross: cross.into_iter().map(Arc::<str>::from).collect(),
         ..ScriptRouteExclusions::default()
     }
 }

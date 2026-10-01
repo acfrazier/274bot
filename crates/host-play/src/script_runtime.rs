@@ -9,10 +9,10 @@ use bank::{action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_o
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]
-pub(super) use script_nav::{approach_tiles, ScriptRouteRequest};
+pub(super) use script_nav::{approach_tiles, resolve_route_exclusions, ScriptRouteRequest};
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome,
-    ScriptWalkArm,
+    ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 #[path = "script_walk.rs"]

@@ -9,9 +9,9 @@ use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
     AvoidRect, FallbackRoute, FindOptions, MissingReq, Route,
 };
-use nav::zones::{ZoneExempt, ZoneKey};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
+use nav::zones::{ZoneExempt, ZoneKey};
 use nav::WorldState;
 
 use super::{
@@ -76,7 +76,7 @@ pub(crate) struct MissingCarry {
 pub(crate) struct ScriptRouteExclusions {
     pub(crate) avoid: Vec<AvoidRect>,
     pub(crate) avoid_wire: Vec<script::shim::InspectAvoidWire>,
-    pub(crate) cross: Vec<String>,
+    pub(crate) cross: Vec<Arc<str>>,
 }
 impl ScriptRouteExclusions {
     fn is_empty(&self) -> bool {
@@ -157,7 +157,8 @@ pub(crate) struct NavBot {
     /// The script walk a reconnect or an operator Pause interrupted, re-sent
     /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
     /// [`take_carried_walk`]).
-    pub(crate) carried_walk: Option<CarriedWalk>,
+    /// Boxed only while held; idle slots do not retain the full wire payload.
+    pub(crate) carried_walk: Option<Box<CarriedWalk>>,
 }
 
 /// A script walk held across a reconnect or an operator Pause.
@@ -224,14 +225,14 @@ fn format_zone_witness(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> Strin
         .join(", ")
 }
 
-pub(super) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
-    format!("blocked by danger zones: {}", format_zone_witness(table, keys))
+pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+    format!(
+        "blocked by danger zones: {}",
+        format_zone_witness(table, keys)
+    )
 }
 
-pub(crate) fn compat_zone_no_route_line(
-    table: &nav::zones::ZoneTable,
-    keys: &[ZoneKey],
-) -> String {
+pub(crate) fn compat_zone_no_route_line(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
     let names = keys
         .iter()
         .map(|&key| format!("{:?}", table.name(key)))
@@ -262,6 +263,7 @@ const DRAYNOR_JAIL_GUARD_AVOIDS: [AvoidRect; 4] = [
         min_x: 3107,
         max_x: 3133,
         min_z: 3225,
+        max_z: 3251,
         level: Some(0),
     },
     AvoidRect {
@@ -280,7 +282,7 @@ const DRAYNOR_JAIL_GUARD_AVOIDS: [AvoidRect; 4] = [
     },
 ];
 
-pub(super) fn resolve_route_exclusions(
+pub(crate) fn resolve_route_exclusions(
     mut opts: FindOptions,
     world: &NavWorld,
     from: WorldTile,
@@ -326,9 +328,7 @@ pub(super) fn resolve_route_exclusions(
                             .any(|rect| rect.contains(from) || rect.contains(to));
                         let combat_high = state.combat_level.is_some_and(|level| level > 50);
                         if !endpoint_inside && !combat_high {
-                            exclusions
-                                .avoid
-                                .extend(DRAYNOR_JAIL_GUARD_AVOIDS);
+                            exclusions.avoid.extend(DRAYNOR_JAIL_GUARD_AVOIDS);
                         }
                     }
                     _ => unreachable!(),
@@ -403,17 +403,20 @@ impl ScriptWalkArm {
                 request.required_after,
             ));
         }
-        let mut exclusions = ScriptRouteExclusions::default();
-        exclusions.cross = request
-            .cross
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
+        let exclusions = ScriptRouteExclusions {
+            cross: request.cross.to_vec(),
+            ..Default::default()
+        };
         self.queue_route_impl(
             request.target.x,
             request.target.z,
             request.target.level,
-            request.options,
+            FindOptions {
+                allow_teleports: request.options.allow_teleports,
+                allow_wilderness: request.options.allow_wilderness,
+                allow_bank_fetch: request.options.allow_bank_fetch,
+                ..FindOptions::default()
+            },
             i32::from(request.radius),
             true,
             authority.request_id().get(),
@@ -616,7 +619,6 @@ impl ScriptWalkArm {
         )
     }
 
-
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)] // deterministic worker seam for route tests
     pub(crate) fn queue_route_in_snapshot_synced(
@@ -769,30 +771,24 @@ impl ScriptWalkArm {
         };
         let empty = WorldState::empty();
         let route_state = self.state.as_ref().unwrap_or(&empty);
-        let (mut opts, exclusions) = match resolve_route_exclusions(
-            opts,
-            world,
-            from,
-            to,
-            route_state,
-            exclusions,
-        ) {
-            Ok(resolved) => resolved,
-            Err(reason) => {
-                log_walk_arm(&self.name, || {
-                    format!("queue_route refused {reason} dest={to:?} request_id={request_id}")
-                });
-                if let Some(authority) = authority.as_ref() {
-                    self.refuse_native_with_detail(
-                        authority.clone(),
-                        Some(Arc::from(reason.as_str())),
-                    );
-                } else {
-                    self.publish_refusal(to, radius, opts.allow_teleports, request_id);
+        let (mut opts, exclusions) =
+            match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
+                Ok(resolved) => resolved,
+                Err(reason) => {
+                    log_walk_arm(&self.name, || {
+                        format!("queue_route refused {reason} dest={to:?} request_id={request_id}")
+                    });
+                    if let Some(authority) = authority.as_ref() {
+                        self.refuse_native_with_detail(
+                            authority.clone(),
+                            Some(Arc::from(reason.as_str())),
+                        );
+                    } else {
+                        self.publish_refusal(to, radius, opts.allow_teleports, request_id);
+                    }
+                    return false;
                 }
-                return false;
-            }
-        };
+            };
         let exclusions = if exclusions.is_empty() {
             None
         } else {
@@ -1236,12 +1232,7 @@ impl ScriptRouteRequest {
             if let Some(stands) = &self.live_candidates {
                 targets.extend_from_slice(stands.as_slice());
             }
-            targets.extend(approach_tiles(
-                &self.world,
-                self.from,
-                self.to,
-                self.radius,
-            ));
+            targets.extend(approach_tiles(&self.world, self.from, self.to, self.radius));
         }
         let bank_targets = if self.radius <= 0 {
             targets.as_slice()
@@ -1931,7 +1922,6 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
     }
 }
 
-
 /// A reconnect the slot relogs through with its Load script's work held
 /// (`SlotScript::reconnect_session_work`). The connection's route follow
 /// ends as in [`reset_script_nav`]; what the held script still waits on
@@ -1962,10 +1952,10 @@ pub(crate) fn hold_script_nav(
         let picking = nav.bank_pick.walking(nav.route_generation);
         if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
             // A nearest-bank walk still choosing its bank: re-ask for it.
-            nav.carried_walk = Some(CarriedWalk {
+            nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
-            });
+            }));
         } else if let (Some(runtime_generation), true, Some(requested), None) =
             (carry, armed, nav.requested_route, &nav.native_walk)
         {
@@ -1973,7 +1963,16 @@ pub(crate) fn hold_script_nav(
             let request_id = nav.walk_request_id;
             let (avoid, cross) = nav.requested_exclusions.as_deref().map_or_else(
                 || (Vec::new(), Vec::new()),
-                |exclusions| (exclusions.avoid_wire.clone(), exclusions.cross.clone()),
+                |exclusions| {
+                    (
+                        exclusions.avoid_wire.clone(),
+                        exclusions
+                            .cross
+                            .iter()
+                            .map(|name| name.to_string())
+                            .collect(),
+                    )
+                },
             );
             let request = if radius > 0 {
                 script::shim::InteractReq::WalkNear {
@@ -2001,10 +2000,10 @@ pub(crate) fn hold_script_nav(
                     cross,
                 }
             };
-            nav.carried_walk = Some(CarriedWalk {
+            nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
                 request,
-            });
+            }));
         }
         end_route_follow(nav);
     }

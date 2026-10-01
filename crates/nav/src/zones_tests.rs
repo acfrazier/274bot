@@ -139,7 +139,9 @@ fn exemption_union_deduplicates_and_all_bypasses_mask_allocation() {
         ZoneKey::Zone(7),
     ])
     .unwrap();
-    assert!(full.union(extra).is_err());
+    assert!(full
+        .union(ZoneExempt::named(&[ZoneKey::Zone(8)]).unwrap())
+        .is_err());
     assert!(ZoneExempt::named(&[ZoneKey::Zone(0x8000)]).is_err());
 
     let all = ZoneFilter::new(&table, Some(10), &[], &ZoneExempt::all());
@@ -209,3 +211,39 @@ fn table_rejects_npc_rows_that_cannot_be_encoded_canonically() {
     ));
 }
 
+#[test]
+fn hunter_reach_overhanging_the_map_indexes_only_its_in_grid_cells() {
+    let zones = vec![
+        Zone::npc(tile(10, 20, 0), 4, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(25, 35, 0), 4, ZoneClass::Always, u16::MAX, 0),
+        Zone::npc(tile(0, 0, 0), 1, ZoneClass::Always, u16::MAX, 0),
+    ];
+    let table = ZoneTable::from_parts(
+        zones,
+        vec![ZoneKind::new("edge", "Edge hunter", 1, 1, false, false)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        tile(10, 20, 0),
+        16,
+        16,
+        &WildernessRules::default(),
+    )
+    .unwrap();
+    let wilderness = WildernessRules::default();
+    let filter = ZoneFilter::new(&table, None, &[], &ZoneExempt::NONE);
+    assert!(filter.blocks(&wilderness, tile(10, 20, 0)));
+    assert!(filter.blocks(&wilderness, tile(14, 24, 0)));
+    assert!(filter.blocks(&wilderness, tile(21, 31, 0)));
+    assert!(filter.blocks(&wilderness, tile(25, 35, 0)));
+    for cell in [
+        tile(15, 24, 0),
+        tile(20, 31, 0),
+        tile(10, 35, 0),
+        tile(9, 20, 0),
+        tile(26, 35, 0),
+        tile(10, 20, 1),
+    ] {
+        assert!(!filter.blocks(&wilderness, cell), "{cell:?}");
+    }
+}

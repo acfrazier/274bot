@@ -378,10 +378,9 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     );
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
-    let mut manifest = host_play::profile::NavManifest::capture(
-        289, &cache, &bytes, None, None, None, None, 0, 0,
-    )
-    .unwrap();
+    let mut manifest =
+        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None, 0, 0)
+            .unwrap();
     manifest.content_id = Some(
         compute_decoded_content_identity(289, &retained, &retained)
             .unwrap()
@@ -423,7 +422,10 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
         http_port: Some(port),
         ..options.clone()
     };
-    let result = mismatched.resolve_with_env(None, &env).unwrap().bind_runtime();
+    let result = mismatched
+        .resolve_with_env(None, &env)
+        .unwrap()
+        .bind_runtime();
     server.join().unwrap();
     let error = match result {
         Err(error) => error,
@@ -441,7 +443,10 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
         http_port: Some(port),
         ..options
     };
-    let result = mismatched.resolve_with_env(None, &env).unwrap().bind_runtime();
+    let result = mismatched
+        .resolve_with_env(None, &env)
+        .unwrap()
+        .bind_runtime();
     server.join().unwrap();
     let error = match result {
         Err(error) => error,

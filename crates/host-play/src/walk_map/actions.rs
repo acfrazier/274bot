@@ -852,15 +852,13 @@ fn blocking_zones_for_walk(
     origin: Tile,
     destination: Tile,
     mut options: FindOptions,
-    state: &WorldState,
-    bank: &[(i32, i32)],
+    slot: &WalkSlotRequest<'_>,
     arms: &WalkArms,
-    name: &str,
 ) -> Option<Vec<nav::zones::ZoneKey>> {
     options.essence = arms
         .lock()
         .unwrap()
-        .get(name)
+        .get(slot.name)
         .and_then(|arm| arm.lock().unwrap().traveller.essence());
     let from = world_tile(origin);
     let destination = world_tile(destination);
@@ -870,7 +868,7 @@ fn blocking_zones_for_walk(
         from,
         destination,
         options,
-        state,
+        slot.state,
         &[],
     )
     .filter(|keys| !keys.is_empty());
@@ -883,13 +881,13 @@ fn blocking_zones_for_walk(
         from,
         destination,
         options,
-        state,
+        slot.state,
         &[],
     )?;
     let plan = plan_bank_fetch(
         &missing,
-        state,
-        bank,
+        slot.state,
+        slot.bank,
         world.banks(),
         from,
         &world.collision,
@@ -908,7 +906,7 @@ fn blocking_zones_for_walk(
         from,
         access,
         options,
-        state,
+        slot.state,
         &[],
     )
     .filter(|keys| !keys.is_empty())
@@ -976,10 +974,8 @@ impl MapCommand {
                 self.origin,
                 self.destination,
                 self.options,
-                state,
-                bank,
+                &WalkSlotRequest { name, state, bank },
                 arms,
-                name,
             ) {
                 if let Some(table) = world.graph.zones.as_ref() {
                     let detail = crate::blocked_zone_detail(table, &keys);
@@ -1163,30 +1159,26 @@ impl Play {
                 self.map_walk(command, &current, req.state, req.bank, arms)
             });
             let detail = match &result {
-                Err(ActionError::BlockedByZones) => {
-                    match (status, origin, self.world.as_deref()) {
-                        (WalkSlotStatus::Eligible(_), Some(origin), Some(world)) => {
-                            blocking_zones_for_walk(
-                                world,
-                                origin,
-                                plan.destination,
-                                plan.options,
-                                req.state,
-                                req.bank,
-                                arms,
-                                req.name,
-                            )
-                            .and_then(|keys| {
-                                world
-                                    .graph
-                                    .zones
-                                    .as_ref()
-                                    .map(|table| crate::blocked_zone_detail(table, &keys))
-                            })
-                        }
-                        _ => None,
+                Err(ActionError::BlockedByZones) => match (status, origin, self.world.as_deref()) {
+                    (WalkSlotStatus::Eligible(_), Some(origin), Some(world)) => {
+                        blocking_zones_for_walk(
+                            world,
+                            origin,
+                            plan.destination,
+                            plan.options,
+                            req,
+                            arms,
+                        )
+                        .and_then(|keys| {
+                            world
+                                .graph
+                                .zones
+                                .as_ref()
+                                .map(|table| crate::blocked_zone_detail(table, &keys))
+                        })
                     }
-                }
+                    _ => None,
+                },
                 _ => None,
             };
             let kind = match (status, result) {

@@ -586,14 +586,8 @@ pub(super) fn calculate(capture: &InspectCapture) -> InspectTerminal {
             InspectTerminal::refusal(capture.request_id, capture.generation, "BudgetExhausted")
         }
         Err(RouteError::NoPath) if !capture.opts.allow_bank_fetch => {
-            let reason = no_path_reason(
-                capture,
-                capture.from,
-                capture.to,
-                capture.opts,
-                pre,
-                avoid,
-            );
+            let reason =
+                no_path_reason(capture, capture.from, capture.to, capture.opts, pre, avoid);
             InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
         }
         Err(RouteError::NoPath) => calculate_bank(capture, pre, avoid),
@@ -606,14 +600,7 @@ fn calculate_bank(
     avoid: &[AvoidRect],
 ) -> InspectTerminal {
     let Some(missing) = search_missing(capture, pre, avoid) else {
-        let reason = no_path_reason(
-            capture,
-            capture.from,
-            capture.to,
-            capture.opts,
-            pre,
-            avoid,
-        );
+        let reason = no_path_reason(capture, capture.from, capture.to, capture.opts, pre, avoid);
         return InspectTerminal::refusal(capture.request_id, capture.generation, &reason);
     };
     let Some(plan) = plan_bank_fetch(
@@ -660,8 +647,7 @@ fn calculate_bank(
                     allow_bank_fetch: false,
                     ..capture.opts
                 };
-                let reason =
-                    no_path_reason(capture, capture.from, stand, opts, pre, avoid);
+                let reason = no_path_reason(capture, capture.from, stand, opts, pre, avoid);
                 return InspectTerminal {
                     bank_planned: false,
                     ..InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
@@ -692,13 +678,14 @@ fn calculate_bank(
                 allow_bank_fetch: false,
                 ..capture.opts
             };
-            let reason = no_path_reason(capture, capture.from, capture.to, opts, &plan.state, avoid);
+            let reason =
+                no_path_reason(capture, capture.from, capture.to, opts, &plan.state, avoid);
             InspectTerminal {
                 bank_planned,
                 ..InspectTerminal::refusal(capture.request_id, capture.generation, &reason)
             }
         }
-}
+    }
 }
 
 fn no_path_reason(
@@ -729,7 +716,6 @@ fn no_path_reason(
     })
     .unwrap_or_else(|| "NoPath".into())
 }
-
 
 fn search_path(
     capture: &InspectCapture,

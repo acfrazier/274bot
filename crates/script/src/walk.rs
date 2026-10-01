@@ -254,10 +254,10 @@ pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<String> {
             min_z,
             max_z,
             level,
-        } => (min_x > max_x
-            || min_z > max_z
-            || level.is_some_and(|level| !(0..=3).contains(&level)))
-            .then(|| "avoidZones: a rectangle with inverted bounds or a level off 0-3".into()),
+        } => {
+            (min_x > max_x || min_z > max_z || level.is_some_and(|level| !(0..=3).contains(&level)))
+                .then(|| "avoidZones: a rectangle with inverted bounds or a level off 0-3".into())
+        }
     })
 }
 
@@ -726,8 +726,6 @@ pub(crate) struct Walk {
     dest: WorldTile,
     radius: i32,
     allow_teleports: bool,
-    avoid: Vec<InspectAvoidWire>,
-    cross: Vec<String>,
 }
 
 impl Walk {
@@ -783,10 +781,8 @@ impl Walk {
             dest,
             radius,
             allow_teleports,
-            cross,
-            avoid,
         };
-        cx.emit(walk.request());
+        cx.emit(walk.request(avoid, cross));
         cx.clock().arm(timeout_ms);
         Ok(walk)
     }
@@ -818,7 +814,7 @@ impl Walk {
     }
 
     /// The native walk this wait is for.
-    fn request(&self) -> InteractReq {
+    fn request(&self, avoid: Vec<InspectAvoidWire>, cross: Vec<String>) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
         if self.radius > 0 {
             InteractReq::WalkNear {
@@ -830,8 +826,8 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
-                cross: self.cross.clone(),
-                avoid: self.avoid.clone(),
+                cross,
+                avoid,
             }
         } else {
             InteractReq::Walk {
@@ -842,8 +838,8 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
-                avoid: self.avoid.clone(),
-                cross: self.cross.clone(),
+                avoid,
+                cross,
             }
         }
     }
@@ -930,7 +926,7 @@ pub(crate) struct Resilient {
     avoid: Vec<InspectAvoidWire>,
     /// Per-walk zone names are preserved across repaths, but apply only to
     /// this request.
-    cross: Vec<String>,
+    cross: Box<[String]>,
     logs: VecDeque<String>,
 }
 
@@ -961,7 +957,7 @@ impl Resilient {
             recover: true,
             avoid: Vec::new(),
             logs: VecDeque::new(),
-            cross: Vec::new(),
+            cross: Box::default(),
         }
     }
 
@@ -978,7 +974,7 @@ impl Resilient {
         self
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
-        self.cross = cross;
+        self.cross = cross.into_boxed_slice();
         self
     }
 
@@ -1189,7 +1185,7 @@ impl Resilient {
             self.timeout_ms,
             allow_teleports,
             self.avoid.clone(),
-            self.cross.clone(),
+            self.cross.to_vec(),
             cx,
         ) {
             Ok(walk) => {
@@ -1487,7 +1483,7 @@ impl Family for WalkResilient {
     fn begin(args: WalkResilientArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
         let opts = args.opts;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
-            return Begin::Refuse(reason.into());
+            return Begin::Refuse(reason);
         }
         if opts.cross_zones.len() > 8 {
             return Begin::Refuse("crossZones: more than 8 zone ids".into());
@@ -2433,17 +2429,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn avoid_zone_ids_are_refused_and_rects_ride_the_walk() {
+    fn avoid_zone_rects_ride_the_walk() {
         reset();
         post_here(0, 0);
-        let args = json!({
-            "tile": { "x": 10, "z": 0, "level": 0 },
-            "opts": { "radius": 0, "avoidZones": ["white-wolf-mountain"] },
-        });
-        assert!(matches!(
-            machine::start("walk-resilient", args, Vec::new(), 0),
-            Started::Refused(_)
-        ));
         let rect = json!({ "minX": 4, "maxX": 6, "minZ": -2, "maxZ": 2, "level": 0 });
         let args = json!({
             "tile": { "x": 10, "z": 0, "level": 0 },

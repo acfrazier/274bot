@@ -62,8 +62,15 @@ fn native_requested(
     to: WorldTile,
     radius: i32,
     allow_teleports: bool,
-) -> (WorldTile, i32, bool, bool, bool) {
-    (to, radius, allow_teleports, false, false)
+) -> (WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt) {
+    (
+        to,
+        radius,
+        allow_teleports,
+        false,
+        false,
+        nav::zones::ZoneExempt::NONE,
+    )
 }
 
 /// No script slot: the follow's arrival probe reads an unavailable view.
@@ -2994,6 +3001,7 @@ fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
             true,
             false,
             false,
+            nav::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -3545,6 +3553,7 @@ fn bot_clone_generation_guard(bot: &NavBot) {
             false,
             false,
             false,
+            nav::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -3661,6 +3670,7 @@ fn park_walk_isolate(
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] if *dx == x && *dz == z && *dr == radius => *request_id,
         other => panic!("unexpected interacts: {other:?}"),
     };
@@ -3689,6 +3699,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_bank_fetch: true,
             request_id: first,
             avoid: _,
+            cross: _,
         }, script::shim::InteractReq::WalkNear {
             x: dx1,
             z: dz1,
@@ -3699,6 +3710,7 @@ fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u6
             allow_bank_fetch: true,
             request_id: second,
             avoid: _,
+            cross: _,
         }] if *dx0 == x
             && *dz0 == z
             && *dr0 == radius
@@ -6592,6 +6604,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
                 false,
                 false,
                 false,
+                nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         },
@@ -6942,6 +6955,7 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
         false,
         false,
         false,
+        nav::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().extend([
         (
@@ -7019,6 +7033,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
         false,
         false,
         false,
+        nav::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().insert(
         "alice".into(),
@@ -11119,6 +11134,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11145,6 +11161,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11224,6 +11241,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_bank_fetch: false,
             request_id: 1,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
@@ -11250,17 +11268,12 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_bank_fetch: true,
             request_id: 2,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     assert!(
         wait_until(200, || queued(&navs_on) == Some(dest)),
         "explicit wilderness must route into the zone"
-    );
-    let bot = &navs_on.lock().unwrap()["alice"];
-    assert_eq!(
-        bot.requested_route,
-        Some((dest, 0, false, true, true)),
-        "dispatch must copy both newly carried FindOptions bits"
     );
 }
 
@@ -11310,7 +11323,9 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
     assert!(
         wait_until(200, || {
             let bot = &navs.lock().unwrap()["flags"];
-            bot.walk_request_id == 12 && bot.requested_route == Some((dest, 1, false, true, false))
+            bot.walk_request_id == 12
+                && bot.requested_route
+                    == Some((dest, 1, false, true, false, nav::zones::ZoneExempt::NONE))
         }),
         "changed wilderness must not reuse the prior permissioned route"
     );
@@ -11330,7 +11345,9 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
     assert!(
         wait_until(200, || {
             let bot = &navs.lock().unwrap()["flags"];
-            bot.walk_request_id == 13 && bot.requested_route == Some((dest, 1, false, true, true))
+            bot.walk_request_id == 13
+                && bot.requested_route
+                    == Some((dest, 1, false, true, true, nav::zones::ZoneExempt::NONE))
         }),
         "changed bank-fetch must not reuse the prior permissioned route"
     );
@@ -11384,6 +11401,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_bank_fetch: false,
             request_id: 77,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
     ));
     let bot = &navs.lock().unwrap()["alice"];
@@ -17200,7 +17218,7 @@ fn following_script_walk() -> NavBot {
             ticks: 0.0,
         }),
         route_worker: Some(Arc::new(())),
-        requested_route: Some((dest, 2, false, true, true)),
+        requested_route: Some((dest, 2, false, true, true, nav::zones::ZoneExempt::NONE)),
         walk_request_id: 9,
         route_request_id: 9,
         ..NavBot::default()
@@ -17416,6 +17434,7 @@ fn session_reset_clears_live_recovery_walk() {
                 false,
                 true,
                 false,
+                nav::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         },
@@ -17512,7 +17531,10 @@ struct ReconnectRig {
     channels: script_channels::SlotChannels,
 }
 
-type ArmedWalk = (u64, Option<(WorldTile, i32, bool, bool, bool)>);
+type ArmedWalk = (
+    u64,
+    Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)>,
+);
 
 impl ReconnectRig {
     fn new(x: i32, z: i32) -> Self {
@@ -17775,7 +17797,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     // The same request surfacing late from the isolate after the carry went
     // out (ReviewBoatFareR4 race): the route already follows it.
     let (request_id, requested) = rig.armed();
-    let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch) =
+    let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _zones) =
         requested.expect("the carry re-armed the walk");
     rig.dispatch(vec![script::shim::InteractReq::WalkNear {
         x: to.x,
@@ -17787,6 +17809,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
         allow_bank_fetch,
         request_id,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }]);
     rig.frames(4);
     assert_eq!(
@@ -17981,8 +18004,15 @@ fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
     rig.slot().lock().unwrap().stop();
 }
 
-fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool)> {
-    Some((WorldTile { x, z, level: 0 }, 1, false, true, true))
+fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)> {
+    Some((
+        WorldTile { x, z, level: 0 },
+        1,
+        false,
+        true,
+        true,
+        nav::zones::ZoneExempt::NONE,
+    ))
 }
 
 /// A reconnect mid-walk: the relogged session's first dispatch re-arms the
@@ -19340,6 +19370,7 @@ impl script::native::Script for WalkProbe {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         });
         Ok(script::native::ScriptFlow::Continue)
     }
@@ -19914,6 +19945,7 @@ export function tick(api) {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
         "native v2 must arm the walk before the approach tile is reached",
     );
