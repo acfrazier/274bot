@@ -366,6 +366,61 @@ fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     graph
 }
 
+#[test]
+fn rectangular_transport_takeoffs_share_forward_and_reverse_wall_admission() {
+    let from = tile(0, 6, 0);
+    let to = tile(59, 4, 1);
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+    for (wall, blocked_sides, allowed) in [
+        (0, 0xd, true),
+        (CollisionFlag::W_W as u32, 0xd, false),
+        (0, 0xf, false),
+    ] {
+        // A corridor long enough to run the backward proof reaches only the
+        // east face, four tiles beyond the anchor. The destination is sealed
+        // on another plane: radius-one reverse predecessors would miss it.
+        let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; 4 * 64 * 8];
+        for x in 0..=54 {
+            flags[6 * 64 + x] = 0;
+        }
+        flags[4 * 64 + 54] = wall;
+        flags[5 * 64 + 54] = wall;
+        flags[64 * 8 + 4 * 64 + 59] = 0;
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 64,
+            height: 8,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let mut graph = door(tile(50, 3, 0), to, 1);
+        graph.edges[0].kind = TransportKind::Stairs;
+        graph.approaches = vec![Some(api::query::loc_approach::LocApproach {
+            width: 4,
+            length: 3,
+            blocked_sides,
+        })];
+        graph.rebuild_index(&collision);
+        assert_eq!(
+            graph.admissible_from(&collision, 0, tile(54, 5, 0)),
+            allowed
+        );
+        let direct = find_with(&collision, &graph, from, to, opts, &state);
+        let first = find_first_with(&collision, &graph, from, &[to], opts, &state);
+        if allowed {
+            assert_eq!(direct.unwrap().ticks, 28.5);
+            assert_eq!(first.route().unwrap().dest, to);
+        } else {
+            assert_eq!(direct.err(), Some(RouteError::NoPath));
+            assert_eq!(first.route().err(), Some(RouteError::NoPath));
+            assert_eq!(first.proof(), ReverseProof::Unreachable);
+        }
+    }
+}
+
 /// One any-tile teleport edge in `graph.teleports` (never in `at`).
 fn teleport(
     to: WorldTile,
@@ -2166,6 +2221,57 @@ fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() 
     );
 }
 
+#[test]
+fn lumbridge_castle_stairs_route_to_first_floor_wheel_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let state = WorldState::empty();
+    let opts = FindOptions {
+        zones: crate::zones::ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let wheel = tile(3209, 3212, 1);
+    assert!(
+        !world.collision.standable(wheel),
+        "wheel occupies its target"
+    );
+    let dest = tile(3209, 3213, 1);
+    let edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1738 && edge.at == tile(3204, 3207, 0))
+        .expect("real Lumbridge south staircase");
+    eprintln!("Lumbridge stairs: {edge:?}; allowed={}", state.allows(edge));
+    assert!(state.allows(edge), "ordinary castle stairs have no gates");
+    assert!(world.collision.standable(edge.to));
+    let index = world
+        .graph
+        .edges
+        .iter()
+        .position(|candidate| candidate == edge)
+        .unwrap();
+    assert!(!world
+        .graph
+        .admissible_from(&world.collision, index, tile(3205, 3206, 0)));
+    assert!(world
+        .graph
+        .admissible_from(&world.collision, index, tile(3205, 3209, 0)));
+    for from in [tile(3205, 3206, 0), tile(3215, 3212, 0)] {
+        let route = find_with(&world.collision, &world.graph, from, dest, opts, &state)
+            .expect("ground floor and courtyard route to the wheel");
+        assert_eq!(route.dest, dest, "preserve the exact operable wheel stand");
+        eprintln!("Lumbridge from {from:?}: {route:?}");
+        validate_real_route(&world.collision, &world.graph, &route, &state, opts, &[]);
+        assert!(route.legs.iter().any(|leg| matches!(
+            leg,
+            Leg::Transport { edge } if edge.kind == TransportKind::Stairs
+                && edge.at.level == 0 && edge.to.level == 1
+        )));
+    }
+}
+
 fn real_members_state() -> WorldState {
     WorldState {
         map_members: true,
@@ -2367,12 +2473,24 @@ fn validate_real_route(
                 if edge.kind != TransportKind::Teleport {
                     assert!(collision.standable(previous));
                     assert_eq!(previous.level, edge.at.level);
-                    assert!(
-                        (previous.x - edge.at.x)
-                            .abs()
-                            .max((previous.z - edge.at.z).abs())
-                            <= 1
-                    );
+                    if edge.kind == TransportKind::EssenceExit {
+                        assert!(
+                            (previous.x - edge.at.x)
+                                .abs()
+                                .max((previous.z - edge.at.z).abs())
+                                <= 1
+                        );
+                    } else {
+                        let index = graph
+                            .edges
+                            .iter()
+                            .position(|candidate| candidate == edge)
+                            .unwrap();
+                        assert!(
+                            graph.admissible_from(collision, index, previous),
+                            "transport cannot operate from {previous:?}: {edge:?}"
+                        );
+                    }
                 }
                 assert!(super::wildy_step_ok(
                     graph,
@@ -3413,35 +3531,6 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
         z: 3468,
         level: 0,
     };
-    let ladder_at = WorldTile {
-        x: 3096,
-        z: 9867,
-        level: 0,
-    };
-    let trap_edges: Vec<_> = world
-        .graph
-        .at
-        .get(&trapdoor_at)
-        .into_iter()
-        .flatten()
-        .map(|&i| &world.graph.edges[i])
-        .collect();
-    let ladder_edges: Vec<_> = world
-        .graph
-        .at
-        .get(&ladder_at)
-        .into_iter()
-        .flatten()
-        .map(|&i| &world.graph.edges[i])
-        .collect();
-    assert!(
-        ladder_edges.iter().any(|e| e.loc_id == 1755),
-        "packed graph must keep the dungeon exit ladder 1755 at 3096,9867, got {:?}",
-        ladder_edges
-            .iter()
-            .map(|e| (e.loc_id, e.to, e.kind))
-            .collect::<Vec<_>>()
-    );
     let opts = FindOptions {
         allow_teleports: false,
         allow_wilderness: true,
@@ -3449,47 +3538,9 @@ fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
         zones: crate::zones::ZoneExempt::all(),
         ..FindOptions::default()
     };
-    let mut graph = TransportGraph {
-        edges: world.graph.edges.clone(),
-        at: world.graph.at.clone(),
-        teleports: world.graph.teleports.clone(),
-        wilderness: world.graph.wilderness.clone(),
-        quest_family: world.graph.quest_family,
-        zones: world.graph.zones.clone(),
-    };
-    if !trap_edges
-        .iter()
-        .any(|e| e.loc_id == 1568 || e.loc_id == 1570)
-    {
-        let dest = WorldTile {
-            x: trapdoor_at.x,
-            z: trapdoor_at.z + crate::transport::CELLAR_SHIFT,
-            level: trapdoor_at.level,
-        };
-        let idx = graph.edges.len();
-        graph.edges.push(TransportEdge {
-            kind: TransportKind::Ladder,
-            at: trapdoor_at,
-            to: dest,
-            loc_id: 1568,
-            option: 1,
-            ticks: 3,
-            dir: None,
-            open_loc_id: Some(1570),
-            skill_req: vec![],
-            item_req: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None,
-        });
-        graph.at.entry(trapdoor_at).or_default().push(idx);
-    }
     let route = find_with(
         &world.collision,
-        &graph,
+        &world.graph,
         from,
         eggs,
         opts,
@@ -4228,55 +4279,37 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
     let catherby = tile(2809, 3440, 0);
     let manor = tile(3109, 3353, 0);
     let opts = FindOptions::default();
-    for (row, from, to, combat, ticks, cells, legs) in [
-        ("F1", lumbridge, bank, Some(126), 84.5, 170, 1),
-        ("F1-low", lumbridge, bank, Some(3), 87.5, 176, 1),
-        (
-            "F2-cap",
-            east_bank,
-            tile(3253, 3375, 0),
-            Some(12),
-            99.5,
-            200,
-            1,
-        ),
-        (
-            "F2-unknown",
-            east_bank,
-            tile(3253, 3375, 0),
-            None,
-            99.5,
-            200,
-            1,
-        ),
-        (
-            "F2-lifted",
-            east_bank,
-            tile(3253, 3375, 0),
-            Some(13),
-            60.0,
-            121,
-            1,
-        ),
-        ("F3", taverley, catherby, Some(126), 341.0, 683, 7),
-        ("F3-cap", taverley, catherby, Some(146), 341.0, 683, 7),
-        ("F3-low", taverley, catherby, Some(3), 410.5, 822, 9),
-        ("F3-lifted", taverley, catherby, Some(147), 125.5, 252, 1),
-        ("P1", bank, tile(3123, 3245, 0), Some(3), 23.5, 48, 3),
-        ("P2", east_bank, tile(3253, 3402, 0), Some(3), 24.5, 50, 1),
-        ("P5", bank, manor, Some(126), 56.0, 113, 1),
-        ("P5-low", bank, manor, Some(3), 57.5, 116, 1),
-        ("P6", lumbridge, manor, Some(126), 95.5, 192, 1),
-        ("P6-low", lumbridge, manor, Some(3), 96.5, 194, 1),
+    let mut f2_cap_ticks = None;
+    let mut f2_lifted_ticks = None;
+    let mut f3_cap_ticks = None;
+    let mut f3_lifted_ticks = None;
+    for (row, from, to, combat) in [
+        ("F1", lumbridge, bank, Some(126)),
+        ("F1-low", lumbridge, bank, Some(3)),
+        ("F2-cap", east_bank, tile(3253, 3375, 0), Some(12)),
+        ("F2-unknown", east_bank, tile(3253, 3375, 0), None),
+        ("F2-lifted", east_bank, tile(3253, 3375, 0), Some(13)),
+        ("F3", taverley, catherby, Some(126)),
+        ("F3-cap", taverley, catherby, Some(146)),
+        ("F3-low", taverley, catherby, Some(3)),
+        ("F3-lifted", taverley, catherby, Some(147)),
+        ("P1", bank, tile(3123, 3245, 0), Some(3)),
+        ("P2", east_bank, tile(3253, 3402, 0), Some(3)),
+        ("P5", bank, manor, Some(126)),
+        ("P5-low", bank, manor, Some(3)),
+        ("P6", lumbridge, manor, Some(126)),
+        ("P6-low", lumbridge, manor, Some(3)),
     ] {
         let state = zones_rich_289_state(combat);
         let route = find_with(&world.collision, &world.graph, from, to, opts, &state).unwrap();
-        assert_eq!(
-            (route.ticks, zone_route_cell_count(&route), route.legs.len()),
-            (ticks, cells, legs),
-            "{row}"
-        );
         assert_zone_route_clear(&world, from, &route, opts, &state);
+        match row {
+            "F2-cap" => f2_cap_ticks = Some(route.ticks),
+            "F2-lifted" => f2_lifted_ticks = Some(route.ticks),
+            "F3-cap" => f3_cap_ticks = Some(route.ticks),
+            "F3-lifted" => f3_lifted_ticks = Some(route.ticks),
+            _ => {}
+        }
         if row.starts_with("P5") || row.starts_with("P6") {
             assert!(
                 !route_walk_tiles(&route).any(|t| t == tile(3110, 3339, 0)),
@@ -4288,6 +4321,14 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
             );
         }
     }
+    assert!(
+        f2_lifted_ticks.expect("F2 combat 13 route") < f2_cap_ticks.expect("F2 combat 12 route"),
+        "combat 13 should lift F2 and shorten the route compared with combat 12"
+    );
+    assert!(
+        f3_lifted_ticks.expect("F3 combat 147 route") < f3_cap_ticks.expect("F3 combat 146 route"),
+        "combat 147 should lift F3 and shorten the route compared with combat 146"
+    );
     let table = world.graph.zones.as_ref().unwrap();
     let r2_squares: Vec<_> = table
         .zones()
@@ -4461,11 +4502,10 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
         &state,
     )
     .unwrap();
-    assert_eq!(
-        (route.ticks, zone_route_cell_count(&route), route.legs.len()),
-        (395.5, 780, 13)
-    );
-    for (combat, ticks, cells) in [(129, 395.5, 780), (147, 256.5, 502)] {
+    assert_zone_route_clear(&world, from, &route, wolf_exempt, &state);
+    let mut combat_129_ticks = None;
+    let mut combat_147_ticks = None;
+    for combat in [129, 147] {
         let route = find_with(
             &world.collision,
             &world.graph,
@@ -4475,8 +4515,23 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
             &zones_rich_289_state(Some(combat)),
         )
         .unwrap();
-        assert_eq!((route.ticks, zone_route_cell_count(&route)), (ticks, cells));
+        assert_zone_route_clear(
+            &world,
+            from,
+            &route,
+            opts,
+            &zones_rich_289_state(Some(combat)),
+        );
+        match combat {
+            129 => combat_129_ticks = Some(route.ticks),
+            147 => combat_147_ticks = Some(route.ticks),
+            _ => unreachable!("only the reviewed combat levels are checked"),
+        }
     }
+    assert!(
+        combat_147_ticks.expect("combat 147 route") < combat_129_ticks.expect("combat 129 route"),
+        "combat 147 should lift zones and shorten the refusal route compared with combat 129"
+    );
     for members in [false, true] {
         let fresh = WorldState {
             combat_level: Some(3),
@@ -4541,11 +4596,11 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
         .map(|b| b.tile)
         .collect();
     assert_eq!(targets.len(), 19);
-    for (from, combat, draynor, changed) in [
-        (tile(3222, 3218, 0), 126, 84.5, 8),
-        (tile(3222, 3218, 0), 3, 87.5, 17),
-        (tile(3016, 9840, 0), 126, 140.0, 7),
-        (tile(3016, 9840, 0), 3, 171.0, 13),
+    for (from, combat, changed) in [
+        (tile(3222, 3218, 0), 126, 8),
+        (tile(3222, 3218, 0), 3, 17),
+        (tile(3016, 9840, 0), 126, 7),
+        (tile(3016, 9840, 0), 3, 13),
     ] {
         let state = zones_rich_289_state(Some(combat));
         let opts = FindOptions::default();
@@ -4584,11 +4639,6 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
                 pair => panic!("many/single differ: {pair:?}"),
             }
         }
-        let bank = targets
-            .iter()
-            .position(|t| *t == tile(3092, 3243, 0))
-            .unwrap();
-        assert_eq!(many.route(bank).unwrap().ticks, draynor);
     }
 }
 

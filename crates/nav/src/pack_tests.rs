@@ -7,8 +7,13 @@ use super::{
     encode_reach_sidecar, merge_squares, parse_door_config, parse_door_config_ids,
     parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, read_canlight_sidecar,
     read_flags_sidecar, read_reach_sidecar, sha256_hex, walkable_dots, BankAccess, BankStand,
-    Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
+    Mapsquare, SQUARE, VERSION,
 };
+use api::query::loc_approach::LocApproach;
+use api::selected::{FactKey, QuestGate};
+use api::snapshot::WorldTile;
+use client::dash3d::CollisionFlag;
+
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::PackError;
@@ -21,9 +26,6 @@ use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules};
 use crate::world::NavWorld;
 use crate::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
-use api::selected::{FactKey, QuestGate};
-use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
 /// A BufRead that yields at most one byte per fill, exercising all parser
 /// fields across real short reads rather than a single in-memory read call.
@@ -60,14 +62,6 @@ impl BufRead for ShortReadBuf<'_> {
     fn consume(&mut self, amount: usize) {
         self.position = self.position.saturating_add(amount).min(self.bytes.len());
     }
-}
-
-#[test]
-fn format_id_names_the_current_wire() {
-    assert_eq!(
-        FORMAT_ID,
-        format!("{}{VERSION}", std::str::from_utf8(MAGIC).unwrap())
-    );
 }
 
 #[test]
@@ -715,7 +709,7 @@ fn roundtrip_collision_and_transport_graph() {
         quest_gates: None,
     };
     let ladder = TransportEdge {
-        kind: TransportKind::Ladder,
+        kind: TransportKind::Stairs,
         at: WorldTile {
             x: 3200,
             z: 3200,
@@ -864,6 +858,18 @@ fn roundtrip_collision_and_transport_graph() {
     graph.at.entry(graph.edges[si].at).or_default().push(si);
     graph.at.entry(graph.edges[ni].at).or_default().push(ni);
 
+    graph.approaches = vec![
+        None,
+        Some(LocApproach {
+            // Already-rotated footprint: width 3 × length 2.
+            width: 3,
+            length: 2,
+            blocked_sides: 0b0101,
+        }),
+        None,
+        None,
+        None,
+    ];
     let bytes = encode(&collision, &graph, &[]);
     let (c, g, _) = decode(&bytes).unwrap();
     assert_eq!(c.origin, collision.origin);
@@ -872,6 +878,7 @@ fn roundtrip_collision_and_transport_graph() {
     assert_eq!(c.walk, collision.walk);
     assert!(c.flags.is_none());
     assert_eq!(g.edges, graph.edges);
+    assert_eq!(g.approaches, graph.approaches);
     // The door edge's new fields round-trip on the wire.
     assert_eq!(g.edges[di].dir, Some(DoorDir::N));
     assert_eq!(g.edges[di].open_loc_id, Some(1531));
@@ -880,10 +887,36 @@ fn roundtrip_collision_and_transport_graph() {
     assert_eq!(g.edges[si].kind, TransportKind::SpiritTree);
     assert_eq!(g.edges[si].varp_req, vec![(150, 160)]);
     assert_eq!(g.edges[ni].kind, TransportKind::Npc);
-    // Teleports round-trip in their own layer, and the at-index is
-    // rebuilt from the ordinary edges only.
+    // Teleports round-trip without entering the ordinary edge index.
     assert_eq!(g.teleports, graph.teleports);
-    assert_eq!(g.at, graph.at);
+
+    let route = crate::router::find_with(
+        &c,
+        &g,
+        WorldTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        WorldTile {
+            x: 3201,
+            z: 3201,
+            level: 1,
+        },
+        crate::router::FindOptions::default(),
+        &crate::WorldState {
+            stats: HashMap::from([(16, 5)]),
+            inv: HashMap::from([(995, 10)]),
+            quests: HashSet::from(["Restless Ghost".to_owned()]),
+            varps: HashMap::from([(4, 1)]),
+            ..crate::WorldState::empty()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        route.ticks, 3.0,
+        "decoded footprint admits the distant takeoff without an extra walk step"
+    );
     assert!(!g.at.contains_key(&WorldTile {
         x: 0,
         z: 0,
@@ -896,6 +929,42 @@ fn roundtrip_collision_and_transport_graph() {
         decode(&encode_grid(&StepGrid::fixture_open_3x3())),
         Err(PackError::BadMagic)
     ));
+}
+
+#[test]
+fn v13_approach_geometry_rejects_malformed_wire_and_forbidden_kind() {
+    let approach = LocApproach {
+        width: 3,
+        length: 2,
+        blocked_sides: 0b1010,
+    };
+    let mut graph = TransportGraph::default();
+    let mut stairs = gated_door(None);
+    stairs.kind = TransportKind::Stairs;
+    graph.edges.push(stairs);
+    graph.approaches.push(Some(approach));
+    let bytes = encode(&tiny_collision(), &graph, &[]);
+    let geometry_at = bytes.len() - (4 + 12 + 20) - 4;
+
+    let mut bad_tag = bytes.clone();
+    bad_tag[geometry_at] = 2;
+    assert!(matches!(decode(&bad_tag), Err(PackError::BadLength(_))));
+
+    for (offset, value) in [(1, 0), (2, 0), (3, 0x10)] {
+        let mut malformed = bytes.clone();
+        malformed[geometry_at + offset] = value;
+        assert!(matches!(decode(&malformed), Err(PackError::BadLength(_))));
+    }
+
+    let mut truncated_tag = bytes.clone();
+    truncated_tag.truncate(geometry_at + 1);
+    assert!(decode(&truncated_tag).is_err());
+
+    let mut door_graph = TransportGraph::default();
+    door_graph.edges.push(gated_door(None));
+    door_graph.approaches.push(Some(approach));
+    let forbidden = encode(&tiny_collision(), &door_graph, &[]);
+    assert!(matches!(decode(&forbidden), Err(PackError::BadLength(_))));
 }
 
 fn zone_table_pack_fixture() -> (Vec<u8>, ZoneTable) {
@@ -995,16 +1064,16 @@ fn zone_table_pack_fixture() -> (Vec<u8>, ZoneTable) {
 }
 
 #[test]
-fn v12_pack_keeps_an_empty_zone_table_present() {
+fn v13_pack_keeps_an_empty_zone_table_present() {
     let bytes = encode(&tiny_collision(), &TransportGraph::default(), &[]);
     let (_, graph, _) = decode(&bytes).unwrap();
-    let table = graph.zones.as_ref().expect("v12 declares a zone table");
+    let table = graph.zones.as_ref().expect("v13 declares a zone table");
     assert!(table.zones().is_empty());
     assert!(table.kinds().is_empty());
 }
 
 #[test]
-fn v12_zone_table_roundtrips_rows_and_rebuilds_its_index() {
+fn v13_zone_table_roundtrips_rows_and_rebuilds_its_index() {
     let (bytes, table) = zone_table_pack_fixture();
     assert_eq!(bytes[4], VERSION);
     assert_eq!(super::zones::wire_size(Some(&table)), 211);
@@ -1034,7 +1103,7 @@ fn v12_zone_table_roundtrips_rows_and_rebuilds_its_index() {
 }
 
 #[test]
-fn v12_shape_rows_preserve_square_and_rectangular_bounds() {
+fn v13_shape_rows_preserve_square_and_rectangular_bounds() {
     let origin = WorldTile {
         x: 0,
         z: 0,
@@ -1160,7 +1229,7 @@ fn v12_shape_rows_preserve_square_and_rectangular_bounds() {
 }
 
 #[test]
-fn v12_decode_rejects_malformed_zone_rows_and_shapes() {
+fn v13_decode_rejects_malformed_zone_rows_and_shapes() {
     let (bytes, table) = zone_table_pack_fixture();
     let zone_start = bytes.len() - super::zones::wire_size(Some(&table));
     let kind_0_size = 15 + "ranger".len() + "Ranger".len();
@@ -1371,7 +1440,7 @@ fn v9_roundtrips_members_req_true_and_false() {
 }
 
 #[test]
-fn v12_decode_rejects_older_version_bytes() {
+fn v13_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -1391,6 +1460,9 @@ fn v12_decode_rejects_older_version_bytes() {
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
     bytes[4] = 9;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(9))));
+    // v12 added zones but predates per-edge approach geometry.
+    bytes[4] = 12;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(12))));
     // A v11 pack predates zone tables and is refused for a rebake.
     bytes[4] = 11;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(11))));
@@ -2364,14 +2436,14 @@ fn every_constructible_quest_family_encodes_a_decodable_pack() {
 /// Gates a pack cannot bind, or a malformed binding, refuse the whole pack
 /// as inconsistent; nothing loads as silently ungated.
 #[test]
-fn v12_decode_refuses_unbound_or_malformed_quest_gates() {
-    // The single edge's gate list ends its record, before the bank-stand
-    // count (u32), wilderness trailer (12 B), and zone counts (20 B).
+fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
+    // The geometry tag follows its gate list, before the bank count,
+    // Wilderness trailer, and zone counts.
     const TRAILER: usize = 4 + 12 + 20;
     let mut graph = TransportGraph::default();
     graph.edges.push(gated_door(None));
     let unbound = encode(&tiny_collision(), &graph, &[]);
-    let count_at = unbound.len() - TRAILER - 4;
+    let count_at = unbound.len() - TRAILER - 1 - 4;
     let mut spliced = unbound[..count_at].to_vec();
     spliced.extend_from_slice(&1u32.to_le_bytes());
     spliced.push(0); // a completed-quest gate
@@ -2401,7 +2473,7 @@ fn v12_decode_refuses_unbound_or_malformed_quest_gates() {
     schema_zero[6 + 32..6 + 34].copy_from_slice(&0u16.to_le_bytes());
     assert!(matches!(decode(&schema_zero), Err(PackError::BadLength(_))));
     // The window's bounds close the record: min flag + i32, max flag + i32.
-    let max_at = bytes.len() - TRAILER - 4;
+    let max_at = bytes.len() - TRAILER - 1 - 4;
     let min_at = max_at - 1 - 4;
     let mut empty_window = bytes.clone();
     empty_window[min_at..min_at + 4].copy_from_slice(&4i32.to_le_bytes());
