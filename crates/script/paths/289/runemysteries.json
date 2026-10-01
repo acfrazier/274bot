@@ -27,8 +27,15 @@
     "progress_binding": "journal:runemysteries",
     "progress": {
       "colour": { "not_started": "runemysteries:0", "in_progress": "runemysteries:1", "complete": "runemysteries:2" },
-      "rules": [],
-      "flags": [],
+      "rules": [
+        { "stage": "runemysteries:2", "all": ["i delivered the notes to sedridor"], "any": [], "not": [], "varp": null },
+        { "stage": "runemysteries:1", "all": ["i spoke to duke horacio"], "any": [], "not": [], "varp": null },
+        { "stage": "runemysteries:0", "all": ["i can start this quest by speaking to duke horacio"], "any": [], "not": [], "varp": null }
+      ],
+      "flags": [
+        { "flag": "runemysteries:talisman_pending", "any": ["i need to find the head wizard and give him the talisman"], "all": [] },
+        { "flag": "runemysteries:package_delivered", "any": ["i took the research package to varrock and delivered it"], "all": [] }
+      ],
       "monotonic": false
     },
     "prelude": [],
@@ -53,7 +60,14 @@
           {
             "id": "scan-bank", "kind": "bank", "version": 1,
             "args": { "op": "scan", "at": "quest_bank" },
-            "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+              ] }
+            ] },
             "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
           },
           {
@@ -61,7 +75,12 @@
             "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "research_notes", "qty": 1 }] },
             "skip_if": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
-              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_notes" } } } }
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_notes" } } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+              ] }
             ] },
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
           },
@@ -70,7 +89,12 @@
             "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "research_package", "qty": 1 }] },
             "skip_if": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
-              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_package" } } } }
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_package" } } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+              ] }
             ] },
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } }
           },
@@ -79,7 +103,12 @@
             "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "air_talisman", "qty": 1 }] },
             "skip_if": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
-              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "air_talisman" } } } }
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "air_talisman" } } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+              ] }
             ] },
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } }
           },
@@ -104,16 +133,6 @@
             "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } }
           },
           {
-            "id": "collect-notes", "kind": "talk", "version": 1,
-            "args": {
-              "npc": "aubury",
-              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
-              "leash": 8, "prefer": []
-            },
-            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
-            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
-          },
-          {
             "id": "deliver-talisman", "kind": "talk", "version": 1,
             "args": {
               "npc": "head_wizard",
@@ -133,13 +152,28 @@
             "skip_if": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
-              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
+              { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "runemysteries", "flag": "runemysteries:talisman_pending", "is": true } } } }
             ] },
             "settle": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
             ] }
+          },
+          {
+            "id": "collect-notes", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "aubury",
+              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+              { "Not": { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "runemysteries", "flag": "runemysteries:package_delivered", "is": true } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
           }
         ]
       },

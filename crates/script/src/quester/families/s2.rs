@@ -1,7 +1,7 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::reach;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkEnd};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
@@ -10,7 +10,8 @@ use crate::quester::compile::{
     CompileContext, CompileError, FamilyReceipt, PredicateContext, PredicatePlan, StepContext,
     StepOutcome, StepPlan, StepRun,
 };
-use api::selected::Truth;
+use api::quest_progress::{EvidenceStamp, QuestProgress};
+use api::selected::{FactKey, Knowledge, Truth};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -36,6 +37,134 @@ fn item(cx: &CompileContext<'_>, alias: &str) -> Result<BankItem, CompileError> 
         id: item.id,
         name: Arc::from(name),
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum QuantityDocument {
+    Fixed(i32),
+    Progress(ProgressQuantityDocument),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProgressQuantityDocument {
+    progress: ProgressCountDocument,
+    #[serde(default)]
+    minus_item: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProgressCountDocument {
+    quest: String,
+    flag: String,
+}
+
+#[derive(Debug)]
+pub(super) enum QuantityPlan {
+    Fixed(i32),
+    Progress {
+        quest: FactKey,
+        flag: FactKey,
+        minus_item: Option<i32>,
+    },
+}
+
+impl QuantityPlan {
+    fn fixed(&self) -> Option<i32> {
+        match self {
+            Self::Fixed(qty) => Some(*qty),
+            Self::Progress { .. } => None,
+        }
+    }
+
+    pub(super) fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Option<i32> {
+        self.evaluate_parts(cx.cx, cx.progress, cx.required_after)
+    }
+
+    pub(super) fn evaluate_step(&self, cx: &StepContext<'_, '_>) -> Option<i32> {
+        self.evaluate_parts(&cx.tick.cx, cx.progress, cx.required_after)
+    }
+
+    fn evaluate_parts(
+        &self,
+        cx: &ActionContext<'_>,
+        progress: &[QuestProgress],
+        required_after: EvidenceStamp,
+    ) -> Option<i32> {
+        let Self::Progress {
+            quest,
+            flag: flag_key,
+            minus_item,
+        } = self
+        else {
+            return self.fixed();
+        };
+
+        let progress = progress.iter().find(|progress| {
+            progress.quest == *quest && progress.evidence.run == required_after.run
+        })?;
+        if !matches!(&progress.stage, Knowledge::Known(_)) {
+            return None;
+        }
+        let flag = progress.flags.iter().find(|flag| flag.flag == *flag_key)?;
+        if flag.truth != Truth::True {
+            return None;
+        }
+        let mut qty = i64::from(flag.count?);
+        if let Some(id) = minus_item {
+            let snapshot = cx.snapshot();
+            let inventory = snapshot.inventory()?;
+            let held = inventory
+                .value
+                .iter()
+                .filter(|item| item.def.id == *id)
+                .map(|item| i64::from(item.count.max(0)))
+                .sum::<i64>();
+            qty = qty.saturating_sub(held).max(0);
+        }
+        Some(qty.min(i64::from(i32::MAX)) as i32)
+    }
+}
+
+pub(super) fn compile_quantity(
+    document: QuantityDocument,
+    cx: &CompileContext<'_>,
+) -> Result<QuantityPlan, CompileError> {
+    match document {
+        QuantityDocument::Fixed(qty) => Ok(QuantityPlan::Fixed(qty)),
+        QuantityDocument::Progress(document) => {
+            if document.progress.quest.is_empty() || document.progress.flag.is_empty() {
+                return Err(CompileError::code("invalid-quantity"));
+            }
+            cx.quests
+                .quest(&document.progress.quest)
+                .map_err(|_| CompileError::code("unresolved-quest"))?;
+            if cx.path.0.as_ref() != document.progress.quest {
+                return Err(CompileError::code("foreign-progress-quest"));
+            }
+            let flag = FactKey::new(&document.progress.flag);
+            if !cx
+                .progress
+                .flags
+                .iter()
+                .any(|candidate| candidate.flag == flag && candidate.count.is_some())
+            {
+                return Err(CompileError::code("unresolved-progress-count"));
+            }
+            let minus_item = document
+                .minus_item
+                .as_deref()
+                .map(|alias| item(cx, alias).map(|item| item.id))
+                .transpose()?;
+            Ok(QuantityPlan::Progress {
+                quest: FactKey::new(&document.progress.quest),
+                flag,
+                minus_item,
+            })
+        }
+    }
 }
 
 fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileError> {
@@ -428,7 +557,7 @@ struct MakeArgs {
     product: String,
     #[serde(default)]
     menu: Option<MakeMenu>,
-    qty: i32,
+    qty: QuantityDocument,
     #[serde(default)]
     make_x: bool,
 }
@@ -438,7 +567,8 @@ pub fn compile_make(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let args: MakeArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if args.qty < 1 || args.anchor.source.trim().is_empty() {
+    let qty = compile_quantity(args.qty, cx)?;
+    if qty.fixed().is_some_and(|qty| qty < 1) || args.anchor.source.trim().is_empty() {
         return Err(CompileError::code("invalid-make"));
     }
     let loc = cx
@@ -469,7 +599,7 @@ pub fn compile_make(
         op: Arc::from(args.loc.op),
         product,
         menu_id,
-        qty: args.qty,
+        qty,
         make_x: args.make_x,
     }))
 }
@@ -480,11 +610,14 @@ struct MakePlan {
     op: Arc<str>,
     product: BankItem,
     menu_id: i32,
-    qty: i32,
+    qty: QuantityPlan,
     make_x: bool,
 }
 impl StepPlan for MakePlan {
-    fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+    fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+        let qty = self.qty.evaluate_step(cx).ok_or_else(|| {
+            ActionError::Unavailable(Arc::from("production quantity evidence unavailable"))
+        })?;
         Ok(Box::new(MakeRun {
             tile: self.tile,
             loc_id: self.loc_id,
@@ -493,7 +626,7 @@ impl StepPlan for MakePlan {
             request: MakeRequest {
                 product_id: self.product.id,
                 menu_id: self.menu_id,
-                qty: self.qty,
+                qty,
                 make_x: self.make_x,
             },
             walk: None,
@@ -517,6 +650,9 @@ struct MakeRun {
 }
 impl StepRun for MakeRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.request.qty <= 0 {
+            return Poll::Ready(Ok(done(cx)));
+        }
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,

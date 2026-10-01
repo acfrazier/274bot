@@ -19,7 +19,7 @@
     "coin_float": 3,
     "loadouts": {},
     "areas": {},
-    "tools": ["obj:shears", "obj:wool", "obj:bronze_sword"],
+    "tools": ["obj:shears", "obj:wool"],
     "owns_inventory": false
   },
   "roles": [{
@@ -27,8 +27,14 @@
     "progress_binding": "journal:sheep",
     "progress": {
       "colour": { "not_started": "sheep:0", "in_progress": "sheep:1", "complete": "sheep:2" },
-      "rules": [],
-      "flags": [],
+      "rules": [
+        { "stage": "sheep:2", "all": ["i brought farmer fred 20 balls of wool"] },
+        { "stage": "sheep:1", "all": ["i asked farmer fred", "i need to collect"] },
+        { "stage": "sheep:0", "all": ["i can start this quest by speaking to farmer fred"] }
+      ],
+      "flags": [
+        { "flag": "sheep:balls_to_go", "any": ["i need to collect"], "count": "(\\d+)" }
+      ],
       "monotonic": false
     },
     "prelude": [],
@@ -75,38 +81,37 @@
             "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } }
           },
           {
-            "id": "equip-service-proof", "kind": "equip", "version": 1,
-            "args": { "obj": "bronze_sword" },
-            "skip_if": { "Any": [
-              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_sword" } } } },
-              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
-            ] },
-            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
-          },
-          {
             "id": "shear", "kind": "use_on", "version": 1,
+            "comment": "Escape text from 289 scripts/general_use/scripts/shear_sheep.rs2:11-14",
             "args": {
               "item": "shears", "target": { "npc": "sheepunsheered" },
               "anchor": { "tile": [3197, 3266, 0], "source": "A exec/wool.ts:20-37" },
-              "radius": 8, "product": "wool", "until": { "obj": "wool", "qty": 20 },
+              "radius": 8, "product": "wool",
+              "until": { "obj": "wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" }, "minus_item": "ball_of_wool" } },
+              "no_product": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["The sheep manages to get away from you!"] } } },
               "settle_ms": 240000
             },
             "skip_if": { "Any": [
               { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } },
-              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" }, "minus_item": "ball_of_wool" } } } }
             ] },
-            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } }
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" }, "minus_item": "ball_of_wool" } } } }
           },
           {
             "id": "spin", "kind": "make", "version": 1,
             "args": {
               "loc": { "name": "spinningwheel", "op": "Spin" },
-              "anchor": { "tile": [2982, 3315, 0], "source": "A exec/wool.ts:40-75" },
-              "product": "ball_of_wool", "qty": 20, "make_x": true,
+              "anchor": { "tile": [3209, 3212, 1], "source": "289 maps/m50_50.jm2:8568 loc 2644, level 1 local 9,12; scripts/skill_crafting/configs/spinning/spinning_wheels.loc:5 forceapproach=south" },
+              "product": "ball_of_wool",
+              "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } },
               "menu": { "obj": "wool", "source": "289 scripts/skill_crafting/scripts/spinning/spinning.rs2:48-52 input menu row" }
             },
-            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
-            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } } } } }
+            ] },
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } } } } }
           },
           {
             "id": "hand-in", "kind": "talk", "version": 1, "advances": true,
@@ -115,7 +120,10 @@
               "anchor": { "tile": [3189, 3273, 0], "source": "A defs/sheepshearer.ts:28-30" },
               "leash": 6, "prefer": []
             },
-            "skip_if": { "Any": [] },
+            "skip_if": { "Not": { "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" } } } } }
+            ] } },
             "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "sheep", "is": "complete" } } }
           }
         ]
