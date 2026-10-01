@@ -26,7 +26,11 @@
 //! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
 //! read from each.
 
-use crate::isolate_fb::{CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat};
+use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
+use crate::isolate_fb::{
+    ApiGather, ApiGatherOutcome, CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat,
+    StatusField,
+};
 use api::line_of_sight::CollisionQuery;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
@@ -501,6 +505,37 @@ pub struct WalkOutcome {
     /// The settled route end is frozen `'blocked'`.
     pub blocked: bool,
 }
+/// One typed status value published by the live Gatherer card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GatherStatusValue {
+    Text(String),
+    Integer(i64),
+    Tile(Tile),
+    Truth(api::selected::Truth),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherStatusField {
+    pub key: String,
+    pub value: GatherStatusValue,
+}
+
+/// The latest posted live Gatherer page. `has_status` distinguishes the
+/// preparation/install page from a published empty status object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherObservation {
+    pub request_id: u64,
+    pub phase: u8,
+    pub has_status: bool,
+    pub fields: Vec<GatherStatusField>,
+}
+
+/// The retained terminal result of the latest Gatherer session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherOutcomeObservation {
+    pub request_id: u64,
+    pub end: GatherEnd,
+}
 
 /// Which post carried a page, in which scene. Equal stamps are the same
 /// posted table; a new table or a `ResetSession` changes the stamp.
@@ -652,6 +687,8 @@ scene_pages! {
         reach: Reach,
         puzzle_board: PuzzlePage,
         walk_missing_carry: Vec<CarryRow>,
+        api_gather: GatherObservation,
+        api_gather_outcome: GatherOutcomeObservation,
     }
 }
 
@@ -731,6 +768,88 @@ fn read_buttons<'a>(
         .map(|row| ButtonRow::read(&row, strings))
         .collect()
 }
+fn read_gather_status(fields: TableVector<'_, StatusField<'_>>) -> Vec<GatherStatusField> {
+    fields
+        .into_iter()
+        .flat_map(|fields| fields.iter())
+        .filter_map(|field| {
+            let key = field.key()?.to_string();
+            let value = match field.kind() {
+                1 => GatherStatusValue::Text(field.text()?.to_string()),
+                2 => GatherStatusValue::Integer(field.integer()),
+                3 => {
+                    let tile = field.tile()?;
+                    GatherStatusValue::Tile(Tile {
+                        x: tile.x(),
+                        z: tile.z(),
+                        level: tile.level(),
+                    })
+                }
+                4 => GatherStatusValue::Truth(match field.truth() {
+                    1 => api::selected::Truth::True,
+                    2 => api::selected::Truth::False,
+                    3 => api::selected::Truth::Unknown,
+                    _ => return None,
+                }),
+                _ => return None,
+            };
+            Some(GatherStatusField { key, value })
+        })
+        .collect()
+}
+
+fn read_gather_page(page: ApiGather<'_>) -> GatherObservation {
+    let fields = if page.has_status() {
+        read_gather_status(page.fields())
+    } else {
+        Vec::new()
+    };
+    GatherObservation {
+        request_id: page.request_id(),
+        phase: page.phase(),
+        has_status: page.has_status(),
+        fields,
+    }
+}
+
+fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObservation> {
+    use crate::api_gather::GatherEnd;
+    let request_id = page.request_id();
+    if request_id == 0 {
+        return None;
+    }
+    let counts = GatherCounts {
+        yielded: page.yielded(),
+        dropped: page.dropped(),
+        deposited: page.deposited(),
+        trips: page.trips(),
+        xp: page.xp(),
+    };
+    let message = page.message().unwrap_or_default();
+    let end = match page.end() {
+        1 => GatherEnd::Stopped { token: request_id, counts },
+        2 => GatherEnd::Blocked {
+            token: request_id,
+            failure: GatherFailure {
+                code: page.code().unwrap_or_default().into(),
+                message: message.into(),
+                retryable: page.retryable(),
+            },
+            counts,
+        },
+        3 => GatherEnd::Refused {
+            token: request_id,
+            reason: message.into(),
+        },
+        4 => GatherEnd::Failed {
+            token: request_id,
+            reason: message.into(),
+            counts,
+        },
+        _ => return None,
+    };
+    Some(GatherOutcomeObservation { request_id, end })
+}
 
 impl Scene {
     fn fresh() -> Self {
@@ -738,6 +857,10 @@ impl Scene {
             epoch: EPOCH.fetch_add(1, Ordering::Relaxed),
             ..Self::default()
         }
+    }
+    /// The session epoch changes whenever this scene is reset.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     /// Every page as last posted (the delta merge; absent stays absent).
@@ -1195,6 +1318,14 @@ impl Scene {
                     })
                     .collect(),
             );
+        }
+        if let Some(page) = snap.api_gather() {
+            p.api_gather(read_gather_page(page));
+        }
+        if let Some(page) = snap.api_gather_outcome() {
+            if let Some(outcome) = read_gather_outcome(page) {
+                p.api_gather_outcome(outcome);
+            }
         }
         if snap.has_walk_outcome_seq() {
             p.walk_outcome(WalkOutcome {
