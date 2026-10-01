@@ -530,6 +530,7 @@ where
                 allow_wilderness,
                 allow_bank_fetch,
                 avoid,
+                cross,
                 request_id,
             } => {
                 let from = WorldTile {
@@ -546,7 +547,7 @@ where
                     allow_bank_fetch,
                     ..FindOptions::default()
                 };
-                let (rects, invalid_args) = match world.as_ref() {
+                let (zones, rects, invalid_args) = match world.as_ref() {
                     Some(world) => {
                         match super::script_nav::resolve_route_exclusions(
                             opts,
@@ -554,9 +555,9 @@ where
                             from,
                             to,
                             route_state,
-                            route_exclusions(avoid, Vec::new()),
+                            route_exclusions(avoid, cross),
                         ) {
-                            Ok((_, exclusions)) => (exclusions.avoid, false),
+                            Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
                             Err(reason) => {
                                 host_log!(
                                     Category::NavTrace,
@@ -564,11 +565,11 @@ where
                                     slot = name,
                                     "inspect route refused {reason}"
                                 );
-                                (Vec::new(), true)
+                                (nav::zones::ZoneExempt::NONE, Vec::new(), true)
                             }
                         }
                     }
-                    None => (Vec::new(), true),
+                    None => (nav::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
@@ -589,6 +590,7 @@ where
                         allow_teleports,
                         allow_wilderness,
                         allow_bank_fetch,
+                        zones,
                         avoid: rects,
                         request_id,
                         invalid_args,
@@ -1175,6 +1177,12 @@ where
             InteractReq::SetCameraYaw { .. } => {}
             InteractReq::RunPolicyOverride { .. } => {
                 // Applied only through Host's generation-fenced policy sink.
+            }
+            InteractReq::GatherRun { .. }
+            | InteractReq::GatherStop { .. }
+            | InteractReq::ProgressRead { .. } => {
+                // Host-local controls are consumed by the slot before game
+                // dispatch; none can authorize a Driver packet here.
             }
             InteractReq::NoteProgress
             | InteractReq::LoopSettled

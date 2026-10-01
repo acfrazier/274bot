@@ -26,7 +26,10 @@
 //! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
 //! read from each.
 
-use crate::isolate_fb::{CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat};
+use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
+use crate::isolate_fb::{
+    ApiGather, ApiGatherOutcome, CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat,
+};
 use api::line_of_sight::CollisionQuery;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
@@ -387,6 +390,7 @@ pub struct MakeButton {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MakeProduct {
+    pub object_id: i32,
     pub name: String,
     pub buttons: Vec<MakeButton>,
 }
@@ -500,6 +504,18 @@ pub struct WalkOutcome {
     pub allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub blocked: bool,
+}
+
+/// The latest posted live Gatherer page, retained only for request identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherObservation {
+    pub request_id: u64,
+}
+/// The retained terminal result of the latest Gatherer session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherOutcomeObservation {
+    pub request_id: u64,
+    pub end: GatherEnd,
 }
 
 /// Which post carried a page, in which scene. Equal stamps are the same
@@ -652,6 +668,8 @@ scene_pages! {
         reach: Reach,
         puzzle_board: PuzzlePage,
         walk_missing_carry: Vec<CarryRow>,
+        api_gather: GatherObservation,
+        api_gather_outcome: GatherOutcomeObservation,
     }
 }
 
@@ -731,6 +749,53 @@ fn read_buttons<'a>(
         .map(|row| ButtonRow::read(&row, strings))
         .collect()
 }
+fn read_gather_page(page: ApiGather<'_>) -> GatherObservation {
+    GatherObservation {
+        request_id: page.request_id(),
+    }
+}
+
+fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObservation> {
+    use crate::api_gather::GatherEnd;
+    let request_id = page.request_id();
+    if request_id == 0 {
+        return None;
+    }
+    let counts = GatherCounts {
+        yielded: page.yielded(),
+        dropped: page.dropped(),
+        deposited: page.deposited(),
+        trips: page.trips(),
+        xp: page.xp(),
+    };
+    let message = page.message().unwrap_or_default();
+    let end = match page.end() {
+        1 => GatherEnd::Stopped {
+            token: request_id,
+            counts,
+        },
+        2 => GatherEnd::Blocked {
+            token: request_id,
+            failure: GatherFailure {
+                code: page.code().unwrap_or_default().into(),
+                message: message.into(),
+                retryable: page.retryable(),
+            },
+            counts,
+        },
+        3 => GatherEnd::Refused {
+            token: request_id,
+            reason: message.into(),
+        },
+        4 => GatherEnd::Failed {
+            token: request_id,
+            reason: message.into(),
+            counts,
+        },
+        _ => return None,
+    };
+    Some(GatherOutcomeObservation { request_id, end })
+}
 
 impl Scene {
     fn fresh() -> Self {
@@ -738,6 +803,10 @@ impl Scene {
             epoch: EPOCH.fetch_add(1, Ordering::Relaxed),
             ..Self::default()
         }
+    }
+    /// The session epoch changes whenever this scene is reset.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     /// Every page as last posted (the delta merge; absent stays absent).
@@ -1016,6 +1085,7 @@ impl Scene {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .map(|product| MakeProduct {
+                        object_id: product.object_id(),
                         name: product.name().unwrap_or_default().to_string(),
                         buttons: product
                             .buttons()
@@ -1195,6 +1265,14 @@ impl Scene {
                     })
                     .collect(),
             );
+        }
+        if let Some(page) = snap.api_gather() {
+            p.api_gather(read_gather_page(page));
+        }
+        if let Some(page) = snap.api_gather_outcome() {
+            if let Some(outcome) = read_gather_outcome(page) {
+                p.api_gather_outcome(outcome);
+            }
         }
         if snap.has_walk_outcome_seq() {
             p.walk_outcome(WalkOutcome {

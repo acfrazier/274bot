@@ -286,6 +286,7 @@ mod tests {
                 sequence: 4,
             },
             accepted: true,
+            chat_since: 0,
         };
         ledger.complete_interaction(
             &old,

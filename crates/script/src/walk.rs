@@ -230,7 +230,7 @@ const MAX_AVOID: usize = 16;
 /// Frozen ids accepted for compat `avoidZones`; their geometry is resolved
 /// by host-play once the walk's endpoints and combat level are known.
 pub(crate) fn known_avoid_catalog_id(id: &str) -> bool {
-    matches!(id, "white-wolf-mountain" | "draynor-jail-guards")
+    nav::zones::AVOID_CATALOG_IDS.contains(&id)
 }
 
 /// Why `avoid` cannot route, if it cannot: an unknown catalog id, a
@@ -1399,6 +1399,8 @@ impl Resilient {
             "allow_teleports": false,
             "allow_wilderness": true,
             "allow_bank_fetch": false,
+            "avoid": self.avoid,
+            "cross": self.cross.as_ref(),
             "timeout_ms": PROBE_TIMEOUT_MS,
         }))
         .as_u64()
@@ -1414,6 +1416,7 @@ impl Resilient {
             allow_wilderness: true,
             allow_bank_fetch: false,
             avoid: self.avoid.clone(),
+            cross: self.cross.to_vec(),
             request_id: token,
         });
         self.phase = Phase::Verify { token };
@@ -2305,6 +2308,31 @@ pub(crate) mod tests {
             }] => *request_id,
             other => panic!("expected the verify probe, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stalled_verify_probe_carries_cross_zone_opt_out_over_flatbuffer() {
+        reset();
+        post_here(0, 0);
+        let h = start_with(json!({
+            "radius": 0,
+            "crossZones": ["test-barrier"],
+        }));
+        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+
+        let ops = machine::merge_ops(Vec::new());
+        let bytes = crate::isolate_fb::encode_interact_batch(&ops);
+        let batch = crate::isolate_fb::InteractBatch::from_bytes(&bytes)
+            .expect("the stalled walk emits a valid interact batch");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        let probe = requests.get(0);
+        assert_eq!(probe.op(), Some("inspect-route"));
+        let cross = probe
+            .cross()
+            .map(|names| names.iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert_eq!(cross, vec!["test-barrier"]);
     }
 
     #[test]

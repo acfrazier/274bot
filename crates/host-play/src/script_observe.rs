@@ -297,15 +297,17 @@ pub(crate) fn drain_observed_host_interacts(
 ) -> (
     Option<DrainedRunPolicyUpdate>,
     Vec<script::shim::InteractReq>,
+    bool,
 ) {
     let producer_generation = slot.runtime_generation();
-    let (update, interacts) = slot.drain_host_interacts();
+    let (update, interacts, owned) = slot.drain_host_interacts();
     (
         update.map(|policy| DrainedRunPolicyUpdate {
             producer_generation,
             policy,
         }),
         interacts,
+        owned,
     )
 }
 
@@ -375,10 +377,12 @@ pub(crate) fn script_observe_cached_with_channels(
             script::RunState::Starting | script::RunState::Paused
         ) && slot.load_active()
         {
-            let (update, queued) = drain_observed_host_interacts(&mut slot);
+            let (update, queued, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
+            // Ownership already removed game rows; retained non-game rows
+            // follow the same pause rule as an unowned batch in every frame.
             slot.restore_interacts(queued);
         }
         // Reap a script-requested Stop before advancing host continuations.
@@ -935,26 +939,27 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         if slot.load_active() {
             if slot.state() == script::RunState::Running {
-                if slot.watchdog().holds_script_actions() {
-                    let (update, _dropped) = drain_observed_host_interacts(&mut slot);
+                // Admit controls before taking any carried walks. Both ownership
+                // edges (and a run/Stop pair within this batch) suppress replay.
+                let (update, reqs, owned) = drain_observed_host_interacts(&mut slot);
+                if slot.watchdog().holds_script_actions() || owned {
+                    if owned {
+                        // Admission already discarded held script walks. The
+                        // host's carried walk is also discarded, but is not a
+                        // script row and must not inflate its drop count.
+                        let _ = take_carried_walk(navs, name, slot.runtime_generation());
+                        interact.extend(reqs);
+                    }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
                 } else {
-                    // What a reconnect interrupted goes out first, on the
-                    // relogged session's first dispatch, ahead of what the
-                    // resumed script asks for: the walk the host was
-                    // following, then the walk requests the dropped
-                    // connection never dispatched (newer, an abort included).
-                    // A carried walk goes out once, unless a queued walk
-                    // request replaces it or the player already arrived.
                     let mut queued = Vec::new();
                     let mut carried = None;
                     if up && !hold && here.is_some() && snapshot.is_some() {
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
                         queued.extend(slot.take_held_walks());
                     }
-                    let (update, reqs) = drain_observed_host_interacts(&mut slot);
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
@@ -984,7 +989,7 @@ pub(crate) fn script_observe_cached_with_channels(
         } else if slot.state() == script::RunState::Running
             && !slot.watchdog().holds_script_actions()
         {
-            let (update, reqs) = drain_observed_host_interacts(&mut slot);
+            let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
                 run_policy_update = Some(update);
             }
@@ -1129,6 +1134,10 @@ pub(crate) fn script_observe_cached_with_channels(
                                             sequence: tick,
                                         },
                                         accepted,
+                                        chat_since: snapshot
+                                            .chat_lines()
+                                            .first()
+                                            .map_or(0, |line| line.sequence),
                                     },
                                 );
                             }

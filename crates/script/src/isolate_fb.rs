@@ -31,10 +31,10 @@ use std::sync::Arc;
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
-    AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine, ChatOption, Collision, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth,
-    NpcBox, PuzzleBoard, QuestStatus, Reach, Row, SceneEntity, SideTabIface, Snapshot, Stat, Tile,
-    Varp, WidgetText,
+    ApiGather, ApiGatherOutcome, AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine,
+    ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch, MainModalTexts,
+    MakeButton, MakeProduct, NearestBooth, NpcBox, PuzzleBoard, QuestStatus, Reach, Row,
+    SceneEntity, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -454,6 +454,11 @@ pub struct NativeFactsInput<'a> {
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
     pub self_anim: Option<i32>,
+    /// The host's live gather session. `None` means do not write this delta
+    /// page; `Some` has a status only after the card publishes one.
+    pub api_gather: Option<&'a crate::api_gather::GatherPage>,
+    /// The retained terminal result. Absence means retain any prior outcome.
+    pub api_gather_outcome: Option<&'a crate::api_gather::GatherEnd>,
     /// Bank item packet generation (`-1` while closed), not the open/close
     /// session identity. `None` omits the slot and keeps the last value.
     pub bank_snapshot_generation: Option<i64>,
@@ -760,6 +765,8 @@ impl<'a> Snapshot<'a> {
         has_self_anim => VT_SELF_ANIM,
         has_walk_outcome_blocked => VT_WALK_OUTCOME_BLOCKED,
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
+        has_api_gather => VT_API_GATHER,
+        has_api_gather_outcome => VT_API_GATHER_OUTCOME,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1012,6 +1019,41 @@ fn reach_fp(r: &ReachViewInput<'_>) -> ReachViewFp {
         stamp: 0,
     }
 }
+/// The live gather page's delta identity. Keeping the status `Arc` alive is
+/// deliberate: pointer identity cannot be confused by allocator address reuse.
+#[derive(Clone)]
+pub struct ApiGatherFp {
+    token: u64,
+    phase: u8,
+    status: Option<Arc<crate::native::ScriptStatus>>,
+}
+
+impl PartialEq for ApiGatherFp {
+    fn eq(&self, other: &Self) -> bool {
+        self.token == other.token
+            && self.phase == other.phase
+            && match (&self.status, &other.status) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+}
+
+impl Eq for ApiGatherFp {}
+
+impl From<&crate::api_gather::GatherPage> for ApiGatherFp {
+    fn from(page: &crate::api_gather::GatherPage) -> Self {
+        Self {
+            token: page.token,
+            phase: match page.phase {
+                crate::api_gather::GatherPhase::Preparing => 1,
+                crate::api_gather::GatherPhase::Running => 2,
+            },
+            status: page.status.clone(),
+        }
+    }
+}
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
@@ -1124,6 +1166,11 @@ pub struct SnapshotFingerprint {
     pub collision: CollisionViewFp,
     pub bank_selection: BankSelectionInput,
     pub self_anim: Option<i32>,
+    /// `(token, phase, status Arc identity)` for the live host session.
+    pub api_gather: Option<ApiGatherFp>,
+    /// The most recent terminal token; terminals are retained, never cleared
+    /// by a delta.
+    pub api_gather_outcome: Option<u64>,
     pub bank_snapshot_generation: Option<i64>,
 }
 
@@ -1411,6 +1458,8 @@ impl SnapshotFingerprint {
             bank_selection: native.bank_selection,
             self_anim: native.self_anim,
             bank_snapshot_generation: native.bank_snapshot_generation,
+            api_gather: native.api_gather.map(ApiGatherFp::from),
+            api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
         }
     }
 }
@@ -1562,6 +1611,10 @@ pub struct DeltaMask {
     /// The local player's animation id; written only when supplied.
     pub self_anim: bool,
     pub bank_snapshot_generation: bool,
+    /// The live session page, including an explicit zero-id clear.
+    pub api_gather: bool,
+    /// The retained terminal is only replaced, never cleared by a delta.
+    pub api_gather_outcome: bool,
 }
 
 impl DeltaMask {
@@ -1653,6 +1706,8 @@ impl DeltaMask {
             bank_selection: true,
             self_anim: true,
             bank_snapshot_generation: true,
+            api_gather: true,
+            api_gather_outcome: true,
         }
     }
 
@@ -1768,6 +1823,9 @@ impl DeltaMask {
             self_anim: next.self_anim != last.self_anim,
             bank_snapshot_generation: next.bank_snapshot_generation
                 != last.bank_snapshot_generation,
+            api_gather: next.api_gather != last.api_gather,
+            api_gather_outcome: next.api_gather_outcome.is_some()
+                && next.api_gather_outcome != last.api_gather_outcome,
         }
     }
 }
@@ -2330,6 +2388,19 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    // The live page posts an explicit request-id-zero table on keyframes and
+    // when a session clears. Terminal outcomes are retained: `None` omits the
+    // table even on an ordinary delta.
+    let api_gather_slot = mask
+        .api_gather
+        .then(|| api_gather_off(b, native.api_gather));
+    let api_gather_outcome_slot = if mask.api_gather_outcome {
+        native
+            .api_gather_outcome
+            .map(|outcome| api_gather_outcome_off(b, outcome))
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -2672,6 +2743,12 @@ fn encode_snapshot_masked_into(
         table.add_puzzle_board(off);
         table.add_puzzle_board_generation(generation);
     }
+    if let Some(off) = api_gather_slot {
+        table.add_api_gather(off);
+    }
+    if let Some(off) = api_gather_outcome_slot {
+        table.add_api_gather_outcome(off);
+    }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
     let root = table.finish();
@@ -2683,6 +2760,406 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'
     table.add_x(t.x);
     table.add_z(t.z);
     table.add_level(t.level);
+    table.finish()
+}
+/// The largest encoded settings vector admitted for `gather-run`.
+pub(crate) const GATHER_SETTINGS_MAX_BYTES: usize = 4 * 1024;
+const MAX_GATHER_SETTING_ROWS: usize = 256;
+const MAX_GATHER_SETTING_LIST_ITEMS: usize = 512;
+
+/// Whether `bag` has supported typed values whose exact FlatBuffer vector
+/// fits the isolate wire limit.
+pub(crate) fn gather_settings_within_limit(bag: &crate::native::SettingsBag) -> bool {
+    let mut builder = FlatBufferBuilder::new();
+    let Ok(settings) = settings_vector_off(&mut builder, bag) else {
+        return false;
+    };
+    builder.finish(settings, None);
+    builder.finished_data().len() <= GATHER_SETTINGS_MAX_BYTES
+}
+
+fn setting_tile(value: &serde_json::Value, key: &str) -> Result<TileInput, String> {
+    let serde_json::Value::Object(fields) = value else {
+        return Err(format!("setting {key:?} is not a tile"));
+    };
+    if fields.len() != 3 {
+        return Err(format!("setting {key:?} is not a tile"));
+    }
+    let coordinate = |name| {
+        fields
+            .get(name)
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or_else(|| format!("setting {key:?} has an invalid tile"))
+    };
+    Ok(TileInput {
+        x: coordinate("x")?,
+        z: coordinate("z")?,
+        level: coordinate("level")?,
+    })
+}
+fn setting_text_bytes(key: &str, value: &serde_json::Value) -> Result<usize, String> {
+    let mut bytes = key.len();
+    match value {
+        serde_json::Value::String(text) => bytes = bytes.saturating_add(text.len()),
+        serde_json::Value::Number(number) => {
+            if number.as_i64().is_none() {
+                return Err(format!("setting {key:?} is not an integer"));
+            }
+        }
+        serde_json::Value::Bool(_) => {}
+        serde_json::Value::Array(items) => {
+            if items.len() > MAX_GATHER_SETTING_LIST_ITEMS {
+                return Err("gather-run settings exceed cap".into());
+            }
+            for item in items {
+                let Some(text) = item.as_str() else {
+                    return Err(format!("setting {key:?} is not a string list"));
+                };
+                bytes = bytes.saturating_add(text.len());
+            }
+        }
+        serde_json::Value::Object(_) => {
+            setting_tile(value, key)?;
+        }
+        serde_json::Value::Null => {
+            return Err(format!("setting {key:?} has an unsupported value"));
+        }
+    }
+    if bytes > GATHER_SETTINGS_MAX_BYTES {
+        return Err("gather-run settings exceed cap".into());
+    }
+    Ok(bytes)
+}
+
+fn setting_row_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<WIPOffset<SettingRow<'b>>, String> {
+    let key_off = b.create_string(key);
+    match value {
+        serde_json::Value::String(text) => {
+            let text_off = b.create_string(text);
+            // FlatBuffer child offsets must be built before their parent.
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(1);
+            table.add_text(text_off);
+            Ok(table.finish())
+        }
+        serde_json::Value::Number(number) => {
+            let integer = number
+                .as_i64()
+                .ok_or_else(|| format!("setting {key:?} is not an integer"))?;
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(2);
+            table.add_integer(integer);
+            Ok(table.finish())
+        }
+        serde_json::Value::Bool(flag) => {
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(3);
+            table.add_flag(*flag);
+            Ok(table.finish())
+        }
+        serde_json::Value::Array(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(text) = item.as_str() else {
+                    return Err(format!("setting {key:?} is not a string list"));
+                };
+                values.push(b.create_string(text));
+            }
+            let list = b.create_vector(&values);
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(4);
+            table.add_list(list);
+            Ok(table.finish())
+        }
+        serde_json::Value::Object(_) => {
+            let tile = setting_tile(value, key)?;
+            let tile = tile_off(b, tile);
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(5);
+            table.add_tile(tile);
+            Ok(table.finish())
+        }
+        serde_json::Value::Null => Err(format!("setting {key:?} has an unsupported value")),
+    }
+}
+
+fn settings_vector_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    bag: &crate::native::SettingsBag,
+) -> Result<WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SettingRow<'b>>>>, String>
+{
+    if bag.len() > MAX_GATHER_SETTING_ROWS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let list_items = bag
+        .values()
+        .filter_map(serde_json::Value::as_array)
+        .fold(0usize, |sum, values| sum.saturating_add(values.len()));
+    if list_items > MAX_GATHER_SETTING_LIST_ITEMS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let _text_bytes = bag.iter().try_fold(0usize, |sum, (key, value)| {
+        let field_bytes = setting_text_bytes(key, value)?;
+        let total = sum.saturating_add(field_bytes);
+        (total <= GATHER_SETTINGS_MAX_BYTES)
+            .then_some(total)
+            .ok_or_else(|| "gather-run settings exceed cap".to_string())
+    })?;
+    let rows = bag
+        .iter()
+        .map(|(key, value)| setting_row_off(b, key, value))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(b.create_vector(&rows))
+}
+
+fn validate_gather_settings_rows<'a>(
+    rows: flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<SettingRow<'a>>>,
+) -> Result<(), String> {
+    if rows.len() > MAX_GATHER_SETTING_ROWS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let mut encoded_text_bytes = 0usize;
+    let mut list_items = 0usize;
+    for (index, row) in rows.iter().enumerate() {
+        let key = row
+            .key()
+            .ok_or_else(|| "gather-run setting has no key".to_string())?;
+        if rows
+            .iter()
+            .take(index)
+            .any(|previous| previous.key() == Some(key))
+        {
+            return Err("gather-run settings contain a duplicate key".into());
+        }
+        encoded_text_bytes = encoded_text_bytes.saturating_add(key.len());
+        if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+            return Err("gather-run settings exceed cap".into());
+        }
+        match row.kind() {
+            1 => {
+                let text = row
+                    .text()
+                    .ok_or_else(|| "gather-run text setting has no value".to_string())?;
+                encoded_text_bytes = encoded_text_bytes.saturating_add(text.len());
+            }
+            2 | 3 => {}
+            4 => {
+                let list = row
+                    .list()
+                    .ok_or_else(|| "gather-run list setting has no value".to_string())?;
+                list_items = list_items.saturating_add(list.len());
+                if list_items > MAX_GATHER_SETTING_LIST_ITEMS {
+                    return Err("gather-run settings exceed cap".into());
+                }
+                for text in list.iter() {
+                    encoded_text_bytes = encoded_text_bytes.saturating_add(text.len());
+                    if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+                        return Err("gather-run settings exceed cap".into());
+                    }
+                }
+            }
+            5 => {
+                if row.tile().is_none() {
+                    return Err("gather-run tile setting has no value".into());
+                }
+            }
+            kind => return Err(format!("gather-run setting has unknown kind {kind}")),
+        }
+        if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+            return Err("gather-run settings exceed cap".into());
+        }
+    }
+    Ok(())
+}
+
+fn decode_gather_settings<'a>(
+    rows: flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<SettingRow<'a>>>,
+) -> Result<crate::native::SettingsBag, String> {
+    validate_gather_settings_rows(rows)?;
+    let mut bag = crate::native::SettingsBag::new();
+    for row in rows.iter() {
+        let key = row
+            .key()
+            .ok_or_else(|| "gather-run setting has no key".to_string())?;
+        let value = match row.kind() {
+            1 => serde_json::Value::String(
+                row.text()
+                    .ok_or_else(|| "gather-run text setting has no value".to_string())?
+                    .to_string(),
+            ),
+            2 => serde_json::Value::from(row.integer()),
+            3 => serde_json::Value::Bool(row.flag()),
+            4 => {
+                let list = row
+                    .list()
+                    .ok_or_else(|| "gather-run list setting has no value".to_string())?;
+                let values = list
+                    .iter()
+                    .map(|text| serde_json::Value::String(text.to_string()))
+                    .collect();
+                serde_json::Value::Array(values)
+            }
+            5 => {
+                let tile = row
+                    .tile()
+                    .ok_or_else(|| "gather-run tile setting has no value".to_string())?;
+                serde_json::json!({
+                    "x": tile.x(),
+                    "z": tile.z(),
+                    "level": tile.level(),
+                })
+            }
+            kind => return Err(format!("gather-run setting has unknown kind {kind}")),
+        };
+        if bag.insert(key.to_string(), value).is_some() {
+            return Err("gather-run settings contain a duplicate key".into());
+        }
+    }
+    if !gather_settings_within_limit(&bag) {
+        return Err("gather-run settings exceed cap".into());
+    }
+    Ok(bag)
+}
+
+fn status_field_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    field: &crate::native::StatusField,
+) -> Option<WIPOffset<StatusField<'b>>> {
+    use crate::native::StatusValue;
+    if matches!(&field.value, crate::native::StatusValue::Quest(_)) {
+        return None;
+    }
+    let key = b.create_string(field.key);
+    match &field.value {
+        StatusValue::Text(value) => {
+            let value = b.create_string(value);
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(1);
+            table.add_text(value);
+            Some(table.finish())
+        }
+        StatusValue::Integer(value) => {
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(2);
+            table.add_integer(*value);
+            Some(table.finish())
+        }
+        StatusValue::Tile(value) => {
+            let tile = tile_off(
+                b,
+                TileInput {
+                    x: value.x,
+                    z: value.z,
+                    level: value.level,
+                },
+            );
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(3);
+            table.add_tile(tile);
+            Some(table.finish())
+        }
+        StatusValue::Truth(value) => {
+            let truth = match value {
+                api::selected::Truth::True => 1,
+                api::selected::Truth::False => 2,
+                api::selected::Truth::Unknown => 3,
+            };
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(4);
+            table.add_truth(truth);
+            Some(table.finish())
+        }
+        StatusValue::Quest(_) => None,
+    }
+}
+
+fn api_gather_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    page: Option<&crate::api_gather::GatherPage>,
+) -> WIPOffset<ApiGather<'b>> {
+    let (request_id, phase, has_status) = match page {
+        Some(page) => (
+            page.token,
+            match page.phase {
+                crate::api_gather::GatherPhase::Preparing => 1,
+                crate::api_gather::GatherPhase::Running => 2,
+            },
+            page.status.is_some(),
+        ),
+        None => (0, 0, false),
+    };
+    let fields = page.and_then(|page| page.status.as_deref()).map(|status| {
+        let rows = status
+            .fields
+            .iter()
+            .filter_map(|field| status_field_off(b, field))
+            .collect::<Vec<_>>();
+        b.create_vector(&rows)
+    });
+    let mut table = ApiGatherBuilder::new(b);
+    table.add_request_id(request_id);
+    table.add_phase(phase);
+    table.add_has_status(has_status);
+    if let Some(fields) = fields {
+        table.add_fields(fields);
+    }
+    table.finish()
+}
+
+fn api_gather_outcome_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    outcome: &crate::api_gather::GatherEnd,
+) -> WIPOffset<ApiGatherOutcome<'b>> {
+    use crate::api_gather::GatherEnd;
+    let (end, code, message, retryable, counts) = match outcome {
+        GatherEnd::Stopped { counts, .. } => (1, None, None, false, *counts),
+        GatherEnd::Blocked {
+            failure, counts, ..
+        } => (
+            2,
+            Some(failure.code.as_ref()),
+            Some(failure.message.as_ref()),
+            failure.retryable,
+            *counts,
+        ),
+        GatherEnd::Refused { reason, .. } => {
+            (3, None, Some(reason.as_ref()), false, Default::default())
+        }
+        GatherEnd::Failed { reason, counts, .. } => {
+            (4, None, Some(reason.as_ref()), false, *counts)
+        }
+    };
+    let code = code.map(|value| b.create_string(value));
+    let message = message.map(|value| b.create_string(value));
+    let mut table = ApiGatherOutcomeBuilder::new(b);
+    table.add_request_id(outcome.token());
+    table.add_end(end);
+    if let Some(code) = code {
+        table.add_code(code);
+    }
+    if let Some(message) = message {
+        table.add_message(message);
+    }
+    table.add_retryable(retryable);
+    table.add_yielded(counts.yielded);
+    table.add_dropped(counts.dropped);
+    table.add_deposited(counts.deposited);
+    table.add_trips(counts.trips);
+    table.add_xp(counts.xp);
     table.finish()
 }
 
@@ -3288,6 +3765,41 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 use_zanaris_bank: row.use_zanaris_bank(),
                 request_id: row.request_id(),
             }),
+            "gather-run" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("gather-run has no request_id".into());
+                }
+                let settings = row
+                    .settings()
+                    .map(decode_gather_settings)
+                    .transpose()?
+                    .unwrap_or_default();
+                out.push(crate::shim::InteractReq::GatherRun {
+                    request_id,
+                    settings: Arc::new(settings),
+                });
+            }
+            "gather-stop" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("gather-stop has no request_id".into());
+                }
+                out.push(crate::shim::InteractReq::GatherStop { request_id });
+            }
+            "progress-read" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("progress-read has no request_id".into());
+                }
+                let name = row
+                    .name()
+                    .ok_or_else(|| "progress-read has no quest id".to_string())?;
+                out.push(crate::shim::InteractReq::ProgressRead {
+                    request_id,
+                    name: name.to_string(),
+                });
+            }
             "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
                 request_id: row.request_id(),
             }),
@@ -3302,6 +3814,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -3654,6 +4170,9 @@ fn interact_off<'b>(
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
         InteractReq::SelectBank { .. } => "select-bank",
+        InteractReq::GatherRun { .. } => "gather-run",
+        InteractReq::GatherStop { .. } => "gather-stop",
+        InteractReq::ProgressRead { .. } => "progress-read",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
@@ -3730,6 +4249,7 @@ fn interact_off<'b>(
         | InteractReq::ChannelClose { name, .. }
         | InteractReq::ChannelMessage { sender: name, .. }
         | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
+        InteractReq::ProgressRead { name, .. } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -3792,7 +4312,9 @@ fn interact_off<'b>(
         _ => None,
     };
     let cross_off = match req {
-        InteractReq::Walk { cross, .. } | InteractReq::WalkNear { cross, .. }
+        InteractReq::Walk { cross, .. }
+        | InteractReq::WalkNear { cross, .. }
+        | InteractReq::InspectRoute { cross, .. }
             if !cross.is_empty() =>
         {
             let names: Vec<_> = cross.iter().map(|name| b.create_string(name)).collect();
@@ -3806,9 +4328,33 @@ fn interact_off<'b>(
         }
         _ => None,
     };
+    let settings_off = match req {
+        InteractReq::GatherRun { settings, .. } => {
+            assert!(
+                gather_settings_within_limit(settings),
+                "gather-run settings must pass wire validation before encoding"
+            );
+            Some(
+                settings_vector_off(b, settings)
+                    .expect("gather-run settings passed the wire validation"),
+            )
+        }
+        _ => None,
+    };
     let mut table = InteractBuilder::new(b);
     table.add_op(op_off);
     match req {
+        InteractReq::GatherRun { request_id, .. } => {
+            table.add_request_id(*request_id);
+            table.add_settings(settings_off.expect("gather-run settings encoded"));
+        }
+        InteractReq::GatherStop { request_id } => {
+            table.add_request_id(*request_id);
+        }
+        InteractReq::ProgressRead { request_id, .. } => {
+            table.add_request_id(*request_id);
+            table.add_name(name_off.expect("progress-read quest id encoded"));
+        }
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
             table.add_channel_id(*channel_id);
@@ -4942,6 +5488,75 @@ pub(crate) mod tests {
             decode_interact_batch(b"not a batch").is_err(),
             "unknown bytes fail closed"
         );
+    }
+
+    #[test]
+    fn old_gather_run_without_settings_decodes_as_default_bag() {
+        let mut builder = FlatBufferBuilder::new();
+        let op = builder.create_string("gather-run");
+        let mut row = InteractBuilder::new(&mut builder);
+        row.add_op(op);
+        row.add_request_id(42);
+        let row = row.finish();
+        let reqs = builder.create_vector(&[row]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        let root = batch.finish();
+        builder.finish(root, None);
+
+        let decoded =
+            decode_interact_batch(builder.finished_data()).expect("older gather-run decodes");
+        let [InteractReq::GatherRun {
+            request_id,
+            settings,
+        }] = decoded.as_slice()
+        else {
+            panic!("older gather-run row retained its operation");
+        };
+        assert_eq!(*request_id, 42);
+        assert!(settings.is_empty());
+    }
+
+    #[test]
+    fn gather_settings_guard_enforces_encoded_size_and_typed_limits() {
+        let mut small = crate::native::SettingsBag::new();
+        small.insert("skill".into(), serde_json::json!("Mining"));
+        assert!(gather_settings_within_limit(&small));
+
+        let mut oversized = crate::native::SettingsBag::new();
+        oversized.insert(
+            "text".into(),
+            serde_json::Value::String("x".repeat(GATHER_SETTINGS_MAX_BYTES * 2)),
+        );
+        assert!(!gather_settings_within_limit(&oversized));
+
+        let mut too_many_items = crate::native::SettingsBag::new();
+        too_many_items.insert("list".into(), serde_json::json!(vec![""; 513]));
+        assert!(!gather_settings_within_limit(&too_many_items));
+
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!(12.5),
+            serde_json::json!({"x": 3200, "z": 3210}),
+        ] {
+            let mut unsupported = crate::native::SettingsBag::new();
+            unsupported.insert("value".into(), value);
+            assert!(!gather_settings_within_limit(&unsupported));
+        }
+    }
+
+    #[test]
+    fn old_snapshot_without_gather_tables_remains_valid() {
+        let mut builder = FlatBufferBuilder::new();
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(3);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+
+        let decoded = Snapshot::from_bytes(builder.finished_data()).expect("old snapshot verifies");
+        assert_eq!(decoded.tick(), 3);
+        assert!(!decoded.has_api_gather());
+        assert!(!decoded.has_api_gather_outcome());
     }
 
     #[test]

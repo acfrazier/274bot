@@ -75,6 +75,7 @@ fn acknowledge(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u6
                 sequence: tick,
             },
             accepted: true,
+            chat_since: 0,
         },
     );
     action.effect

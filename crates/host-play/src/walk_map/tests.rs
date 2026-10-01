@@ -1463,7 +1463,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     let kinds: Vec<(&str, WalkSlotOutcomeKind)> = report
         .outcomes
         .iter()
-        .map(|o| (o.name.as_str(), o.kind))
+        .map(|o| (o.name.as_str(), o.kind.clone()))
         .collect();
     assert_eq!(
         kinds,
@@ -1565,11 +1565,16 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
     let arms = Arc::new(Mutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
     assert!(!report.legacy_zones_unavailable);
-    assert_eq!(
-        report.outcomes[0].kind,
-        WalkSlotOutcomeKind::Failed(ActionError::BlockedByZones)
-    );
-    let detail = report.outcomes[0].detail.as_deref().unwrap();
+    let WalkSlotOutcomeKind::Failed(error) = &report.outcomes[0].kind else {
+        unreachable!("zone refusal must carry its error");
+    };
+    let ActionError::BlockedByZones {
+        detail: Some(detail),
+    } = error
+    else {
+        unreachable!("zone refusal must carry its named diagnosis");
+    };
+    assert!(error.to_string().contains("test-barrier@3203,"), "{error}");
     assert!(detail.starts_with("blocked by danger zones:"), "{detail}");
     assert!(detail.contains("test-barrier@3203,"), "{detail}");
 }
@@ -1579,11 +1584,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 fn group_walk_reasons_label_stale_and_members_only_separately() {
     let reason = |error| WalkSlotOutcomeKind::Failed(error).reason();
     assert_eq!(
-        reason(ActionError::BlockedByZones),
+        reason(ActionError::BlockedByZones { detail: None }),
         Some("blocked by danger zones")
     );
     assert_eq!(
-        ActionError::BlockedByZones.to_string(),
+        ActionError::BlockedByZones { detail: None }.to_string(),
         "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
     );
     assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));

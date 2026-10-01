@@ -315,7 +315,7 @@ pub(crate) fn resolve_route_exclusions(
                         "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
                     ));
                 };
-                if !matches!(id.as_str(), "white-wolf-mountain" | "draynor-jail-guards")
+                if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str())
                     || table.resolve(id).is_none()
                 {
                     return Err(format!("avoidZones: unknown zone {id:?}"));
