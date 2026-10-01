@@ -32,42 +32,95 @@ pub struct StatusData {
     pub last_event: Arc<str>,
 }
 
-/// Value kind of one published status key. [`KEYS`] is the single key/type
-/// table: [`publish`] emits exactly these keys with these value kinds, and
-/// the `GatherStatus` JS declaration is rendered from it (never copied).
+/// Value kind of one published status key. [`KEYS`] projects key/kind from
+/// the single [`status_rows!`] table below, and [`publish`] builds its field
+/// array from the same table; the `GatherStatus` JS declaration is rendered
+/// from [`KEYS`] (never copied).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
     Text,
     Integer,
 }
 
-/// The Gatherer's published status keys in publish order (22 entries).
-/// [`publish`] emits exactly this table; the host JS `GatherStatus`
-/// declaration is rendered from it.
-pub const KEYS: &[(&str, FieldKind)] = &[
-    ("skill", FieldKind::Text),
-    ("method", FieldKind::Text),
-    ("phase", FieldKind::Text),
-    ("area", FieldKind::Text),
-    ("target", FieldKind::Text),
-    ("tool", FieldKind::Text),
-    ("bait", FieldKind::Integer),
-    ("food", FieldKind::Integer),
-    ("coins", FieldKind::Integer),
-    ("yielded", FieldKind::Integer),
-    ("dropped", FieldKind::Integer),
-    ("deposited", FieldKind::Integer),
-    ("trips", FieldKind::Integer),
-    ("xp", FieldKind::Integer),
-    ("xp_per_hour", FieldKind::Integer),
-    ("bank", FieldKind::Text),
-    ("last_progress", FieldKind::Integer),
-    ("deaths", FieldKind::Integer),
-    ("absent", FieldKind::Integer),
-    ("zone_gated", FieldKind::Integer),
-    ("excluded_targets", FieldKind::Text),
-    ("last_event", FieldKind::Text),
-];
+/// The single canonical status table: each row is
+/// `(key, label, kind, value)`. The value expression reads `data` from the
+/// enclosing scope. [`KEYS`] and [`publish`] both expand this table through
+/// [`status_key!`] / [`status_field!`], so the published keys and the shared
+/// key table cannot drift.
+macro_rules! status_rows {
+    ($emit:ident) => {
+        $emit!("skill", "Skill", Text, data.skill),
+        $emit!("method", "Method", Text, Arc::clone(&data.method)),
+        $emit!("phase", "Phase", Text, data.phase),
+        $emit!("area", "Area", Text, Arc::clone(&data.area)),
+        $emit!("target", "Target", Text, Arc::clone(&data.target)),
+        $emit!("tool", "Tool", Text, Arc::clone(&data.tool)),
+        $emit!("bait", "Bait", Integer, data.bait),
+        $emit!("food", "Food", Integer, data.food),
+        $emit!("coins", "Coins", Integer, data.coins),
+        $emit!("yielded", "Yielded", Integer, i64::from(data.yielded)),
+        $emit!("dropped", "Dropped", Integer, i64::from(data.dropped)),
+        $emit!("deposited", "Deposited", Integer, i64::from(data.deposited)),
+        $emit!("trips", "Trips", Integer, i64::from(data.trips)),
+        $emit!("xp", "XP", Integer, i64::from(data.xp)),
+        $emit!(
+            "xp_per_hour",
+            "XP/hour",
+            Integer,
+            i64::from(data.xp_per_hour.unwrap_or(-1))
+        ),
+        $emit!("bank", "Bank", Text, Arc::clone(&data.bank)),
+        $emit!(
+            "last_progress",
+            "Last progress",
+            Integer,
+            data.last_progress as i64
+        ),
+        $emit!("deaths", "Deaths", Integer, i64::from(data.deaths)),
+        $emit!("absent", "Absent", Integer, i64::from(data.absent)),
+        $emit!("zone_gated", "Zone gated", Integer, i64::from(data.zone_gated)),
+        $emit!(
+            "excluded_targets",
+            "Excluded targets",
+            Text,
+            Arc::clone(&data.excluded_targets)
+        ),
+        $emit!(
+            "last_event",
+            "Last event",
+            Text,
+            Arc::clone(&data.last_event)
+        )
+    };
+}
+
+macro_rules! status_key {
+    ($key:literal, $_label:literal, $kind:ident, $_value:expr) => {
+        ($key, FieldKind::$kind)
+    };
+}
+
+macro_rules! status_field {
+    ($key:literal, $label:literal, Text, $value:expr) => {
+        StatusField {
+            key: $key,
+            label: $label,
+            value: StatusValue::Text(($value).into()),
+        }
+    };
+    ($key:literal, $label:literal, Integer, $value:expr) => {
+        StatusField {
+            key: $key,
+            label: $label,
+            value: StatusValue::Integer(($value).into()),
+        }
+    };
+}
+
+/// The Gatherer's published status keys (22 entries), projected from the
+/// single [`status_rows!`] table. The host JS `GatherStatus` declaration is
+/// rendered from this table.
+pub const KEYS: &[(&str, FieldKind)] = &[status_rows!(status_key)];
 
 pub fn publish(
     output: &mut dyn NativeOutput,
@@ -78,55 +131,7 @@ pub fn publish(
     failure: Option<ScriptFailure>,
     data: &StatusData,
 ) {
-    let fields: Arc<[StatusField]> = Arc::from([
-        text("skill", "Skill", data.skill),
-        text_arc("method", "Method", Arc::clone(&data.method)),
-        text("phase", "Phase", data.phase),
-        text_arc("area", "Area", Arc::clone(&data.area)),
-        text_arc("target", "Target", Arc::clone(&data.target)),
-        text_arc("tool", "Tool", Arc::clone(&data.tool)),
-        integer("bait", "Bait", data.bait),
-        integer("food", "Food", data.food),
-        integer("coins", "Coins", data.coins),
-        integer("yielded", "Yielded", i64::from(data.yielded)),
-        integer("dropped", "Dropped", i64::from(data.dropped)),
-        integer("deposited", "Deposited", i64::from(data.deposited)),
-        integer("trips", "Trips", i64::from(data.trips)),
-        integer("xp", "XP", i64::from(data.xp)),
-        integer(
-            "xp_per_hour",
-            "XP/hour",
-            i64::from(data.xp_per_hour.unwrap_or(-1)),
-        ),
-        text_arc("bank", "Bank", Arc::clone(&data.bank)),
-        integer("last_progress", "Last progress", data.last_progress as i64),
-        integer("deaths", "Deaths", i64::from(data.deaths)),
-        integer("absent", "Absent", i64::from(data.absent)),
-        integer("zone_gated", "Zone gated", i64::from(data.zone_gated)),
-        text_arc(
-            "excluded_targets",
-            "Excluded targets",
-            Arc::clone(&data.excluded_targets),
-        ),
-        text_arc("last_event", "Last event", Arc::clone(&data.last_event)),
-    ]);
-    debug_assert_eq!(
-        fields.len(),
-        KEYS.len(),
-        "gatherer status KEYS drifted from publish",
-    );
-    for (field, (key, kind)) in fields.iter().zip(KEYS.iter()) {
-        debug_assert_eq!(field.key, *key, "gatherer status key drift");
-        debug_assert!(
-            matches!(
-                (&field.value, kind),
-                (StatusValue::Text(_), FieldKind::Text)
-                    | (StatusValue::Integer(_), FieldKind::Integer)
-            ),
-            "gatherer status kind drift for {key}",
-        );
-    }
-    let fields: Arc<[StatusField]> = fields;
+    let fields: Arc<[StatusField]> = Arc::from([status_rows!(status_field)]);
     output.status(ScriptStatus {
         run,
         card: CompiledId("Gatherer"),
@@ -153,29 +158,6 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
     })
 }
 
-fn text(key: &'static str, label: &'static str, value: &str) -> StatusField {
-    StatusField {
-        key,
-        label,
-        value: StatusValue::Text(Arc::from(value)),
-    }
-}
-
-fn text_arc(key: &'static str, label: &'static str, value: Arc<str>) -> StatusField {
-    StatusField {
-        key,
-        label,
-        value: StatusValue::Text(value),
-    }
-}
-
-fn integer(key: &'static str, label: &'static str, value: i64) -> StatusField {
-    StatusField {
-        key,
-        label,
-        value: StatusValue::Integer(value),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -199,12 +181,11 @@ mod tests {
         fn settings_applied(&mut self, _revision: u64) {}
     }
 
-    /// `publish` emits exactly the shared [`KEYS`] table: same keys in the
-    /// same order with the same value kinds. The JS `GatherStatus`
-    /// declaration is rendered from that table, so drift here breaks the
-    /// freshness gate, not just a comment.
+    /// `publish` emits the shared [`KEYS`] key set with the table's value
+    /// kinds and the card's typed values. Order is not asserted: only the
+    /// key set, the per-key kind, and representative typed public values.
     #[test]
-    fn publish_emits_exactly_the_shared_keys_table() {
+    fn publish_emits_typed_values_for_every_shared_key() {
         let data = StatusData {
             skill: "Woodcutting",
             method: Arc::from("normal"),
@@ -242,26 +223,44 @@ mod tests {
         let status = out.status.expect("publish posts one status");
         assert_eq!(status.fields.len(), KEYS.len(), "status KEYS length");
         assert_eq!(status.fields.len(), 22, "gatherer publishes 22 keys");
-        for (field, (key, kind)) in status.fields.iter().zip(KEYS.iter()) {
-            assert_eq!(field.key, *key, "status key");
+        let mut keys: Vec<&str> = status.fields.iter().map(|field| field.key).collect();
+        keys.sort_unstable();
+        let mut want: Vec<&str> = KEYS.iter().map(|(key, _)| *key).collect();
+        want.sort_unstable();
+        assert_eq!(keys, want, "published key set matches KEYS");
+        let value = |key: &str| {
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == key)
+                .unwrap_or_else(|| panic!("status key {key}"))
+                .value
+                .clone()
+        };
+        for (key, kind) in KEYS {
             match kind {
                 FieldKind::Text => assert!(
-                    matches!(field.value, StatusValue::Text(_)),
+                    matches!(value(key), StatusValue::Text(_)),
                     "key {key} is text",
                 ),
                 FieldKind::Integer => assert!(
-                    matches!(field.value, StatusValue::Integer(_)),
+                    matches!(value(key), StatusValue::Integer(_)),
                     "key {key} is integer",
                 ),
             }
         }
-        let xp_per_hour = status
-            .fields
-            .iter()
-            .find(|field| field.key == "xp_per_hour")
-            .expect("xp_per_hour key");
         assert_eq!(
-            xp_per_hour.value,
+            value("skill"),
+            StatusValue::Text(Arc::from("Woodcutting")),
+            "skill publishes its typed value",
+        );
+        assert_eq!(
+            value("yielded"),
+            StatusValue::Integer(3),
+            "yielded publishes its typed value",
+        );
+        assert_eq!(
+            value("xp_per_hour"),
             StatusValue::Integer(-1),
             "missing xp_per_hour publishes -1",
         );
