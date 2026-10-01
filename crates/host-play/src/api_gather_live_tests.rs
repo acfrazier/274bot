@@ -13,17 +13,49 @@ use vault::{Profile, ProfileSettings};
 const LIVE_SOURCE: &str = r#"
 export const apiVersion = 2;
 export function tick(api) {
-  globalThis.__page = api.snapshot.gather;
+  const page = api.snapshot.gather;
+  globalThis.__page = page;
+  const phase = page ? `${page.phase}:${page.status ? page.status.phase : 'no-status'}` : 'idle';
+  if (phase !== globalThis.__lastPhase) {
+    globalThis.__lastPhase = phase;
+    (globalThis.__phases ||= []).push(phase);
+  }
   if (globalThis.__start && !globalThis.__run) {
-    globalThis.__run = api.gather.run({ skill: 'Woodcutting', location: 'Custom', customTile: globalThis.__tile });
+    globalThis.__run = api.gather.run({ skill: 'Woodcutting', woodcuttingResources: ['normal'], disposition: 'Power', location: 'Custom', customTile: globalThis.__tile });
+    api.request({ op: 'held', name: 'Logs', action: 'Drop' });
     globalThis.__run.then(value => { globalThis.__result = value; });
+  }
+  if (page && page.status && !globalThis.__liveHeldSent) {
+    globalThis.__liveHeldSent = true;
+    api.request({ op: 'held', name: 'Logs', action: 'Drop' });
   }
   if (globalThis.__stop && api.snapshot.gather && !globalThis.__stopped) {
     globalThis.__stopped = true;
     globalThis.__stopResult = api.gather.stop();
+    api.request({ op: 'held', name: 'Logs', action: 'Drop' });
   }
 }
 "#;
+
+#[derive(Default)]
+struct AdmissionLog {
+    rows: Mutex<Vec<(String, String)>>,
+}
+
+impl api::hostlog::Sink for AdmissionLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.message.starts_with("gather foreground: dropped ") {
+            self.rows.lock().expect("admission log lock").push((
+                record.slot.unwrap_or("").to_owned(),
+                record.message.to_owned(),
+            ));
+        }
+    }
+}
+
+static ADMISSION_LOG: AdmissionLog = AdmissionLog {
+    rows: Mutex::new(Vec::new()),
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SeedPhase {
@@ -130,6 +162,9 @@ fn live_options(home: &Path) -> ProfileOptions {
         port: Some(port),
         http_port: Some(http_port),
         vault_path: Some(home.join("vault")),
+        cache_dir: Some(PathBuf::from(
+            std::env::var_os("BOT_CACHE_DIR").expect("live proof requires copied BOT_CACHE_DIR"),
+        )),
         unpack_dir: Some(home.join("unpack")),
         nav_pack: Some(nav_pack),
         engine_dir: Some(engine_dir),
@@ -437,6 +472,11 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         "BOT_EVIDENCE_DIR must be absolute"
     );
     std::fs::create_dir_all(&evidence_dir).expect("create receipt directory");
+    assert!(
+        api::hostlog::install_sink(&ADMISSION_LOG),
+        "run this ignored live receipt in its own test process"
+    );
+    api::hostlog::set_debug(true);
     let home = ThrowawayHome::enter("receipt");
     let options = live_options(&home.path);
     let template = options
@@ -522,7 +562,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         Duration::from_secs(180),
         || {
             let page = slot_probe(&play, &account, "globalThis.__page");
-            page["phase"] == "running" && page["status"]["phase"].as_str().is_some()
+            page["phase"] == "running"
+                && page["status"]["phase"] == "gathering"
+                && page["status"]["yielded"].as_i64().is_some_and(|n| n > 0)
         },
     );
     let live_page = slot_probe(&play, &account, "globalThis.__page");
@@ -574,11 +616,50 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         .memory_script_metrics(&account)
         .expect("real Play memory metrics after API Stop");
     let terminal = slot_probe(&play, &account, "globalThis.__result");
+    assert_eq!(terminal["kind"], "done");
+    assert_eq!(terminal["value"]["token"].as_u64(), Some(token));
+    assert!(
+        terminal["value"]["counts"]["yielded"]
+            .as_i64()
+            .zip(live_page["status"]["yielded"].as_i64())
+            .is_some_and(|(terminal_count, live_count)| terminal_count >= live_count),
+        "Stop preserves pre-reconnect published counts: {terminal:?}"
+    );
+    assert_eq!(
+        slot_probe(&play, &account, "globalThis.__stopResult"),
+        serde_json::json!({"ok": true, "value": null})
+    );
+    let phases = slot_probe(&play, &account, "globalThis.__phases");
+    assert!(
+        phases.as_array().is_some_and(|rows| {
+            rows.iter().any(|row| row == "idle")
+                && rows.iter().any(|row| row == "running:gathering")
+        }),
+        "actual snapshot.gather status transitions: {phases:?}"
+    );
+    let dropped_rows: Vec<_> = ADMISSION_LOG
+        .rows
+        .lock()
+        .expect("admission log lock")
+        .iter()
+        .filter(|(slot, _)| slot == &account)
+        .map(|(_, message)| message.clone())
+        .collect();
+    assert!(
+        dropped_rows
+            .iter()
+            .any(|message| message == "gather foreground: dropped 3 script game rows total"),
+        "all three emitted script game rows must be dropped, not controls: {dropped_rows:?}"
+    );
     let receipt = serde_json::json!({
         "proof": "live Gather API seat memory and reconnect receipt",
         "profile": "local-289",
         "account": account,
         "tile": {"x": tile.x, "z": tile.z, "level": tile.level},
+        "settings": {"skill": "Woodcutting", "woodcuttingResources": ["normal"], "disposition": "Power"},
+        "snapshot_phases": phases,
+        "foreground_drop_trace": dropped_rows,
+        "driver_trace": "native-packet account/run/tick lines in the full live command log; InteractTrace is stderr-only",
         "token_before_reconnect": token,
         "token_after_reconnect": reconnect_page["token"],
         "run_session_before_reconnect": session_before,

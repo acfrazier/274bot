@@ -1,14 +1,16 @@
+#![cfg(feature = "load")]
+
 use api::selected::{RunKey, Truth};
 use api::snapshot::WorldTile;
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
 use script::isolate_fb::{
     decode_interact_batch, encode_interact_batch, encode_snapshot_delta_with_native,
-    InteractReq, NativeFactsInput, ReachViewInput, Snapshot,
-    SnapshotInput,
+    NativeFactsInput, ReachViewInput, Snapshot, SnapshotInput,
 };
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script::{observed, CompiledId};
 use script::observed::GatherStatusField;
+use script::shim::InteractReq;
+use script::{observed, CompiledId};
 use std::sync::Arc;
 
 fn empty_input(tick: u64) -> SnapshotInput<'static> {
@@ -175,7 +177,7 @@ fn gather_run_settings_use_typed_rows_and_preserve_empty_lists() {
         request_id: 42,
         settings: Arc::new(settings.clone()),
     };
-    let bytes = encode_interact_batch(&[request.clone()]);
+    let bytes = encode_interact_batch(std::slice::from_ref(&request));
     let decoded = decode_interact_batch(&bytes).expect("typed gather request decodes");
     assert_eq!(decoded, vec![request]);
     let InteractReq::GatherRun {
@@ -188,10 +190,8 @@ fn gather_run_settings_use_typed_rows_and_preserve_empty_lists() {
     assert_eq!(decoded.get("emptyList"), Some(&serde_json::json!([])));
 }
 
-
 #[test]
 fn host_control_deserialization_fails_closed() {
-
     for forged in [
         serde_json::json!({"op": "gather-run", "request_id": 42, "settings": {}}),
         serde_json::json!({"op": "gather-stop", "request_id": 42}),
@@ -200,7 +200,6 @@ fn host_control_deserialization_fails_closed() {
         assert!(serde_json::from_value::<InteractReq>(forged).is_err());
     }
 }
-
 
 #[test]
 fn every_gather_terminal_kind_round_trips_with_counts_and_reason() {
@@ -332,7 +331,10 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
     let decoded = Snapshot::from_bytes(&keyframe).expect("gather keyframe decodes");
     assert!(decoded.has_api_gather());
     let posted = decoded.api_gather().expect("keyframe carries gather page");
-    assert_eq!((posted.request_id(), posted.phase(), posted.has_status()), (7, 1, false));
+    assert_eq!(
+        (posted.request_id(), posted.phase(), posted.has_status()),
+        (7, 1, false)
+    );
     observed::apply(&decoded);
 
     let (unchanged, next) = encode_snapshot_delta_with_native(
@@ -341,9 +343,7 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
         native_facts(Some(&page), None),
         false,
     );
-    assert!(!Snapshot::from_bytes(&unchanged)
-        .unwrap()
-        .has_api_gather());
+    assert!(!Snapshot::from_bytes(&unchanged).unwrap().has_api_gather());
     fingerprint = next;
     observed::apply(&Snapshot::from_bytes(&unchanged).unwrap());
     assert_eq!(
@@ -408,9 +408,7 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
         native_facts(Some(&same_arc), None),
         false,
     );
-    assert!(!Snapshot::from_bytes(&same_status)
-        .unwrap()
-        .has_api_gather());
+    assert!(!Snapshot::from_bytes(&same_status).unwrap().has_api_gather());
     fingerprint = next;
 
     let equal_but_new_arc = GatherPage {
@@ -424,9 +422,7 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
         native_facts(Some(&equal_but_new_arc), None),
         false,
     );
-    assert!(Snapshot::from_bytes(&new_status)
-        .unwrap()
-        .has_api_gather());
+    assert!(Snapshot::from_bytes(&new_status).unwrap().has_api_gather());
     fingerprint = next;
 
     let (clear, next) = encode_snapshot_delta_with_native(
@@ -458,7 +454,13 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
     let outcome = outcome_view.api_gather_outcome().unwrap();
     assert_eq!((outcome.request_id(), outcome.end()), (7, 2));
     assert_eq!(
-        (outcome.yielded(), outcome.dropped(), outcome.deposited(), outcome.trips(), outcome.xp()),
+        (
+            outcome.yielded(),
+            outcome.dropped(),
+            outcome.deposited(),
+            outcome.trips(),
+            outcome.xp()
+        ),
         (11, 12, 13, 14, -15)
     );
     assert_eq!(outcome.code(), Some("route-blocked"));
@@ -501,3 +503,96 @@ fn gather_snapshot_deltas_use_arc_identity_clear_live_page_and_retain_terminal()
         .has_api_gather_outcome());
 }
 
+#[test]
+fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
+    struct Capture(Option<ScriptStatus>);
+    impl script::native::NativeOutput for Capture {
+        fn status(&mut self, status: ScriptStatus) {
+            self.0 = Some(status);
+        }
+        fn paint(&mut self, _: Arc<script::shim::ScriptPaint>) {
+            unreachable!("status publication cannot paint");
+        }
+        fn log(&mut self, _: api::hostlog::Level, _: &str) {
+            unreachable!("status publication cannot log");
+        }
+        fn settings_applied(&mut self, _: u64) {
+            unreachable!("status publication cannot apply settings");
+        }
+    }
+    let mut capture = Capture(None);
+    script::gatherer::status::publish(
+        &mut capture,
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        1,
+        None,
+        NativePhase::Working,
+        None,
+        &script::gatherer::status::StatusData {
+            skill: "Woodcutting",
+            method: Arc::from("woodcutting.normal.op1"),
+            phase: "gathering",
+            area: Arc::from("Start (Lumbridge)"),
+            target: Arc::from("Tree"),
+            tool: Arc::from("Bronze axe"),
+            bait: -1,
+            food: 0,
+            coins: 0,
+            yielded: 29,
+            dropped: 28,
+            deposited: 0,
+            trips: 0,
+            xp: 725,
+            xp_per_hour: Some(4500),
+            bank: Arc::from("—"),
+            last_progress: 12,
+            deaths: 0,
+            absent: 0,
+            zone_gated: 0,
+            excluded_targets: Arc::from(""),
+            last_event: Arc::from("dropped"),
+        },
+    );
+    let page = GatherPage {
+        token: 31,
+        phase: GatherPhase::Running,
+        status: Some(Arc::new(capture.0.expect("canonical status publication"))),
+    };
+    let input = empty_input(1);
+    let (bare, _) =
+        encode_snapshot_delta_with_native(None, &input, native_facts(None, None), false);
+    let (populated, fingerprint) =
+        encode_snapshot_delta_with_native(None, &input, native_facts(Some(&page), None), false);
+    let (unchanged, _) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &empty_input(2),
+        native_facts(Some(&page), None),
+        false,
+    );
+    let delta = populated
+        .len()
+        .checked_sub(bare.len())
+        .expect("populated status byte delta");
+    println!("API gather canonical sample wire: without={}B populated={}B status_delta={delta}B unchanged={}B (gather page omitted)", bare.len(), populated.len(), unchanged.len());
+    assert!(
+        delta <= 2048,
+        "canonical sample status exceeds the 2-KiB wire target"
+    );
+    assert!(!Snapshot::from_bytes(&unchanged).unwrap().has_api_gather());
+    observed::apply(&Snapshot::from_bytes(&populated).unwrap());
+    assert!(
+        observed::with(|scene| scene
+            .since_login()
+            .api_gather()
+            .unwrap()
+            .fields
+            .iter()
+            .any(|field| field.key == "yielded"
+                && field.value == script::observed::GatherStatusValue::Integer(29),)),
+        "wire budget must include the delivered canonical counter"
+    );
+}

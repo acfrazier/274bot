@@ -936,13 +936,13 @@ export type QuestJournalOutcome =
 export interface GatherSettings {
   /** default "Woodcutting" */
   skill?: 'Woodcutting' | 'Mining' | 'Fishing';
-  /** default ["normal"] */
+  /** default ["normal"], only when its card show-if holds */
   woodcuttingResources?: string[];
-  /** default ["copper","tin"] */
+  /** default ["copper","tin"], only when its card show-if holds */
   miningResources?: string[];
-  /** default "fishing.saltfish.op1" */
+  /** default "fishing.saltfish.op1", only when its card show-if holds */
   fishingMethod?: string;
-  /** default "Best tier" */
+  /** default "Best tier", only when its card show-if holds */
   targetPreference?: 'Best tier' | 'Nearest';
   /** default "Start" */
   location?: 'Start' | 'Custom' | 'Auto';

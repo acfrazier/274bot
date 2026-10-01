@@ -1,3 +1,5 @@
+#![cfg(feature = "load")]
+
 //! Consumer-visible runtime probes for the JS API v2 Gatherer session.
 //! These drive the real V8 isolate and its machine host while supplying the
 //! same typed FlatBuffer snapshot pages a Load slot publishes.
@@ -5,7 +7,9 @@ use std::sync::Arc;
 
 use api::selected::RunKey;
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
-use script::isolate_fb::{encode_snapshot_with_native, NativeFactsInput, SnapshotInput};
+use script::isolate_fb::{
+    encode_snapshot_delta_with_native, NativeFactsInput, SnapshotFingerprint, SnapshotInput,
+};
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
 use script::shim::InteractReq;
 use script::{CompiledId, LoadIsolate, LoadShape};
@@ -20,7 +24,8 @@ fn post_snapshot(
     tick: u64,
     api_gather: Option<&GatherPage>,
     api_gather_outcome: Option<&GatherEnd>,
-) {
+    last: Option<&SnapshotFingerprint>,
+) -> SnapshotFingerprint {
     let input = SnapshotInput {
         tick,
         here: None,
@@ -99,7 +104,9 @@ fn post_snapshot(
         api_gather_outcome,
         ..NativeFactsInput::default()
     };
-    iso.post_snapshot(encode_snapshot_with_native(&input, native));
+    let (bytes, fingerprint) = encode_snapshot_delta_with_native(last, &input, native, false);
+    iso.post_snapshot(bytes);
+    fingerprint
 }
 
 fn tick(
@@ -107,10 +114,21 @@ fn tick(
     tick: u64,
     api_gather: Option<&GatherPage>,
     api_gather_outcome: Option<&GatherEnd>,
-) {
-    post_snapshot(iso, tick, api_gather, api_gather_outcome);
+) -> SnapshotFingerprint {
+    tick_with_last(iso, tick, api_gather, api_gather_outcome, None)
+}
+
+fn tick_with_last(
+    iso: &LoadIsolate,
+    tick: u64,
+    api_gather: Option<&GatherPage>,
+    api_gather_outcome: Option<&GatherEnd>,
+    last: Option<&SnapshotFingerprint>,
+) -> SnapshotFingerprint {
+    let fingerprint = post_snapshot(iso, tick, api_gather, api_gather_outcome, last);
     iso.on_game_tick(tick);
     let _ = iso.probe("true").unwrap();
+    fingerprint
 }
 
 fn isolate() -> LoadIsolate {
@@ -137,19 +155,30 @@ fn begin(iso: &LoadIsolate, label: &str, settings: &serde_json::Value) {
     assert_eq!(iso.probe(&expression).unwrap(), true);
 }
 
+fn forward_queued_controls(iso: &LoadIsolate) {
+    let current_tick = iso.probe("__api.tick").unwrap();
+    let current_tick = current_tick
+        .as_f64()
+        .unwrap_or_else(|| panic!("non-numeric API tick: {current_tick}"))
+        as u64;
+    iso.on_game_tick(current_tick);
+    let _ = iso.probe("true").unwrap();
+}
+
 fn begin_and_take_run(
     iso: &LoadIsolate,
     label: &str,
     settings: &serde_json::Value,
-) -> (u64, serde_json::Map<String, serde_json::Value>) {
+) -> (u64, Arc<serde_json::Map<String, serde_json::Value>>) {
     begin(iso, label, settings);
+    forward_queued_controls(iso);
     let requests = iso.drain_interacts();
     take_single_run(&requests)
 }
 
 fn take_single_run(
     requests: &[InteractReq],
-) -> (u64, serde_json::Map<String, serde_json::Value>) {
+) -> (u64, Arc<serde_json::Map<String, serde_json::Value>>) {
     let runs: Vec<_> = requests
         .iter()
         .filter_map(|request| match request {
@@ -163,7 +192,6 @@ fn take_single_run(
     assert_eq!(runs.len(), 1, "expected one gather-run in {requests:?}");
     runs.into_iter().next().unwrap()
 }
-
 
 fn counts() -> GatherCounts {
     GatherCounts {
@@ -254,7 +282,10 @@ fn status() -> Arc<ScriptStatus> {
 #[test]
 fn run_marshals_every_settings_kind_and_snapshot_materializes_every_status_member() {
     let iso = isolate();
-    assert_eq!(iso.probe("__api.snapshot.gather ?? null").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__api.snapshot.gather ?? null").unwrap(),
+        serde_json::Value::Null
+    );
 
     let settings = serde_json::json!({
         "skill": "Mining",
@@ -273,8 +304,8 @@ fn run_marshals_every_settings_kind_and_snapshot_materializes_every_status_membe
     });
     let (token, sent_settings) = begin_and_take_run(&iso, "status", &settings);
     assert_ne!(token, 0);
-    assert!(token <= (1_u64 << 53) - 1);
-    assert_eq!(sent_settings, settings.as_object().unwrap().clone());
+    assert!(token < (1_u64 << 53));
+    assert_eq!(sent_settings.as_ref(), settings.as_object().unwrap());
 
     let preparing = GatherPage {
         token,
@@ -292,7 +323,7 @@ fn run_marshals_every_settings_kind_and_snapshot_materializes_every_status_membe
         phase: GatherPhase::Running,
         status: Some(status()),
     };
-    tick(&iso, 3, Some(&running), None);
+    let running_fingerprint = tick(&iso, 3, Some(&running), None);
     let snapshot = iso.probe("__api.snapshot.gather").unwrap();
     assert_eq!(snapshot["token"], token);
     assert_eq!(snapshot["phase"], "running");
@@ -322,11 +353,14 @@ fn run_marshals_every_settings_kind_and_snapshot_materializes_every_status_membe
 
     // An omitted api_gather delta keeps the materialized value; request_id 0
     // is the explicit live-page clear, not an outcome clear.
-    tick(&iso, 4, None, None);
+    tick_with_last(&iso, 4, Some(&running), None, Some(&running_fingerprint));
     assert_eq!(iso.probe("__api.snapshot.gather").unwrap(), snapshot);
     let empty = clear_page();
     tick(&iso, 5, Some(&empty), None);
-    assert_eq!(iso.probe("__api.snapshot.gather").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__api.snapshot.gather").unwrap(),
+        serde_json::Value::Null
+    );
 
     let end = stop_end(token);
     tick(&iso, 6, Some(&empty), Some(&end));
@@ -456,13 +490,42 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
             catch (e) { return String(e); } })()"#,
         )
         .unwrap();
-    assert!(forged.as_str().unwrap().contains("not impl: request.gather-run"));
+    assert!(forged
+        .as_str()
+        .unwrap()
+        .contains("not impl: request.gather-run"));
 
-    for (tick_no, (label, args, expected)) in [
+    let mut next_tick = 2;
+    for (label, args, expected) in [
         (
             "bad_shape",
             serde_json::json!(["not settings"]),
             serde_json::json!({"kind": "refused", "reason": "invalid-args"}),
+        ),
+        (
+            "bad_primitive",
+            serde_json::json!(42),
+            serde_json::json!({"kind": "refused", "reason": "invalid-args"}),
+        ),
+        (
+            "wrong_radius_type",
+            serde_json::json!({"radius": "12"}),
+            serde_json::json!({"kind": "refused", "reason": "invalid-settings"}),
+        ),
+        (
+            "fractional_radius",
+            serde_json::json!({"radius": 12.5}),
+            serde_json::json!({"kind": "refused", "reason": "invalid-settings"}),
+        ),
+        (
+            "staged_bank",
+            serde_json::json!({"disposition": "Bank"}),
+            serde_json::json!({"kind": "refused", "reason": "invalid-setting:disposition:staged-option"}),
+        ),
+        (
+            "missing_custom_tile",
+            serde_json::json!({"location": "Custom"}),
+            serde_json::json!({"kind": "refused", "reason": "invalid-setting:customTile:required"}),
         ),
         (
             "bad_semantic",
@@ -476,10 +539,10 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
         ),
     ]
     .into_iter()
-    .enumerate()
     {
         begin(&iso, label, &args);
-        tick(&iso, 2 + tick_no as u64, None, None);
+        tick(&iso, next_tick, None, None);
+        next_tick += 1;
         assert_eq!(result(&iso, label), expected, "{label}");
         assert_eq!(iso.drain_interacts(), Vec::<InteractReq>::new());
     }
@@ -487,7 +550,8 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
     let long_values = vec!["x".repeat(160); 48];
     let too_large = serde_json::json!({"woodcuttingResources": long_values});
     begin(&iso, "too_large", &too_large);
-    tick(&iso, 5, None, None);
+    tick(&iso, next_tick, None, None);
+    next_tick += 1;
     assert_eq!(
         result(&iso, "too_large"),
         serde_json::json!({"kind": "refused", "reason": "invalid-settings"})
@@ -499,6 +563,7 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
     let second_stop = iso.probe("__api.gather.stop()").unwrap();
     assert_eq!(first_stop, serde_json::json!({"ok": true, "value": null}));
     assert_eq!(second_stop, first_stop, "repeated Stop is idempotent");
+    forward_queued_controls(&iso);
     let stop_rows: Vec<_> = iso
         .drain_interacts()
         .into_iter()
@@ -507,11 +572,15 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
             _ => None,
         })
         .collect();
-    assert_eq!(stop_rows, vec![token], "idempotent Stop emits only one host row");
+    assert_eq!(
+        stop_rows,
+        vec![token],
+        "idempotent Stop emits only one host row"
+    );
 
     let empty = clear_page();
     let end = stop_end(token);
-    tick(&iso, 6, Some(&empty), Some(&end));
+    tick(&iso, next_tick, Some(&empty), Some(&end));
     assert_eq!(
         result(&iso, "stop"),
         serde_json::json!({
@@ -581,7 +650,10 @@ fn reconnect_reemits_same_unacknowledged_token_after_a_dropped_delivery() {
     // The test deliberately drops the delivered batch instead of admitting
     // it to a host seat. The row remains pending at the isolate.
     iso.reconnect_session_work();
-    assert!(iso.drain_interacts().is_empty(), "no pre-reemit stale row remains");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no pre-reemit stale row remains"
+    );
     tick(&iso, 2, None, None);
     let (replayed_token, replayed_settings) = take_single_run(&iso.drain_interacts());
     assert_eq!(replayed_token, token);
@@ -611,7 +683,10 @@ fn reconnect_carries_lost_stop_without_restarting_an_acknowledged_session() {
     );
     // Leave the first Stop in the isolate queue so reconnect must lose it.
     iso.reconnect_session_work();
-    assert!(iso.drain_interacts().is_empty(), "old queued Stop is discarded");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "old queued Stop is discarded"
+    );
     tick(&iso, 3, Some(&live), None); // keyframe re-posts admission
     let carried = iso.drain_interacts();
     let carried_stops: Vec<_> = carried
@@ -645,7 +720,10 @@ fn lost_start_and_stop_in_one_epoch_reemit_in_start_then_stop_order() {
         serde_json::json!({"ok": true, "value": null})
     );
     iso.reconnect_session_work();
-    assert!(iso.drain_interacts().is_empty(), "both old-epoch rows were lost");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "both old-epoch rows were lost"
+    );
 
     tick(&iso, 2, None, None);
     let carried = iso.drain_interacts();
@@ -659,7 +737,10 @@ fn lost_start_and_stop_in_one_epoch_reemit_in_start_then_stop_order() {
         .collect();
     assert_eq!(controls, vec![("run", token), ("stop", token)]);
     tick(&iso, 3, None, None);
-    assert!(iso.drain_interacts().is_empty(), "start and Stop carry once in this epoch");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "start and Stop carry once in this epoch"
+    );
 
     let empty = clear_page();
     let end = stop_end(token);
@@ -678,7 +759,10 @@ fn terminal_in_reconnect_keyframe_settles_before_any_start_or_stop_carry() {
     let empty = clear_page();
     let terminal = stop_end(token);
     tick(&iso, 2, Some(&empty), Some(&terminal));
-    assert!(iso.drain_interacts().is_empty(), "matching terminal wins before carry");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "matching terminal wins before carry"
+    );
     assert_eq!(
         result(&iso, "terminal_keyframe"),
         serde_json::json!({

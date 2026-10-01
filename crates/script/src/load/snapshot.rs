@@ -929,7 +929,10 @@ fn gather_status_object<'s, 'a>(
             continue;
         };
         let value: Option<v8::Local<'s, v8::Value>> = match field.kind() {
-            1 => field.text().map(|text| js_string(scope, text)).transpose()?,
+            1 => field
+                .text()
+                .map(|text| js_string(scope, text))
+                .transpose()?,
             2 => Some(num(scope, field.integer() as f64)),
             3 => field
                 .tile()

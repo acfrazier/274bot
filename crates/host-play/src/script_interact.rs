@@ -1173,6 +1173,12 @@ where
             InteractReq::RunPolicyOverride { .. } => {
                 // Applied only through Host's generation-fenced policy sink.
             }
+            InteractReq::GatherRun { .. }
+            | InteractReq::GatherStop { .. }
+            | InteractReq::ProgressRead { .. } => {
+                // Host-local controls are consumed by the slot before game
+                // dispatch; none can authorize a Driver packet here.
+            }
             InteractReq::NoteProgress
             | InteractReq::LoopSettled
             | InteractReq::WaitEnqueued
