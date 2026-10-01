@@ -686,7 +686,7 @@ pub fn compile_loadout(
     let qualified = if args.loadout.contains('/') {
         args.loadout.clone()
     } else {
-        format!("{}/{}", cx.path_id.0, args.loadout)
+        format!("{}/{}", cx.path.0, args.loadout)
     };
     let row = cx
         .loadouts
@@ -1009,7 +1009,7 @@ pub fn compile_loadout_ready(
     let qualified = if args.loadout.contains('/') {
         args.loadout
     } else {
-        format!("{}/{}", cx.path_id.0, args.loadout)
+        format!("{}/{}", cx.path.0, args.loadout)
     };
     let row = cx
         .loadouts

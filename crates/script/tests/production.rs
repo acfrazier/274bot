@@ -219,22 +219,34 @@ fn make_x_clicks_the_posted_button_and_does_not_answer_a_closed_dialog() {
 #[test]
 fn make_x_answers_once_the_count_dialog_opens_then_waits_the_menu() {
     let iso = spawn(MAKE_X);
+    iso.probe("globalThis.__match = 'Wool'; true").unwrap();
+    let wrong_row_buttons = [MakeButtonInput {
+        qty: -1,
+        com_id: 9000,
+    }];
     let buttons = [MakeButtonInput {
         qty: -1,
         com_id: 8875,
     }];
-    let products = [MakeProductInput {
-        object_id: 1779,
-        name: "Flax",
-        buttons: &buttons,
-    }];
+    let products = [
+        MakeProductInput {
+            object_id: 1759,
+            name: "Iron bar",
+            buttons: &wrong_row_buttons,
+        },
+        MakeProductInput {
+            object_id: 1737,
+            name: "Ball of wool",
+            buttons: &buttons,
+        },
+    ];
     let mut snap = base();
     snap.make_products = &products;
     post(&iso, &snap, Some(&[]));
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::IfButton { component_id: 8875 }]
+        vec![InteractReq::IfButton { component_id: 8875 }],
     );
 
     snap.tick = 2;
@@ -248,19 +260,28 @@ fn make_x_answers_once_the_count_dialog_opens_then_waits_the_menu() {
     );
 
     snap.tick = 3;
-    snap.count_dialog_open = false;
     post(&iso, &snap, Some(&[]));
     tick(&iso, 3);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an already-answered open count dialog must not answer twice"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+
+    snap.tick = 4;
+    snap.count_dialog_open = false;
+    post(&iso, &snap, Some(&[]));
+    tick(&iso, 4);
     assert_eq!(
         iso.probe("__ok").unwrap(),
         Value::Null,
         "count close is not make-menu close"
     );
 
-    snap.tick = 4;
+    snap.tick = 5;
     snap.make_products = &[];
     post(&iso, &snap, Some(&[]));
-    tick(&iso, 4);
+    tick(&iso, 5);
     assert_eq!(
         iso.probe("__ok").unwrap(),
         Value::Bool(true),

@@ -1,5 +1,5 @@
-//! Rust-owned `ChatDialog` make and option sequencing, the `chat-dialog`
-//! [`crate::machine`] family.
+//! Shared Make-X selection/count sequencing and the compat `ChatDialog`
+//! family.
 //!
 //! Chat `make_products` already posts the Make/Smelt quantity buttons.
 //! `ChatDialog.makeX` must click the posted Make-X control, wait the real
@@ -14,22 +14,166 @@
 //! machine per call and awaits its boolean — it does not pick a product,
 //! wait one tick and guess the count dialog is open.
 
-use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
-use crate::shim::InteractReq;
-use serde::Deserialize;
-use serde_json::Value;
-
 /// Frozen family-1 count-dialog open wait.
 pub const COUNT_OPEN_MS: u64 = 3_000;
 /// Frozen count-dialog close wait after Answer-Count.
 pub const COUNT_CLOSE_MS: u64 = 3_000;
 /// Frozen chat make-menu close wait after the count dialog drops.
 pub const MAKE_MENU_MS: u64 = 5_000;
-/// Frozen anvil panel modal-change wait.
-pub const PANEL_WAIT_MS: u64 = 5_000;
-/// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
-pub const MODAL_WAIT_MS: u64 = 3_000;
+
+/// One product row from either runtime's posted make menu.
+pub(crate) trait MakeXProduct {
+    fn object_id(&self) -> i32;
+    fn make_x_component_id(&self) -> Option<i32>;
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MakeXPhase {
+    Select,
+    WaitCountOpen,
+    WaitCountClose,
+    WaitMenuClose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MakeXSelection {
+    MenuMissing,
+    MissingButton,
+    InvalidCount,
+    Click { component_id: i32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MakeXStep {
+    Wait,
+    AnswerCount { value: i32 },
+    WaitMenuClose,
+    Complete,
+    TimedOut(MakeXPhase),
+}
+
+/// Shared Make-X selection, count-dialog latch and make-menu close sequence.
+/// Runtime adapters supply their row view, count semantics and clock.
+pub(crate) struct MakeXCore {
+    phase: MakeXPhase,
+    count: i32,
+}
+
+impl MakeXCore {
+    pub(crate) const fn new() -> Self {
+        Self {
+            phase: MakeXPhase::Select,
+            count: 0,
+        }
+    }
+
+    pub(crate) const fn phase(&self) -> MakeXPhase {
+        self.phase
+    }
+
+    pub(crate) const fn timeout_ms(&self) -> u64 {
+        match self.phase {
+            MakeXPhase::Select => MAKE_MENU_MS,
+            MakeXPhase::WaitCountOpen => COUNT_OPEN_MS,
+            MakeXPhase::WaitCountClose => COUNT_CLOSE_MS,
+            MakeXPhase::WaitMenuClose => MAKE_MENU_MS,
+        }
+    }
+
+    /// Resolve one posted object identity and start its Make-X button.
+    pub(crate) fn select<P: MakeXProduct>(
+        &mut self,
+        products: Option<&[P]>,
+        object_id: i32,
+        count: Option<i32>,
+    ) -> MakeXSelection {
+        if self.phase != MakeXPhase::Select {
+            return MakeXSelection::MenuMissing;
+        }
+        let Some(product) = products
+            .and_then(|rows| rows.iter().find(|row| row.object_id() == object_id))
+        else {
+            return MakeXSelection::MenuMissing;
+        };
+        let Some(component_id) = product.make_x_component_id() else {
+            return MakeXSelection::MissingButton;
+        };
+        let Some(count) = count else {
+            return MakeXSelection::InvalidCount;
+        };
+        self.count = count;
+        self.phase = MakeXPhase::WaitCountOpen;
+        MakeXSelection::Click { component_id }
+    }
+
+    /// Advance the frozen open → one answer → close → menu-close order.
+    /// `timed_out` belongs to the current phase's adapter-owned clock.
+    pub(crate) fn step(
+        &mut self,
+        count_dialog_open: bool,
+        make_menu_open: bool,
+        timed_out: bool,
+    ) -> MakeXStep {
+        match self.phase {
+            MakeXPhase::Select => {
+                if timed_out {
+                    MakeXStep::TimedOut(MakeXPhase::Select)
+                } else {
+                    MakeXStep::Wait
+                }
+            }
+            MakeXPhase::WaitCountOpen if count_dialog_open => {
+                self.phase = MakeXPhase::WaitCountClose;
+                MakeXStep::AnswerCount { value: self.count }
+            }
+            MakeXPhase::WaitCountOpen if timed_out => {
+                MakeXStep::TimedOut(MakeXPhase::WaitCountOpen)
+            }
+            MakeXPhase::WaitCountOpen => MakeXStep::Wait,
+            MakeXPhase::WaitCountClose if !count_dialog_open => {
+                self.phase = MakeXPhase::WaitMenuClose;
+                MakeXStep::WaitMenuClose
+            }
+            MakeXPhase::WaitCountClose if timed_out => {
+                MakeXStep::TimedOut(MakeXPhase::WaitCountClose)
+            }
+            MakeXPhase::WaitCountClose => MakeXStep::Wait,
+            MakeXPhase::WaitMenuClose if !make_menu_open => MakeXStep::Complete,
+            MakeXPhase::WaitMenuClose if timed_out => {
+                MakeXStep::TimedOut(MakeXPhase::WaitMenuClose)
+            }
+            MakeXPhase::WaitMenuClose => MakeXStep::Wait,
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+mod compat {
+    use super::{MakeXCore, MakeXProduct, MakeXSelection, MakeXStep};
+    use crate::machine::{Begin, Cx, Family, Step};
+    use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
+    use crate::shim::InteractReq;
+    use serde::Deserialize;
+    use serde_json::Value;
+
+    /// Frozen anvil panel modal-change wait.
+    pub const PANEL_WAIT_MS: u64 = 5_000;
+    /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
+    pub const MODAL_WAIT_MS: u64 = 3_000;
+
+    impl MakeXProduct for MakeProduct {
+        fn object_id(&self) -> i32 {
+            self.object_id
+        }
+
+        fn make_x_component_id(&self) -> Option<i32> {
+            self.buttons
+                .iter()
+                .find(|button| button.qty == -1 && button.com_id >= 0)
+                .map(|button| button.com_id)
+        }
+    }
 
 /// The posted facts this module decides from, borrowed from the isolate
 /// scene. A logout forgets the session: only pages posted since login count.
@@ -65,12 +209,7 @@ pub(crate) enum Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
 enum Phase {
-    /// Make-X button sent; waiting `count_dialog_open`.
-    WaitCountOpen,
-    /// One Answer-Count sent; waiting the dialog to close.
-    WaitCountClose,
-    /// Count dialog closed; waiting chat make-products to drop.
-    WaitMakeMenu,
+    MakeX,
     /// Anvil Make-N sent; waiting the main modal identity to leave `before`.
     WaitPanel { before: i32 },
     /// Make-N button sent; waiting the chat (else main) modal to change.
@@ -96,8 +235,7 @@ pub(crate) struct ChatArgs {
 /// One `ChatDialog` make or option call.
 pub(crate) struct ChatDialog {
     phase: Phase,
-    /// Requested Make-X count.
-    count: i32,
+    make_x: MakeXCore,
 }
 
 impl Family for ChatDialog {
@@ -166,7 +304,10 @@ fn whole(value: &Value) -> Option<i64> {
 
 fn run(phase: Phase, window: u64, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
     cx.clock().arm(window);
-    Begin::Run(ChatDialog { phase, count: 0 })
+    Begin::Run(ChatDialog {
+        phase,
+        make_x: MakeXCore::new(),
+    })
 }
 
 /// Frozen `ChatDialog.make`: the product containing `match` (else the
@@ -253,33 +394,31 @@ fn begin_make_x(
         return Begin::Done(false);
     }
     let want = match_name.to_ascii_lowercase();
-    let Some(product) = probe
+    let Some(object_id) = probe
         .make_products
         .iter()
-        .find(|p| p.name.to_ascii_lowercase().contains(&want))
+        .find(|product| product.name.to_ascii_lowercase().contains(&want))
+        .map(|product| product.object_id)
     else {
         return Begin::Done(false);
     };
-    let Some(button) = product
-        .buttons
-        .iter()
-        .find(|b| b.qty == -1 && b.com_id >= 0)
-    else {
-        return Begin::Refuse("missing Make-X button".into());
-    };
-    let Some(count) = whole(count)
+    let count = whole(count)
         .and_then(|n| i32::try_from(n).ok())
-        .filter(|n| *n >= 0)
-    else {
-        return Begin::Done(false);
+        .filter(|n| *n >= 0);
+    let mut make_x = MakeXCore::new();
+    let component_id = match make_x.select(Some(probe.make_products), object_id, count) {
+        MakeXSelection::MenuMissing => return Begin::Done(false),
+        MakeXSelection::MissingButton => {
+            return Begin::Refuse("missing Make-X button".into());
+        }
+        MakeXSelection::InvalidCount => return Begin::Done(false),
+        MakeXSelection::Click { component_id } => component_id,
     };
-    cx.emit(InteractReq::IfButton {
-        component_id: button.com_id,
-    });
-    cx.clock().arm(COUNT_OPEN_MS);
+    cx.emit(InteractReq::IfButton { component_id });
+    cx.clock().arm(make_x.timeout_ms());
     Begin::Run(ChatDialog {
-        phase: Phase::WaitCountOpen,
-        count,
+        phase: Phase::MakeX,
+        make_x,
     })
 }
 
@@ -367,24 +506,24 @@ impl ChatDialog {
                 timed_out,
             ),
             _ if !probe.ingame => Step::Done(false),
-            Phase::WaitCountOpen => {
-                if probe.count_dialog_open {
-                    self.phase = Phase::WaitCountClose;
-                    cx.clock().arm(COUNT_CLOSE_MS);
-                    cx.emit(InteractReq::AnswerCount { value: self.count });
-                    return Step::Wait;
+            Phase::MakeX => match self.make_x.step(
+                probe.count_dialog_open,
+                !probe.make_products.is_empty(),
+                timed_out,
+            ) {
+                MakeXStep::Wait => Step::Wait,
+                MakeXStep::AnswerCount { value } => {
+                    cx.clock().arm(self.make_x.timeout_ms());
+                    cx.emit(InteractReq::AnswerCount { value });
+                    Step::Wait
                 }
-                done_or_wait(false, timed_out)
-            }
-            Phase::WaitCountClose => {
-                if !probe.count_dialog_open {
-                    self.phase = Phase::WaitMakeMenu;
-                    cx.clock().arm(MAKE_MENU_MS);
-                    return Step::Wait;
+                MakeXStep::WaitMenuClose => {
+                    cx.clock().arm(self.make_x.timeout_ms());
+                    Step::Wait
                 }
-                done_or_wait(false, timed_out)
-            }
-            Phase::WaitMakeMenu => done_or_wait(probe.make_products.is_empty(), timed_out),
+                MakeXStep::Complete => Step::Done(true),
+                MakeXStep::TimedOut(_) => Step::Done(false),
+            },
             Phase::WaitPanel { before } => done_or_wait(probe.main_modal_id != before, timed_out),
         }
     }
@@ -431,13 +570,15 @@ pub fn largest_make_op(ops: &[Text]) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{COUNT_CLOSE_MS, COUNT_OPEN_MS, MAKE_MENU_MS};
     use crate::machine::Reply;
     use crate::observed::MakeButton;
     use crate::task_clock::InstantTaskClock;
     use std::time::{Duration, Instant};
 
-    fn product(name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
+    fn product_with_id(object_id: i32, name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
         MakeProduct {
+            object_id,
             name: name.into(),
             buttons: buttons
                 .iter()
@@ -447,6 +588,10 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn product(name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
+        product_with_id(0, name, buttons)
     }
 
     fn panel(name: &str, id: i32, slot: i32, component: i32, ops: &[&str]) -> ItemRow {
@@ -478,8 +623,11 @@ mod tests {
         }
     }
 
-    fn machine(phase: Phase, count: i32) -> ChatDialog {
-        ChatDialog { phase, count }
+    fn machine(phase: Phase) -> ChatDialog {
+        ChatDialog {
+            phase,
+            make_x: MakeXCore::new(),
+        }
     }
 
     fn armed(window: u64) -> InstantTaskClock {
@@ -606,43 +754,69 @@ mod tests {
     }
 
     #[test]
-    fn make_x_does_not_answer_count_until_the_dialog_is_posted_open() {
-        let products = [product("Bow string", &[(-1, 8875), (10, 8876)])];
-        let mut m = machine(Phase::WaitCountOpen, 28);
-        let mut clock = armed(COUNT_OPEN_MS);
-        let closed = probe(&products, None, false, -1);
-        assert_eq!(step(&mut m, &mut clock, &closed), (None, vec![]));
-
-        let open = probe(&products, None, true, -1);
+    fn make_x_core_selects_the_posted_object_id_not_the_product_output_id() {
+        let products = [
+            product_with_id(1737, "Ball of wool", &[(-1, 8875)]),
+            product_with_id(1759, "Wool", &[(-1, 9999)]),
+        ];
+        let mut core = MakeXCore::new();
         assert_eq!(
-            step(&mut m, &mut clock, &open),
-            (None, vec![InteractReq::AnswerCount { value: 28 }])
+            core.select(Some(&products), 1737, Some(20)),
+            MakeXSelection::Click { component_id: 8875 }
         );
-        assert_eq!(m.phase, Phase::WaitCountClose);
+        assert_eq!(core.phase(), MakeXPhase::WaitCountOpen);
+    }
+
+    #[test]
+    fn make_x_shared_core_answers_once_only_after_count_dialog_opens() {
+        let products = [product_with_id(1737, "Ball of wool", &[(-1, 8875)])];
+        let mut core = MakeXCore::new();
+        assert_eq!(
+            core.select(Some(&products), 1737, Some(28)),
+            MakeXSelection::Click { component_id: 8875 }
+        );
+        assert_eq!(core.timeout_ms(), COUNT_OPEN_MS);
+        assert_eq!(core.step(false, true, false), MakeXStep::Wait);
+        assert_eq!(
+            core.step(true, true, false),
+            MakeXStep::AnswerCount { value: 28 }
+        );
+        assert_eq!(core.phase(), MakeXPhase::WaitCountClose);
+        assert_eq!(core.step(true, true, false), MakeXStep::Wait);
+    }
+
+    #[test]
+    fn make_x_shared_core_preserves_frozen_count_and_menu_close_order() {
+        let products = [product_with_id(1737, "Ball of wool", &[(-1, 8875)])];
+        let mut core = MakeXCore::new();
+        assert_eq!(
+            core.select(Some(&products), 1737, Some(20)),
+            MakeXSelection::Click { component_id: 8875 }
+        );
+        assert_eq!(
+            core.step(true, true, false),
+            MakeXStep::AnswerCount { value: 20 }
+        );
+        assert_eq!(core.timeout_ms(), COUNT_CLOSE_MS);
+        assert_eq!(core.step(true, true, false), MakeXStep::Wait);
+        assert_eq!(core.step(false, true, false), MakeXStep::WaitMenuClose);
+        assert_eq!(core.timeout_ms(), MAKE_MENU_MS);
+        assert_eq!(core.step(false, true, false), MakeXStep::Wait);
+        assert_eq!(core.step(false, false, false), MakeXStep::Complete);
     }
 
     #[test]
     fn make_x_count_open_timeout_sends_no_answer() {
-        let products = [product("Bow string", &[(-1, 8875)])];
-        let mut m = machine(Phase::WaitCountOpen, 28);
-        let closed = probe(&products, None, false, -1);
-        assert_eq!(step(&mut m, &mut expired(), &closed), (Some(false), vec![]));
-    }
-
-    #[test]
-    fn make_x_waits_count_close_then_the_make_menu() {
-        let products = [product("Bow string", &[(-1, 8875)])];
-        let mut m = machine(Phase::WaitCountClose, 28);
-        let mut clock = armed(COUNT_CLOSE_MS);
-        let open = probe(&products, None, true, -1);
-        assert_eq!(step(&mut m, &mut clock, &open), (None, vec![]));
-
-        let closed = probe(&products, None, false, -1);
-        assert_eq!(step(&mut m, &mut clock, &closed), (None, vec![]));
-        assert_eq!(m.phase, Phase::WaitMakeMenu);
-
-        let empty = probe(&[], None, false, -1);
-        assert_eq!(step(&mut m, &mut clock, &empty), (Some(true), vec![]));
+        let products = [product_with_id(1737, "Ball of wool", &[(-1, 8875)])];
+        let mut core = MakeXCore::new();
+        assert_eq!(
+            core.select(Some(&products), 1737, Some(28)),
+            MakeXSelection::Click { component_id: 8875 }
+        );
+        assert_eq!(
+            core.step(false, true, true),
+            MakeXStep::TimedOut(MakeXPhase::WaitCountOpen)
+        );
     }
 
     #[test]
@@ -676,8 +850,12 @@ mod tests {
     #[test]
     fn panel_timeout_does_not_invent_a_second_press() {
         let rows = [panel("Bronze dagger", 1205, 0, 1119, &["Make 10"])];
-        let mut m = machine(Phase::WaitPanel { before: 3000 }, 0);
+        let mut m = machine(Phase::WaitPanel { before: 3000 });
         let still = probe(&[], Some(rows.as_slice()), false, 3000);
         assert_eq!(step(&mut m, &mut expired(), &still), (Some(false), vec![]));
     }
 }
+}
+
+#[cfg(feature = "load")]
+pub(crate) use compat::{ChatArgs, ChatDialog, Kind};
