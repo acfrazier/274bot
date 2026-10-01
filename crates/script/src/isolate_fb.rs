@@ -31,10 +31,11 @@ use std::sync::Arc;
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
-    ApiGather, ApiGatherOutcome, AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine,
-    ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch, MainModalTexts,
-    MakeButton, MakeProduct, NearestBooth, NpcBox, PuzzleBoard, QuestStatus, Reach, Row,
-    SceneEntity, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WidgetText,
+    ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand, Booth, Carry,
+    ChatLine, ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch,
+    MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
+    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface, Snapshot,
+    Stat, StatusField, Tile, Varp, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -459,6 +460,9 @@ pub struct NativeFactsInput<'a> {
     pub api_gather: Option<&'a crate::api_gather::GatherPage>,
     /// The retained terminal result. Absence means retain any prior outcome.
     pub api_gather_outcome: Option<&'a crate::api_gather::GatherEnd>,
+    /// The most recently published progress acknowledgment or terminal.
+    /// Absence omits the page and retains the isolate's prior value.
+    pub api_progress: Option<&'a crate::api_progress::ProgressPage>,
     /// Bank item packet generation (`-1` while closed), not the open/close
     /// session identity. `None` omits the slot and keeps the last value.
     pub bank_snapshot_generation: Option<i64>,
@@ -767,6 +771,7 @@ impl<'a> Snapshot<'a> {
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
         has_api_gather => VT_API_GATHER,
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
+        has_api_progress => VT_API_PROGRESS,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1171,6 +1176,8 @@ pub struct SnapshotFingerprint {
     /// The most recent terminal token; terminals are retained, never cleared
     /// by a delta.
     pub api_gather_outcome: Option<u64>,
+    /// The current page identity; only a new `(token, kind)` is posted.
+    pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
 }
 
@@ -1460,6 +1467,7 @@ impl SnapshotFingerprint {
             bank_snapshot_generation: native.bank_snapshot_generation,
             api_gather: native.api_gather.map(ApiGatherFp::from),
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
+            api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
         }
     }
 }
@@ -1615,6 +1623,8 @@ pub struct DeltaMask {
     pub api_gather: bool,
     /// The retained terminal is only replaced, never cleared by a delta.
     pub api_gather_outcome: bool,
+    /// A progress page is replaced by the next request or cleared on teardown.
+    pub api_progress: bool,
 }
 
 impl DeltaMask {
@@ -1708,6 +1718,7 @@ impl DeltaMask {
             bank_snapshot_generation: true,
             api_gather: true,
             api_gather_outcome: true,
+            api_progress: true,
         }
     }
 
@@ -1826,6 +1837,7 @@ impl DeltaMask {
             api_gather: next.api_gather != last.api_gather,
             api_gather_outcome: next.api_gather_outcome.is_some()
                 && next.api_gather_outcome != last.api_gather_outcome,
+            api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
         }
     }
 }
@@ -2401,6 +2413,15 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    // A progress page is present only when supplied and changed. Unlike the
+    // live Gatherer page, there is no request-id-zero clear table.
+    let api_progress_slot = if mask.api_progress {
+        native
+            .api_progress
+            .map(|page| api_progress_off(b, page))
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -2748,6 +2769,9 @@ fn encode_snapshot_masked_into(
     }
     if let Some(off) = api_gather_outcome_slot {
         table.add_api_gather_outcome(off);
+    }
+    if let Some(off) = api_progress_slot {
+        table.add_api_progress(off);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -3160,6 +3184,114 @@ fn api_gather_outcome_off<'b>(
     table.add_deposited(counts.deposited);
     table.add_trips(counts.trips);
     table.add_xp(counts.xp);
+    table.finish()
+}
+pub(crate) const MAX_PROGRESS_FLAG_COUNT: u32 = 999_999_999;
+
+fn progress_truth_code(truth: api::selected::Truth) -> u8 {
+    match truth {
+        api::selected::Truth::True => 1,
+        api::selected::Truth::False => 2,
+        api::selected::Truth::Unknown => 3,
+    }
+}
+
+fn progress_colour_code(colour: api::snapshot::QuestListStatus) -> u8 {
+    match colour {
+        api::snapshot::QuestListStatus::NotStarted => 1,
+        api::snapshot::QuestListStatus::InProgress => 2,
+        api::snapshot::QuestListStatus::Complete => 3,
+        api::snapshot::QuestListStatus::Unknown => 4,
+    }
+}
+
+fn knowledge_parts(value: &api::selected::Knowledge<Arc<str>>) -> (&str, &str) {
+    match value {
+        api::selected::Knowledge::Known(value) => (value, ""),
+        api::selected::Knowledge::Partial { known, gaps } => (
+            known,
+            gaps.first().map_or("", |gap| gap.code.as_ref()),
+        ),
+        api::selected::Knowledge::Unknown(gap) => ("", gap.code.as_ref()),
+    }
+}
+
+fn progress_row_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &crate::api_progress::QuestProgressRow,
+) -> WIPOffset<QuestProgressRow<'b>> {
+    let quest = b.create_string(&row.quest);
+    let display = b.create_string(&row.display);
+    let (stage_value, stage_gap) = knowledge_parts(&row.stage);
+    let stage = b.create_string(stage_value);
+    let stage_gap = b.create_string(stage_gap);
+    let (rule_value, rule_gap) = knowledge_parts(&row.rule);
+    let rule = b.create_string(rule_value);
+    let rule_gap = b.create_string(rule_gap);
+    let binding = b.create_string(&row.binding);
+    let role = row.role.as_deref().map(|value| b.create_string(value));
+    let flags = row
+        .flags
+        .iter()
+        .map(|flag| {
+            let name = b.create_string(flag.flag.0.as_ref());
+            let count = flag.count.map_or(-1, |count| {
+                assert!(
+                    count <= MAX_PROGRESS_FLAG_COUNT,
+                    "quest progress flag count exceeds the nine-digit wire bound"
+                );
+                count as i32
+            });
+            let mut table = ProgressFlagRowBuilder::new(b);
+            table.add_flag(name);
+            table.add_truth(progress_truth_code(flag.truth));
+            table.add_count(count);
+            table.finish()
+        })
+        .collect::<Vec<_>>();
+    let flags = b.create_vector(&flags);
+
+    let mut table = QuestProgressRowBuilder::new(b);
+    table.add_quest(quest);
+    table.add_display(display);
+    table.add_colour(progress_colour_code(row.colour));
+    table.add_stage(stage);
+    table.add_stage_gap(stage_gap);
+    table.add_complete(progress_truth_code(row.complete));
+    table.add_rule(rule);
+    table.add_rule_gap(rule_gap);
+    table.add_flags(flags);
+    table.add_evidence_run(row.evidence.run.run);
+    table.add_evidence_session(row.evidence.run.session);
+    table.add_evidence_tick(row.evidence.tick);
+    table.add_evidence_sequence(row.evidence.sequence);
+    table.add_journal_read(row.journal_read);
+    table.add_binding(binding);
+    if let Some(role) = role {
+        table.add_role(role);
+    }
+    table.finish()
+}
+
+fn api_progress_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    page: &crate::api_progress::ProgressPage,
+) -> WIPOffset<ApiProgress<'b>> {
+    use crate::api_progress::ProgressPage;
+    let (reason, row) = match page {
+        ProgressPage::Reading { .. } => (None, None),
+        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row))),
+        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None),
+    };
+    let mut table = ApiProgressBuilder::new(b);
+    table.add_request_id(page.token());
+    table.add_kind(page.kind());
+    if let Some(reason) = reason {
+        table.add_reason(reason);
+    }
+    if let Some(row) = row {
+        table.add_row(row);
+    }
     table.finish()
 }
 
