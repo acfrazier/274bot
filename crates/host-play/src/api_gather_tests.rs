@@ -219,7 +219,7 @@ fn attached_client(tile: WorldTile) -> (Client, TcpListener) {
         Arc::new(cache),
         Arc::new(Vec::new()),
         Arc::new(Vec::new()),
-        client::ClientRevision::R289,
+        ClientRevision::R289,
     );
     client.stream = Some(stream);
     client.ingame = true;
@@ -229,8 +229,6 @@ fn attached_client(tile: WorldTile) -> (Client, TcpListener) {
     client.map_build_base_z = tile.z.saturating_sub(5);
     client.local_player = Some(ClientPlayer::at(5, 5));
     client.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
-    client.bump_gens(client::io::ServerProt::PLAYER_INFO);
-    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
     (client, listener)
 }
 
@@ -286,8 +284,8 @@ fn observe_frame(
     names: &Arc<api::obj_names::ObjNames>,
     policy: &mut host::ScriptRunPolicy,
 ) -> Vec<u8> {
-    let checkpoint = api::interact::Driver::packet_checkpoint(client)
-        .expect("R289 packet checkpoint");
+    let checkpoint =
+        api::interact::Driver::packet_checkpoint(client).expect("R289 packet checkpoint");
     script_observe_cached(
         client,
         SLOT,
@@ -332,7 +330,14 @@ fn probe(scripts: &ScriptWall, expression: &str) -> serde_json::Value {
 
 fn force_watchdog_sampling(slot: &mut script::SlotScript, here: WorldTile) {
     let now = Instant::now();
-    slot.feed_watchdog(now, Some((here.x, here.z, here.level)), &[], false, true, &[]);
+    slot.feed_watchdog(
+        now,
+        Some((here.x, here.z, here.level)),
+        &[],
+        false,
+        true,
+        &[],
+    );
     assert_eq!(
         slot.feed_watchdog(
             now + script::watchdog::WEDGE,
@@ -410,7 +415,10 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         &names,
         &mut policy,
     );
-    assert!(packets.is_empty(), "recovery hold must drop the same-batch Held row");
+    assert!(
+        packets.is_empty(),
+        "recovery hold must drop the same-batch Held row"
+    );
     let cell = script_slot(&scripts, SLOT).unwrap();
     assert!(
         cell.lock().unwrap().api_owns_foreground(),
@@ -447,8 +455,14 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         }
         tick += 1;
     }
-    assert!(native_drop_batch_seen, "the live Gatherer seat dispatches its five-item Drop batch");
-    assert!(live_held_queued, "the v2 script queued its Held row while the seat was live");
+    assert!(
+        native_drop_batch_seen,
+        "the live Gatherer seat dispatches its five-item Drop batch"
+    );
+    assert!(
+        live_held_queued,
+        "the v2 script queued its Held row while the seat was live"
+    );
 
     let cell = script_slot(&scripts, SLOT).unwrap();
     cell.lock()
@@ -467,7 +481,10 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         &names,
         &mut policy,
     );
-    assert!(stop_packets.is_empty(), "gather-stop and its same-batch Held row are drained before game dispatch");
+    assert!(
+        stop_packets.is_empty(),
+        "gather-stop and its same-batch Held row are drained before game dispatch"
+    );
     assert!(
         !cell.lock().unwrap().api_owns_foreground(),
         "Stop tears down the foreground owner"
@@ -487,14 +504,23 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
         &mut policy,
     );
     assert_eq!(
-        resumed_packets.iter().filter(|opcode| **opcode == held_op).count(),
+        resumed_packets
+            .iter()
+            .filter(|opcode| **opcode == held_op)
+            .count(),
         1,
         "after teardown the script's Held row dispatches again"
     );
     assert!(probe(&scripts, "globalThis.__afterStopSent === true") == true);
     let result = probe(&scripts, "globalThis.__runResult");
-    assert_eq!(result["kind"], "done", "run resolves with the unchanged machine envelope: {result}");
-    assert_eq!(result["value"]["end"], "stopped", "host terminal is the nested GatherEnd: {result}");
+    assert_eq!(
+        result["kind"], "done",
+        "run resolves with the unchanged machine envelope: {result}"
+    );
+    assert_eq!(
+        result["value"]["end"], "stopped",
+        "host terminal is the nested GatherEnd: {result}"
+    );
     assert!(probe(&scripts, "globalThis.__lastPage === null") == true);
 }
 
@@ -535,7 +561,10 @@ fn api_foreground_edges_drop_paused_game_rows_but_restore_unowned_rows() {
         &mut policy,
     );
     assert_eq!(
-        paused_unowned.iter().filter(|opcode| **opcode == held_op).count(),
+        paused_unowned
+            .iter()
+            .filter(|opcode| **opcode == held_op)
+            .count(),
         0,
         "Pause keeps an unowned game row queued"
     );
