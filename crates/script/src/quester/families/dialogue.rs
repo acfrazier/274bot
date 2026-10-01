@@ -42,6 +42,7 @@ pub struct Dialogue {
     phase: Phase,
     steps: u32,
     due_tick: u64,
+    gap_inventory: Option<u64>,
     ack_modal: i32,
     ack_page: u64,
     npc_index: i32,
@@ -60,6 +61,7 @@ impl NativeMachine for Dialogue {
             phase: Phase::Open,
             steps: 0,
             due_tick: 0,
+            gap_inventory: None,
             ack_modal: -1,
             ack_page: 0,
             npc_index: -1,
@@ -155,14 +157,24 @@ impl NativeMachine for Dialogue {
                 if obs.ready {
                     self.phase = Phase::Drive;
                     self.drive(cx, &obs)
-                } else if obs.tick >= self.due_tick {
-                    Poll::Ready(Ok(if obs.open {
-                        DialogueOutcome::Failed
-                    } else {
-                        DialogueOutcome::Completed
-                    }))
                 } else {
-                    Poll::Pending
+                    let inventory = inventory_fingerprint(cx);
+                    if inventory != self.gap_inventory {
+                        // Bulk hand-ins close the chat while the server consumes
+                        // items, then reopen it for the final page. These are
+                        // active game ticks, not the conversation's quiet end.
+                        self.gap_inventory = inventory;
+                        self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
+                    }
+                    if obs.tick >= self.due_tick {
+                        Poll::Ready(Ok(if obs.open {
+                            DialogueOutcome::Failed
+                        } else {
+                            DialogueOutcome::Completed
+                        }))
+                    } else {
+                        Poll::Pending
+                    }
                 }
             }
             Phase::Drive => self.drive(cx, &obs),
@@ -215,6 +227,7 @@ impl Dialogue {
         }
         if !obs.ready {
             self.phase = Phase::WaitGap;
+            self.gap_inventory = inventory_fingerprint(cx);
             self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
             return Poll::Pending;
         }
@@ -250,6 +263,18 @@ impl Dialogue {
         self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
         Poll::Pending
     }
+}
+
+fn inventory_fingerprint(cx: &ActionContext<'_>) -> Option<u64> {
+    cx.snapshot().inventory().map(|inventory| {
+        let mut hash = DefaultHasher::new();
+        for item in inventory.value {
+            item.def.id.hash(&mut hash);
+            item.slot.hash(&mut hash);
+            item.count.hash(&mut hash);
+        }
+        hash.finish()
+    })
 }
 
 struct ChatObs<'a> {
