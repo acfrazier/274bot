@@ -11,10 +11,10 @@ use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
 };
-use nav::zones::ZoneExempt;
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
+use nav::zones::ZoneExempt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

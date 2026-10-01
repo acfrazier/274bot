@@ -406,7 +406,8 @@ pub enum InteractReq {
 
 /// One avoid entry of an inspect route or a walk. Catalog ids stay symbolic
 /// until the host knows the arm-time endpoints and combat level.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
 pub enum InspectAvoidWire {
     Rect {
         min_x: i32,

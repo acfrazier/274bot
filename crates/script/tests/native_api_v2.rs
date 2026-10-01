@@ -874,6 +874,7 @@ export function tick(api) {
             allow_bank_fetch,
             avoid,
             request_id,
+            ..
         } => {
             assert_eq!((*from_x, *from_z, *from_level), (2763, 3233, 0));
             assert_eq!((*x, *z, *level), (2803, 3208, 0));

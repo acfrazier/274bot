@@ -557,9 +557,7 @@ where
                             route_state,
                             route_exclusions(avoid, cross),
                         ) {
-                            Ok((opts, exclusions)) => {
-                                (opts.zones, exclusions.avoid, false)
-                            }
+                            Ok((opts, exclusions)) => (opts.zones, exclusions.avoid, false),
                             Err(reason) => {
                                 host_log!(
                                     Category::NavTrace,
