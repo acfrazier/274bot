@@ -1,0 +1,149 @@
+{
+  "schema": 2,
+  "id": "runemysteries",
+  "display_name": "Rune Mysteries",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "air_talisman", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "research_package", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "research_notes", "qty": 1, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:air_talisman", "obj:research_package", "obj:research_notes"],
+    "owns_inventory": false
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:runemysteries",
+    "progress": {
+      "colour": { "not_started": "runemysteries:0", "in_progress": "runemysteries:1", "complete": "runemysteries:2" },
+      "rules": [],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "runemysteries:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start-duke", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "duke_of_lumbridge",
+            "anchor": { "tile": [3212, 3220, 1], "source": "A defs/runemysteries.ts:6" },
+            "leash": 6,
+            "prefer": ["Have you any quests for me?", "Sure, no problem."]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "runemysteries", "is": "in_progress" } } }
+        }]
+      },
+      {
+        "stage": "runemysteries:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-bank", "kind": "bank", "version": 1,
+            "args": { "op": "scan", "at": "quest_bank" },
+            "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-notes", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "research_notes", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_notes" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+          },
+          {
+            "id": "withdraw-package", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "research_package", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "research_package" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } }
+          },
+          {
+            "id": "withdraw-talisman", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "air_talisman", "qty": 1 }] },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "air_talisman" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } }
+          },
+          {
+            "id": "deliver-notes", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "head_wizard",
+              "anchor": { "tile": [3108, 9572, 0], "source": "A defs/runemysteries.ts:7" },
+              "leash": 8, "prefer": ["I'm looking for the head wizard.", "Ok, here you are.", "Yes, certainly."]
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } } },
+            "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "runemysteries", "is": "complete" } } }
+          },
+          {
+            "id": "deliver-package", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "aubury",
+              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
+              "leash": 8, "prefer": ["I have been sent here with a package for you."]
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } },
+            "settle": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } } }
+          },
+          {
+            "id": "collect-notes", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "aubury",
+              "anchor": { "tile": [3253, 3402, 0], "source": "A defs/runemysteries.ts:8" },
+              "leash": 8, "prefer": []
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+          },
+          {
+            "id": "deliver-talisman", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "head_wizard",
+              "anchor": { "tile": [3108, 9572, 0], "source": "A defs/runemysteries.ts:7" },
+              "leash": 8, "prefer": ["I'm looking for the head wizard.", "Ok, here you are.", "Yes, certainly."]
+            },
+            "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } }
+          },
+          {
+            "id": "recover-duke", "kind": "talk", "version": 1,
+            "args": {
+              "npc": "duke_of_lumbridge",
+              "anchor": { "tile": [3212, 3220, 1], "source": "A defs/runemysteries.ts:17,39" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+            ] },
+            "settle": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "air_talisman" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_package" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "research_notes" } } }
+            ] }
+          }
+        ]
+      },
+      { "stage": "runemysteries:2", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

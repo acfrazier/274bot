@@ -378,13 +378,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
         }
         // `requested_route == armed`: the arrival above is for this walk.
         if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
-            // The isolate settles the walk wait on this same arrival rule
-            // (walk_wait.rs), so the card has already moved on. Every
-            // further hop would be a click the card never sent; a stall
-            // re-send walks the player out of the fight the card started at
-            // the edge of the radius.
+            // End the follow without another hop, but retain its terminal
+            // for the owner: arrival may no longer hold on its next frame.
             bot.traveller.clear();
-            bot.route = None;
+            settle_route_end(bot, false);
         } else if let Some(route) = bot.route.clone() {
             let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
                 matches!(
