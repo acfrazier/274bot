@@ -1008,6 +1008,7 @@ pub(crate) fn collect_hunter_inputs(
             huntrange,
             wanderrange,
             maxrange,
+            attackrange,
             stationary,
             never_wanders,
             check_nottoostrong: mode

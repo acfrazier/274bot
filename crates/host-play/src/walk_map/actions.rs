@@ -990,6 +990,7 @@ impl MapCommand {
                         &detail,
                         false,
                     );
+                }
                 return Err(ActionError::BlockedByZones);
             }
         }

@@ -733,11 +733,11 @@ impl<'a> ZoneFilter<'a> {
     /// [`Self::blocks`]. Overlapping zones are independent: exempting Z1 never
     /// grants passage through an unexempted active Z2 in their overlap.
     #[inline]
-    pub fn blocking_at(
-        &self,
-        wilderness: &WildernessRules,
+    pub fn blocking_at<'b>(
+        &'b self,
+        wilderness: &'b WildernessRules,
         tile: WorldTile,
-    ) -> impl Iterator<Item = u16> + '_ {
+    ) -> impl Iterator<Item = u16> + 'b {
         self.table.at(tile).filter(move |index| {
             if self.all || self.masked(*index) {
                 return false;

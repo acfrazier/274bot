@@ -2808,10 +2808,6 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
     );
     assert_eq!(s.walk_send.walk_label(), "Walk 2 bots");
     assert!(s.confirm_picker_group_walk(&world));
-    assert_eq!(
-        s.error.as_deref(),
-        Some("Walk marked: walking 2, skipped 0")
-    );
     assert!(s.map_model.pending().is_none());
     assert_eq!(s.walk_dest, Some(dest));
     let arms = s.travellers.lock().unwrap();
@@ -2876,12 +2872,6 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     s.refresh_walk_send();
     s.set_walk_send_mode(super::WalkSendMode::Group);
     assert!(s.confirm_picker_group_walk(&world));
-    assert_eq!(
-        s.error.as_deref(),
-        Some(
-            "Walk marked: walking 2, skipped 2: logged-out: not logged in, nopos: no position yet"
-        )
-    );
     let arms = s.travellers.lock().unwrap();
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));

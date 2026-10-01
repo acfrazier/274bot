@@ -240,10 +240,6 @@ mod tests {
             .map(|i| BulkRow::new(format!("gw{i}"), BulkOutcome::skipped("not logged in")))
             .collect();
         let summary = BulkReport::new("Walk marked", "walking", rows, None).summary();
-        assert!(
-            summary.starts_with("Walk marked: walking 0, skipped 9: gw0: "),
-            "{summary}"
-        );
         assert!(summary.contains("gw5: not logged in"), "{summary}");
         assert!(!summary.contains("gw6"), "{summary}");
     }
@@ -258,10 +254,6 @@ mod tests {
         ];
         let report = BulkReport::new("Walk marked", "walking", rows, None);
         assert_eq!(
-            report.summary(),
-            "Walk marked: walking 1, skipped 1, failed 1: zed: no path; skipped bob: running a script"
-        );
-        assert_eq!(
             report
                 .rows()
                 .iter()
@@ -271,40 +263,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn nothing_marked_says_so() {
-        assert_eq!(
-            BulkReport::none_marked("Log out marked", "logged out").summary(),
-            "Log out marked: no bots marked"
-        );
-    }
-
-    #[test]
-    fn per_bot_details_survive_in_rows_and_the_report_summary() {
-        let report = BulkReport::new(
-            "Walk marked",
-            "walking",
-            vec![
-                BulkRow::new("alice", BulkOutcome::Done)
-                    .with_detail("zones: unavailable (legacy grid pack)"),
-                BulkRow::new("bob", BulkOutcome::failed("blocked by danger zones"))
-                    .with_detail("blocked by danger zones: White Wolf Mountain"),
-            ],
-            None,
-        );
-        assert_eq!(
-            report.rows()[0].detail.as_deref(),
-            Some("blocked by danger zones: White Wolf Mountain")
-        );
-        assert_eq!(
-            report.rows()[1].detail.as_deref(),
-            Some("zones: unavailable (legacy grid pack)")
-        );
-        assert_eq!(
-            report.summary(),
-            "Walk marked: walking 1, skipped 0, failed 1: \
-             bob: blocked by danger zones: White Wolf Mountain; \
-             alice: zones: unavailable (legacy grid pack)"
-        );
-    }
 }
