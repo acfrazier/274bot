@@ -123,31 +123,34 @@ fn write_packs(dir: &Path, packs: &[Vec<u8>]) {
     }
 }
 
-/// A complete retained snapshot for `packs` (jags + one-record bins + the
-/// manifest completion marker), as an earlier preparation would have left it.
-fn snapshot(root: &Path, packs: &[Vec<u8>]) -> PathBuf {
-    let version = client::unpack::version_hash(&packs[4]);
-    let dir = root.join(&version);
-    write_packs(&dir, packs);
-    let mut manifest = format!(
-        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
-        dir.display()
-    );
-    for (name, bytes) in JAG_SLOTS.iter().zip(packs) {
-        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+/// Seed retained inputs through the real verified publisher, not a size-only
+/// marker. These synthetic records isolate profile binding from a game server.
+fn snapshot(root: &Path, revision: u16, packs: &[Vec<u8>]) -> PathBuf {
+    struct FixtureEntries;
+    impl client::unpack::EntrySource for FixtureEntries {
+        fn fetch_entries(
+            &mut self,
+            _archive: i32,
+            files: &[i32],
+        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+        }
     }
-    for name in ["models", "anims", "midi", "maps"] {
-        let mut bin = 0u32.to_le_bytes().to_vec();
-        bin.extend_from_slice(&4u32.to_le_bytes());
-        bin.extend_from_slice(b"body");
-        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
-        manifest += &format!(
-            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
-            bin.len()
-        );
-    }
-    std::fs::write(dir.join("manifest"), manifest).unwrap();
-    dir
+    let transfer = nav::manifest::hash_bytes(&packs[4]);
+    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let input = root.join("fixture-packs");
+    write_packs(&input, packs);
+    let out = root
+        .join(format!("revision-{revision}"))
+        .join(&negotiated)
+        .join(&transfer);
+    let manifest = client::unpack::fetch_snapshot(
+        &input.to_string_lossy(),
+        &out.to_string_lossy(),
+        &mut FixtureEntries,
+    )
+    .unwrap();
+    PathBuf::from(manifest.dir)
 }
 
 fn crc_body(packs: &[Vec<u8>]) -> Vec<u8> {
@@ -240,7 +243,7 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
     let public = packs(2);
     write_packs(&cache, &local);
     // Earlier complete snapshot, independently keyed by negotiated transfer.
-    let retained = snapshot(&root.join("unpack"), &public);
+    let retained = snapshot(&root.join("unpack"), 274, &public);
     let expected_identity = compute_decoded_content_identity(274, &retained, &retained).unwrap();
 
     std::fs::write(
@@ -249,7 +252,7 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
             .unwrap(),
     )
     .unwrap();
-    let (port, server) = serve_packs(public.clone(), 1);
+    let (port, server) = serve_packs(public.clone(), 0);
     let selection = selection(&root, "274", port);
     let profile = selection.bind_runtime().unwrap();
     server.join().unwrap();
@@ -315,7 +318,7 @@ fn runtime_bind_refuses_wrong_archive_same_revision_manifest() {
     let cache = root.join("cache");
     let local = packs(1);
     write_packs(&cache, &local);
-    snapshot(&root.join("unpack"), &local);
+    snapshot(&root.join("unpack"), 274, &local);
 
     let wrong = host_play::profile::CacheManifest {
         revision: 274,
@@ -349,7 +352,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let root = TempRoot::new("nav-source");
     let p = packs(1);
     write_packs(&root.join("cache"), &p);
-    let retained = snapshot(&root.join("unpack"), &p);
+    let retained = snapshot(&root.join("unpack"), 289, &p);
     let cache = host_play::profile::CacheManifest::capture(289, &root.join("cache")).unwrap();
     std::fs::write(
         root.join("cache-manifest.json"),
