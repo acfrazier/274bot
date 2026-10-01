@@ -175,7 +175,8 @@ pub struct ConsumptionFact {
 }
 
 impl ConsumptionFact {
-    fn fixed_hp_heal(&self) -> Option<i32> {
+    /// Returns this row's fixed hitpoint heal when its canonical qualification is valid.
+    pub fn fixed_hp_heal(&self) -> Option<i32> {
         let heal = self.stat_heal.as_slice();
         (self.qualification == "fixed_hp_heal"
             && heal.len() == 1
@@ -1821,7 +1822,6 @@ impl SelectedGameData {
     pub fn melee_mode_varp(&self) -> Option<i32> {
         self.melee_mode_varp
     }
-
 
     pub fn loc_names(&self) -> Option<&LocNameFacts> {
         self.loc_names.as_ref()

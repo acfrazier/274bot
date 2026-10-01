@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parsePack, requireGatherText, walkContentFiles } from './common.ts';
+import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
 import { buildSpellMaxHits, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
 
-export const npcNamesContentFiles = ['pack/npc.pack'];
+export const npcNamesContentFiles = ['pack/npc.pack', 'scripts/skill_combat/configs/combat.param'];
 
 type NpcBlock = {
     name: string;
@@ -48,6 +48,21 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
 }
 
 function parseNpcFiles(content: string) {
+    const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const defaultParam = (name: string) => {
+        const definition = definitions.get(name);
+        if (definition?.type !== undefined && definition.type !== 'int') {
+            throw new Error(`npc_names: ${name} is not an integer parameter`);
+        }
+        const value = parseParamInt(definition?.default, `${name} default`);
+        if (name === 'attackrate' && value !== null && (value < 0 || value > 255)) {
+            throw new Error(`npc_names: ${name} default is out of range: ${value}`);
+        }
+        return value;
+    };
+    const strengthbonus = defaultParam('strengthbonus');
+    const rangebonus = defaultParam('rangebonus');
+    const attackrate = defaultParam('attackrate');
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -74,10 +89,10 @@ function parseNpcFiles(content: string) {
                     category: null,
                     strength: null,
                     ranged: null,
-                    strengthbonus: null,
-                    rangebonus: null,
+                    strengthbonus,
+                    rangebonus,
                     undead: null,
-                    attackrate: null,
+                    attackrate,
                     params: new Map(),
                 };
                 blocks.set(name, current);

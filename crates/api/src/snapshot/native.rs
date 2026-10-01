@@ -517,6 +517,7 @@ pub struct CombatView {
 mod tests {
     use super::*;
     use crate::selected::RunKey;
+    use crate::snapshot::HitmarkView;
 
     #[test]
     fn unavailable_fields_never_look_like_observed_empty_fields() {

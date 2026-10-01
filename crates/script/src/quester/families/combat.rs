@@ -196,24 +196,25 @@ pub(super) fn compile(
         .transpose()?;
     let tables = build_tables(cx)?;
 
-    let mut request = CombatRequest::default();
-    request.target = target;
-    request.tactic = Tactic::Open;
-    request.style = Style::Melee;
-    request.melee_mode = args.melee_mode;
-    request.kit = kit;
-    request.spells = None;
-    request.stand = stand;
-    request.search_bounds = search_bounds;
-    request.engage_radius = args.tactic.engage_radius;
-    request.lost_radius = args.lost_radius;
-    request.budget_ticks = args.kill_budget_ticks;
-    request.allow = Allowances::default();
-    request.fallback = Fallback::Abort;
-    request.intruder = IntruderPolicy::default();
-    request.retaliate = args.tactic.auto_retaliate;
-    request.prayer_mode = PrayerMode::Hold;
-    request.until_ticks = 0;
+    let request = CombatRequest {
+        target,
+        tactic: Tactic::Open,
+        style: Style::Melee,
+        melee_mode: args.melee_mode,
+        kit,
+        spells: None,
+        stand,
+        search_bounds,
+        engage_radius: args.tactic.engage_radius,
+        lost_radius: args.lost_radius,
+        budget_ticks: args.kill_budget_ticks,
+        allow: Allowances::default(),
+        fallback: Fallback::Abort,
+        intruder: IntruderPolicy::default(),
+        retaliate: args.tactic.auto_retaliate,
+        prayer_mode: PrayerMode::Hold,
+        until_ticks: 0,
+    };
 
     Ok(Arc::new(CombatPlan {
         request: Arc::new(request),
@@ -474,6 +475,10 @@ enum Phase {
     Loot,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Keep native machines inline instead of allocating on every combat/loot transition."
+)]
 enum Action {
     Combat(ActionHandle<Combat>),
     Loot(ActionHandle<Reach>),
@@ -624,7 +629,7 @@ impl CombatRun {
             receipt: self
                 .last_outcome
                 .as_ref()
-                .and_then(|outcome| outcome.receipt.as_ref().map(|receipt| Arc::clone(receipt))),
+                .and_then(|outcome| outcome.receipt.as_ref().map(Arc::clone)),
         }))
     }
 }

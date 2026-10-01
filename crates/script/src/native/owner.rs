@@ -107,6 +107,7 @@ impl Owner {
                 return false;
             };
             let reserved = self.live()
+                && !self.batch_live(request)
                 && self.batch.iter().any(|slot| {
                     slot.compare_exchange(0, request.get(), Ordering::AcqRel, Ordering::Acquire)
                         .is_ok()

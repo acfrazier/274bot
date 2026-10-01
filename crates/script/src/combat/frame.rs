@@ -44,8 +44,12 @@ impl<'a> Frame<'a> {
         let hitmarks = snapshot.hitmarks()?.value;
         let prayers = snapshot.prayers_active()?.value;
         let varps = snapshot.varps()?.value;
-        let combat_tab = snapshot.side_tabs().and_then(|tabs| tabs.value.iter()
-            .find(|tab| tab.index == 0 && tab.available).map(|tab| tab.root_component_id));
+        let combat_tab = snapshot.side_tabs().and_then(|tabs| {
+            tabs.value
+                .iter()
+                .find(|tab| tab.index == 0 && tab.available)
+                .map(|tab| tab.root_component_id)
+        });
         let in_combat = snapshot.in_combat()?.value;
         Some(Self {
             here,

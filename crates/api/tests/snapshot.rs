@@ -10,9 +10,9 @@ use api::snapshot::{
 use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
+use client::dash3d::client_proj::ClientProj;
 use client::dash3d::{ClientObj, ClientPlayer, CollisionFlag};
 use client::datastruct::LinkList;
-use client::dash3d::client_proj::ClientProj;
 use client::io::{Packet, ServerProt};
 use std::sync::Arc;
 
@@ -230,8 +230,10 @@ fn actor_onsets_and_player_weapon_rebuild_from_client_fields() {
     local.entity.damage_cycles = [140, 0, -1, 139];
     client.local_player = Some(local);
 
-    let mut remote = ClientPlayer::default();
-    remote.name = Some("bob".into());
+    let mut remote = ClientPlayer {
+        name: Some("bob".into()),
+        ..ClientPlayer::default()
+    };
     remote.appearance[3] = 0x200 + 83;
     remote.entity.primary_anim = 30;
     remote.entity.primary_anim_frame = 4;
@@ -293,7 +295,15 @@ fn actor_onsets_and_player_weapon_rebuild_from_client_fields() {
 
     assert_eq!(snapshot.local_player().unwrap().player.weapon, Some(0));
     assert_eq!(snapshot.local_player().unwrap().player.actor.animation, 30);
-    assert_eq!(snapshot.local_player().unwrap().player.actor.animation_frame, 0);
+    assert_eq!(
+        snapshot
+            .local_player()
+            .unwrap()
+            .player
+            .actor
+            .animation_frame,
+        0
+    );
     assert_eq!(
         snapshot
             .local_player()

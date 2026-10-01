@@ -1,8 +1,11 @@
 use super::*;
-use crate::native::{HostEffect, InteractionReceipt};
+use crate::native::{
+    ActionContext, ActionError, HostEffect, InteractionReceipt, NativeActions, NativeMachine,
+};
 use crate::quester::families::tests::with_tick;
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
-use api::snapshot::{GameSnapshot, QuestStatusView};
+use api::snapshot::{GameSnapshot, QuestStatusView, VarpView};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -134,6 +137,204 @@ fn finish_read(
     ));
     snapshot.seed_main_modal(-1, vec![]);
     drive(script, snapshot, ledger, tick + 3);
+}
+
+struct PendingNativeAction {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl NativeMachine for PendingNativeAction {
+    type Args = Arc<AtomicBool>;
+    type Output = ();
+
+    fn begin(cancelled: Self::Args, _cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self { cancelled })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        match cx.emit(crate::shim::InteractReq::IfButton { component_id: 9000 }) {
+            Ok(_) => Poll::Pending,
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+}
+
+struct OwnedActionStep {
+    handle: Option<ActionHandle<PendingNativeAction>>,
+}
+
+impl StepRun for OwnedActionStep {
+    fn poll(&mut self, _cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        Poll::Pending
+    }
+
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(handle) = self.handle.take() {
+            actions.cancel(handle);
+        }
+    }
+}
+
+fn random_event() -> DetectedRandom {
+    DetectedRandom {
+        kind: api::random::RandomKind::Dialog,
+        name: "genie".into(),
+        ours: true,
+        npc_index: Some(0),
+    }
+}
+
+#[test]
+fn random_event_revokes_active_step_owner_and_rereads_progress() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(script.progress().is_some());
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        let handle = tick
+            .actions
+            .begin::<PendingNativeAction>(Arc::clone(&cancelled), &mut tick.cx)
+            .unwrap();
+        assert!(matches!(
+            tick.actions.poll(&handle, &mut tick.cx),
+            Poll::Pending
+        ));
+        script.step = Some(Box::new(OwnedActionStep {
+            handle: Some(handle),
+        }));
+    });
+    let authority = ledger.as_ref().unwrap().outbox[0].authority();
+    assert!(authority.live());
+
+    script.attempts = 3;
+    script.journal_attempts = 2;
+    script.journal_retry_pending = true;
+    script.journal_quiet_since = NonZeroU32::new(3);
+    script.selection_since = Some(Duration::from_secs(5));
+    script.unreadable_since = Some(Duration::from_secs(6));
+    script.dirty = false;
+
+    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(!authority.live());
+    assert!(script.step.is_none());
+    assert!(script.progress.is_none());
+    assert!(script.needs_read && script.dirty && script.prayer_cleanup_pending);
+    assert_eq!(script.attempts, 0);
+    assert_eq!(script.journal_attempts, 0);
+    assert!(!script.journal_retry_pending);
+    assert!(script.journal_quiet_since.is_none());
+    assert!(script.selection_since.is_none());
+    assert!(script.unreadable_since.is_none());
+    assert!(!script.parked);
+    assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
+
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 8, "next branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
+    assert_eq!(
+        script.last_journal().unwrap().lines[0].as_ref(),
+        "next branch"
+    );
+}
+
+#[test]
+fn random_event_revokes_journal_owner_and_discards_settlement_state() {
+    let (mut script, mut snapshot) = fixture(true);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(script.settling && script.needs_read);
+    assert!(script.last_outcome.is_some());
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    drive(&mut script, &snapshot, &mut ledger, 8);
+    assert!(script.journal.is_some());
+
+    let authority = ledger.as_ref().unwrap().outbox[0].authority();
+    assert!(authority.live());
+    script.journal_attempts = 2;
+    script.journal_retry_pending = true;
+    script.journal_quiet_since = NonZeroU32::new(3);
+    script.dirty = false;
+
+    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    assert!(!authority.live());
+    assert!(script.journal.is_none());
+    assert!(script.progress.is_none());
+    assert!(script.last_outcome.is_none());
+    assert!(!script.settling);
+    assert_eq!(script.settle_deadline, Duration::ZERO);
+    assert_eq!(script.journal_attempts, 0);
+    assert!(!script.journal_retry_pending);
+    assert!(script.journal_quiet_since.is_none());
+    assert!(script.needs_read && script.dirty && script.prayer_cleanup_pending);
+    assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
+
+    drive(&mut script, &snapshot, &mut ledger, 9);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 10, "next branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
+    assert!(!script.settling);
+}
+
+#[test]
+fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
+    let (mut script, mut snapshot) = fixture(true);
+    let prayer_varp = script.selected.prayers()[0].varp;
+    snapshot.seed_varps(vec![VarpView {
+        index: prayer_varp,
+        value: 1,
+    }]);
+    script.parked = true;
+    script.park_reason = "pre-existing park";
+    script.last_error = Some(Arc::from("pre-existing failure"));
+    let mut ledger = None;
+
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    drive(&mut script, &snapshot, &mut ledger, 2);
+    assert!(script.clear_prayers.is_some());
+    let authority = ledger.as_ref().unwrap().outbox[0].authority();
+    assert!(authority.live());
+
+    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    assert!(!authority.live());
+    assert!(script.clear_prayers.is_none());
+    assert!(script.prayer_cleanup_pending);
+    assert!(script.needs_read && script.dirty);
+    assert!(script.parked);
+    assert_eq!(script.park_reason, "pre-existing park");
+    assert_eq!(script.last_error.as_deref(), Some("pre-existing failure"));
+
+    assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
+    script.retry().unwrap();
+    drive(&mut script, &snapshot, &mut ledger, 3);
+    assert!(script.clear_prayers.is_some());
+    drive(&mut script, &snapshot, &mut ledger, 4);
+    let resumed_authority = ledger.as_ref().unwrap().outbox[0].authority();
+    assert!(resumed_authority.live());
+    assert!(matches!(
+        ack(&mut ledger, 4),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+    ));
+    snapshot.seed_varps(vec![VarpView {
+        index: prayer_varp,
+        value: 0,
+    }]);
+    drive(&mut script, &snapshot, &mut ledger, 5);
+    assert!(script.clear_prayers.is_none());
+    assert!(!script.prayer_cleanup_pending);
+    assert!(script.journal.is_some());
+    finish_read(&mut script, &mut snapshot, &mut ledger, 6, "seeded branch");
+    assert!(!script.parked);
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
 }
 
 #[test]

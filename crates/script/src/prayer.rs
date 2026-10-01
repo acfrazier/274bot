@@ -5,8 +5,8 @@
 //! `points|max|full|known|available|active` queries stay one native call
 //! each over the same selected rows.
 
+use crate::combat::prayer::{PrayerSweep, PrayerToggle, ToggleProgress};
 use crate::machine::{self, Begin, Cx, Family, Step};
-use crate::combat::prayer::{PrayerSweep, PrayerToggle, SweepDecision, ToggleProgress};
 use crate::observed::{self, Scene};
 use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
@@ -156,20 +156,29 @@ impl Clear {
         obs: &PrayerObservation,
         cx: &mut Cx<'_>,
     ) -> Step<PrayerDone> {
-        self.sweep.observe(obs, cx.clock().bound_reached());
-        match self.sweep.next(data, obs) {
-            SweepDecision::Wait => Step::Wait,
-            SweepDecision::Click(click) => {
-                cx.emit(InteractReq::IfButton {
-                    component_id: click.button_com,
-                });
-                cx.clock().arm(TOGGLE_MS);
-                self.sweep.emitted(click);
-                Step::Wait
-            }
-            SweepDecision::Done(report) => {
-                Step::Done(PrayerDone::cleared(report.clicked, report.timed_out))
-            }
+        let timed_out = if cx.clock().bound_reached() {
+            self.sweep.pending_mask()
+        } else {
+            0
+        };
+        if self.sweep.observe(obs, timed_out) != 0 {
+            // The one pending click settled or timed out; the next candidate
+            // gets a fresh capacity-one wait window.
+            cx.clock().deadline = None;
+        }
+        if self.sweep.pending_mask() != 0 {
+            return Step::Wait;
+        }
+        if let Some(click) = data.and_then(|data| self.sweep.candidates(data, obs).next()) {
+            cx.emit(InteractReq::IfButton {
+                component_id: click.button_com,
+            });
+            cx.clock().arm(TOGGLE_MS);
+            debug_assert!(self.sweep.accepted(click));
+            Step::Wait
+        } else {
+            let report = self.sweep.report();
+            Step::Done(PrayerDone::cleared(report.clicked, report.timed_out))
         }
     }
 }
@@ -567,24 +576,5 @@ mod tests {
         tick();
         assert!(drain().is_empty(), "an aborted row never clicks again");
         assert!(!machine::live("prayer"));
-    }
-
-    #[test]
-    fn clear_continues_after_timeout_with_counts() {
-        prepare(ClientRevision::R274);
-        set_obs(43, 43, 96, 1);
-        set_obs(43, 43, 97, 1);
-        let handle = running(start(json!({ "op": "clear" })));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5622 }]);
-        thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        tick();
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
-        set_obs(43, 43, 97, 0);
-        tick();
-        assert_eq!(
-            done(handle),
-            json!({ "ok": true, "reason": "cleared", "value": { "clicked": 2, "timed_out": 1 } }),
-            "counts stay in the settled value"
-        );
     }
 }

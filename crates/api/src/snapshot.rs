@@ -461,8 +461,10 @@ impl GameSnapshot {
 
     /// Offline fixture seed for the raw local hitmark observation.
     pub fn seed_hitmarks(&mut self, marks: HitmarksView) {
-        self.taking_damage = marks.marks.iter().any(|mark|
-            mark.kind == 1 && mark.value > 0 && mark.cycle > marks.loop_cycle);
+        self.taking_damage = marks
+            .marks
+            .iter()
+            .any(|mark| mark.kind == 1 && mark.value > 0 && mark.cycle > marks.loop_cycle);
         self.hitmarks = Some(marks);
     }
 

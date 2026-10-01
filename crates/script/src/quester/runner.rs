@@ -99,9 +99,14 @@ fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutc
         value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
     });
     if let Some(mode) = report.melee_mode_fallback {
-        static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| [
-            Arc::from("accurate"), Arc::from("aggressive"), Arc::from("defensive"), Arc::from("controlled"),
-        ]);
+        static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| {
+            [
+                Arc::from("accurate"),
+                Arc::from("aggressive"),
+                Arc::from("defensive"),
+                Arc::from("controlled"),
+            ]
+        });
         fields.push(StatusField {
             key: "combat_melee_mode_fallback",
             label: "Combat melee-mode fallback",
@@ -1143,7 +1148,25 @@ impl Script for Quester {
         }
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.step = None;
+        self.clear_prayers = None;
+        self.journal = None;
+        self.needs_read = true;
         self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
+        self.advances = false;
+        self.attempts = 0;
+        self.progress = None;
+        self.settling = false;
+        self.settle_deadline = Duration::ZERO;
+        self.unreadable_since = None;
+        self.journal_attempts = 0;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
+        self.selection_since = None;
+        self.waiting = None;
+        self.dirty = true;
         RandomClaim::Host
     }
 

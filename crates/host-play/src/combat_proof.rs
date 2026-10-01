@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
 use script::native::{HostAuthority, NativePhase, ScriptStatus, StatusValue};
 use script::shim::InteractReq;
 use serde_json::{json, Value};
@@ -14,7 +15,6 @@ fn captures() -> &'static Mutex<HashMap<String, Arc<Mutex<CombatCapture>>>> {
 
 #[derive(Default)]
 pub(crate) struct CombatCapture {
-    pub(crate) case: String,
     pub(crate) frames: Vec<Value>,
     pub(crate) statuses: Vec<Value>,
     pub(crate) actions: Vec<Value>,
@@ -137,14 +137,10 @@ pub(crate) fn mark_invalid(account: &str, reason: impl Into<String>) {
 pub(crate) fn record_interaction(
     account: &str,
     tick: u64,
-    run: impl std::fmt::Debug,
-    request_id: u64,
-    batch: u64,
+    (request_id, batch): (u64, u64),
     authority: &HostAuthority,
     request: &InteractReq,
-    accepted: bool,
-    decoded: bool,
-    wire_opcodes: &[i32],
+    (accepted, decoded, wire_opcodes): (bool, bool, &[u8]),
     snapshot: &GameSnapshot,
 ) {
     let Some(capture) = capture_for(account) else {
@@ -157,7 +153,7 @@ pub(crate) fn record_interaction(
         "sequence": sequence,
         "kind": "interaction",
         "tick": tick,
-        "run": format!("{run:?}"),
+        "run": format!("{:?}", authority.run()),
         "request_id": request_id,
         "batch": batch,
         "request": request_value,
@@ -237,7 +233,7 @@ pub(crate) fn record_walk(
     tick: u64,
     run: impl std::fmt::Debug,
     request_id: u64,
-    request: &impl std::fmt::Debug,
+    request: &script::native::WalkRequest,
     snapshot: &GameSnapshot,
 ) {
     let Some(capture) = capture_for(account) else {
@@ -251,7 +247,10 @@ pub(crate) fn record_walk(
         "tick": tick,
         "run": format!("{run:?}"),
         "request_id": request_id,
-        "request": format!("{request:?}"),
+        "request": {
+            "target": { "x": request.target.x, "z": request.target.z, "level": request.target.level },
+            "radius": request.radius,
+        },
         "dispatch": "queued",
         "accepted": null,
         "wire_decoded": false,
@@ -448,7 +447,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot) -> Value {
         })
         .collect::<Vec<_>>();
     let prayer_varps = (83..=97)
-        .map(|index| json!({"index": index, "value": snapshot.varp(index)}))
+        .map(|index| json!({"index": index, "value": snapshot.varps().iter().find(|row| row.index == index).map(|row| row.value)}))
         .collect::<Vec<_>>();
     let local = snapshot.local_player().map(|player| {
         json!({

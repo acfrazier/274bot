@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
-import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
+import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
 import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
@@ -974,26 +974,6 @@ export function parseIdentifyHerbPairs(text: string) {
     return pairs;
 }
 
-type ParamDef = { type?: string; default?: string };
-
-export function parseParamDefinitions(text: string) {
-    const defs = new Map<string, ParamDef>();
-    let current: string | null = null;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
-        if (line.startsWith('[') && line.endsWith(']')) {
-            current = line.slice(1, -1);
-            defs.set(current, {});
-            continue;
-        }
-        if (!current) continue;
-        const entry = defs.get(current)!;
-        if (line.startsWith('type=')) entry.type = line.slice('type='.length);
-        else if (line.startsWith('default=')) entry.default = line.slice('default='.length);
-    }
-    return defs;
-}
 
 /** Default Herblore level from pinned `identify.param`, not obj cost. */
 export function identifiedHerbLevelDefault(content: string) {

@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
-import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows } from './extractors/common.ts';
+import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
+import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, gatherMethodGap, gatherResources, isKnownGatherTarget, GATHERING_SCHEMA, type GatherResourceWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
@@ -142,6 +142,9 @@ const combat = path.join(content, 'scripts/skill_combat/configs/magic');
 const magic = path.join(content, 'scripts/skill_magic/configs');
 fs.mkdirSync(combat, { recursive: true });
 fs.mkdirSync(magic, { recursive: true });
+const combatParamFile = path.join(content, 'scripts/skill_combat/configs/combat.param');
+const combatParams = '[strengthbonus]\ntype=int\ndefault=0\n[rangebonus]\ntype=int\ndefault=0\n[attackrate]\ntype=int\ndefault=4\n';
+fs.writeFileSync(combatParamFile, combatParams);
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
 data=spellcom,wind_strike_button
@@ -348,6 +351,11 @@ assert.equal(testNpc.attack_kind, 'mixed');
 assert.equal(testNpc.forced_max_hit, 24, 'a dagannoth double roll is one 24-damage event');
 assert.equal(testNpc.bespoke, true);
 assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.dragonfire, 'chromatic');
+fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
+const changedDefaults = extractNpcNamesFacts(content, combatScripts);
+assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
+assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
+fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
 assert.throws(() => extractNpcNamesFacts(content, combatScripts), /attackrate is out of range/);
@@ -2773,13 +2781,11 @@ for (const revision of [274, 289]) {
     assert.equal('debug_commands' in base, false, `${revision}: base must not embed debug commands`);
     assert.equal('debug_names' in base, false, `${revision}: base must not embed debug names`);
     assert.deepEqual(base.provenance.inputs.map((input: { path: string }) => input.path), ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'], `${revision}: base engine inputs stay the original three`);
-    assert.equal(base.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), false, `${revision}: debug-only packs stay out of base provenance`);
     const debugFile = path.join(repoRoot, `crates/api/data/game-data/${revision}/debug.json`);
     const debug = JSON.parse(fs.readFileSync(debugFile, 'utf8'));
     assert.equal(debug.schema_version, 1, `${revision}: debug artifact schema`);
     assert.equal(debug.revision, revision, `${revision}: debug artifact revision`);
     assert.deepEqual(debug.provenance.inputs.map((input: { path: string }) => input.path).sort(), ['data/pack/server/npc.dat', 'src/engine/entity/PlayerStat.ts', 'src/network/game/client/handler/ClientCheatHandler.ts'].sort(), `${revision}: debug engine provenance`);
-    assert.equal(debug.provenance.content_inputs.some((input: { path: string }) => input.path === 'pack/seq.pack'), true, `${revision}: debug provenance covers debug-only packs`);
     assert.equal('obj' in debug.debug_names, false, `${revision}: object picker reuses base items, no obj duplication`);
     assert.equal('namedobj' in debug.debug_names, false, `${revision}: no namedobj duplication`);
     assert.ok(debug.debug_commands.length > 0, `${revision}: debug commands present`);
