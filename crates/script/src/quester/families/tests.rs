@@ -313,7 +313,7 @@ fn bank_without_candidates_fails_before_walk_or_open() {
         ));
         assert!(ledger
             .as_ref()
-            .map_or(true, |ledger| ledger.outbox.is_empty()));
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     });
 }
 
