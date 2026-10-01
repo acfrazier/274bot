@@ -6995,6 +6995,7 @@ export default class T extends LoopingBot {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(
             *request_id, 0,
             "walkOpening starts its first native segment"
@@ -7203,6 +7204,7 @@ export default class T extends LoopingBot {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(
             *request_id, 0,
             "createReturnToAnchorTask queues walkResilient(tile, opts)"
@@ -7255,6 +7257,7 @@ export default class T extends LoopingBot {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(
             *request_id, 0,
             "walkTo queues InteractReq::Walk with an isolate request id"
@@ -7313,6 +7316,7 @@ export default class T extends LoopingBot {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => assert_ne!(
             *request_id, 0,
             "useTeleportCatalog maps onto FindOptions.allow_teleports"

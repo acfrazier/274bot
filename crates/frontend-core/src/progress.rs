@@ -85,13 +85,25 @@ mod tests {
 
     #[test]
     fn cells_show_a_dash_without_a_run_or_a_running_clock() {
-        assert_eq!(runtime_label(None), NONE);
-        assert_eq!(idle_label(None), NONE);
-        assert_eq!(levels_label(None), NONE);
         let frozen = progress(&[], None);
         assert_eq!(idle_label(Some(&frozen)), NONE, "paused: no idle time");
         assert_eq!(runtime_label(Some(&frozen)), "3h05m");
         assert_eq!(idle_label(Some(&progress(&[], Some(90)))), "1m");
+    }
+    #[test]
+    fn unarmed_slots_render_absent_progress_in_all_cells() {
+        assert_eq!(runtime_label(None), NONE, "unarmed: no run");
+        assert_eq!(idle_label(None), NONE, "unarmed: no clock");
+        assert_eq!(levels_label(None), NONE, "unarmed: no gains");
+        // An armed-but-zero run must not look absent.
+        let zero = script::ScriptProgress {
+            running_for: Duration::from_secs(0),
+            idle_for: Some(Duration::from_secs(0)),
+            gained: [0u8; script::SKILL_SLOTS],
+        };
+        assert_eq!(runtime_label(Some(&zero)), "0s");
+        assert_eq!(idle_label(Some(&zero)), "0s");
+        assert_eq!(levels_label(Some(&zero)), "+0");
     }
 
     #[test]

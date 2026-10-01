@@ -3,6 +3,9 @@
 //! (`on_is_up`). `tick` runs on the caller's pump at a game-tick edge and
 //! must return; panics are caught, never abort the process.
 
+#[cfg(feature = "load")]
+#[path = "slot/api.rs"]
+mod api_seat;
 pub(crate) mod compiled;
 mod pending;
 use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
@@ -143,6 +146,8 @@ pub struct SlotScript {
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
     preparing: Option<Box<Preparation>>,
+    #[cfg(feature = "load")]
+    api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
     incarnation: u64,
@@ -240,6 +245,11 @@ pub struct SlotScript {
     /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
     #[cfg(feature = "load")]
     recovery_hints: Arc<crate::load::RecoveryHintsCell>,
+    /// Test-only spawn failure seam: when set, the next `spawn_isolate`
+    /// returns a deterministic thread-spawn diagnostic instead of spawning.
+    /// Never set outside `#[cfg(test)]`; production builds have no field.
+    #[cfg(all(test, feature = "load"))]
+    fail_spawn_for_test: bool,
 }
 
 impl Default for SlotScript {
@@ -255,6 +265,8 @@ impl SlotScript {
             state: RunState::Idle,
             compiled: None,
             preparing: None,
+            #[cfg(feature = "load")]
+            api: None,
             retained: None,
             native_runtime: Default::default(),
             incarnation: 0,
@@ -313,6 +325,8 @@ impl SlotScript {
             native_input: NativeInputAuthority::new(),
             #[cfg(feature = "load")]
             recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
+            #[cfg(all(test, feature = "load"))]
+            fail_spawn_for_test: false,
         }
     }
 
@@ -500,6 +514,10 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_spawn_for_test) {
+            return Err("isolate thread: test-injected spawn failure".to_string());
+        }
         let isolate = LoadIsolate::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
@@ -531,12 +549,36 @@ impl SlotScript {
         }
         Ok(())
     }
+    /// Test-only: arm the spawn-failure seam, then drive the real typed
+    /// Start producer. Lets a test assert the `Idle|Error` branch maps a
+    /// spawn failure to `RuntimeLoad` (not `Refused`) without spawning.
+    #[cfg(all(test, feature = "load"))]
+    pub(crate) fn start_with_injected_spawn_failure_for_test(
+        &mut self,
+        source: String,
+        shape: crate::load::LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartLoadError> {
+        self.fail_spawn_for_test = true;
+        self.start_load_with_loadouts_and_game_data_typed(
+            source,
+            shape,
+            siblings,
+            loadouts,
+            game_data,
+            named_banks,
+        )
+    }
 
     #[cfg(feature = "load")]
     fn begin_async_stop(&mut self, after: AfterStop) -> bool {
         let Some(isolate) = self.load.take() else {
             return false;
         };
+        self.teardown_api(StopReason::Replaced);
         let (tx, rx) = std::sync::mpsc::channel();
         isolate.join_detached(tx);
         self.stop_rx = Some(rx);
@@ -556,6 +598,8 @@ impl SlotScript {
 
     fn finish_idle_stop(&mut self) {
         self.teardown_compiled(StopReason::Operator);
+        #[cfg(feature = "load")]
+        self.teardown_api(StopReason::Operator);
         #[cfg(feature = "load")]
         self.compiled_interacts.clear();
         #[cfg(feature = "load")]
@@ -604,6 +648,7 @@ impl SlotScript {
                     }
                     Ready::Failed(e) => {
                         let isolate = self.load.take().expect("failed setup still owns isolate");
+                        self.teardown_api(StopReason::Replaced);
                         let (tx, rx) = std::sync::mpsc::channel();
                         isolate.join_detached(tx);
                         self.stop_rx = Some(rx);
@@ -746,6 +791,8 @@ impl SlotScript {
         self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
+        #[cfg(feature = "load")]
+        self.interrupt_api(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
         }
@@ -774,6 +821,8 @@ impl SlotScript {
             return;
         }
         self.interrupt_compiled(Interrupt::Resume);
+        #[cfg(feature = "load")]
+        self.interrupt_api(Interrupt::Resume);
         if self.state == RunState::Error {
             return;
         }
@@ -834,6 +883,8 @@ impl SlotScript {
         }
         self.control_generation = self.control_generation.saturating_add(1);
         self.preparing = None;
+        #[cfg(feature = "load")]
+        self.teardown_api(reason);
         self.native_runtime.revoke();
         self.retained = None;
         self.revoke_native_input();
@@ -946,6 +997,8 @@ impl SlotScript {
         if let Some(run) = self.compiled.as_mut() {
             run.rekey_session(self.work_epoch);
         }
+        #[cfg(feature = "load")]
+        self.api_session_boundary(reconnect);
         #[cfg(feature = "load")]
         if !self.load_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
@@ -1086,11 +1139,12 @@ impl SlotScript {
         Arc::clone(&self.native_input)
     }
 
-    /// The selected-revision facts this compiled Start pinned — what the host
-    /// copies into the ctx as `ScriptCtx::compiled.selected`. `None` for a
-    /// Load slot, an idle slot, or a `Play` with no generated facts.
+    /// Selected-revision facts pinned by a compiled run or a live Load seat.
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
-        self.compiled.as_ref().map(|run| Arc::clone(&run.selected))
+        let selected = self.compiled.as_ref().map(|run| Arc::clone(&run.selected));
+        #[cfg(feature = "load")]
+        let selected = selected.or_else(|| self.api_game_data());
+        selected
     }
 
     /// Pump-thread sync of the compiled clue machine: the owed abort or
@@ -1287,6 +1341,13 @@ impl SlotScript {
         native: crate::isolate_fb::NativeFactsInput<'_>,
         force_banks: bool,
     ) -> Vec<u8> {
+        let mut native = native;
+        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
+        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_delta_with_native(
             self.last_snapshot.as_ref(),
             input,
@@ -1305,6 +1366,13 @@ impl SlotScript {
         force_banks: bool,
         preserve_inv: bool,
     ) -> Vec<u8> {
+        let mut native = native;
+        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
+        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_wake_with_native(
             self.last_snapshot.as_mut(),
             input,
@@ -1445,18 +1513,37 @@ impl SlotScript {
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
         Vec<crate::shim::InteractReq>,
+        bool,
     ) {
         let mut reqs = self.drain_interacts();
         let mut policy = None;
-        reqs.retain(|req| {
-            if let crate::shim::InteractReq::RunPolicyOverride { policy: update } = req {
+        let mut owned = self.api_owns_foreground();
+        reqs.retain(|req| match req {
+            crate::shim::InteractReq::RunPolicyOverride { policy: update } => {
                 policy = Some(*update);
                 false
-            } else {
-                true
             }
+            crate::shim::InteractReq::GatherRun { .. }
+            | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::ProgressRead { .. } => {
+                self.consume_api_control(req);
+                owned |= self.api_owns_foreground();
+                false
+            }
+            _ => true,
         });
-        (policy, reqs)
+        if owned {
+            let before = reqs.len();
+            reqs.retain(|req| !req.is_game());
+            // Reconnect rows are script game work too; discard them at this
+            // admission edge rather than replaying an old route after the seat.
+            let held = self.take_held_walks();
+            self.record_api_dropped_rows(before - reqs.len() + held.len());
+        }
+        if !self.api_owns_foreground() {
+            self.log_api_drop_total();
+        }
+        (policy, reqs, owned)
     }
 
     /// Restore a batch drained by the host when Pause wins the final
@@ -1593,6 +1680,14 @@ impl SlotScript {
                         return WatchdogAction::None;
                     }
                 };
+                return self.watchdog.on_anchor(
+                    now,
+                    here.map(|(x, z, level)| WatchdogTile { x, z, level }),
+                    anchor,
+                );
+            }
+            #[cfg(feature = "load")]
+            if let Some(anchor) = self.api_recovery_anchor() {
                 return self.watchdog.on_anchor(
                     now,
                     here.map(|(x, z, level)| WatchdogTile { x, z, level }),
@@ -1787,6 +1882,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
+            self.tick_api(ctx);
             return;
         }
         let Some(run) = self.compiled.as_mut() else {
@@ -2029,6 +2125,8 @@ impl Drop for SlotScript {
     fn drop(&mut self) {
         self.preparing = None;
         self.teardown_compiled(StopReason::Removed);
+        #[cfg(feature = "load")]
+        self.teardown_api(StopReason::Removed);
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();

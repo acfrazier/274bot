@@ -183,31 +183,19 @@ impl ActionContext<'_> {
 
 /// Whether `emit` may queue `request`: a game interaction the host dispatches
 /// once, not a route (the typed walk owns those), broker channel, script
-/// mouse, host run policy or isolate lifecycle marker.
+/// mouse, inspect request/ack, SetCameraYaw, host run policy, GatherRun,
+/// GatherStop, ProgressRead or isolate lifecycle marker.
 fn native_interaction(request: &InteractReq) -> bool {
-    !matches!(
-        request,
-        InteractReq::Walk { .. }
-            | InteractReq::WalkNear { .. }
-            | InteractReq::WalkNearestBank
-            | InteractReq::SelectBank { .. }
-            | InteractReq::AbortWalk { .. }
-            | InteractReq::InspectRoute { .. }
-            | InteractReq::InspectAck { .. }
-            | InteractReq::ChannelOpen { .. }
-            | InteractReq::ChannelPost { .. }
-            | InteractReq::ChannelClose { .. }
-            | InteractReq::ChannelMessage { .. }
-            | InteractReq::ChannelStatus { .. }
-            | InteractReq::Mouse { .. }
-            | InteractReq::RunPolicyOverride { .. }
-            | InteractReq::NoteProgress
-            | InteractReq::LoopSettled
-            | InteractReq::WaitEnqueued
-            | InteractReq::WaitSettled
-            | InteractReq::RecoveryAnchor { .. }
-            | InteractReq::RecoveryAnchorNone
-    )
+    request.is_game()
+        && !matches!(
+            request,
+            InteractReq::Walk { .. }
+                | InteractReq::WalkNear { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::SelectBank { .. }
+                | InteractReq::AbortWalk { .. }
+                | InteractReq::Mouse { .. }
+        )
 }
 
 fn not_an_interaction() -> ActionError {
@@ -580,6 +568,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: action.request_id.get() != requests[1],
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -674,6 +663,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: true,
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -745,6 +735,7 @@ mod tests {
                     allow_bank_fetch: false,
                     request_id: 0,
                     avoid: Vec::new(),
+                    cross: Vec::new(),
                 },
                 InteractReq::WalkNearestBank,
                 InteractReq::AbortWalk { request_id: 0 },
@@ -779,6 +770,7 @@ mod tests {
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
+                cross: Vec::new().into_boxed_slice(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();

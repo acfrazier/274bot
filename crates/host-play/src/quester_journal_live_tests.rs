@@ -1182,7 +1182,7 @@ fn frame_hook(
     state: Arc<Mutex<SetupState>>,
     mode: SetupMode,
     headed: bool,
-) -> impl Fn(&mut client::client::Client, &str, bool) + Send + Sync + 'static {
+) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
     move |client, _name, _hold| {
         if headed {
             client.set_draw(true);
@@ -1407,7 +1407,6 @@ fn assert_synthetic_pre_teleport(state: &Arc<Mutex<SetupState>>) {
     );
     println!("Observed safe pre-teleport combat staging: {observation:?}");
 }
-
 fn field<'a>(status: &'a ScriptStatus, key: &str) -> &'a StatusValue {
     status
         .fields
@@ -1437,7 +1436,6 @@ fn progress_evidence(status: &ScriptStatus, key: &str) -> EvidenceStamp {
         other => panic!("status {key:?} is not Quest progress: {other:?}"),
     }
 }
-
 fn wait_status(
     play: &super::Play,
     name: &str,
@@ -1491,7 +1489,6 @@ fn wait_read_journal_active(
         thread::sleep(Duration::from_millis(20));
     }
 }
-
 fn wait_test_start(handle: &ScriptStartHandle, name: &str) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -1710,7 +1707,6 @@ fn start_synthetic(
     play.wake(name);
     run
 }
-
 #[test]
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
 fn live_quester_journal_synthetic_runemysteries() {

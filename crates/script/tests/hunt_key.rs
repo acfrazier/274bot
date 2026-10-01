@@ -937,6 +937,7 @@ export async function tick(api) {
                 allow_bank_fetch: false,
                 request_id,
                 avoid: _,
+                cross: _,
             }] if *request_id != 0
         ),
         "one corridor walk-near, not re-queued: {walks:?}"

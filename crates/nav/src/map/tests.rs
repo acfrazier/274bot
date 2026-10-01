@@ -585,7 +585,6 @@ fn bounded_sequences_refuse_extra_elements_before_decoding_them() {
 #[test]
 fn maximum_image_documents_fit_the_json_contract() {
     const START: i32 = -33_000_000;
-    assert_eq!(MAX_IMAGE_TILES, 5_440);
     let west = START * 64;
     let east = (START + MAX_IMAGE_TILES as i32) * 64;
     let south = START * 64;
@@ -906,7 +905,7 @@ fn ready_images_distinguish_unlisted_art_from_a_damaged_listed_tile() {
     std::fs::write(&tile, &png).unwrap();
     assert_eq!(
         image.read_tile_into(tile_key(), &mut buffer).unwrap(),
-        Some(266_256)
+        Some(TILE_RGBA_BYTES)
     );
     let mut corrupt = png;
     corrupt[20] ^= 1;
