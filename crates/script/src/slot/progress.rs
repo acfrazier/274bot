@@ -2,7 +2,7 @@
 use super::*;
 use crate::api_progress::{ProgressPage, QuestProgressRow};
 use crate::native::{ActionError, ActionHandle, NativeActions};
-use crate::quest_journal::{JournalMachine, JournalRequest};
+use crate::quest_journal::{title_matches, JournalMachine, JournalRequest, ROOT_289, TITLE_289};
 use crate::quester::{
     compile::CompiledPath,
     progress::{quest_colour, resolve_colour, resolve_journal},
@@ -76,6 +76,13 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::Failed(reason) | ActionError::Blocked(reason) => {
             format!("failed:{reason}").into()
         }
+    }
+}
+
+fn compile_error_reason(error: crate::quester::compile::CompileError) -> Arc<str> {
+    match error.detail.as_deref() {
+        Some(detail) => format!("failed:{}: {detail}", error.code).into(),
+        None => format!("failed:{}", error.code).into(),
     }
 }
 
@@ -197,7 +204,7 @@ impl SlotScript {
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
             let path = crate::quester::compile::compile_path(bytes, &selected, &quests)
-                .map_err(|error| Arc::from(format!("failed:{}", error.code)))?;
+                .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,
                 pin,
@@ -310,14 +317,26 @@ impl SlotScript {
                 return;
             };
             if colour == QuestListStatus::InProgress && !prepared.path.progress.rules.is_empty() {
-                // Other modals are foreground occupancy, not a failed journal read.
-                let occupied = cx
-                    .snapshot()
-                    .main_modal()
-                    .is_some_and(|modal| modal.value.root != -1 && modal.value.root != 8134)
-                    || cx.snapshot().chat_modal().is_some_and(|modal| {
-                        modal.value.root != -1 || !modal.value.texts.is_empty()
-                    });
+                // A modal owned by another quest is foreground occupancy, not a failed read.
+                let snapshot = cx.snapshot();
+                let occupied = snapshot.main_modal().is_some_and(|modal| {
+                    if modal.value.root == ROOT_289 {
+                        let expected = prepared
+                            .quests
+                            .quest(prepared.path.id.0.as_ref())
+                            .ok()
+                            .and_then(|facts| facts.journal_title.as_deref());
+                        !expected.is_some_and(|expected| {
+                            snapshot
+                                .journal_widgets(ROOT_289, TITLE_289)
+                                .is_some_and(|page| title_matches(page.value.title, expected))
+                        })
+                    } else {
+                        modal.value.root != -1
+                    }
+                }) || snapshot
+                    .chat_modal()
+                    .is_some_and(|modal| modal.value.root != -1 || !modal.value.texts.is_empty());
                 if occupied {
                     ProgressPage::Refused {
                         token: *token,

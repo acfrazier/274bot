@@ -70,7 +70,7 @@ instance; `want_run` distinguishes operator Pause from offline.
 A Load slot can also host one API seat: `api.gather.run` prepares and ticks
 the genuine Gatherer card inside the slot with the slot's own ledger, and
 `api.snapshot.gather` reports its live session. `api.questPaths()` is a sync
-read of the release Path index (Cook only) needing no seat;
+read of the release Path index for the four released quests, needing no seat;
 `api.questProgress({ quest })` runs one owned progress read in the same seat —
 tab colour first, then the quiet host journal read only when the colour is
 in-progress and the released Path has journal rules. While the seat is live the

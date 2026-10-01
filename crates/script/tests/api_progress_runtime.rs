@@ -224,9 +224,9 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
                     "id": "romeojuliet",
                     "display": "Romeo & Juliet",
                     "journal": true,
-                    "stages": ["romeojuliet:0", "romeojuliet:10", "romeojuliet:100",
-                               "romeojuliet:20", "romeojuliet:30", "romeojuliet:40",
-                               "romeojuliet:50", "romeojuliet:60"]
+                    "stages": ["romeojuliet:0", "romeojuliet:10", "romeojuliet:20",
+                               "romeojuliet:30", "romeojuliet:40", "romeojuliet:50",
+                               "romeojuliet:60", "romeojuliet:100"]
                 }]
             }
         })

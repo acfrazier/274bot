@@ -1058,7 +1058,7 @@ export interface QuestProgressRow {
   role: string | null;
 }
 
-/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `unavailable:<why>` or `failed:<why>` and never ran. */
+/** How a progress read ended (the `value` of a `done` outcome). `refused` carries `unknown-path`, `busy`, `stale`, `cancelled`, `unavailable:<why>` or `failed:<why>` and no row was produced. */
 export type QuestProgressEnd =
   | { end: 'done'; token: number; row: QuestProgressRow }
   | { end: 'refused'; token: number; reason: string };
