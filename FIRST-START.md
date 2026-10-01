@@ -56,9 +56,9 @@ from your chosen rs2b0t checkout. Public login requires your own account.
 
 ## Cache and nav pack
 
-Pack cache for **local** is `$ENGINE_DIR/data/pack/client` (`--cache`
-overrides). First `maininit` GETs `/crc` and jags from the engine HTTP into
-that directory; later boots reuse disk.
+The **local** packed-cache source is `$ENGINE_DIR/data/pack/client`
+(`--cache` overrides). Ordinary preparation negotiates `/crc`, checks packed
+JAGs, and downloads missing assets from the selected engine.
 
 If the cache directory is empty, run
 [`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from
@@ -66,11 +66,26 @@ If the cache directory is empty, run
 local engine). That script does not download assets from the public
 internet for you.
 
-**rs2b2t** downloads `/crc` and jags into
-**`~/.274bot/unpack-289`** by default. The local-274 unpack default is
-`~/.274bot/unpack`; there is no public 274 profile. Versioned model/anim
-snapshots from `unpack-cache` live in a child folder named the first 8 hex
-bytes of SHA-256(`versionlist`) — not the `/crc` table.
+The **rs2b2t** snapshot root is **`~/.274bot/unpack-289`** by default.
+The local-274 default is `~/.274bot/unpack`; there is no public 274 profile.
+A successful ordinary first preparation retains all eight checked packed
+JAGs and the complete decoded model, animation, map and MIDI archives in
+that root. Retained selections are namespaced by revision, the negotiated
+`/crc` table, and the full raw `versionlist` SHA-256.
+
+Every later preparation still negotiates `/crc`, validates the selected
+packed JAGs and snapshot integrity, and recomputes the canonical decoded
+identity from the actual bytes. Matching retained assets avoid another
+full download or decode. Missing, incomplete or corrupt assets are repaired;
+changed negotiation/version inputs select a new snapshot. Each prepared
+profile uses its own immutable `.runtime-*` copy, removed when its last
+owner is dropped; retained snapshots survive ordinary process exit.
+Dead runtime copies left by crashes or explicit exits are swept on the
+next preparation without deleting a live process's copy.
+
+The standalone `unpack-cache` layout remains separate: its child folder is
+the first 8 bytes of SHA-256(`versionlist`), encoded as 16 hex characters,
+not a hash of the `/crc` table.
 
 Nav pack: an ordinary application build bakes and stages the selected
 **build-time** revision’s pack next to the binary
