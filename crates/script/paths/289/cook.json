@@ -163,6 +163,7 @@
           "args": {
             "target": { "name": "Hopper controls" },
             "op": "Operate",
+            "anchor": { "tile": [3166, 3305, 2], "source": "S1 integration review Nit-2; re-approach hopper controls after respawn" },
             "radius": 8,
             "settle_ms": 20000
           },
@@ -215,7 +216,7 @@
         }
       ]
     },
-    "bank": { "tile": [3093, 3243, 0], "source": "A defs/cooksassistant.ts:145" },
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
     "coin_float": 0,
     "loadouts": {},
     "areas": {},

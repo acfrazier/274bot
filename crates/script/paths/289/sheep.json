@@ -1,0 +1,126 @@
+{
+  "schema": 2,
+  "id": "sheep",
+  "display_name": "Sheep Shearer",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "shears", "qty": 1, "kind": "acquirable", "acquire": null },
+      { "obj": "wool", "qty": 20, "kind": "acquirable", "acquire": null },
+      { "obj": "ball_of_wool", "qty": 20, "kind": "acquirable", "acquire": null }
+    ],
+    "acquire": {},
+    "bank": { "tile": [3092, 3242, 0], "source": "289 observed walkable east approach to Draynor booth 2213" },
+    "coin_float": 3,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:shears", "obj:wool", "obj:bronze_sword"],
+    "owns_inventory": false
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:sheep",
+    "progress": {
+      "colour": { "not_started": "sheep:0", "in_progress": "sheep:1", "complete": "sheep:2" },
+      "rules": [],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "sheep:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start", "kind": "talk", "version": 1, "advances": true,
+          "args": {
+            "npc": "fred_the_farmer",
+            "anchor": { "tile": [3189, 3273, 0], "source": "A defs/sheepshearer.ts:7-10" },
+            "leash": 2,
+            "prefer": ["I'm looking for a quest.", "Yes okay. I can do that."]
+          },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "sheep", "is": "in_progress" } } }
+        }]
+      },
+      {
+        "stage": "sheep:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-bank", "kind": "bank", "version": 1,
+            "args": { "op": "scan", "at": "quest_bank" },
+            "skip_if": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-shears", "kind": "bank", "version": 1,
+            "args": { "op": "withdraw", "at": "quest_bank", "items": [{ "obj": "shears", "qty": 1 }], "partial_ok": false },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "shears" } } } }
+            ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } }
+          },
+          {
+            "id": "buy-shears", "kind": "buy", "version": 1,
+            "args": {
+              "shop": { "npc": "generalshopkeeper1", "anchor": { "tile": [3212, 3247, 0], "source": "Lumbridge General Store, A exec/steps.ts buy" } },
+              "obj": "shears", "qty": 1, "est_gp": 1
+            },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "shears" } } }
+          },
+          {
+            "id": "equip-service-proof", "kind": "equip", "version": 1,
+            "args": { "obj": "bronze_sword" },
+            "skip_if": { "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bronze_sword" } } } },
+              { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
+            ] },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "bronze_sword" } } }
+          },
+          {
+            "id": "shear", "kind": "use_on", "version": 1,
+            "args": {
+              "item": "shears", "target": { "npc": "sheepunsheered" },
+              "anchor": { "tile": [3197, 3266, 0], "source": "A exec/wool.ts:20-37" },
+              "radius": 8, "product": "wool", "until": { "obj": "wool", "qty": 20 },
+              "settle_ms": 240000
+            },
+            "skip_if": { "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } },
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }
+            ] },
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "wool", "qty": 20 } } }
+          },
+          {
+            "id": "spin", "kind": "make", "version": 1,
+            "args": {
+              "loc": { "name": "spinningwheel", "op": "Spin" },
+              "anchor": { "tile": [2982, 3315, 0], "source": "A exec/wool.ts:40-75" },
+              "product": "ball_of_wool", "qty": 20, "make_x": true,
+              "menu": { "obj": "wool", "source": "289 scripts/skill_crafting/scripts/spinning/spinning.rs2:48-52 input menu row" }
+            },
+            "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } },
+            "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "ball_of_wool", "qty": 20 } } }
+          },
+          {
+            "id": "hand-in", "kind": "talk", "version": 1, "advances": true,
+            "args": {
+              "npc": "fred_the_farmer",
+              "anchor": { "tile": [3189, 3273, 0], "source": "A defs/sheepshearer.ts:28-30" },
+              "leash": 6, "prefer": []
+            },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "sheep", "is": "complete" } } }
+          }
+        ]
+      },
+      { "stage": "sheep:2", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

@@ -3,6 +3,7 @@
 pub mod dialogue;
 pub mod progress_predicates;
 pub mod reach;
+pub mod s2;
 
 use super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
@@ -52,6 +53,36 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             kind: "wait",
             version: 1,
             compile: compile_wait,
+        },
+        super::compile::StepHandler {
+            kind: "bank",
+            version: 1,
+            compile: s2::compile_bank,
+        },
+        super::compile::StepHandler {
+            kind: "buy",
+            version: 1,
+            compile: s2::compile_buy,
+        },
+        super::compile::StepHandler {
+            kind: "make",
+            version: 1,
+            compile: s2::compile_make,
+        },
+        super::compile::StepHandler {
+            kind: "equip",
+            version: 1,
+            compile: s2::compile_equip,
+        },
+        super::compile::StepHandler {
+            kind: "unequip",
+            version: 1,
+            compile: s2::compile_unequip,
+        },
+        super::compile::StepHandler {
+            kind: "loadout",
+            version: 1,
+            compile: s2::compile_loadout,
         },
     ]
 }
@@ -157,6 +188,21 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "flag",
             version: 1,
             compile: progress_predicates::compile_flag,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_known",
+            version: 1,
+            compile: s2::compile_bank_known,
+        },
+        super::compile::PredicateHandler {
+            kind: "bank_has",
+            version: 1,
+            compile: s2::compile_bank_has,
+        },
+        super::compile::PredicateHandler {
+            kind: "loadout_ready",
+            version: 1,
+            compile: s2::compile_loadout_ready,
         },
     ]
 }
@@ -1386,6 +1432,13 @@ struct UseOnTarget {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UseOnUntil {
+    obj: String,
+    qty: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseOnArgs {
     item: String,
     target: UseOnTarget,
@@ -1397,6 +1450,8 @@ struct UseOnArgs {
     product: Option<String>,
     #[serde(default)]
     settle_ms: Option<u64>,
+    #[serde(default)]
+    until: Option<UseOnUntil>,
 }
 
 fn compile_use_on(
@@ -1457,6 +1512,15 @@ fn compile_use_on(
         .as_deref()
         .map(|name| resolve_obj(cx, name))
         .transpose()?;
+    let until = arg
+        .until
+        .map(|until| {
+            if until.qty < 1 {
+                return Err(CompileError::code("invalid-args"));
+            }
+            Ok((resolve_obj(cx, &until.obj)?, until.qty))
+        })
+        .transpose()?;
     Ok(Arc::new(UseOnPlan {
         item: Arc::from(item_name),
         item_id,
@@ -1464,6 +1528,7 @@ fn compile_use_on(
         target_id,
         target_name: Some(target_name),
         product,
+        until,
         tile,
         radius: arg.radius.max(1),
         settle_ms: arg.settle_ms,
@@ -1475,6 +1540,7 @@ struct UseOnPlan {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, i32)>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1488,6 +1554,7 @@ impl StepPlan for UseOnPlan {
             item_id: self.item_id,
             target_id: self.target_id,
             product: self.product,
+            until: self.until,
             kind: Arc::clone(&self.kind),
             target_name: self.target_name.clone(),
             tile: self.tile,
@@ -1496,7 +1563,9 @@ impl StepPlan for UseOnPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             interaction: None,
+            round_before: None,
             accepted: false,
+            chat_since: 0,
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -1509,6 +1578,7 @@ struct UseOnRun {
     item_id: i32,
     target_id: i32,
     product: Option<i32>,
+    until: Option<(i32, i32)>,
     kind: Arc<str>,
     target_name: Option<Arc<str>>,
     tile: Option<WorldTile>,
@@ -1518,6 +1588,8 @@ struct UseOnRun {
     walk: Option<ActionHandle<Walk>>,
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
+    round_before: Option<i32>,
+    chat_since: i32,
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -1548,6 +1620,15 @@ impl StepRun for UseOnRun {
             let Some(inventory) = snapshot.inventory() else {
                 return Poll::Pending;
             };
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            self.round_before = observed_id.map(|id| {
+                inventory
+                    .value
+                    .iter()
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum()
+            });
             let Some(source) = inventory
                 .value
                 .iter()
@@ -1583,7 +1664,16 @@ impl StepRun for UseOnRun {
                     else {
                         return Poll::Pending;
                     };
-                    (npc.tile, Some(npc.index as i32), None)
+                    let tile = npc.tile;
+                    let index = npc.index as i32;
+                    if npc.distance > 1 {
+                        self.walk = Some(cx.tick.actions.begin::<Walk>(
+                            reach::walk_request(tile, 1, cx.required_after),
+                            &mut cx.tick.cx,
+                        )?);
+                        return Poll::Pending;
+                    }
+                    (tile, Some(index), None)
                 }
                 _ => {
                     let Some(target) = inventory
@@ -1617,6 +1707,7 @@ impl StepRun for UseOnRun {
                 target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
                 target_item_slot,
             };
+            self.chat_since = reach::last_chat_seq(&cx.tick.cx);
             self.interaction = Some(
                 cx.tick
                     .actions
@@ -1631,13 +1722,45 @@ impl StepRun for UseOnRun {
                 Poll::Ready(Ok(())) => self.accepted = true,
             }
         }
-        if self.product.is_some_and(|id| {
-            !cx.tick.cx.snapshot().inventory().is_some_and(|inv| {
+        if reach::saw_game_message(
+            &cx.tick.cx,
+            self.chat_since,
+            "The sheep manages to get away from you!",
+        ) {
+            // The game completed this attempt without a product. Report the
+            // observed failure instead of waiting for impossible inventory
+            // growth; the quest's existing failure policy owns the next step.
+            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
+        }
+        let held = |id| {
+            cx.tick.cx.snapshot().inventory().map(|inv| {
                 inv.value
                     .iter()
-                    .any(|row| row.def.id == id && row.count > 0)
+                    .filter(|row| row.def.id == id)
+                    .map(|row| row.count)
+                    .sum::<i32>()
             })
-        }) {
+        };
+        if let Some(before) = self.round_before {
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            if observed_id
+                .and_then(held)
+                .is_none_or(|count| count <= before)
+            {
+                return Poll::Pending;
+            }
+        }
+        if let Some((id, qty)) = self.until {
+            if !held(id).is_some_and(|count| count >= qty) {
+                self.interaction = None;
+                self.accepted = false;
+                self.round_before = None;
+                return Poll::Pending;
+            }
+        } else if self
+            .product
+            .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
+        {
             return Poll::Pending;
         }
         Poll::Ready(Ok(StepOutcome {
@@ -1758,6 +1881,7 @@ impl StepRun for AcquireRun {
                     required_after: cx.required_after,
                     chat_since: self.chat_since,
                     outcome: None,
+                    bank: cx.bank,
                 });
                 if truth != Truth::True {
                     if cx.tick.cx.active_now() >= self.settle_deadline {
@@ -1779,6 +1903,7 @@ impl StepRun for AcquireRun {
                         required_after: cx.required_after,
                         chat_since: reach::last_chat_seq(&cx.tick.cx),
                         outcome: None,
+                        bank: cx.bank,
                     });
                     if skip == Truth::Unknown {
                         let since = self.selection_since.get_or_insert(cx.tick.cx.active_now());
@@ -1894,6 +2019,7 @@ impl StepRun for WaitRun {
             required_after: cx.required_after,
             chat_since: self.chat_since,
             outcome: None,
+            bank: cx.bank,
         };
         if self.until.evaluate(&pred) != Truth::True {
             return Poll::Pending;
