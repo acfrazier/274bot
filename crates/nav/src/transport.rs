@@ -284,6 +284,11 @@ impl TransportGraph {
                 }
             }
         }
+        // Nearly every router probe misses this sparse index. Footprint
+        // stands can fill the last slots of a hash-table size class, making
+        // those misses scan multiple control groups. Keep spare capacity
+        // once at load/bake time instead of paying that cost for every tile.
+        self.at.reserve(self.at.len());
     }
 }
 
