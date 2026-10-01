@@ -1714,6 +1714,76 @@ fn relog_presses_the_logout_button_while_ingame() {
     );
 }
 
+fn relog_before_start() -> (Client, ScenarioRunner) {
+    let mut client = seeded_client();
+    client.set_iface(
+        2458,
+        IfType {
+            client_code: api::interact::CC_LOGOUT,
+            ..Default::default()
+        },
+    );
+    client.side_icon[3] = 100;
+    client.bump_gens(ServerProt::IF_SETICON);
+    let mut scenario = compiled_start_scenario(20);
+    scenario.steps.insert(
+        0,
+        Step {
+            name: "relog before native Start",
+            kind: StepKind::Relog,
+            wait: wait(Proof::SideTabAvailable { index: 3 }, 20),
+        },
+    );
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    (client, runner)
+}
+
+#[test]
+fn relog_stale_side_tab_cannot_start_native_before_logout_and_new_login() {
+    let (mut client, mut runner) = relog_before_start();
+    runner.tick(&mut client);
+    assert!(
+        !runner.on_start_script(),
+        "the old session's already-available tab cannot complete Relog"
+    );
+    let after_logout_request = client.out.pos;
+    for _ in 0..3 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert!(!runner.on_start_script());
+    }
+    assert_eq!(client.out.pos, after_logout_request);
+
+    client.ingame = false;
+    runner.tick(&mut client);
+    assert!(!runner.on_start_script());
+
+    client.ingame = true;
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.side_icon[3] = -1;
+    client.bump_gens(ServerProt::IF_SETICON);
+    runner.tick(&mut client);
+    assert!(!runner.on_start_script(), "new login still needs its tab");
+    client.side_icon[3] = 100;
+    client.bump_gens(ServerProt::IF_SETICON);
+    runner.tick(&mut client);
+    assert!(runner.on_start_script());
+}
+
+#[test]
+fn relog_new_session_identity_allows_start_without_an_off_world_sample() {
+    let (mut client, mut runner) = relog_before_start();
+    runner.tick(&mut client);
+    assert!(!runner.on_start_script());
+    let after_logout_request = client.out.pos;
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.bump_gens(ServerProt::IF_SETICON);
+    runner.tick(&mut client);
+    assert!(runner.on_start_script());
+    assert_eq!(client.out.pos, after_logout_request);
+}
+
 const AIR_RUINS: (i32, i32, i32) = (2988, 3294, 0);
 const AIR_RUNE_ID: i32 = 556;
 const RUNE_ESSENCE_ID: i32 = 1436;
