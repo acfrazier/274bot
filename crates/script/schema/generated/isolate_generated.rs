@@ -140,6 +140,204 @@ impl ::core::fmt::Debug for Tile<'_> {
       ds.finish()
   }
 }
+pub enum SettingRowOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SettingRow<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SettingRow<'a> {
+  type Inner = SettingRow<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SettingRow<'a> {
+  pub const VT_KEY: ::flatbuffers::VOffsetT = 4;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 6;
+  pub const VT_TEXT: ::flatbuffers::VOffsetT = 8;
+  pub const VT_INTEGER: ::flatbuffers::VOffsetT = 10;
+  pub const VT_FLAG: ::flatbuffers::VOffsetT = 12;
+  pub const VT_LIST: ::flatbuffers::VOffsetT = 14;
+  pub const VT_TILE: ::flatbuffers::VOffsetT = 16;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SettingRow { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SettingRowArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SettingRow<'bldr>> {
+    let mut builder = SettingRowBuilder::new(_fbb);
+    builder.add_integer(args.integer);
+    if let Some(x) = args.tile { builder.add_tile(x); }
+    if let Some(x) = args.list { builder.add_list(x); }
+    if let Some(x) = args.text { builder.add_text(x); }
+    if let Some(x) = args.key { builder.add_key(x); }
+    builder.add_flag(args.flag);
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn key(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SettingRow::VT_KEY, None)}
+  }
+  #[inline]
+  pub fn kind(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(SettingRow::VT_KIND, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn text(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SettingRow::VT_TEXT, None)}
+  }
+  #[inline]
+  pub fn integer(&self) -> i64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(SettingRow::VT_INTEGER, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn flag(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(SettingRow::VT_FLAG, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn list(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(SettingRow::VT_LIST, None)}
+  }
+  #[inline]
+  pub fn tile(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(SettingRow::VT_TILE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SettingRow<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("key", Self::VT_KEY, false)?
+     .visit_field::<u8>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("text", Self::VT_TEXT, false)?
+     .visit_field::<i64>("integer", Self::VT_INTEGER, false)?
+     .visit_field::<bool>("flag", Self::VT_FLAG, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("list", Self::VT_LIST, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("tile", Self::VT_TILE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SettingRowArgs<'a> {
+    pub key: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub kind: u8,
+    pub text: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub integer: i64,
+    pub flag: bool,
+    pub list: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+    pub tile: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+}
+impl<'a> Default for SettingRowArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SettingRowArgs {
+      key: None,
+      kind: 0,
+      text: None,
+      integer: 0,
+      flag: false,
+      list: None,
+      tile: None,
+    }
+  }
+}
+
+pub struct SettingRowBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SettingRowBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_key(&mut self, key: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SettingRow::VT_KEY, key);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: u8) {
+    self.fbb_.push_slot::<u8>(SettingRow::VT_KIND, kind, 0);
+  }
+  #[inline]
+  pub fn add_text(&mut self, text: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SettingRow::VT_TEXT, text);
+  }
+  #[inline]
+  pub fn add_integer(&mut self, integer: i64) {
+    self.fbb_.push_slot::<i64>(SettingRow::VT_INTEGER, integer, 0);
+  }
+  #[inline]
+  pub fn add_flag(&mut self, flag: bool) {
+    self.fbb_.push_slot::<bool>(SettingRow::VT_FLAG, flag, false);
+  }
+  #[inline]
+  pub fn add_list(&mut self, list: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SettingRow::VT_LIST, list);
+  }
+  #[inline]
+  pub fn add_tile(&mut self, tile: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(SettingRow::VT_TILE, tile);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SettingRowBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SettingRowBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SettingRow<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SettingRow<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SettingRow");
+      ds.field("key", &self.key());
+      ds.field("kind", &self.kind());
+      ds.field("text", &self.text());
+      ds.field("integer", &self.integer());
+      ds.field("flag", &self.flag());
+      ds.field("list", &self.list());
+      ds.field("tile", &self.tile());
+      ds.finish()
+  }
+}
 pub enum RowOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -3618,6 +3816,1211 @@ impl ::core::fmt::Debug for NpcBox<'_> {
       ds.finish()
   }
 }
+pub enum StatusFieldOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct StatusField<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for StatusField<'a> {
+  type Inner = StatusField<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> StatusField<'a> {
+  pub const VT_KEY: ::flatbuffers::VOffsetT = 4;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 6;
+  pub const VT_TEXT: ::flatbuffers::VOffsetT = 8;
+  pub const VT_INTEGER: ::flatbuffers::VOffsetT = 10;
+  pub const VT_TILE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_TRUTH: ::flatbuffers::VOffsetT = 14;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    StatusField { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args StatusFieldArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<StatusField<'bldr>> {
+    let mut builder = StatusFieldBuilder::new(_fbb);
+    builder.add_integer(args.integer);
+    if let Some(x) = args.tile { builder.add_tile(x); }
+    if let Some(x) = args.text { builder.add_text(x); }
+    if let Some(x) = args.key { builder.add_key(x); }
+    builder.add_truth(args.truth);
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn key(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(StatusField::VT_KEY, None)}
+  }
+  #[inline]
+  pub fn kind(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(StatusField::VT_KIND, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn text(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(StatusField::VT_TEXT, None)}
+  }
+  #[inline]
+  pub fn integer(&self) -> i64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(StatusField::VT_INTEGER, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn tile(&self) -> Option<Tile<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(StatusField::VT_TILE, None)}
+  }
+  #[inline]
+  pub fn truth(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(StatusField::VT_TRUTH, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for StatusField<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("key", Self::VT_KEY, false)?
+     .visit_field::<u8>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("text", Self::VT_TEXT, false)?
+     .visit_field::<i64>("integer", Self::VT_INTEGER, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("tile", Self::VT_TILE, false)?
+     .visit_field::<u8>("truth", Self::VT_TRUTH, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct StatusFieldArgs<'a> {
+    pub key: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub kind: u8,
+    pub text: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub integer: i64,
+    pub tile: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub truth: u8,
+}
+impl<'a> Default for StatusFieldArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    StatusFieldArgs {
+      key: None,
+      kind: 0,
+      text: None,
+      integer: 0,
+      tile: None,
+      truth: 0,
+    }
+  }
+}
+
+pub struct StatusFieldBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> StatusFieldBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_key(&mut self, key: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(StatusField::VT_KEY, key);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: u8) {
+    self.fbb_.push_slot::<u8>(StatusField::VT_KIND, kind, 0);
+  }
+  #[inline]
+  pub fn add_text(&mut self, text: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(StatusField::VT_TEXT, text);
+  }
+  #[inline]
+  pub fn add_integer(&mut self, integer: i64) {
+    self.fbb_.push_slot::<i64>(StatusField::VT_INTEGER, integer, 0);
+  }
+  #[inline]
+  pub fn add_tile(&mut self, tile: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(StatusField::VT_TILE, tile);
+  }
+  #[inline]
+  pub fn add_truth(&mut self, truth: u8) {
+    self.fbb_.push_slot::<u8>(StatusField::VT_TRUTH, truth, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> StatusFieldBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    StatusFieldBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<StatusField<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for StatusField<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("StatusField");
+      ds.field("key", &self.key());
+      ds.field("kind", &self.kind());
+      ds.field("text", &self.text());
+      ds.field("integer", &self.integer());
+      ds.field("tile", &self.tile());
+      ds.field("truth", &self.truth());
+      ds.finish()
+  }
+}
+pub enum ApiGatherOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ApiGather<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ApiGather<'a> {
+  type Inner = ApiGather<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ApiGather<'a> {
+  pub const VT_REQUEST_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PHASE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_HAS_STATUS: ::flatbuffers::VOffsetT = 8;
+  pub const VT_FIELDS: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ApiGather { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ApiGatherArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ApiGather<'bldr>> {
+    let mut builder = ApiGatherBuilder::new(_fbb);
+    builder.add_request_id(args.request_id);
+    if let Some(x) = args.fields { builder.add_fields(x); }
+    builder.add_has_status(args.has_status);
+    builder.add_phase(args.phase);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ApiGather::VT_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn phase(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiGather::VT_PHASE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn has_status(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ApiGather::VT_HAS_STATUS, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn fields(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<StatusField<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<StatusField>>>>(ApiGather::VT_FIELDS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ApiGather<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("request_id", Self::VT_REQUEST_ID, false)?
+     .visit_field::<u8>("phase", Self::VT_PHASE, false)?
+     .visit_field::<bool>("has_status", Self::VT_HAS_STATUS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<StatusField>>>>("fields", Self::VT_FIELDS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ApiGatherArgs<'a> {
+    pub request_id: u64,
+    pub phase: u8,
+    pub has_status: bool,
+    pub fields: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<StatusField<'a>>>>>,
+}
+impl<'a> Default for ApiGatherArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ApiGatherArgs {
+      request_id: 0,
+      phase: 0,
+      has_status: false,
+      fields: None,
+    }
+  }
+}
+
+pub struct ApiGatherBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiGatherBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_request_id(&mut self, request_id: u64) {
+    self.fbb_.push_slot::<u64>(ApiGather::VT_REQUEST_ID, request_id, 0);
+  }
+  #[inline]
+  pub fn add_phase(&mut self, phase: u8) {
+    self.fbb_.push_slot::<u8>(ApiGather::VT_PHASE, phase, 0);
+  }
+  #[inline]
+  pub fn add_has_status(&mut self, has_status: bool) {
+    self.fbb_.push_slot::<bool>(ApiGather::VT_HAS_STATUS, has_status, false);
+  }
+  #[inline]
+  pub fn add_fields(&mut self, fields: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<StatusField<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiGather::VT_FIELDS, fields);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiGatherBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ApiGatherBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ApiGather<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ApiGather<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ApiGather");
+      ds.field("request_id", &self.request_id());
+      ds.field("phase", &self.phase());
+      ds.field("has_status", &self.has_status());
+      ds.field("fields", &self.fields());
+      ds.finish()
+  }
+}
+pub enum ApiGatherOutcomeOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ApiGatherOutcome<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ApiGatherOutcome<'a> {
+  type Inner = ApiGatherOutcome<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ApiGatherOutcome<'a> {
+  pub const VT_REQUEST_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_END: ::flatbuffers::VOffsetT = 6;
+  pub const VT_CODE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_MESSAGE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_RETRYABLE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_YIELDED: ::flatbuffers::VOffsetT = 14;
+  pub const VT_DROPPED: ::flatbuffers::VOffsetT = 16;
+  pub const VT_DEPOSITED: ::flatbuffers::VOffsetT = 18;
+  pub const VT_TRIPS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_XP: ::flatbuffers::VOffsetT = 22;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ApiGatherOutcome { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ApiGatherOutcomeArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ApiGatherOutcome<'bldr>> {
+    let mut builder = ApiGatherOutcomeBuilder::new(_fbb);
+    builder.add_request_id(args.request_id);
+    builder.add_xp(args.xp);
+    builder.add_trips(args.trips);
+    builder.add_deposited(args.deposited);
+    builder.add_dropped(args.dropped);
+    builder.add_yielded(args.yielded);
+    if let Some(x) = args.message { builder.add_message(x); }
+    if let Some(x) = args.code { builder.add_code(x); }
+    builder.add_retryable(args.retryable);
+    builder.add_end(args.end);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ApiGatherOutcome::VT_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn end(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiGatherOutcome::VT_END, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn code(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiGatherOutcome::VT_CODE, None)}
+  }
+  #[inline]
+  pub fn message(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiGatherOutcome::VT_MESSAGE, None)}
+  }
+  #[inline]
+  pub fn retryable(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ApiGatherOutcome::VT_RETRYABLE, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn yielded(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ApiGatherOutcome::VT_YIELDED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn dropped(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ApiGatherOutcome::VT_DROPPED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn deposited(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ApiGatherOutcome::VT_DEPOSITED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn trips(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ApiGatherOutcome::VT_TRIPS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn xp(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ApiGatherOutcome::VT_XP, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ApiGatherOutcome<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("request_id", Self::VT_REQUEST_ID, false)?
+     .visit_field::<u8>("end", Self::VT_END, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("code", Self::VT_CODE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("message", Self::VT_MESSAGE, false)?
+     .visit_field::<bool>("retryable", Self::VT_RETRYABLE, false)?
+     .visit_field::<u32>("yielded", Self::VT_YIELDED, false)?
+     .visit_field::<u32>("dropped", Self::VT_DROPPED, false)?
+     .visit_field::<u32>("deposited", Self::VT_DEPOSITED, false)?
+     .visit_field::<u32>("trips", Self::VT_TRIPS, false)?
+     .visit_field::<i32>("xp", Self::VT_XP, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ApiGatherOutcomeArgs<'a> {
+    pub request_id: u64,
+    pub end: u8,
+    pub code: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub message: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub retryable: bool,
+    pub yielded: u32,
+    pub dropped: u32,
+    pub deposited: u32,
+    pub trips: u32,
+    pub xp: i32,
+}
+impl<'a> Default for ApiGatherOutcomeArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ApiGatherOutcomeArgs {
+      request_id: 0,
+      end: 0,
+      code: None,
+      message: None,
+      retryable: false,
+      yielded: 0,
+      dropped: 0,
+      deposited: 0,
+      trips: 0,
+      xp: 0,
+    }
+  }
+}
+
+pub struct ApiGatherOutcomeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiGatherOutcomeBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_request_id(&mut self, request_id: u64) {
+    self.fbb_.push_slot::<u64>(ApiGatherOutcome::VT_REQUEST_ID, request_id, 0);
+  }
+  #[inline]
+  pub fn add_end(&mut self, end: u8) {
+    self.fbb_.push_slot::<u8>(ApiGatherOutcome::VT_END, end, 0);
+  }
+  #[inline]
+  pub fn add_code(&mut self, code: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiGatherOutcome::VT_CODE, code);
+  }
+  #[inline]
+  pub fn add_message(&mut self, message: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiGatherOutcome::VT_MESSAGE, message);
+  }
+  #[inline]
+  pub fn add_retryable(&mut self, retryable: bool) {
+    self.fbb_.push_slot::<bool>(ApiGatherOutcome::VT_RETRYABLE, retryable, false);
+  }
+  #[inline]
+  pub fn add_yielded(&mut self, yielded: u32) {
+    self.fbb_.push_slot::<u32>(ApiGatherOutcome::VT_YIELDED, yielded, 0);
+  }
+  #[inline]
+  pub fn add_dropped(&mut self, dropped: u32) {
+    self.fbb_.push_slot::<u32>(ApiGatherOutcome::VT_DROPPED, dropped, 0);
+  }
+  #[inline]
+  pub fn add_deposited(&mut self, deposited: u32) {
+    self.fbb_.push_slot::<u32>(ApiGatherOutcome::VT_DEPOSITED, deposited, 0);
+  }
+  #[inline]
+  pub fn add_trips(&mut self, trips: u32) {
+    self.fbb_.push_slot::<u32>(ApiGatherOutcome::VT_TRIPS, trips, 0);
+  }
+  #[inline]
+  pub fn add_xp(&mut self, xp: i32) {
+    self.fbb_.push_slot::<i32>(ApiGatherOutcome::VT_XP, xp, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiGatherOutcomeBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ApiGatherOutcomeBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ApiGatherOutcome<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ApiGatherOutcome<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ApiGatherOutcome");
+      ds.field("request_id", &self.request_id());
+      ds.field("end", &self.end());
+      ds.field("code", &self.code());
+      ds.field("message", &self.message());
+      ds.field("retryable", &self.retryable());
+      ds.field("yielded", &self.yielded());
+      ds.field("dropped", &self.dropped());
+      ds.field("deposited", &self.deposited());
+      ds.field("trips", &self.trips());
+      ds.field("xp", &self.xp());
+      ds.finish()
+  }
+}
+pub enum ProgressFlagRowOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ProgressFlagRow<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ProgressFlagRow<'a> {
+  type Inner = ProgressFlagRow<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ProgressFlagRow<'a> {
+  pub const VT_FLAG: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TRUTH: ::flatbuffers::VOffsetT = 6;
+  pub const VT_COUNT: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ProgressFlagRow { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ProgressFlagRowArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ProgressFlagRow<'bldr>> {
+    let mut builder = ProgressFlagRowBuilder::new(_fbb);
+    builder.add_count(args.count);
+    if let Some(x) = args.flag { builder.add_flag(x); }
+    builder.add_truth(args.truth);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn flag(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ProgressFlagRow::VT_FLAG, None)}
+  }
+  #[inline]
+  pub fn truth(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ProgressFlagRow::VT_TRUTH, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn count(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(ProgressFlagRow::VT_COUNT, Some(-1)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ProgressFlagRow<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("flag", Self::VT_FLAG, false)?
+     .visit_field::<u8>("truth", Self::VT_TRUTH, false)?
+     .visit_field::<i32>("count", Self::VT_COUNT, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ProgressFlagRowArgs<'a> {
+    pub flag: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub truth: u8,
+    pub count: i32,
+}
+impl<'a> Default for ProgressFlagRowArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ProgressFlagRowArgs {
+      flag: None,
+      truth: 0,
+      count: -1,
+    }
+  }
+}
+
+pub struct ProgressFlagRowBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ProgressFlagRowBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_flag(&mut self, flag: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ProgressFlagRow::VT_FLAG, flag);
+  }
+  #[inline]
+  pub fn add_truth(&mut self, truth: u8) {
+    self.fbb_.push_slot::<u8>(ProgressFlagRow::VT_TRUTH, truth, 0);
+  }
+  #[inline]
+  pub fn add_count(&mut self, count: i32) {
+    self.fbb_.push_slot::<i32>(ProgressFlagRow::VT_COUNT, count, -1);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ProgressFlagRowBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ProgressFlagRowBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ProgressFlagRow<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ProgressFlagRow<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ProgressFlagRow");
+      ds.field("flag", &self.flag());
+      ds.field("truth", &self.truth());
+      ds.field("count", &self.count());
+      ds.finish()
+  }
+}
+pub enum QuestProgressRowOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct QuestProgressRow<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for QuestProgressRow<'a> {
+  type Inner = QuestProgressRow<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> QuestProgressRow<'a> {
+  pub const VT_QUEST: ::flatbuffers::VOffsetT = 4;
+  pub const VT_DISPLAY: ::flatbuffers::VOffsetT = 6;
+  pub const VT_COLOUR: ::flatbuffers::VOffsetT = 8;
+  pub const VT_STAGE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_STAGE_GAP: ::flatbuffers::VOffsetT = 12;
+  pub const VT_COMPLETE: ::flatbuffers::VOffsetT = 14;
+  pub const VT_RULE: ::flatbuffers::VOffsetT = 16;
+  pub const VT_RULE_GAP: ::flatbuffers::VOffsetT = 18;
+  pub const VT_FLAGS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_EVIDENCE_RUN: ::flatbuffers::VOffsetT = 22;
+  pub const VT_EVIDENCE_SESSION: ::flatbuffers::VOffsetT = 24;
+  pub const VT_EVIDENCE_TICK: ::flatbuffers::VOffsetT = 26;
+  pub const VT_EVIDENCE_SEQUENCE: ::flatbuffers::VOffsetT = 28;
+  pub const VT_JOURNAL_READ: ::flatbuffers::VOffsetT = 30;
+  pub const VT_BINDING: ::flatbuffers::VOffsetT = 32;
+  pub const VT_ROLE: ::flatbuffers::VOffsetT = 34;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    QuestProgressRow { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args QuestProgressRowArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<QuestProgressRow<'bldr>> {
+    let mut builder = QuestProgressRowBuilder::new(_fbb);
+    builder.add_evidence_sequence(args.evidence_sequence);
+    builder.add_evidence_tick(args.evidence_tick);
+    builder.add_evidence_session(args.evidence_session);
+    builder.add_evidence_run(args.evidence_run);
+    if let Some(x) = args.role { builder.add_role(x); }
+    if let Some(x) = args.binding { builder.add_binding(x); }
+    if let Some(x) = args.flags { builder.add_flags(x); }
+    if let Some(x) = args.rule_gap { builder.add_rule_gap(x); }
+    if let Some(x) = args.rule { builder.add_rule(x); }
+    if let Some(x) = args.stage_gap { builder.add_stage_gap(x); }
+    if let Some(x) = args.stage { builder.add_stage(x); }
+    if let Some(x) = args.display { builder.add_display(x); }
+    if let Some(x) = args.quest { builder.add_quest(x); }
+    builder.add_journal_read(args.journal_read);
+    builder.add_complete(args.complete);
+    builder.add_colour(args.colour);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn quest(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_QUEST, None)}
+  }
+  #[inline]
+  pub fn display(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_DISPLAY, None)}
+  }
+  #[inline]
+  pub fn colour(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(QuestProgressRow::VT_COLOUR, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn stage(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_STAGE, None)}
+  }
+  #[inline]
+  pub fn stage_gap(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_STAGE_GAP, None)}
+  }
+  #[inline]
+  pub fn complete(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(QuestProgressRow::VT_COMPLETE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn rule(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_RULE, None)}
+  }
+  #[inline]
+  pub fn rule_gap(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_RULE_GAP, None)}
+  }
+  #[inline]
+  pub fn flags(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProgressFlagRow<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProgressFlagRow>>>>(QuestProgressRow::VT_FLAGS, None)}
+  }
+  #[inline]
+  pub fn evidence_run(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(QuestProgressRow::VT_EVIDENCE_RUN, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn evidence_session(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(QuestProgressRow::VT_EVIDENCE_SESSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn evidence_tick(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(QuestProgressRow::VT_EVIDENCE_TICK, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn evidence_sequence(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(QuestProgressRow::VT_EVIDENCE_SEQUENCE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn journal_read(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(QuestProgressRow::VT_JOURNAL_READ, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn binding(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_BINDING, None)}
+  }
+  #[inline]
+  pub fn role(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(QuestProgressRow::VT_ROLE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for QuestProgressRow<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("quest", Self::VT_QUEST, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display", Self::VT_DISPLAY, false)?
+     .visit_field::<u8>("colour", Self::VT_COLOUR, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("stage", Self::VT_STAGE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("stage_gap", Self::VT_STAGE_GAP, false)?
+     .visit_field::<u8>("complete", Self::VT_COMPLETE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("rule", Self::VT_RULE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("rule_gap", Self::VT_RULE_GAP, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ProgressFlagRow>>>>("flags", Self::VT_FLAGS, false)?
+     .visit_field::<u64>("evidence_run", Self::VT_EVIDENCE_RUN, false)?
+     .visit_field::<u64>("evidence_session", Self::VT_EVIDENCE_SESSION, false)?
+     .visit_field::<u64>("evidence_tick", Self::VT_EVIDENCE_TICK, false)?
+     .visit_field::<u64>("evidence_sequence", Self::VT_EVIDENCE_SEQUENCE, false)?
+     .visit_field::<bool>("journal_read", Self::VT_JOURNAL_READ, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("binding", Self::VT_BINDING, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("role", Self::VT_ROLE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct QuestProgressRowArgs<'a> {
+    pub quest: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub display: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub colour: u8,
+    pub stage: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub stage_gap: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub complete: u8,
+    pub rule: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub rule_gap: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub flags: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ProgressFlagRow<'a>>>>>,
+    pub evidence_run: u64,
+    pub evidence_session: u64,
+    pub evidence_tick: u64,
+    pub evidence_sequence: u64,
+    pub journal_read: bool,
+    pub binding: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub role: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for QuestProgressRowArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    QuestProgressRowArgs {
+      quest: None,
+      display: None,
+      colour: 0,
+      stage: None,
+      stage_gap: None,
+      complete: 0,
+      rule: None,
+      rule_gap: None,
+      flags: None,
+      evidence_run: 0,
+      evidence_session: 0,
+      evidence_tick: 0,
+      evidence_sequence: 0,
+      journal_read: false,
+      binding: None,
+      role: None,
+    }
+  }
+}
+
+pub struct QuestProgressRowBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> QuestProgressRowBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_quest(&mut self, quest: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_QUEST, quest);
+  }
+  #[inline]
+  pub fn add_display(&mut self, display: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_DISPLAY, display);
+  }
+  #[inline]
+  pub fn add_colour(&mut self, colour: u8) {
+    self.fbb_.push_slot::<u8>(QuestProgressRow::VT_COLOUR, colour, 0);
+  }
+  #[inline]
+  pub fn add_stage(&mut self, stage: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_STAGE, stage);
+  }
+  #[inline]
+  pub fn add_stage_gap(&mut self, stage_gap: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_STAGE_GAP, stage_gap);
+  }
+  #[inline]
+  pub fn add_complete(&mut self, complete: u8) {
+    self.fbb_.push_slot::<u8>(QuestProgressRow::VT_COMPLETE, complete, 0);
+  }
+  #[inline]
+  pub fn add_rule(&mut self, rule: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_RULE, rule);
+  }
+  #[inline]
+  pub fn add_rule_gap(&mut self, rule_gap: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_RULE_GAP, rule_gap);
+  }
+  #[inline]
+  pub fn add_flags(&mut self, flags: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ProgressFlagRow<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_FLAGS, flags);
+  }
+  #[inline]
+  pub fn add_evidence_run(&mut self, evidence_run: u64) {
+    self.fbb_.push_slot::<u64>(QuestProgressRow::VT_EVIDENCE_RUN, evidence_run, 0);
+  }
+  #[inline]
+  pub fn add_evidence_session(&mut self, evidence_session: u64) {
+    self.fbb_.push_slot::<u64>(QuestProgressRow::VT_EVIDENCE_SESSION, evidence_session, 0);
+  }
+  #[inline]
+  pub fn add_evidence_tick(&mut self, evidence_tick: u64) {
+    self.fbb_.push_slot::<u64>(QuestProgressRow::VT_EVIDENCE_TICK, evidence_tick, 0);
+  }
+  #[inline]
+  pub fn add_evidence_sequence(&mut self, evidence_sequence: u64) {
+    self.fbb_.push_slot::<u64>(QuestProgressRow::VT_EVIDENCE_SEQUENCE, evidence_sequence, 0);
+  }
+  #[inline]
+  pub fn add_journal_read(&mut self, journal_read: bool) {
+    self.fbb_.push_slot::<bool>(QuestProgressRow::VT_JOURNAL_READ, journal_read, false);
+  }
+  #[inline]
+  pub fn add_binding(&mut self, binding: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_BINDING, binding);
+  }
+  #[inline]
+  pub fn add_role(&mut self, role: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(QuestProgressRow::VT_ROLE, role);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> QuestProgressRowBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    QuestProgressRowBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<QuestProgressRow<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for QuestProgressRow<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("QuestProgressRow");
+      ds.field("quest", &self.quest());
+      ds.field("display", &self.display());
+      ds.field("colour", &self.colour());
+      ds.field("stage", &self.stage());
+      ds.field("stage_gap", &self.stage_gap());
+      ds.field("complete", &self.complete());
+      ds.field("rule", &self.rule());
+      ds.field("rule_gap", &self.rule_gap());
+      ds.field("flags", &self.flags());
+      ds.field("evidence_run", &self.evidence_run());
+      ds.field("evidence_session", &self.evidence_session());
+      ds.field("evidence_tick", &self.evidence_tick());
+      ds.field("evidence_sequence", &self.evidence_sequence());
+      ds.field("journal_read", &self.journal_read());
+      ds.field("binding", &self.binding());
+      ds.field("role", &self.role());
+      ds.finish()
+  }
+}
+pub enum ApiProgressOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ApiProgress<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ApiProgress<'a> {
+  type Inner = ApiProgress<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ApiProgress<'a> {
+  pub const VT_REQUEST_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 6;
+  pub const VT_REASON: ::flatbuffers::VOffsetT = 8;
+  pub const VT_ROW: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ApiProgress { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ApiProgressArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ApiProgress<'bldr>> {
+    let mut builder = ApiProgressBuilder::new(_fbb);
+    builder.add_request_id(args.request_id);
+    if let Some(x) = args.row { builder.add_row(x); }
+    if let Some(x) = args.reason { builder.add_reason(x); }
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ApiProgress::VT_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn kind(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiProgress::VT_KIND, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn reason(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiProgress::VT_REASON, None)}
+  }
+  #[inline]
+  pub fn row(&self) -> Option<QuestProgressRow<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<QuestProgressRow>>(ApiProgress::VT_ROW, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ApiProgress<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("request_id", Self::VT_REQUEST_ID, false)?
+     .visit_field::<u8>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("reason", Self::VT_REASON, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<QuestProgressRow>>("row", Self::VT_ROW, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ApiProgressArgs<'a> {
+    pub request_id: u64,
+    pub kind: u8,
+    pub reason: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub row: Option<::flatbuffers::WIPOffset<QuestProgressRow<'a>>>,
+}
+impl<'a> Default for ApiProgressArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ApiProgressArgs {
+      request_id: 0,
+      kind: 0,
+      reason: None,
+      row: None,
+    }
+  }
+}
+
+pub struct ApiProgressBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiProgressBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_request_id(&mut self, request_id: u64) {
+    self.fbb_.push_slot::<u64>(ApiProgress::VT_REQUEST_ID, request_id, 0);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: u8) {
+    self.fbb_.push_slot::<u8>(ApiProgress::VT_KIND, kind, 0);
+  }
+  #[inline]
+  pub fn add_reason(&mut self, reason: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiProgress::VT_REASON, reason);
+  }
+  #[inline]
+  pub fn add_row(&mut self, row: ::flatbuffers::WIPOffset<QuestProgressRow<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<QuestProgressRow>>(ApiProgress::VT_ROW, row);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiProgressBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ApiProgressBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ApiProgress<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ApiProgress<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ApiProgress");
+      ds.field("request_id", &self.request_id());
+      ds.field("kind", &self.kind());
+      ds.field("reason", &self.reason());
+      ds.field("row", &self.row());
+      ds.finish()
+  }
+}
 pub enum SnapshotOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -3767,6 +5170,9 @@ impl<'a> Snapshot<'a> {
   pub const VT_SELF_ANIM: ::flatbuffers::VOffsetT = 264;
   pub const VT_WALK_OUTCOME_BLOCKED: ::flatbuffers::VOffsetT = 266;
   pub const VT_BANK_SNAPSHOT_GENERATION: ::flatbuffers::VOffsetT = 268;
+  pub const VT_API_GATHER: ::flatbuffers::VOffsetT = 270;
+  pub const VT_API_GATHER_OUTCOME: ::flatbuffers::VOffsetT = 272;
+  pub const VT_API_PROGRESS: ::flatbuffers::VOffsetT = 274;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3807,6 +5213,9 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.api_progress { builder.add_api_progress(x); }
+    if let Some(x) = args.api_gather_outcome { builder.add_api_gather_outcome(x); }
+    if let Some(x) = args.api_gather { builder.add_api_gather(x); }
     builder.add_self_anim(args.self_anim);
     builder.add_bank_selection_index(args.bank_selection_index);
     if let Some(x) = args.walk_missing_carry { builder.add_walk_missing_carry(x); }
@@ -4847,6 +6256,27 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i64>(Snapshot::VT_BANK_SNAPSHOT_GENERATION, Some(-1)).unwrap()}
   }
+  #[inline]
+  pub fn api_gather(&self) -> Option<ApiGather<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiGather>>(Snapshot::VT_API_GATHER, None)}
+  }
+  #[inline]
+  pub fn api_gather_outcome(&self) -> Option<ApiGatherOutcome<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiGatherOutcome>>(Snapshot::VT_API_GATHER_OUTCOME, None)}
+  }
+  #[inline]
+  pub fn api_progress(&self) -> Option<ApiProgress<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiProgress>>(Snapshot::VT_API_PROGRESS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -4988,6 +6418,9 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<i32>("self_anim", Self::VT_SELF_ANIM, false)?
      .visit_field::<bool>("walk_outcome_blocked", Self::VT_WALK_OUTCOME_BLOCKED, false)?
      .visit_field::<i64>("bank_snapshot_generation", Self::VT_BANK_SNAPSHOT_GENERATION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ApiGather>>("api_gather", Self::VT_API_GATHER, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ApiGatherOutcome>>("api_gather_outcome", Self::VT_API_GATHER_OUTCOME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ApiProgress>>("api_progress", Self::VT_API_PROGRESS, false)?
      .finish();
     Ok(())
   }
@@ -5126,6 +6559,9 @@ pub struct SnapshotArgs<'a> {
     pub self_anim: i32,
     pub walk_outcome_blocked: bool,
     pub bank_snapshot_generation: i64,
+    pub api_gather: Option<::flatbuffers::WIPOffset<ApiGather<'a>>>,
+    pub api_gather_outcome: Option<::flatbuffers::WIPOffset<ApiGatherOutcome<'a>>>,
+    pub api_progress: Option<::flatbuffers::WIPOffset<ApiProgress<'a>>>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -5264,6 +6700,9 @@ impl<'a> Default for SnapshotArgs<'a> {
       self_anim: -1,
       walk_outcome_blocked: false,
       bank_snapshot_generation: -1,
+      api_gather: None,
+      api_gather_outcome: None,
+      api_progress: None,
     }
   }
 }
@@ -5806,6 +7245,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<i64>(Snapshot::VT_BANK_SNAPSHOT_GENERATION, bank_snapshot_generation, -1);
   }
   #[inline]
+  pub fn add_api_gather(&mut self, api_gather: ::flatbuffers::WIPOffset<ApiGather<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiGather>>(Snapshot::VT_API_GATHER, api_gather);
+  }
+  #[inline]
+  pub fn add_api_gather_outcome(&mut self, api_gather_outcome: ::flatbuffers::WIPOffset<ApiGatherOutcome<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiGatherOutcome>>(Snapshot::VT_API_GATHER_OUTCOME, api_gather_outcome);
+  }
+  #[inline]
+  pub fn add_api_progress(&mut self, api_progress: ::flatbuffers::WIPOffset<ApiProgress<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiProgress>>(Snapshot::VT_API_PROGRESS, api_progress);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -5956,6 +7407,9 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("self_anim", &self.self_anim());
       ds.field("walk_outcome_blocked", &self.walk_outcome_blocked());
       ds.field("bank_snapshot_generation", &self.bank_snapshot_generation());
+      ds.field("api_gather", &self.api_gather());
+      ds.field("api_gather_outcome", &self.api_gather_outcome());
+      ds.field("api_progress", &self.api_progress());
       ds.finish()
   }
 }
@@ -6660,6 +8114,7 @@ impl<'a> Interact<'a> {
   pub const VT_RUN_AUTO_KIND: ::flatbuffers::VOffsetT = 78;
   pub const VT_RUN_ENERGY_KIND: ::flatbuffers::VOffsetT = 80;
   pub const VT_RUN_ENERGY_MIN: ::flatbuffers::VOffsetT = 82;
+  pub const VT_SETTINGS: ::flatbuffers::VOffsetT = 84;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6680,6 +8135,7 @@ impl<'a> Interact<'a> {
     if let Some(x) = args.xf { builder.add_xf(x); }
     builder.add_request_id(args.request_id);
     if let Some(x) = args.bank_generation { builder.add_bank_generation(x); }
+    if let Some(x) = args.settings { builder.add_settings(x); }
     builder.add_run_energy_min(args.run_energy_min);
     if let Some(x) = args.data { builder.add_data(x); }
     if let Some(x) = args.avoid { builder.add_avoid(x); }
@@ -6995,6 +8451,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(Interact::VT_RUN_ENERGY_MIN, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn settings(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow>>>>(Interact::VT_SETTINGS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -7043,6 +8506,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<u8>("run_auto_kind", Self::VT_RUN_AUTO_KIND, false)?
      .visit_field::<u8>("run_energy_kind", Self::VT_RUN_ENERGY_KIND, false)?
      .visit_field::<i32>("run_energy_min", Self::VT_RUN_ENERGY_MIN, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SettingRow>>>>("settings", Self::VT_SETTINGS, false)?
      .finish();
     Ok(())
   }
@@ -7088,6 +8552,7 @@ pub struct InteractArgs<'a> {
     pub run_auto_kind: u8,
     pub run_energy_kind: u8,
     pub run_energy_min: i32,
+    pub settings: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SettingRow<'a>>>>>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -7133,6 +8598,7 @@ impl<'a> Default for InteractArgs<'a> {
       run_auto_kind: 0,
       run_energy_kind: 0,
       run_energy_min: 0,
+      settings: None,
     }
   }
 }
@@ -7303,6 +8769,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<i32>(Interact::VT_RUN_ENERGY_MIN, run_energy_min, 0);
   }
   #[inline]
+  pub fn add_settings(&mut self, settings: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SettingRow<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Interact::VT_SETTINGS, settings);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -7360,6 +8830,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("run_auto_kind", &self.run_auto_kind());
       ds.field("run_energy_kind", &self.run_energy_kind());
       ds.field("run_energy_min", &self.run_energy_min());
+      ds.field("settings", &self.settings());
       ds.finish()
   }
 }

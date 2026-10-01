@@ -320,6 +320,18 @@ pub enum InteractReq {
     /// Host-side orbit yaw write (`client.orbit_camera_yaw`); no opcode.
     #[serde(rename = "set-camera-yaw")]
     SetCameraYaw { yaw: i32 },
+    /// Native gather-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "gather-run", skip_deserializing)]
+    GatherRun {
+        request_id: u64,
+        settings: std::sync::Arc<crate::native::SettingsBag>,
+    },
+    /// Native gather-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "gather-stop", skip_deserializing)]
+    GatherStop { request_id: u64 },
+    /// Reserved native progress-family control; public JS interact rows cannot forge it.
+    #[serde(rename = "progress-read", skip_deserializing)]
+    ProgressRead { request_id: u64, name: String },
     /// Native `RunManager.override` replacement. The V8 binding is the only
     /// producer; public JS interact rows cannot forge this host policy update.
     #[serde(rename = "run-policy", skip_deserializing)]
