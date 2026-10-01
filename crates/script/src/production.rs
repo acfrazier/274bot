@@ -570,7 +570,7 @@ pub fn largest_make_op(ops: &[Text]) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{COUNT_CLOSE_MS, COUNT_OPEN_MS, MAKE_MENU_MS};
+    use super::super::{MakeXPhase, COUNT_CLOSE_MS, COUNT_OPEN_MS, MAKE_MENU_MS};
     use crate::machine::Reply;
     use crate::observed::MakeButton;
     use crate::task_clock::InstantTaskClock;
@@ -722,7 +722,6 @@ mod tests {
                 chat: false,
                 before: 3000,
             },
-            0,
         );
         assert_eq!(step(&mut m, &mut late, &at), (Some(false), vec![]));
     }
@@ -858,4 +857,4 @@ mod tests {
 }
 
 #[cfg(feature = "load")]
-pub(crate) use compat::{ChatArgs, ChatDialog, Kind};
+pub(crate) use compat::ChatDialog;
