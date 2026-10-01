@@ -6,6 +6,7 @@ use super::oneop::{OneOp, OneOpArgs};
 use super::select::{select, AvoidedTile, PlacementClass, SelectedTarget, Selection, TargetPlan};
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
+use super::widen::{remember_group, SearchExclusions, SearchResult, TriedGroup, WidenCursor};
 use super::{GatherRetained, RecoveryState};
 use crate::native::walk::Walk;
 use crate::native::{
@@ -21,7 +22,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 const MAX_AVOID: usize = 8;
-const WAIT_GAMEPLAY_TICKS: u64 = 8 * 60 * 4;
+const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +98,9 @@ pub struct Gatherer {
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
     wait_until: Option<u64>,
+    widen: WidenCursor,
+    tried_groups: [TriedGroup; 4],
+    hazard_escape: Option<WorldTile>,
     last_gameplay_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
@@ -105,11 +109,12 @@ pub struct Gatherer {
     failure: Option<ScriptFailure>,
     paused: bool,
     needs_validate: bool,
+    rebaseline_gameplay: bool,
     dirty: bool,
     yielded: u32,
     dropped: u32,
     xp: i32,
-    observed_progress: Option<(u32, i32)>,
+    observed_progress: Option<(u32, i32, WorldTile)>,
     method: Arc<str>,
     last_event: Arc<str>,
     absent: u16,
@@ -138,6 +143,9 @@ impl Gatherer {
             },
             avoid: [AvoidedTile::EMPTY; MAX_AVOID],
             wait_until: None,
+            widen: WidenCursor::default(),
+            tried_groups: [TriedGroup::default(); 4],
+            hazard_escape: None,
             last_gameplay_tick: 0,
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
@@ -146,6 +154,7 @@ impl Gatherer {
             failure: None,
             paused: false,
             needs_validate: true,
+            rebaseline_gameplay: true,
             dirty: true,
             yielded: retained.yielded,
             dropped: retained.dropped,
@@ -250,6 +259,9 @@ impl Gatherer {
             return Validation::Pending;
         };
         let skill = self.settings().skill_kind();
+        if snapshot.npcs().is_none() {
+            return Validation::Pending;
+        }
         let skill_stat = stats
             .value
             .iter()
@@ -279,6 +291,47 @@ impl Gatherer {
             }
         }
 
+        // Only watchdog-restamping admissions get a fresh gameplay baseline.
+        // Widening and other revalidation must preserve the idle wait cap.
+        // An existing wait deadline remains fixed, including across Resume.
+        if self.rebaseline_gameplay {
+            self.last_gameplay_tick = cx.evidence().tick;
+            self.rebaseline_gameplay = false;
+        }
+        if self.retained.start_tile.is_none() {
+            self.retained.start_tile = Some(here.value);
+            self.sync_retained_from_context(cx);
+        }
+        if self.settings().location.eq_ignore_ascii_case("auto") && self.retained.anchor.is_none() {
+            match self.widen.poll(
+                &self.prepared.catalog,
+                &self.prepared.methods,
+                self.retained.start_tile.unwrap_or(here.value),
+                self.prepared.settings.radius,
+                SearchExclusions {
+                    avoided: &self.avoid,
+                    tried: &self.tried_groups,
+                },
+                cx.evidence().tick,
+            ) {
+                SearchResult::Pending => {
+                    self.set_event("searching Auto within 128 tiles");
+                    return Validation::Pending;
+                }
+                SearchResult::Found(anchor) => {
+                    self.retained.anchor = Some(anchor);
+                    self.sync_retained_from_context(cx);
+                }
+                SearchResult::Exhausted => {
+                    self.fail(
+                        "resource-unavailable",
+                        "Auto searched 128 tiles without a usable group",
+                        true,
+                    );
+                    return Validation::Pending;
+                }
+            }
+        }
         let retained_anchor = self.retained.anchor;
         let area = match WorkArea::resolve(self.settings(), retained_anchor, Some(here.value)) {
             Ok(area) => area,
@@ -323,6 +376,23 @@ impl Gatherer {
             return Validation::Pending;
         }
 
+        for &index in self.prepared.methods.iter() {
+            for consume in known_rows(&self.prepared.catalog.methods()[index].consumes) {
+                if !inventory
+                    .value
+                    .iter()
+                    .any(|row| row.def.id == consume.item && row.count > 0)
+                {
+                    let name = self
+                        .prepared
+                        .catalog
+                        .alias(api::selected::EntityId::Obj(consume.item))
+                        .unwrap_or("bait");
+                    self.fail("supply-missing", format!("supply-missing:{name}"), true);
+                    return Validation::Pending;
+                }
+            }
+        }
         let Some(tool) = self.derive_tool(skill, skill_stat, inventory.value, equipment.value)
         else {
             self.fail(
@@ -334,9 +404,11 @@ impl Gatherer {
         };
         self.tool = tool;
         self.area = Some(area);
-        self.last_gameplay_tick = self.last_gameplay_tick.max(cx.evidence().tick);
         self.dirty = true;
-        if !tool.worn && self.can_wield(tool, inventory.value, stats.value) {
+        if skill != Skill::Fishing
+            && !tool.worn
+            && self.can_wield(tool, inventory.value, stats.value)
+        {
             return Validation::Wear(tool);
         }
         Validation::Ready
@@ -449,6 +521,9 @@ impl Gatherer {
     }
 
     fn action_failure(&mut self, error: ActionError) {
+        if matches!(error, ActionError::Held) {
+            return;
+        }
         let retryable = !matches!(error, ActionError::Stale | ActionError::Cancelled);
         self.fail(
             "action-error",
@@ -462,37 +537,34 @@ impl Gatherer {
         let Some(inventory) = snapshot.inventory() else {
             return;
         };
-        let mut products = [0; 8];
-        let mut products_len = 0;
-        for &index in self.prepared.methods.iter() {
-            let Some(method) = self.prepared.catalog.methods().get(index) else {
-                continue;
-            };
-            for product in known_rows(&method.products).iter().take(8) {
-                if !products[..products_len].contains(&product.item) {
-                    products[products_len] = product.item;
-                    products_len += 1;
-                }
-            }
-        }
+        let products = Arc::clone(&self.prepared.products);
         let mut protected = [0; 8];
-        let protected_len = if self.tool.id >= 0 {
+        let mut protected_len = if self.tool.id >= 0 {
             protected[0] = self.tool.id;
             1
         } else {
             0
         };
+        for &index in self.prepared.methods.iter() {
+            for consume in known_rows(&self.prepared.catalog.methods()[index].consumes) {
+                if !protected[..protected_len].contains(&consume.item)
+                    && protected_len < protected.len()
+                {
+                    protected[protected_len] = consume.item;
+                    protected_len += 1;
+                }
+            }
+        }
         let args = DropBatchArgs {
-            products,
-            products_len: products_len as u8,
+            products: Arc::clone(&products),
             protected,
-            protected_len,
+            protected_len: protected_len as u8,
         };
         if !inventory.value.iter().any(|row| {
             row.count > 0
                 && row.def.name.is_some()
-                && products[..products_len].contains(&row.def.id)
-                && !protected[..usize::from(protected_len)].contains(&row.def.id)
+                && products.contains(&row.def.id)
+                && !protected[..protected_len].contains(&row.def.id)
         }) {
             self.fail(
                 "inventory-blocked",
@@ -513,11 +585,14 @@ impl Gatherer {
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
+        // Observed NPC ops own their client-side approach. Their occupied water
+        // tile is not a navigation destination (and can move before arrival).
         if selected.class == PlacementClass::Unloaded
-            || !adjacent(
-                tick.cx.snapshot().here().map(|here| here.value),
-                selected.plan.tile,
-            )
+            || (selected.plan.npc_index < 0
+                && !adjacent(
+                    tick.cx.snapshot().here().map(|here| here.value),
+                    selected.plan.tile,
+                ))
         {
             let request = WalkRequest {
                 target: selected.plan.tile,
@@ -546,6 +621,7 @@ impl Gatherer {
             GatherRunArgs {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
+                catalog: Arc::clone(&self.prepared.catalog),
             },
             &mut tick.cx,
         ) {
@@ -574,36 +650,28 @@ impl Gatherer {
                 let products = inventory
                     .value
                     .iter()
-                    .filter(|row| {
-                        self.prepared.methods.iter().any(|&index| {
-                            self.prepared
-                                .catalog
-                                .methods()
-                                .get(index)
-                                .is_some_and(|method| {
-                                    known_rows(&method.products)
-                                        .iter()
-                                        .any(|product| product.item == row.def.id)
-                                })
-                        })
-                    })
+                    .filter(|row| self.prepared.products.contains(&row.def.id))
                     .fold(0u32, |total, row| {
                         total.saturating_add(row.count.max(0) as u32)
                     });
-                Some((products, xp))
+                Some((products, xp, snapshot.here()?.value))
             });
         // Inventory may arrive after the target's depleted scene row. The
         // runner owns this baseline across machine completion and reselection.
         let previous = self.observed_progress;
         self.observed_progress = current;
-        if let (Some((products, xp)), Some((old_products, old_xp))) = (current, previous) {
+        if let (Some((products, xp, tile)), Some((old_products, old_xp, old_tile))) =
+            (current, previous)
+        {
             let gained = products.saturating_sub(old_products);
             let xp = xp.saturating_sub(old_xp).max(0);
+            if tile != old_tile || xp != 0 {
+                self.last_gameplay_tick = tick.cx.evidence().tick;
+            }
             if gained != 0 || xp != 0 {
                 self.yielded = self.yielded.saturating_add(gained);
                 self.retained.yielded = self.yielded;
                 self.xp = self.xp.saturating_add(xp);
-                self.last_gameplay_tick = tick.cx.evidence().tick;
                 self.wait_until = None;
                 self.dirty = true;
                 self.sync_retained(tick);
@@ -623,6 +691,18 @@ impl Gatherer {
                 self.start_drop(tick);
             }
             GatherEnd::TargetGone => self.set_event("target gone"),
+            GatherEnd::Depleted => {
+                // Re-observe every tick rather than suppressing an early
+                // respawn behind an avoidance timer.
+                self.set_event("resource depleted");
+            }
+            GatherEnd::Hazard => {
+                if let Some(target) = &target {
+                    self.avoid(target.tile, tick.cx.evidence().tick.saturating_add(60));
+                }
+                self.hazard_escape = target.map(|target| target.tile);
+                self.set_event("hazard observed; cancelling queued gather");
+            }
             GatherEnd::Idle => {
                 if let Some(target) = target {
                     self.avoid(
@@ -682,6 +762,7 @@ impl Gatherer {
             );
             return;
         }
+        self.hazard_escape = None;
         // A walk receipt is not resource evidence: the target may have
         // depleted while travelling. Select again from the arrival frame.
         self.target = None;
@@ -814,6 +895,9 @@ impl Gatherer {
             self.needs_validate = true;
             return;
         };
+        let Some(npcs) = snapshot.npcs() else {
+            return;
+        };
         let selected = select(
             &self.prepared.catalog,
             &self.prepared.methods,
@@ -823,6 +907,7 @@ impl Gatherer {
             super::select::SelectionObservation {
                 world: world.value,
                 locs: locs.value,
+                npcs: npcs.value,
                 here: here.value,
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
@@ -831,10 +916,12 @@ impl Gatherer {
         self.zone_gated = selected.zone_gated;
         match selected.target {
             Some(target) => {
+                self.hazard_escape = None;
                 self.wait_until = None;
                 self.absent = 0;
                 self.start_target(target, tick);
             }
+            None if self.hazard_escape.is_some() => self.escape_hazard(tick),
             None => match selected.outcome {
                 Selection::Absent { absent } => {
                     self.absent = absent;
@@ -846,21 +933,76 @@ impl Gatherer {
                 }
                 Selection::Exhausted { wait_until, absent } => {
                     self.absent = absent;
-                    let bounded = tick
-                        .cx
-                        .evidence()
-                        .tick
-                        .max(self.last_gameplay_tick)
-                        .saturating_add(WAIT_GAMEPLAY_TICKS);
-                    self.wait_until = Some(wait_until.min(bounded));
-                    if tick.cx.evidence().tick >= self.wait_until.unwrap_or(0) {
-                        self.fail("resource-unavailable", "resource-unavailable", true);
+                    let bounded = self.last_gameplay_tick.saturating_add(WAIT_GAMEPLAY_TICKS);
+                    let deadline = *self.wait_until.get_or_insert(wait_until.min(bounded));
+                    if tick.cx.evidence().tick >= deadline {
+                        if self.settings().location.eq_ignore_ascii_case("auto") {
+                            self.begin_widen(wait_until, tick);
+                        } else {
+                            self.fail("resource-unavailable", "resource-unavailable", true);
+                        }
                     } else {
                         self.set_event("waiting for a resource");
                     }
                 }
                 Selection::Target(_) => unreachable!(),
             },
+        }
+    }
+
+    fn begin_widen(&mut self, exhausted_until: u64, tick: &mut NativeTick<'_>) {
+        let now = tick.cx.evidence().tick;
+        let Some(area) = self.area else { return };
+        if !remember_group(&mut self.tried_groups, area.anchor, now, exhausted_until) {
+            self.fail(
+                "widen-limit",
+                "Auto widening limit: tried: 4 (within 128 tiles)",
+                true,
+            );
+            return;
+        }
+        self.retained.anchor = None;
+        self.area = None;
+        self.wait_until = None;
+        self.widen.reset();
+        self.needs_validate = true;
+        self.sync_retained(tick);
+        self.set_event("widening Auto within 128 tiles");
+    }
+
+    fn escape_hazard(&mut self, tick: &mut NativeTick<'_>) {
+        let Some(here) = tick.cx.snapshot().here().map(|row| row.value) else {
+            return;
+        };
+        let Some(hazard) = self.hazard_escape else {
+            return;
+        };
+        let mut dx = here.x.saturating_sub(hazard.x).signum();
+        let dz = here.z.saturating_sub(hazard.z).signum();
+        if dx == 0 && dz == 0 {
+            dx = 1;
+        }
+        let request = WalkRequest {
+            target: WorldTile {
+                x: here.x.saturating_add(dx),
+                z: here.z.saturating_add(dz),
+                level: here.level,
+            },
+            radius: 0,
+            options: FindOptions {
+                allow_teleports: false,
+                allow_wilderness: self.settings().allow_wilderness,
+                allow_bank_fetch: false,
+            },
+            required_after: tick.cx.evidence(),
+            evidence: None,
+        };
+        match tick.actions.begin::<Walk>(request, &mut tick.cx) {
+            Ok(handle) => {
+                self.active = Active::Walk(handle);
+                self.set_event("walking away from hazard");
+            }
+            Err(error) => self.action_failure(error),
         }
     }
 
@@ -929,10 +1071,7 @@ impl Gatherer {
             skill: self.settings().skill_kind().name(),
             method: Arc::clone(&self.method),
             phase,
-            area: Arc::<str>::from(
-                self.area
-                    .map_or_else(|| "unresolved".to_owned(), WorkArea::label),
-            ),
+            area: Arc::<str>::from(self.area_label()),
             target: self
                 .target
                 .as_ref()
@@ -963,6 +1102,30 @@ impl Gatherer {
             excluded_targets: Arc::clone(&self.prepared.excluded_targets),
             last_event: Arc::clone(&self.last_event),
         }
+    }
+
+    fn area_label(&self) -> String {
+        let mut label = self
+            .area
+            .map_or_else(|| "unresolved".to_owned(), WorkArea::label);
+        if self.settings().location.eq_ignore_ascii_case("auto") {
+            use std::fmt::Write;
+            let tried = self
+                .tried_groups
+                .iter()
+                .filter(|entry| u64::from(entry.until) > self.fence.tick)
+                .count();
+            let _ = write!(
+                label,
+                "; searched: {}; tried: {tried}; limit: 128",
+                self.widen.searched
+            );
+        }
+        if let Some(until) = self.wait_until {
+            use std::fmt::Write;
+            let _ = write!(label, "; wait_until: {until}");
+        }
+        label
     }
 
     fn publish(&mut self, tick: &mut NativeTick<'_>) {
@@ -998,8 +1161,13 @@ impl Script for Gatherer {
             self.observed_progress = None;
             self.cancel_active();
             self.needs_validate = true;
+            self.rebaseline_gameplay = true;
             self.death = crate::quester::death::DeathLatch::from_watermark(self.retained.death_seq);
             self.set_event("run key changed; revalidating");
+        }
+        if !tick.cx.eligible || self.paused {
+            self.publish(tick);
+            return Ok(ScriptFlow::Continue);
         }
         if self.observe_death(tick) {
             self.cancel_active();
@@ -1014,10 +1182,6 @@ impl Script for Gatherer {
             return Ok(ScriptFlow::Blocked(self.failure.clone().unwrap()));
         }
         self.observe_progress(tick);
-        if self.paused {
-            self.publish(tick);
-            return Ok(ScriptFlow::Continue);
-        }
         if self.active_matches_none() {
             if let Some(revision) = self.apply_pending() {
                 tick.output.settings_applied(revision);
@@ -1040,15 +1204,9 @@ impl Script for Gatherer {
         }
         if !self.active_matches_none() {
             self.poll_active(tick);
-        } else if self
-            .wait_until
-            .is_some_and(|until| tick.cx.evidence().tick < until)
-        {
-            // Re-run selection even during a bounded wait so a respawned row is
-            // acted on immediately. `select` itself is the live re-observation.
-            self.begin_idle(tick);
         } else {
-            self.wait_until = None;
+            // Even at expiry, re-observe first: a freshly regrown resource
+            // takes precedence over waiting or widening.
             self.begin_idle(tick);
         }
         self.publish(tick);
@@ -1087,9 +1245,20 @@ impl Script for Gatherer {
         if !failure.retryable {
             return Err(failure.clone());
         }
+        let exhausted_search =
+            failure.code.as_ref() == "resource-unavailable" && self.retained.anchor.is_none();
+        if self.settings().location.eq_ignore_ascii_case("auto")
+            && (failure.code.as_ref() == "widen-limit" || exhausted_search)
+        {
+            self.tried_groups = [TriedGroup::default(); 4];
+            self.widen.reset();
+            self.retained.anchor = None;
+            self.area = None;
+        }
         self.clear_failure();
         self.wait_until = None;
         self.needs_validate = true;
+        self.rebaseline_gameplay = true;
         self.dirty = true;
         Ok(())
     }
@@ -1104,6 +1273,7 @@ impl Script for Gatherer {
             Interrupt::Resume | Interrupt::Hold(false) | Interrupt::SessionReady => {
                 self.paused = false;
                 self.needs_validate = true;
+                self.rebaseline_gameplay = true;
                 self.dirty = true;
             }
         }
@@ -1130,7 +1300,7 @@ fn tool_gate_met(tool: &ToolUse, skill: Skill, stat: &StatView) -> bool {
         i32::from(gate.skill) == stat.index && stat.base >= i32::from(gate.level)
     } else {
         match skill {
-            Skill::Woodcutting | Skill::Mining => true,
+            Skill::Woodcutting | Skill::Mining | Skill::Fishing => true,
         }
     }
 }
@@ -1159,7 +1329,75 @@ mod tests {
     }
 
     #[test]
-    fn g1_instance_layout_stays_inside_the_inline_budget() {
+    fn auto_retry_preserves_groups_unless_search_is_exhausted() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut bag = crate::native::SettingsBag::new();
+        bag.insert("location".into(), serde_json::json!("Auto"));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let anchor = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        for (code, current_group, reset) in [
+            ("walk-failed", Some(anchor), false),
+            ("inventory-blocked", Some(anchor), false),
+            ("resource-unavailable", Some(anchor), false),
+            ("widen-limit", Some(anchor), true),
+            ("resource-unavailable", None, true),
+        ] {
+            let mut runner = Gatherer::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                Arc::clone(&config),
+                Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+                GatherRetained::default(),
+            );
+            runner.retained.anchor = current_group;
+            runner.area = current_group.map(|anchor| WorkArea {
+                mode: super::super::area::AreaMode::Auto,
+                anchor,
+                radius: 12,
+            });
+            assert!(remember_group(&mut runner.tried_groups, anchor, 1, 1000));
+            runner.fail(code, code, true);
+
+            runner.retry().unwrap();
+
+            assert!(runner.failure.is_none(), "{code}");
+            assert!(runner.needs_validate, "{code}");
+            assert_eq!(
+                runner.retained.anchor,
+                if reset { None } else { current_group },
+                "{code}"
+            );
+            assert_eq!(runner.area.is_none(), reset, "{code}");
+            assert_eq!(
+                runner.tried_groups[0].until,
+                if reset { 0 } else { 1000 },
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn instance_with_widening_stays_inside_the_inline_budget() {
         assert!(size_of::<Gatherer>() <= 1024);
         assert!(size_of::<GatherRetained>() <= 80);
         println!(

@@ -55,7 +55,7 @@ draws the game view on the CPU";
 const GRAPHICS_HELP: &str = "the panel window needs a Vulkan driver (ICD). BOT_CPU=1 does not \
 help: it only draws the game view on the CPU";
 
-/// Panel window-loop error.
+/// Panel application or window-loop error.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PanelError {
@@ -63,6 +63,8 @@ pub enum PanelError {
     ServerProfile(String),
     #[error("event loop error: {0}")]
     EventLoop(#[from] winit::error::EventLoopError),
+    #[error("live harness failed: {0}")]
+    LiveHarnessFailure(String),
     #[error("window creation failed: {0}")]
     WindowCreation(#[source] winit::error::OsError),
     #[error("WGPU surface creation failed: {0}; {help}", help = GRAPHICS_HELP)]
@@ -883,9 +885,9 @@ impl AppWindow {
         gui: &mut F,
         docking: &DockingConfig,
         shots: &Mutex<ShotState>,
-    ) -> Result<(), PanelError>
+    ) -> Result<bool, PanelError>
     where
-        F: FnMut(&imgui::Ui, &mut Gpu),
+        F: FnMut(&imgui::Ui, &mut Gpu) -> bool,
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
         #[cfg(feature = "memory-profile")]
@@ -922,13 +924,13 @@ impl AppWindow {
 
         let mut gpu = Gpu::new(&self.device, &self.queue, &mut self.imgui.renderer);
 
-        // Call the UI body
-        gui(ui, &mut gpu);
-
+        let exit_requested = gui(ui, &mut gpu);
         // Keep OS cursor/IME state in sync with Dear ImGui's per-frame intent.
         self.imgui.platform.prepare_render_with_ui(ui, &self.window);
-
         let draw_data = self.imgui.context.render();
+        if exit_requested {
+            return Ok(true);
+        }
 
         // Acquire the swapchain image as late as possible to reduce time holding it.
         let (frame, reconfigure_after_present) = match self.surface.get_current_texture() {
@@ -937,16 +939,16 @@ impl AppWindow {
             wgpu::CurrentSurfaceTexture::Lost => {
                 report_deferred_readback(shots, "lost");
                 self.surface.configure(&self.device, &self.surface_desc);
-                return Ok(());
+                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 report_deferred_readback(shots, "outdated");
                 self.surface.configure(&self.device, &self.surface_desc);
-                return Ok(());
+                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Timeout => {
                 report_deferred_readback(shots, "timeout");
-                return Ok(());
+                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Occluded => {
                 // Presentation is blocked, but a promoted capture can still
@@ -973,7 +975,7 @@ impl AppWindow {
                     }
                     complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
                 }
-                return Ok(());
+                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 return Err(PanelError::SurfaceValidation);
@@ -1003,7 +1005,7 @@ impl AppWindow {
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
         }
-        Ok(())
+        Ok(exit_requested)
     }
 }
 
@@ -1434,7 +1436,7 @@ struct Lifecycle {
 
 struct App<F>
 where
-    F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
+    F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
     cfg: PanelConfig,
     window: Option<AppWindow>,
@@ -1453,7 +1455,7 @@ where
 
 impl<F> App<F>
 where
-    F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
+    F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
     fn new(
         cfg: PanelConfig,
@@ -1543,7 +1545,7 @@ fn close_for_destroyed_window(
 
 impl<F> ApplicationHandler for App<F>
 where
-    F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
+    F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if event_loop.exiting() {
@@ -1592,15 +1594,19 @@ where
                         &full_event,
                     );
 
-                    if let Err(e) =
-                        window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
+                    match window.render(&mut self.ui_frame, &self.cfg.docking, self.shots.as_ref())
                     {
-                        eprintln!(
-                            "Render error: {e}; attempting to recover by recreating GPU state"
-                        );
-                        need_recreate = true;
-                    } else if matches!(self.cfg.redraw, RedrawMode::Poll) {
-                        window.window.request_redraw();
+                        Ok(true) => event_loop.exit(),
+                        Ok(false) if matches!(self.cfg.redraw, RedrawMode::Poll) => {
+                            window.window.request_redraw();
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "Render error: {e}; attempting to recover by recreating GPU state"
+                            );
+                            need_recreate = true;
+                        }
                     }
                 }
 
@@ -1696,9 +1702,10 @@ where
 }
 
 /// Run the panel window loop. `ui_frame` is called every frame with the Ui
-/// and the `Gpu` handle; `on_gpu_init` fires once the device/queue/surface
-/// exist (the loop owns the window now). `shots` coordinates whole-window
-/// captures between the UI body (requests) and the render pass (readback).
+/// and `Gpu` handle, and returns `true` to end the loop after that frame.
+/// `on_gpu_init` fires once the device/queue/surface exist (the loop owns the
+/// window now). `shots` coordinates whole-window captures between the UI body
+/// (requests) and the render pass (readback).
 pub fn run<F>(
     cfg: PanelConfig,
     on_style: impl FnMut(&mut imgui::Context) + 'static,
@@ -1708,7 +1715,7 @@ pub fn run<F>(
     ui_frame: F,
 ) -> Result<(), PanelError>
 where
-    F: FnMut(&imgui::Ui, &mut Gpu) + 'static,
+    F: FnMut(&imgui::Ui, &mut Gpu) -> bool + 'static,
 {
     let event_loop = EventLoop::new()?;
     match cfg.redraw {

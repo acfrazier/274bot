@@ -1248,7 +1248,20 @@ impl LiveHarness {
         }
     }
 
+    pub(super) fn failure(&self) -> Option<&str> {
+        match self {
+            Self::Script(live) => live.failed.as_deref(),
+            Self::Smoke(live) => live.failed.as_deref(),
+            Self::Null(_) | Self::Stress(_) => None,
+        }
+    }
+
     pub(super) fn exit_pass(&self) -> bool {
-        matches!(self, Self::Smoke(s) if s.passed) || matches!(self, Self::Script(s) if s.passed)
+        match self {
+            Self::Null(live) => live.passed,
+            Self::Stress(live) => live.passed,
+            Self::Script(live) => live.passed,
+            Self::Smoke(live) => live.passed,
+        }
     }
 }

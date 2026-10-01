@@ -8,7 +8,7 @@
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
@@ -1209,7 +1209,7 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     scenario_name: Option<String>,
-    output: std::fs::File,
+    output: BufWriter<std::fs::File>,
     diagnostics: bool,
     /// Historical `BOT_MEMORY_SINGLE_RENDERER=1` only (old metadata summaries).
     pub single_renderer: bool,
@@ -1412,6 +1412,9 @@ impl Run {
             .create_new(true)
             .open(&output_path)
             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+        // JSON's Display writes individual tokens. Coalesce those writes,
+        // especially when the samples file lives on a VM's shared volume.
+        let output = BufWriter::new(output);
         let qualification_output = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1899,6 +1902,9 @@ impl Run {
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
+            // Frontends finish with process::exit, which skips destructors:
+            // each complete row must be visible before this poll returns.
+            self.output.flush().map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
             }
@@ -1985,7 +1991,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
+        write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
 
     /// The duel fleet's recorded failure, named with its slot's account,
@@ -2023,7 +2029,7 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
-        if let Err(write_error) = writeln!(self.qualification_output, "{value}") {
+        if let Err(write_error) = write_row(&mut self.qualification_output, &value) {
             eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
         }
     }
@@ -2041,9 +2047,9 @@ impl Run {
         let row = serde_json::json!({"record":"diagnostics","elapsed_s":self.started.elapsed().as_secs_f64(),"failure":failure,"slots":slots});
         // A separate record type in the diagnostic-only sidecar keeps original
         // Sample consumers and baseline JSONL unchanged.
-        writeln!(
+        write_row(
             self.diagnostic_output.as_mut().expect("diagnostic output"),
-            "{row}"
+            &row,
         )
         .map_err(|e| e.to_string())
     }
@@ -2056,6 +2062,16 @@ impl Run {
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
     }
+}
+
+/// One sidecar row in a single write. JSON's `Display` emits token-sized
+/// writes, which cost a measured frame when a sidecar row lands inside the
+/// observed window; one `write_all` per row also leaves nothing buffered
+/// for `process::exit` to lose.
+fn write_row(file: &mut std::fs::File, value: &serde_json::Value) -> std::io::Result<()> {
+    let mut line = value.to_string();
+    line.push('\n');
+    file.write_all(line.as_bytes())
 }
 
 #[cfg(test)]

@@ -4941,6 +4941,30 @@ fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Opti
     }
 }
 
+/// Resolve a normal event-loop return against any failure latched by `--live`.
+/// A live failure remains fatal if the window closes before the frame exits.
+fn finish_panel_run(
+    result: Result<(), window::PanelError>,
+    live_failure: Option<String>,
+) -> Result<(), window::PanelError> {
+    match (result, live_failure) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Some(message)) => Err(window::PanelError::LiveHarnessFailure(message)),
+        (Ok(()), None) => Ok(()),
+    }
+}
+
+/// Exit status for a live terminal decision; failure takes precedence.
+fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
+    if failure.is_some() || live.failure().is_some() {
+        Some(1)
+    } else if live.exit_pass() {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
@@ -4986,7 +5010,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
-    window::run(
+    let live_failure = Arc::new(Mutex::new(None));
+    let live_failure_frame = Arc::clone(&live_failure);
+    let result = window::run(
         cfg,
         amber_style,
         move |window, device, queue, _| {
@@ -5002,8 +5028,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             let _profile_draw = client::profiling::UI_DRAW.start();
             if let Some(holder) = instance_prompt.as_ref() {
                 match instance_conflict_choice(ui, holder) {
-                    None => return,
-                    Some(false) => std::process::exit(0),
+                    None => return false,
+                    Some(false) => return true,
                     Some(true) => {
                         instance_prompt = None;
                         match init_panel_running(
@@ -5021,7 +5047,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let Some((state, startup)) = running.as_mut() else {
-                return;
+                return false;
             };
             if presented {
                 drive_startup(state, startup);
@@ -5047,9 +5073,11 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
             let progress = startup_progress(startup, state.session.profile_generation());
-            ui_frame(ui, gpu, state, progress);
+            ui_frame(ui, gpu, state, progress, &live_failure_frame)
         },
-    )
+    );
+    let failure = live_failure.lock().unwrap().take();
+    finish_panel_run(result, failure)
 }
 
 /// Whole-window shots (the 377 harness pattern): write completed captures
@@ -5244,7 +5272,13 @@ fn record_presented_upload(
 
 /// The per-frame UI body: session pump, live harness ticks, dock host,
 /// chrome, game pane, rail.
-fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<StartupProgressView>) {
+fn ui_frame(
+    ui: &Ui,
+    gpu: &mut Gpu,
+    state: &mut PanelState,
+    progress: Option<StartupProgressView>,
+    live_failure: &Mutex<Option<String>>,
+) -> bool {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
@@ -5281,18 +5315,21 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
                 .map(|label| state.shot_state.lock().unwrap().status(label))
                 .unwrap_or(ShotStatus::Missing)
         };
-        if let Some(msg) = live.tick(
+        let failure = live.tick(
             &mut state.session,
             &statuses,
             &terminal_shot_status,
             Some(&state.shot_state),
             wrote_shots,
-        ) {
-            eprintln!("FAIL: {msg}");
-            std::process::exit(1);
-        }
-        if live.exit_pass() {
-            std::process::exit(0);
+        );
+        if let Some(code) = live_exit_code(live, failure.as_deref()) {
+            if code == 1 {
+                if let Some(msg) = failure.as_deref().or_else(|| live.failure()) {
+                    eprintln!("FAIL: {msg}");
+                    *live_failure.lock().unwrap() = Some(msg.to_owned());
+                }
+            }
+            return true;
         }
     }
     // Interactive whole-window capture: F12 enqueues one shot per press
@@ -5348,6 +5385,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);
     discard_unconsumed_native_capture();
+    false
 }
 
 #[cfg(test)]
