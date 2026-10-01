@@ -903,9 +903,8 @@ fn compile_walk(
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if !arg.cross.is_empty() {
-        return Err(CompileError::code(
-            "invalid-args: walk: cross needs protected walk (combat slice)",
-        ));
+        return Err(CompileError::code("invalid-args")
+            .with_detail("walk: cross needs protected walk (combat slice)"));
     }
     validate_tile(arg.tile, &arg.source)?;
     Ok(Arc::new(WalkPlan {

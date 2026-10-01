@@ -31,6 +31,7 @@ pub struct CompileError {
     pub role: Option<FactKey>,
     pub step: Option<FactKey>,
     pub code: Arc<str>,
+    pub detail: Option<Arc<str>>,
     pub source: Option<SourceSpan>,
 }
 
@@ -41,12 +42,18 @@ impl CompileError {
             role: None,
             step: None,
             code: Arc::from(code),
+            detail: None,
             source: None,
         }
     }
 
     pub fn with_path(mut self, path: FactKey) -> Self {
         self.path = path;
+        self
+    }
+
+    pub fn with_detail(mut self, detail: &'static str) -> Self {
+        self.detail = Some(Arc::from(detail));
         self
     }
 }
@@ -301,6 +308,7 @@ fn compile_uncached(
                 role: None,
                 step: Some(step.id.clone()),
                 code: Arc::from("duplicate-step"),
+                detail: None,
                 source: None,
             });
         }
@@ -316,6 +324,7 @@ fn compile_uncached(
                 role: None,
                 step: Some(step.id.clone()),
                 code: Arc::from("duplicate-step"),
+                detail: None,
                 source: None,
             });
         }
@@ -379,6 +388,7 @@ fn compile_steps(
                 role: None,
                 step: Some(step.id.clone()),
                 code: Arc::from("duplicate-step"),
+                detail: None,
                 source: None,
             });
         }
@@ -388,6 +398,7 @@ fn compile_steps(
                 role: None,
                 step: Some(step.id.clone()),
                 code: Arc::from("always-skipped"),
+                detail: None,
                 source: None,
             });
         }
@@ -399,6 +410,7 @@ fn compile_steps(
                 role: None,
                 step: Some(step.id.clone()),
                 code: Arc::from("unknown-handler"),
+                detail: None,
                 source: None,
             })?;
         let plan = if step.kind == "acquire" {
@@ -409,6 +421,7 @@ fn compile_steps(
                 role: None,
                 step: Some(step.id.clone()),
                 code: err.code,
+                detail: err.detail,
                 source: None,
             })?
         };
@@ -418,6 +431,7 @@ fn compile_steps(
                 role: None,
                 step: Some(step.id.clone()),
                 code: err.code,
+                detail: err.detail,
                 source: None,
             })?;
         let settle = families::compile_predicate(&step.settle, cx).map_err(|err| CompileError {
@@ -425,6 +439,7 @@ fn compile_steps(
             role: None,
             step: Some(step.id.clone()),
             code: err.code,
+            detail: err.detail,
             source: None,
         })?;
         out.push(CompiledStep {
@@ -588,6 +603,25 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("compile must fail"),
         }
+    }
+
+    #[test]
+    fn path_walk_cross_refusal_has_invalid_args_code_and_specific_detail() {
+        let err = compile_err(|document| {
+            let step = &mut document.roles[0].sequences[0].steps[0];
+            step.kind = "walk".into();
+            step.args = serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "regression test",
+                "radius": 1,
+                "cross": ["Test barrier"],
+            });
+        });
+        assert_eq!(err.code.as_ref(), "invalid-args");
+        assert_eq!(
+            err.detail.as_deref(),
+            Some("walk: cross needs protected walk (combat slice)")
+        );
     }
 
     #[test]

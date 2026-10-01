@@ -11,6 +11,7 @@ use nav::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
 };
+use nav::zones::ZoneExempt;
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
 use nav::world_state::WorldState;
@@ -309,6 +310,7 @@ pub(super) struct InspectRequest {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    pub zones: ZoneExempt,
     pub avoid: Vec<AvoidRect>,
     pub request_id: u64,
     pub invalid_args: bool,
@@ -393,6 +395,7 @@ pub(super) fn queue_inspect(
             allow_teleports: req.allow_teleports,
             allow_wilderness: req.allow_wilderness,
             allow_bank_fetch: req.allow_bank_fetch,
+            zones: req.zones,
             ..FindOptions::default()
         };
         if let Some(ess) = bot.traveller.essence() {
