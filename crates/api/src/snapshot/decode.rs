@@ -28,11 +28,13 @@ impl NpcView {
             tile: entity_world_tile(entity, base, level),
             distance,
             animation: entity.primary_anim,
+            animation_frame: entity.primary_anim_frame,
             pose_animation: entity.secondary_anim,
             orientation: entity.yaw,
             target_orientation: entity.dst_yaw,
             overhead_text: entity.chat_message.clone(),
             spot_animation: entity.spotanim_id,
+            spot_animation_stamp: entity.spotanim_last_cycle,
             health: entity.health,
             total_health: entity.total_health,
             face_entity: entity.face_entity,
@@ -95,6 +97,7 @@ impl GameSnapshot {
         if !track(client.gens.player, &mut self.gens.player) {
             return false;
         }
+        self.players_available = true;
         if advance_tick {
             // One `PLAYER_INFO` per game tick: the snapshot's tick count.
             self.tick = self.tick.wrapping_add(1);
@@ -138,6 +141,7 @@ impl GameSnapshot {
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
+                weapon: player_weapon(&lp.appearance),
             },
             energy: client.runenergy,
             weight: client.runweight,
@@ -165,6 +169,7 @@ impl GameSnapshot {
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
+                    weapon: player_weapon(&player.appearance),
                 });
             }
         }
@@ -172,7 +177,7 @@ impl GameSnapshot {
         true
     }
 
-    /// Refresh native scalar facts that may change without a packet-family
+    /// Refresh native observations that may change without a packet-family
     /// generation. Clone the overhead string only when its value changes.
     pub(super) fn refresh_native_facts(&mut self, client: &Client) {
         let local_overhead_text = client
@@ -189,6 +194,38 @@ impl GameSnapshot {
         // Hitmarks live on the local entity and expire against loop_cycle;
         // neither event bumps a packet family, so recompute every read.
         self.taking_damage = local_player_taking_damage(client);
+        self.active_side_tab = client.active_icon;
+        self.hitmarks = if client.ingame {
+            client.local_player.as_ref().map(|player| HitmarksView {
+                marks: std::array::from_fn(|index| HitmarkView {
+                    value: player.entity.damage_values[index],
+                    kind: player.entity.damage_types[index],
+                    cycle: player.entity.damage_cycles[index],
+                }),
+                loop_cycle: client.loop_cycle,
+            })
+        } else {
+            None
+        };
+        self.projectiles.clear();
+        if client.ingame {
+            let base = (client.map_build_base_x, client.map_build_base_z);
+            client.projectiles.for_each(|projectile| {
+                self.projectiles.push(ProjectileView {
+                    spotanim: projectile.spotanim,
+                    level: projectile.level,
+                    src: projectile_source_tile(
+                        projectile.src_x,
+                        projectile.src_z,
+                        projectile.level,
+                        base,
+                    ),
+                    target: decode_projectile_target(projectile.target),
+                    t1: projectile.t1,
+                    t2: projectile.t2,
+                });
+            });
+        }
     }
 
     /// Refresh cached spatial distances only when the local origin moves.
@@ -649,6 +686,7 @@ impl GameSnapshot {
                 widgets,
             });
         }
+        self.side_tabs_available = true;
         true
     }
 
@@ -1252,6 +1290,25 @@ fn entity_network_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> W
     }
 }
 
+/// Projectile sources are encoded as scene-local tile centers in pixel space.
+fn projectile_source_tile(
+    src_x: i32,
+    src_z: i32,
+    level: i32,
+    base: (i32, i32),
+) -> WorldTile {
+    WorldTile {
+        x: base.0 + (src_x - 64) / 128,
+        z: base.1 + (src_z - 64) / 128,
+        level,
+    }
+}
+
+fn player_weapon(appearance: &[u16; 12]) -> Option<i32> {
+    let encoded = i32::from(appearance[3]);
+    (encoded >= 0x200).then_some(encoded - 0x200)
+}
+
 /// The engine encodes a player face target as slot + 32768.
 pub const PLAYER_FACE_BASE: i32 = 32768;
 
@@ -1280,6 +1337,23 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
             index: (face_entity - PLAYER_FACE_BASE) as usize,
         })
     }
+}
+
+/// Projectiles encode target slots by sign: positive NPC, negative player,
+/// zero for untargeted. Keep the published view in the shared actor scheme.
+fn decode_projectile_target(target: i32) -> Option<ActorTargetView> {
+    if target == 0 {
+        return None;
+    }
+    let (kind, index) = if target > 0 {
+        (ActorKind::Npc, usize::try_from(target - 1).ok()?)
+    } else {
+        (
+            ActorKind::Player,
+            usize::try_from(target.unsigned_abs().checked_sub(1)?).ok()?,
+        )
+    };
+    Some(ActorTargetView { kind, index })
 }
 
 /// Health-bar window: the client draws it while `combatCycle > loopCycle`.
@@ -1325,11 +1399,13 @@ fn actor_view(
         tile: entity_world_tile(entity, base, level),
         distance,
         animation: entity.primary_anim,
+        animation_frame: entity.primary_anim_frame,
         pose_animation: entity.secondary_anim,
         orientation: entity.yaw,
         target_orientation: entity.dst_yaw,
         overhead_text: entity.chat_message.clone(),
         spot_animation: entity.spotanim_id,
+        spot_animation_stamp: entity.spotanim_last_cycle,
         health: entity.health,
         total_health: entity.total_health,
         face_entity: entity.face_entity,

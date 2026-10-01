@@ -11,9 +11,9 @@ mod arbiter;
 mod machine;
 pub mod style { pub mod melee; }
 pub use machine::Combat;
-pub use prayer::ClearPrayers;
+pub use prayer::{ClearPrayers, PrayerSweepReport};
 pub use request::*;
-pub use select::{ident, npc_max_hit, retaliate, taken_by_another};
+pub use select::{facts, ident, retaliate, taken_by_another};
 pub use tables::CombatTables;
 pub use threats::{HitOnset, HitOnsets, Threat, ThreatSet};
 /// `%option_nodef`: zero means auto-retaliation is on.

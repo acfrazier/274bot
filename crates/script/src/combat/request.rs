@@ -2,7 +2,8 @@
 use api::quest_progress::EvidenceStamp;
 pub use api::snapshot::ActorKind;
 use api::WorldTile;
-use serde::Serialize;
+use api::gather_methods::SceneRegionInput;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -17,6 +18,18 @@ impl ActorRef {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style { Melee, Ranged, Mage }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum MeleeMode { Accurate, Aggressive, Defensive, Controlled }
+impl MeleeMode {
+    pub(crate) const fn xp_mask(self) -> u8 {
+        match self { Self::Accurate => 1, Self::Aggressive => 2, Self::Defensive => 4, Self::Controlled => 7 }
+    }
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
+        match code { 0 => Some(Self::Accurate), 1 => Some(Self::Aggressive), 2 => Some(Self::Defensive), 3 => Some(Self::Controlled), _ => None }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrayerMode { #[default] Hold, Flick }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,9 +83,11 @@ pub struct CombatRequest {
     pub target: Target,
     pub tactic: Tactic,
     pub style: Style,
+    pub melee_mode: Option<MeleeMode>,
     pub kit: Option<Arc<CompiledKit>>,
     pub spells: Option<Arc<[SpellRef]>>,
     pub stand: Option<WorldTile>,
+    pub search_bounds: Option<Arc<[SceneRegionInput]>>,
     pub engage_radius: u8,
     pub lost_radius: u8,
     pub budget_ticks: u16,
@@ -88,7 +103,8 @@ impl Default for CombatRequest {
         Self {
             target: Target::Attacker { npcs: true, players: true },
             tactic: Tactic::Open, style: Style::Melee, kit: None, spells: None,
-            stand: None, engage_radius: 12, lost_radius: 20, budget_ticks: 1500,
+            melee_mode: None,
+            stand: None, search_bounds: None, engage_radius: 12, lost_radius: 20, budget_ticks: 1500,
             allow: Allowances::default(), fallback: Fallback::Abort,
             intruder: IntruderPolicy::default(), retaliate: true,
             prayer_mode: PrayerMode::Hold, until_ticks: 0,
@@ -127,6 +143,8 @@ pub struct CombatReport {
     pub ammo_pickups: u8,
     pub restorations: u8,
     pub locked_ticks: u8,
+    pub multi_op_plans: u8,
+    pub melee_mode_fallback: Option<MeleeMode>,
     pub flick_resets: u8,
     pub flick_misses: u8,
     pub flick_fallback: bool,

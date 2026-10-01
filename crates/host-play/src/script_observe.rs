@@ -315,6 +315,8 @@ pub(crate) fn drain_observed_host_interacts(
 pub(crate) struct ScriptObservation {
     pub wrote: bool,
     pub journal_paint_hidden: bool,
+    /// A live nonzero native batch was drained; freeze follow for this key.
+    pub exclusive: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,6 +354,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut wrote = false;
     let mut journal_wall_now = None;
     let mut journal_paint_hidden = false;
+    let mut exclusive = false;
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
@@ -1053,22 +1056,57 @@ pub(crate) fn script_observe_cached_with_channels(
                     return ScriptObservation {
                         wrote,
                         journal_paint_hidden,
+                        exclusive,
                     };
                 };
                 if same_lifetime
                     && slot.state() == script::RunState::Running
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
+                    let mut refused_batch = None;
                     while let Some(action) = slot.take_native_action() {
+                        let batch = action.batch;
                         let authority = action.authority();
                         if !authority.live() {
                             continue;
                         }
+                        if batch != 0 {
+                            exclusive = true;
+                        }
+                        if batch != 0 && refused_batch == Some(batch) {
+                            slot.complete_native_interaction(
+                                &authority,
+                                script::native::InteractionReceipt {
+                                    request_id: authority.request_id().get(),
+                                    evidence: api::quest_progress::EvidenceStamp {
+                                        run: authority.run(),
+                                        tick,
+                                        sequence: tick,
+                                    },
+                                    accepted: false,
+                                },
+                            );
+                            continue;
+                        }
                         match action.effect {
                             script::native::HostEffect::Interaction(request) => {
-                                let packet_trace = api::hostlog::enabled(Category::InteractTrace)
+                                #[cfg(test)]
+                                let proof_capture = crate::combat_proof::capture_enabled(name);
+                                #[cfg(test)]
+                                let packet_trace_enabled =
+                                    api::hostlog::enabled(Category::InteractTrace) || proof_capture;
+                                #[cfg(not(test))]
+                                let packet_trace_enabled =
+                                    api::hostlog::enabled(Category::InteractTrace);
+                                let packet_trace = packet_trace_enabled
                                     .then(|| driver.packet_checkpoint())
                                     .flatten();
+                                #[cfg(test)]
+                                let proof_request = proof_capture.then(|| request.clone());
+                                #[cfg(test)]
+                                let mut proof_wire_opcodes = proof_capture.then(Vec::new);
+                                #[cfg(test)]
+                                let mut proof_decoded = false;
                                 #[cfg(all(windows, test, feature = "journal-paint-proof"))]
                                 let proof_close =
                                     matches!(&request, script::shim::InteractReq::CloseModal);
@@ -1089,6 +1127,10 @@ pub(crate) fn script_observe_cached_with_channels(
                                     let mut count = 0;
                                     let decoded = driver.trace_packets(*checkpoint, &mut |opcode| {
                                         count += 1;
+                                        #[cfg(test)]
+                                        if let Some(opcodes) = proof_wire_opcodes.as_mut() {
+                                            opcodes.push(opcode);
+                                        }
                                         host_log!(
                                             Category::InteractTrace,
                                             Level::Debug,
@@ -1097,12 +1139,32 @@ pub(crate) fn script_observe_cached_with_channels(
                                             authority.request_id(),
                                         );
                                     });
+                                    #[cfg(test)]
+                                    {
+                                        proof_decoded = decoded;
+                                    }
                                     host_log!(
                                         Category::InteractTrace,
                                         Level::Debug,
                                         "native-packets account={name} run={:?} tick={tick} request={} count={count} decoded={decoded} accepted={accepted}",
                                         authority.run(),
                                         authority.request_id(),
+                                    );
+                                }
+                                #[cfg(test)]
+                                if let Some(request) = proof_request.as_ref() {
+                                    crate::combat_proof::record_interaction(
+                                        name,
+                                        tick,
+                                        authority.run(),
+                                        authority.request_id().get(),
+                                        batch,
+                                        &authority,
+                                        request,
+                                        accepted,
+                                        proof_decoded,
+                                        proof_wire_opcodes.as_deref().unwrap_or_default(),
+                                        snapshot,
                                     );
                                 }
                                 wrote |= accepted;
@@ -1131,8 +1193,20 @@ pub(crate) fn script_observe_cached_with_channels(
                                         accepted,
                                     },
                                 );
+                                if batch != 0 && !accepted {
+                                    refused_batch = Some(batch);
+                                }
                             }
                             script::native::HostEffect::Walk(request) => {
+                                #[cfg(test)]
+                                crate::combat_proof::record_walk(
+                                    name,
+                                    tick,
+                                    authority.run(),
+                                    authority.request_id().get(),
+                                    &request,
+                                    snapshot,
+                                );
                                 let arm = super::ScriptWalkArm {
                                     here,
                                     world: world.clone(),
@@ -1157,6 +1231,8 @@ pub(crate) fn script_observe_cached_with_channels(
                     let mut rejected_withdraw_x = 0usize;
                     let mut rejected_withdraw_load = 0usize;
                     let mut rejected_bank_op = 0usize;
+                    #[cfg(test)]
+                    crate::combat_proof::record_shim_interactions(name, tick, &interact, snapshot);
                     for req in interact {
                         match req {
                             req @ (script::shim::InteractReq::Deposit { .. }
@@ -1384,6 +1460,22 @@ pub(crate) fn script_observe_cached_with_channels(
                         }
                     }
                 } else if same_lifetime
+                    && Some(slot.work_epoch()) != slot_work_epoch
+                    && has_native_actions
+                {
+                    // The existing session-work revocation owns stale
+                    // outbox cleanup. Do not leave an admitted batch to be
+                    // dispatched against a later observation key.
+                    slot.reset_session_work();
+                } else if !same_lifetime && has_native_actions {
+                    // A replacement slot must not inherit the old object's
+                    // admitted batch rows; revoke through its lifecycle path.
+                    if let Some(stale_slot) = observed_slot.as_ref() {
+                        if let Ok(mut stale_slot) = stale_slot.lock() {
+                            stale_slot.reset_session_work();
+                        }
+                    }
+                } else if same_lifetime
                     && slot.state() == script::RunState::Paused
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
@@ -1418,6 +1510,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         return ScriptObservation {
                             wrote,
                             journal_paint_hidden,
+                            exclusive,
                         };
                     };
                     if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
@@ -1462,6 +1555,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     return ScriptObservation {
                         wrote,
                         journal_paint_hidden,
+                        exclusive,
                     };
                 };
                 if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
@@ -1488,6 +1582,8 @@ pub(crate) fn script_observe_cached_with_channels(
             None => (queued, true),
         };
         if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
+            #[cfg(test)]
+            crate::combat_proof::record_other_request(name, tick, "cheat", &cmd);
             wrote = true;
             if observe_replies {
                 if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
@@ -1506,6 +1602,7 @@ pub(crate) fn script_observe_cached_with_channels(
     ScriptObservation {
         wrote,
         journal_paint_hidden,
+        exclusive,
     }
 }
 

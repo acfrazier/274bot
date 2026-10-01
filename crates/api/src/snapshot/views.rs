@@ -83,11 +83,16 @@ pub struct ActorView {
     pub tile: WorldTile,
     pub distance: i32,
     pub animation: i32,
+    /// The current primary-sequence frame; unlike `animation`, resets on
+    /// a restarted sequence with the same id.
+    pub animation_frame: i32,
     pub pose_animation: i32,
     pub orientation: i32,
     pub target_orientation: i32,
     pub overhead_text: Option<String>,
     pub spot_animation: i32,
+    /// Packet cycle for the most recent spot-animation onset.
+    pub spot_animation_stamp: i32,
     pub health: i32,
     pub total_health: i32,
     pub face_entity: i32,
@@ -109,11 +114,13 @@ pub struct NpcView {
     pub tile: WorldTile,
     pub distance: i32,
     pub animation: i32,
+    pub animation_frame: i32,
     pub pose_animation: i32,
     pub orientation: i32,
     pub target_orientation: i32,
     pub overhead_text: Option<String>,
     pub spot_animation: i32,
+    pub spot_animation_stamp: i32,
     pub health: i32,
     pub total_health: i32,
     pub face_entity: i32,
@@ -140,6 +147,9 @@ pub struct PlayerView {
     pub actor: ActorView,
     pub combat_level: i32,
     pub skill_level: i32,
+    /// Worn right-hand obj id decoded from appearance slot 3 when encoded
+    /// as `0x200 + obj id`; unavailable appearance data is `None`.
+    pub weapon: Option<i32>,
 }
 
 /// The local player: a `PlayerView` at `self_slot` plus the run/weight
@@ -149,6 +159,34 @@ pub struct LocalPlayerView {
     pub player: PlayerView,
     pub energy: i32,
     pub weight: i32,
+}
+
+/// One live projectile copied from the client's projectile list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ProjectileView {
+    pub spotanim: i32,
+    pub level: i32,
+    /// World tile where the projectile was launched.
+    pub src: WorldTile,
+    /// Decoded actor index; zero on the wire means the projectile has no target.
+    pub target: Option<ActorTargetView>,
+    pub t1: i32,
+    pub t2: i32,
+}
+
+/// One raw hitmark slot on the local player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HitmarkView {
+    pub value: i32,
+    pub kind: i32,
+    pub cycle: i32,
+}
+
+/// The four local hitmark slots and client cycle used for their freshness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HitmarksView {
+    pub marks: [HitmarkView; 4],
+    pub loop_cycle: i32,
 }
 
 /// One skill slot of the client's 25-entry table.

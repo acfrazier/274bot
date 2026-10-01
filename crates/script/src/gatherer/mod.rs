@@ -107,25 +107,19 @@ pub(crate) fn test_full_pack_fixture(
         actions: vec![Some("Remove".into())],
         component_id: -1,
     };
-    let actor = ActorView {
-        name: Some("fixture".into()),
-        actions: Vec::new(),
-        tile: tree_tile,
-        distance: 0,
-        animation: -1,
-        pose_animation: -1,
-        orientation: 0,
-        target_orientation: 0,
-        overhead_text: None,
-        spot_animation: -1,
-        health: 10,
-        total_health: 10,
-        face_entity: -1,
-        target: None,
-        moving: false,
-        running: false,
-        in_combat: false,
-    };
+    let actor = ActorView { name: Some("fixture".into()),
+    actions: Vec::new(),
+    tile: tree_tile,
+    distance: 0, animation: -1, animation_frame: 0, pose_animation: -1,
+    orientation: 0,
+    target_orientation: 0,
+    overhead_text: None, spot_animation: -1, spot_animation_stamp: -1, health: 10,
+    total_health: 10,
+    face_entity: -1,
+    target: None,
+    moving: false,
+    running: false,
+    in_combat: false, };
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_npcs(Vec::new());
@@ -140,12 +134,8 @@ pub(crate) fn test_full_pack_fixture(
         cycle: 1,
     });
     snapshot.seed_local_player(LocalPlayerView {
-        player: PlayerView {
-            index: 0,
-            actor,
-            combat_level: 3,
-            skill_level: 1,
-        },
+        player: PlayerView { index: 0,
+        actor, combat_level: 3, skill_level: 1, weapon: None,  },
         energy: 100,
         weight: 0,
     });

@@ -12,6 +12,8 @@ import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
+import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
+import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -29,31 +31,110 @@ assert.deepEqual(rows[0].values.consumable, [['bread'], ['anchovies']]);
 assert.deepEqual(rows[0].values.stat_heal[1], ['energy', '2', '0']);
 
 const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-fixture-'));
+const pack = path.join(content, 'pack');
 const consumption = path.join(content, 'scripts/player/configs/consumption');
+const consumeScript = path.join(content, 'scripts/player/scripts/consumption');
 const thieving = path.join(content, 'scripts/skill_thieving/configs/pickpocking');
-fs.mkdirSync(consumption, { recursive: true });
-fs.mkdirSync(thieving, { recursive: true });
-fs.writeFileSync(path.join(consumption, 'consume_normal.dbrow'), `[food]\ndata=consumable,bread\ndata=consumable,anchovies\ndata=stat_heal,hitpoints,4,0\n[zero]\ndata=consumable,zero_food\ndata=stat_heal,hitpoints,0,0\n`);
-fs.writeFileSync(path.join(consumption, 'consume_effects.dbrow'), `[potion]\ndata=consumable,potion\ndata=stat_change,attack,1,5\ndata=stat_heal,hitpoints,5,10\ndata=healenergy,3\n`);
-fs.writeFileSync(path.join(thieving, 'pickpocket.dbrow'), `[guard]\ndata=npc,guard1\ndata=npc,guard2\ndata=level,40\ndata=experience,30\ndata=stun_ticks,8\ndata=stun_damage,3\ndata=success_chance,1,2\ndata=pocket,coins\ndata=loot,coin,1,5,10\ndata=loot,coin,2,3,20\n`);
+for (const directory of [pack, consumption, consumeScript, thieving]) fs.mkdirSync(directory, { recursive: true });
+fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n6=category_5\n');
+fs.writeFileSync(path.join(pack, 'enum.pack'), '0=potion_prayerrestore\n');
+fs.writeFileSync(path.join(pack, 'param.pack'), [
+    '0=next_obj_stage', '1=decant_potion_enum', '2=dose_count',
+    '3=stabattack_anim', '4=slashattack_anim', '5=crushattack_anim',
+    '6=rangeattack_anim', '7=proj_launch', '8=proj_travel', '9=attackrate',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(consumeScript, 'consume.rs2'), `[opheld1,_food]
+def_int $eat_delay = 2;
+def_int $skill_delay = 3;
+if (oc_param(last_item, next_obj_stage) = ^stale_anchovies) {
+    $eat_delay = 1;
+}
+@player_consume_item(^consume_food, $eat_delay, $skill_delay);
+[opheld1,_potion]
+@player_consume_item(^consume_potion, null, null);
+`);
+fs.writeFileSync(path.join(consumption, 'consume_normal.dbrow'), `[food]
+data=consumable,bread
+data=consumable,anchovies
+data=stat_heal,hitpoints,4,0
+[zero]
+data=consumable,zero_food
+data=stat_heal,hitpoints,0,0
+[unhandled]
+data=consumable,cooked_chompy
+data=stat_heal,hitpoints,10,0
+`);
+fs.writeFileSync(path.join(consumption, 'consume_effects.dbrow'), `[potion]
+data=consumable,potion
+data=stat_change,attack,1,5
+data=stat_heal,hitpoints,5,10
+data=healenergy,3
+`);
+fs.writeFileSync(path.join(consumption, 'consume_messages.dbrow'), `[anchovies]
+data=consumable,anchovies
+data=message_delay,2
+[potion]
+data=consumable,potion
+data=message_delay,1
+[cooked_chompy]
+data=consumable,cooked_chompy
+data=message_delay,4
+`);
+fs.writeFileSync(path.join(thieving, 'pickpocket.dbrow'), `[guard]
+data=npc,guard1
+data=npc,guard2
+data=level,40
+data=experience,30
+data=stun_ticks,8
+data=stun_damage,3
+data=success_chance,1,2
+data=pocket,coins
+data=loot,coin,1,5,10
+data=loot,coin,2,3,20
+`);
 const facts = extractFacts(content,
     [
-        { id: 1, debugname: 'bread', name: 'Bread', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
-        { id: 2, debugname: 'anchovies', name: 'Anchovies', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
-        { id: 3, debugname: 'zero_food', name: 'Zero food', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
-        { id: 4, debugname: 'potion', name: 'Potion', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+        { id: 1, debugname: 'bread', name: 'Bread', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map() },
+        { id: 2, debugname: 'anchovies', name: 'Anchovies', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map([[0, 'stale_anchovies']]) },
+        { id: 3, debugname: 'zero_food', name: 'Zero food', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map() },
+        { id: 4, debugname: 'potion', name: 'Potion', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 5, params: new Map([[1, 0], [2, 1]]) },
         { id: 5, debugname: 'coin', name: 'Coins', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+        { id: 6, debugname: 'stale_anchovies', name: 'Stale anchovies', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 4, params: new Map() },
+        { id: 7, debugname: 'cooked_chompy', name: 'Cooked chompy', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1, category: 6, params: new Map() },
     ],
     [
         { id: 10, debugname: 'guard1', name: 'Guard' },
         { id: 11, debugname: 'guard2', name: 'Guard' },
     ],
 );
-assert.equal(facts.consumption.length, 4);
+assert.equal(facts.consumption.length, 5);
 assert.equal(facts.consumption.filter((fact) => fact.qualification === 'fixed_hp_heal').length, 2);
 assert.equal(facts.consumption.find((fact) => fact.item.alias === 'zero_food')?.qualification, 'not_fixed_hp_heal');
+const unhandledFact = facts.consumption.find((fact) => fact.item.alias === 'cooked_chompy')!;
+assert.equal(unhandledFact.effect, '');
+assert.equal(unhandledFact.eat_delay_arg, null);
+assert.equal(unhandledFact.skill_delay_arg, null);
+assert.equal(unhandledFact.message_delay, null);
+assert.equal(unhandledFact.qualification, 'not_fixed_hp_heal');
+assert.deepEqual(unhandledFact.stat_heal, [{ stat: 'hitpoints', base: 10, percent: 0 }]);
 assert.equal(facts.consumption.find((fact) => fact.item.alias === 'potion')?.stat_change[0].percent, 5);
-assert.equal(facts.pickpocket[0].npcs.length, 2);
+const breadFact = facts.consumption.find((fact) => fact.item.alias === 'bread')!;
+assert.equal(breadFact.eat_delay_arg, 2);
+assert.equal(breadFact.skill_delay_arg, 3);
+assert.equal(breadFact.message_delay, null);
+const stageFoodFact = facts.consumption.find((fact) => fact.item.alias === 'anchovies')!;
+assert.equal(stageFoodFact.next_stage, 'stale_anchovies');
+assert.equal(stageFoodFact.eat_delay_arg, 1, 'the source next-stage branch overrides the ordinary food delay');
+assert.equal(stageFoodFact.skill_delay_arg, 3);
+assert.equal(stageFoodFact.message_delay, 2);
+const potionFact = facts.consumption.find((fact) => fact.item.alias === 'potion')!;
+assert.equal(potionFact.effect, 'consume_potion');
+assert.equal(potionFact.eat_delay_arg, null);
+assert.equal(potionFact.skill_delay_arg, null);
+assert.equal(potionFact.message_delay, 1);
+assert.equal(potionFact.dose_family, 'potion_prayerrestore');
+assert.equal(potionFact.dose_count, 1);
+assert.deepEqual(facts.pickpocket[0].npcs.map((npc) => npc.alias), ['guard1', 'guard2']);
 assert.equal(facts.pickpocket[0].loot.length, 2);
 assert.deepEqual(facts.pickpocket[0].success_chance, { numerator: 1, denominator: 2 });
 
@@ -63,16 +144,35 @@ fs.mkdirSync(combat, { recursive: true });
 fs.mkdirSync(magic, { recursive: true });
 fs.writeFileSync(path.join(combat, 'magic_combat_spells.dbrow'), `[magic_spell_wind_strike]
 data=name,Wind Strike
+data=spellcom,wind_strike_button
+data=spell,^test_spell
 data=levelrequired,1
+data=maxhit,2
+data=members,false
+data=anim,^test_magic_seq
+data=staffanim,^test_magic_seq
+data=spotanim_origin,^spell_origin
+data=spotanim_proj,^spell_projectile
+data=spotanim_target,^spell_target
 data=runesrequired,mindrune,1,airrune,1,null,null
 data=continue_by_autocast,true
 [magic_spell_iban]
 data=levelrequired,50
+data=spell,^test_iban
+data=maxhit,10
+data=members,true
 data=runesrequired,firerune,1,null,null,null,null
 data=continue_by_autocast,true
 [magic_spell_fire_wave]
 data=name,Fire Wave
+data=spellcom,fire_wave_button
+data=spell,^fire_wave
 data=levelrequired,75
+data=maxhit,15
+data=members,true
+data=wornrequired,staff_of_fire
+data=anim,^test_magic_seq
+data=staffanim,^test_magic_seq
 data=runesrequired,bloodrune,1,firerune,7,airrune,5
 data=continue_by_autocast,true
 `);
@@ -107,8 +207,242 @@ assert.equal(magicFacts.spells[1].ssb, 1);
 const lava = magicFacts.staves.find((staff) => staff.name === 'Lava battlestaff');
 assert.deepEqual(lava?.runes.map((rune) => rune.name).sort(), ['Earth rune', 'Fire rune']);
 assert.equal(magicFacts.staves.find((staff) => staff.name === 'Staff of air')?.runes.length, 1);
+assert.equal(magicFacts.spells[0].spellcom, 'wind_strike_button');
+assert.equal(magicFacts.spells[0].maxhit, 2);
+assert.equal(magicFacts.spells[0].members, false);
+assert.equal(magicFacts.spells[1].spellcom, 'fire_wave_button');
+assert.equal(magicFacts.spells[1].maxhit, 15);
+assert.equal(magicFacts.spells[1].members, true);
+assert.equal(magicFacts.spells[1].wornrequired, 'staff_of_fire');
+const npcSource = path.join(content, 'scripts/npc/config/combat.npc');
+const npcScriptDir = path.join(content, 'scripts/npc/scripts');
+fs.mkdirSync(path.dirname(npcSource), { recursive: true });
+fs.mkdirSync(npcScriptDir, { recursive: true });
+fs.writeFileSync(path.join(pack, 'npc.pack'), '100=test_npc\n477=khazard_warlord\n478=dragon_npc\n');
+fs.writeFileSync(path.join(pack, 'seq.pack'), [
+    '1=shared_seq', '2=staff_seq', '3=human_unarmedpunch', '4=human_unarmedkick',
+    '5=test_attack_seq', '6=test_range_seq', '7=test_magic_seq', '8=dragon_seq',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
+    '1=arrow_launch', '2=arrow_travel', '3=spell_origin', '4=spell_projectile',
+    '5=spell_target', '6=failedspell_impact', '7=firebreath_attack',
+    '8=fireblast_travel', '9=fireblast_impact',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n');
+fs.writeFileSync(npcSource, `[test_npc]
+name=Test NPC
+op1=Attack
+hitpoints=44
+strength=24
+ranged=3
+category=dagannoth_mother
+param=strengthbonus,8
+param=rangebonus,4
+param=undead,^true
+param=attackrate,6
+param=attack_anim,test_attack_seq
+param=magicattack_anim,test_magic_seq
+param=proj_launch,arrow_launch
+param=proj_travel,arrow_travel
+[dragon_npc]
+name=Dragon NPC
+op1=Attack
+hitpoints=60
+param=attackrate,4
+`);
+fs.writeFileSync(path.join(npcScriptDir, 'test.rs2'), `/*
+[ai_applayer2,phantom]
+~npc_default_attack();
+*/
+// [ai_opplayer2,ghost] is not a trigger
+[proc,test_attack_proc]
+~npc_cast_spell(^test_spell, 4);
+~npc_cast_spell_with_forced_max_hit(^test_spell, 4, 12);
+[ai_applayer2,test_npc]
+~test_attack_proc;
+~npc_default_attack();
+npc_anim(^test_attack_seq);
+[ai_opplayer2,test_npc]
+~dagannoth_rangeattack(12, ^true);
+npc_anim(^test_range_seq);
+[ai_queue1,test_npc]
+~npc_default_retaliate_ap();
+`);
+fs.writeFileSync(path.join(npcScriptDir, 'dragon.rs2'), `%dragonresist = 1;
+[ai_applayer2,dragon_npc]
+~firebreath_attack();
+npc_anim(^dragon_seq);
+`);
+const attackStylesDir = path.join(content, 'scripts/skill_combat/scripts/player');
+fs.mkdirSync(attackStylesDir, { recursive: true });
+fs.writeFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), `switch_category (oc_category($obj)) {
+case weapon_bow : ~.weapon_category_tab_attack(combat_bow:preview, combat_bow:name, combat_bow, $obj, null);
+case weapon_staff : ~.weapon_category_tab_attack(combat_staff_2:preview, combat_staff_2:name, combat_staff_2, $obj, null);
+case weapon_axe : ~.weapon_category_tab_attack(combat_axe:preview, combat_axe:name, combat_axe, $obj, null);
+case weapon_2h_sword : ~.weapon_category_tab_attack(combat_heavysword:preview, combat_heavysword:name, combat_heavysword, $obj, null);
+case weapon_slash : ~.weapon_category_tab_attack(combat_hacksword:preview, combat_hacksword:name, combat_hacksword, $obj, null);
+case weapon_stab : ~.weapon_category_tab_attack(combat_stabsword:preview, combat_stabsword:name, combat_stabsword, $obj, null);
+case weapon_unknown : ~.weapon_category_tab_attack(combat_missing:preview, combat_missing:name, combat_missing, $obj, null);
+case weapon_crossbow : ~.weapon_category_tab_attack(combat_crossbow:preview, combat_crossbow:name, combat_crossbow, $obj, null);
+case weapon_thrown : ~.weapon_category_tab_attack(combat_thrown:preview, combat_thrown:name, combat_thrown, $obj, null);
+case weapon_javelin : ~.weapon_category_tab_attack(combat_thrown:preview, combat_thrown:name, combat_thrown, $obj, null);
+case default : ~.weapon_category_tab_attack_unarmed($obj);
+}
+[proc,.weapon_category_tab_attack_unarmed](obj $obj)
+.if_settab(combat_unarmed, 0);
+`);
+const modeConfigDir = path.join(content, 'scripts/skill_combat/configs');
+fs.mkdirSync(modeConfigDir, { recursive: true });
+fs.writeFileSync(path.join(modeConfigDir, 'combat_damagestyles.constant'), [
+    '^style_melee_accurate = 0',
+    '^style_melee_aggressive = 1',
+    '^style_melee_defensive = 2',
+    '^style_melee_controlled = 3',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(modeConfigDir, 'combat.dbtable'), '[combat_style_table]\ncolumn=damagestyle,int,LIST\n');
+const meleeStyleRow = (name: string, styles: string[]) =>
+    `[${name}]\ntable=combat_style_table\n${styles.map((style) => `data=damagestyle,^style_melee_${style}`).join('\n')}\n`;
+fs.writeFileSync(path.join(modeConfigDir, 'combat.dbrow'), [
+    meleeStyleRow('weapon_2h_sword_table', ['accurate', 'aggressive', 'aggressive', 'defensive']),
+    meleeStyleRow('weapon_slash_table', ['accurate', 'aggressive', 'controlled', 'defensive']),
+    meleeStyleRow('weapon_unarmed_table', ['accurate', 'aggressive', 'defensive']),
+    '[weapon_bow_table]\ntable=combat_style_table\ndata=damagestyle,^style_ranged_accurate\ndata=damagestyle,^style_ranged_rapid\ndata=damagestyle,^style_ranged_longrange\n',
+].join('\n'));
+fs.writeFileSync(path.join(content, 'scripts/skill_combat/scripts/combat.rs2'), `[proc,combat_get_weapon_style_data](obj $weapon)(dbrow)
+switch_category(oc_category($weapon)) {
+case weapon_2h_sword : return(weapon_2h_sword_table);
+case weapon_slash : return(weapon_slash_table);
+case weapon_bow : return(weapon_bow_table);
+case default : return(weapon_unarmed_table);
+}
+`);
+fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
+    '[if_button,combat_heavysword:heavy0] ~set_attackstyle(0);',
+    '[if_button,combat_heavysword:heavy1] ~set_attackstyle(1);',
+    '[if_button,combat_heavysword:heavy2] ~set_attackstyle(2);',
+    '[if_button,combat_heavysword:heavy3] ~set_attackstyle(3);',
+    '[if_button,combat_hacksword:hack0] ~set_attackstyle(0);',
+    '[if_button,combat_hacksword:hack1] ~set_attackstyle(1);',
+    '[if_button,combat_hacksword:hack2] ~set_attackstyle(2);',
+    '[if_button,combat_hacksword:hack3] ~set_attackstyle(3);',
+    '[if_button,combat_unarmed:unarmed0] ~set_attackstyle(0);',
+    '[if_button,combat_unarmed:unarmed1] ~set_attackstyle(1);',
+    '[if_button,combat_unarmed:unarmed2] ~set_attackstyle(2);',
+    '[if_button,combat_bow:bow0] ~set_attackstyle(0);',
+    '[if_button,combat_bow:bow1] ~set_attackstyle(1);',
+    '[if_button,combat_bow:bow2] ~set_attackstyle(2);',
+].join('\n') + '\n');
+const combatScripts = parseCombatScripts(content);
+assert.equal(combatScripts.triggers.has('phantom'), false);
+assert.equal(combatScripts.triggers.has('ghost'), false);
+const npcFacts = extractNpcNamesFacts(content, combatScripts);
+const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
+assert.equal(testNpc.attackrate, 6);
+assert.equal(testNpc.strength, 24);
+assert.equal(testNpc.ranged, 3);
+assert.equal(testNpc.strengthbonus, 8);
+assert.equal(testNpc.rangebonus, 4);
+assert.equal(testNpc.undead, 1);
+assert.equal(testNpc.ap_attack, true);
+assert.equal(testNpc.attack_kind, 'mixed');
+assert.equal(testNpc.forced_max_hit, 24, 'a dagannoth double roll is one 24-damage event');
+assert.equal(testNpc.bespoke, true);
+assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.dragonfire, 'chromatic');
+const npcSourceBytes = fs.readFileSync(npcSource);
+fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
+assert.throws(() => extractNpcNamesFacts(content, combatScripts), /attackrate is out of range/);
+fs.writeFileSync(npcSource, npcSourceBytes);
+// combat_axe is intentionally absent so a recognized but unresolved root must stay null.
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
+const interfacePackPath = path.join(content, 'pack/interface.pack');
+fs.appendFileSync(interfacePackPath, [
+    '20001=combat_heavysword:heavy0',
+    '20002=combat_heavysword:heavy1',
+    '20003=combat_heavysword:heavy2',
+    '20004=combat_heavysword:heavy3',
+    '20011=combat_hacksword:hack0',
+    '20012=combat_hacksword:hack1',
+    '20013=combat_hacksword:hack2',
+    '20014=combat_hacksword:hack3',
+    '20021=combat_unarmed:unarmed0',
+    '20022=combat_unarmed:unarmed1',
+    '20023=combat_unarmed:unarmed2',
+    '20031=combat_bow:bow0',
+    '20032=combat_bow:bow1',
+    '20033=combat_bow:bow2',
+].join('\n') + '\n');
+fs.writeFileSync(path.join(content, 'pack/varp.pack'), '43=com_mode\n');
+const styleObjects = [
+    { id: 50, category: 10, params: new Map([[6, 'shared_seq'], [7, 'arrow_launch'], [8, 'arrow_travel'], [9, 5]]) },
+    { id: 51, category: 11, params: new Map([[3, 'staff_seq'], [9, 7]]) },
+    { id: 52, category: 12, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 53, category: 13, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 54, category: 14, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 55, category: 15, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 56, category: 16, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 57, category: 17, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 58, category: 18, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 59, category: 19, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 60, category: 20, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+    { id: 61, category: 21, params: new Map([[3, 'shared_seq'], [9, 4]]) },
+];
+const extractStyleFacts = () => extractCombatStyleFacts(content, styleObjects, npcFacts.combatNpcs, combatScripts);
+const styleFacts = extractStyleFacts();
+const sequenceStyle = (name: string) => styleFacts.style_seqs.find((row) => row.seq_id === new Map([
+    ['shared_seq', 1], ['staff_seq', 2], ['test_attack_seq', 5], ['test_range_seq', 6],
+    ['test_magic_seq', 7], ['dragon_seq', 8],
+]).get(name))?.style;
+assert.equal(sequenceStyle('shared_seq'), 3, 'melee and ranged object facts merge into one mask');
+assert.equal(sequenceStyle('staff_seq'), 1);
+assert.equal(sequenceStyle('test_magic_seq'), 4);
+assert.equal(sequenceStyle('dragon_seq'), 8);
+assert.deepEqual(styleFacts.weapon_styles.map((row) => [
+    row.obj_id, row.style, row.attackrate, row.category, row.tab,
+]), [
+    [50, 2, 5, 1, 12], [51, 4, 7, 5, 15], [52, 1, 4, 0, 0],
+    [53, 1, 4, 0, 1], [54, 1, 4, 0, 6], [55, 1, 4, 0, 9],
+    [56, 1, 4, 0, null], [57, 1, 4, 0, 0], [58, 2, 4, 2, 13],
+    [59, 2, 4, 3, 14], [60, 2, 4, 4, 14], [61, 1, 4, 0, null],
+]);
+assert.deepEqual(styleFacts.combat_tabs.map((row) => [row.tab, row.root_id]), [
+    [0, 904], [1, 901], [6, 902], [9, 903], [12, 900], [13, 910], [14, 911], [15, 328],
+]);
+
+const modeRowsFor = (facts: typeof styleFacts, tab: number) => facts.melee_modes
+    .filter((row) => row.tab === tab)
+    .map((row) => [row.slot, row.mode, row.button]);
+assert.deepEqual(modeRowsFor(styleFacts, 1), [
+    [0, 0, 20001], [1, 1, 20002], [2, 1, 20003], [3, 2, 20004],
+]);
+assert.deepEqual(modeRowsFor(styleFacts, 6), [
+    [0, 0, 20011], [1, 1, 20012], [2, 3, 20013], [3, 2, 20014],
+]);
+assert.equal(modeRowsFor(styleFacts, 12).length, 0, 'ranged modes are not melee mode choices');
+assert.equal(styleFacts.melee_mode_varp, 43);
+
+const interfacePackOriginal = fs.readFileSync(interfacePackPath);
+fs.writeFileSync(
+    interfacePackPath,
+    interfacePackOriginal.toString().replace('20001=combat_heavysword:heavy0\n', ''),
+);
+const missingButtonFacts = extractStyleFacts();
+assert.deepEqual(modeRowsFor(missingButtonFacts, 1), [], 'an unresolved control withholds that tab mode choices');
+assert.equal(missingButtonFacts.combat_tabs.some((row) => row.tab === 1), true, 'root facts remain separate from button facts');
+fs.writeFileSync(
+    interfacePackPath,
+    interfacePackOriginal.toString().replace('901=combat_heavysword\n', ''),
+);
+const missingRootFacts = extractStyleFacts();
+assert.deepEqual(modeRowsFor(missingRootFacts, 1), [], 'an unresolved root withholds its mode choices');
+assert.equal(missingRootFacts.combat_tabs.some((row) => row.tab === 1), false);
+fs.writeFileSync(interfacePackPath, interfacePackOriginal);
+const launch = styleFacts.style_spotanims.find((row) => row.spotanim_id === 1);
+const travel = styleFacts.style_spotanims.find((row) => row.spotanim_id === 2);
+const spellTarget = styleFacts.style_spotanims.find((row) => row.spotanim_id === 5);
+assert.deepEqual(launch && [launch.style, launch.where], [2, 'attacker']);
+assert.deepEqual(travel && [travel.style, travel.where], [2, 'projectile']);
+assert.deepEqual(spellTarget && [spellTarget.style, spellTarget.where], [4, 'on_us']);
 fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
 fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n286=dueloptions\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
