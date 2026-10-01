@@ -766,36 +766,6 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
 }
 
 #[test]
-fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
-    let _guard = super::lock_nav_statics();
-    let mut world = bake_world(3, 3, &[]);
-    world.collision.origin.x = 7777;
-    let origin = world.collision.origin;
-    let width = world.collision.width;
-    let height = world.collision.height;
-    let expected: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
-    nav::paint::reset_bake_reach_calls();
-    set_reach_binding(Some(Arc::clone(&expected)), origin, width, height, true);
-    let first = reach_bitset(&world).expect("bundled bits");
-    let second = reach_bitset(&world).expect("slot reuse");
-    assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(&*first, &*expected);
-    assert_eq!(
-        nav::paint::bake_reach_calls(),
-        0,
-        "bundled first/second paint must not flood"
-    );
-    let mut other = open_world(3, 3);
-    other.collision.origin.x = 99;
-    assert!(
-        reach_bitset(&other).is_none(),
-        "same-size different origin must not reuse bundled bits"
-    );
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
-    set_reach_binding(None, origin, 0, 0, false);
-}
-
-#[test]
 fn unbound_reach_is_unavailable_and_does_not_bake() {
     let _guard = super::lock_nav_statics();
     set_reach_binding(
@@ -1017,8 +987,7 @@ fn session_pack_detach_clears_flood_and_reach_binding() {
     let origin = world.collision.origin;
     let width = world.collision.width;
     let height = world.collision.height;
-    let bits: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
-    set_reach_binding(Some(Arc::clone(&bits)), origin, width, height, true);
+    set_reach_binding(None, origin, width, height, true);
     assert!(reach_binding_occupied());
 
     let seed = WorldTile {

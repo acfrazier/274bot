@@ -1062,7 +1062,7 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
 }
 
 #[test]
-fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
+fn bundled_identity_decodes_pack_once_and_hashes_sidecars_on_demand() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();
     let root = fixture.0.join("Resources");
@@ -1107,7 +1107,16 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
     assert_eq!(profile.nav_load_counters().pack_hashes, 0);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
+    assert_eq!(profile.nav_load_counters().canlight_reads, 1);
+    assert_eq!(profile.nav_load_counters().canlight_hashes, 1);
     assert!(profile.reach().is_some());
+    assert_eq!(profile.nav_load_counters().reach_reads, 2);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
+    assert!(profile.reach().is_some());
+    assert_eq!(profile.nav_load_counters().reach_reads, 2);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
     assert!(profile.canlight().is_some());
     assert!(updates
         .lock()
@@ -1691,6 +1700,54 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
     assert_eq!(external.reach().as_deref(), bundled.reach().as_deref());
     assert_eq!(external.reach().as_deref(), Some(&[0u64][..]));
     assert_eq!(external.canlight().as_deref(), Some(&[0u64][..]));
+}
+
+#[test]
+fn external_manifest_rejects_wrong_reach_and_canlight_hashes() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let root = fixture.0.join("external");
+    std::fs::create_dir_all(&root).unwrap();
+    let pack = root.join("274bot.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let reach_sha256 = write_bundled_reach(&root, &bytes);
+    let (canlight_sha256, _) = write_bundled_canlight(&root, &bytes);
+    let manifest = NavManifest {
+        revision: 289,
+        cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        content_id: None,
+        source_sha256: None,
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: None,
+        reach_sha256: Some(reach_sha256),
+        canlight_sha256: Some(canlight_sha256),
+        pois_sha256: None,
+    };
+    for extension in ["navreach", "navcanlight"] {
+        let mut bad = manifest.clone();
+        if extension == "navreach" {
+            bad.reach_sha256 = Some("00".repeat(32));
+        } else {
+            bad.canlight_sha256 = Some("00".repeat(32));
+        }
+        std::fs::write(
+            host_play::profile::nav_manifest_path(&pack),
+            serde_json::to_vec(&bad).unwrap(),
+        )
+        .unwrap();
+        let mut options = fixture.options(289);
+        options.nav_pack = Some(pack.clone());
+        let error = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap_err();
+        assert!(error.contains(extension), "{error}");
+        assert!(
+            error.contains("content hash does not match identity"),
+            "{error}"
+        );
+    }
 }
 
 fn write_world_json(engine: &Path, revision: u64, port: u64, members: &str) {

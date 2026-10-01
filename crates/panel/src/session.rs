@@ -1889,7 +1889,7 @@ impl Session {
         );
         if let Some(world) = profile.world() {
             crate::picker::set_reach_binding(
-                profile.reach(),
+                profile.reach_source(),
                 world.collision.origin,
                 world.collision.width,
                 world.collision.height,

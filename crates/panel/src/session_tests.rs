@@ -491,6 +491,34 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
 }
 
 #[test]
+fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
+    let _guard = crate::picker::lock_nav_statics();
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = preparation_only_session();
+    session.install_prepared_template(template);
+    let world = profile.world().unwrap();
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
+    nav::paint::reset_bake_reach_calls();
+    // An eager install would keep the old verified payload and paint it even
+    // after the file changes. First layer demand must instead fail closed.
+    let path = profile.nav_pack().with_extension("navreach");
+    let mut bytes = std::fs::read(&path).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(path, bytes).unwrap();
+    assert!(
+        crate::picker::map_reach_bitset(&world).is_none(),
+        "profile install must retain no decoded reach payload"
+    );
+    assert!(profile.reach().is_none());
+    assert_eq!(profile.nav_load_counters().reach_reads, 2);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+}
+
+#[test]
 fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let _guard = crate::picker::lock_nav_statics();
     let home = UpgradeHome::new();
@@ -499,14 +527,27 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let mut session = preparation_only_session();
     session.install_prepared_template(template);
     let world = profile.world().unwrap();
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
+    nav::paint::reset_bake_reach_calls();
     let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
     assert_eq!(&*map_bits, &[0u64]);
     assert!(Arc::ptr_eq(&map_bits, &profile.reach().unwrap()));
+    assert_eq!(Arc::strong_count(&map_bits), 2, "profile plus paint lease");
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    let mut other = nav::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
+    other.collision.origin.x += 1;
+    assert!(crate::picker::map_reach_bitset(&other).is_none());
+    assert!(crate::picker::reach_bitset(&other).is_none());
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
     session.release_walk_map();
     assert!(Arc::ptr_eq(
         &map_bits,
         &crate::picker::map_reach_bitset(&world).unwrap()
     ));
+    assert_eq!(Arc::strong_count(&map_bits), 2);
+    drop(map_bits);
+    assert_eq!(Arc::strong_count(&profile.reach().unwrap()), 2);
     crate::picker::set_pack(None);
     assert!(crate::picker::map_reach_bitset(&world).is_none());
 }

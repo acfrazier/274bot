@@ -169,11 +169,13 @@ Paint reach is checked at preparation (magic/version, geometry, pack binding,
 exact payload length and SHA-256), without retaining its world-scale words.
 The first paint request decodes it once into a shared `Arc<[u64]>`, rechecking
 the header and hashing the very bytes decoded before publishing them. The panel
-requests it when installing its paint binding; the TUI requests it only with
-the map open and its reach layer enabled. Routing and first walks never use it.
-Closing the TUI map releases its consumer lease; reopening shares the existing
-process-level decode instead of adding another buffer. A failed first decode
-stays unavailable, not a runtime flood or an all-reached mask.
+binds only the lazy handle at profile install and requests words when the map's
+reach layer or 3D collision/debug paint is enabled. The TUI requests words only
+with the map open and its reach layer enabled. Routing and first walks never use
+them. Closing either map releases its consumer lease; the profile caches the
+process-level decode, so reopening shares it instead of adding another buffer.
+`NavLoadCounters` includes both preparation and the lazy read/hash.
+A failed first decode stays unavailable, not a runtime flood or an all-reached mask.
 
 Canlight is decoded and SHA-256 verified during profile preparation, off the
 client tick threads, so Fire queries can immediately crop the shared plane.
