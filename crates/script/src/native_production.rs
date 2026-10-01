@@ -110,11 +110,11 @@ impl NativeMachine for MakeMachine {
                         } else {
                             None
                         };
-                        let count_dialog_open = snapshot
-                            .count_dialog_open()
-                            .is_some_and(|open| open.value);
-                        let make_menu_open =
-                            products.as_ref().map_or(true, |rows| !rows.value.is_empty());
+                        let count_dialog_open =
+                            snapshot.count_dialog_open().is_some_and(|open| open.value);
+                        let make_menu_open = products
+                            .as_ref()
+                            .map_or(true, |rows| !rows.value.is_empty());
                         (selection, count_dialog_open, make_menu_open)
                     };
                     if let Some(selection) = selection {
@@ -146,23 +146,20 @@ impl NativeMachine for MakeMachine {
                             }
                         }
                     }
-                    match self.make_x.step(
-                        count_dialog_open,
-                        make_menu_open,
-                        now >= self.deadline,
-                    ) {
+                    match self
+                        .make_x
+                        .step(count_dialog_open, make_menu_open, now >= self.deadline)
+                    {
                         MakeXStep::Wait => return Poll::Pending,
                         MakeXStep::AnswerCount { value } => {
                             cx.emit(InteractReq::AnswerCount { value })?;
-                            self.deadline = now.saturating_add(Duration::from_millis(
-                                self.make_x.timeout_ms(),
-                            ));
+                            self.deadline =
+                                now.saturating_add(Duration::from_millis(self.make_x.timeout_ms()));
                             return Poll::Pending;
                         }
                         MakeXStep::WaitMenuClose => {
-                            self.deadline = now.saturating_add(Duration::from_millis(
-                                self.make_x.timeout_ms(),
-                            ));
+                            self.deadline =
+                                now.saturating_add(Duration::from_millis(self.make_x.timeout_ms()));
                             return Poll::Pending;
                         }
                         MakeXStep::Complete => {

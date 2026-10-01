@@ -45,7 +45,10 @@ fn s2_reset_step() -> Step {
         wait: Wait {
             // Posted Defence back at base 1 before any seed lands. Fails
             // closed while a reused account still carries a staged profile.
-            arm: Proof::StatAtMost { id: S2_DEFENCE_STAT_ID, max: 1 },
+            arm: Proof::StatAtMost {
+                id: S2_DEFENCE_STAT_ID,
+                max: 1,
+            },
             budget_ticks: 80,
         },
     }
@@ -384,9 +387,9 @@ mod tests {
                     "pre-Start send '{}' must succeed",
                     step.name
                 );
-                written.push_str(
-                    &String::from_utf8_lossy(&client.out.data()[before..client.out.pos]),
-                );
+                written.push_str(&String::from_utf8_lossy(
+                    &client.out.data()[before..client.out.pos],
+                ));
             }
         }
         written

@@ -1900,12 +1900,18 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
     with_tick(&snapshot, &mut ledger, 32, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    assert!(matches!(emitted(&ledger), InteractReq::Npc { index: Some(7), .. }));
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Npc { index: Some(7), .. }
+    ));
     // The approach took 18.6 seconds; the new Open window is still eight seconds.
     with_tick(&snapshot, &mut ledger, 36, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
-    snapshot.seed_chat_modal(4893, vec!["Fred the Farmer".into(), "Well I need some wool...".into()]);
+    snapshot.seed_chat_modal(
+        4893,
+        vec!["Fred the Farmer".into(), "Well I need some wool...".into()],
+    );
     snapshot.seed_chat_options(vec![], 4899);
     with_tick(&snapshot, &mut ledger, 37, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
