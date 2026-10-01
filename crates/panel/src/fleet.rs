@@ -15,6 +15,7 @@ use frontend_core::{FleetRow, ProfileIdentity, Scripts};
 
 use crate::fleet_columns::{self, FleetColumn};
 use crate::session::Session;
+use crate::theme::{scale_px, scale_size};
 
 const RESTART_POPUP: &str = "##fleet-restart-confirm";
 
@@ -289,7 +290,10 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             | TableFlags::SCROLL_Y
             | TableFlags::SCROLL_X
             | TableFlags::RESIZABLE,
-        [0.0, (ui.content_region_avail()[1] - 70.0).max(80.0)],
+        [
+            0.0,
+            (ui.content_region_avail()[1] - scale_px(ui, 70.0)).max(scale_px(ui, 80.0)),
+        ],
         0.0,
     ) {
         ui.table_setup_column("Mark", TableColumnFlags::NONE, None, None);
@@ -388,7 +392,7 @@ pub fn window(ui: &Ui, session: &mut Session) {
     ui.window("Fleet###fleet-window")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([760.0, 460.0], Condition::FirstUseEver)
+        .size(scale_size(ui, [760.0, 460.0]), Condition::FirstUseEver)
         .build(|| {
             ui.input_text("Filter", &mut session.fleet_filter)
                 .hint("name or status")

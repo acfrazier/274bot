@@ -4,14 +4,14 @@
 use dear_imgui_rs::Ui;
 use frontend_core::Light;
 
-/// Width of the MultiBox sidecar rail (rs2b0t's 264px strip).
+/// Base logical width of the MultiBox sidecar at 100% scale.
 pub const RAIL_W: f32 = 264.0;
-/// Cap-body tile draw size inside the rail (rs2b0t ~236×155).
+/// Base logical tile draw size inside the rail, at 100% scale.
 pub const TILE_W: f32 = 236.0;
 pub const TILE_H: f32 = 155.0;
-/// Default OS window without the rail (game + 330 chrome).
+/// Default OS inner width without the rail (game + panel), in logical px.
 pub const BASE_WINDOW_W: f32 = 1120.0;
-/// Default OS window height.
+/// Default OS inner height in logical px.
 pub const BASE_WINDOW_H: f32 = 580.0;
 
 /// Minimum inner size so the native 765×503 blit is not covered by the
@@ -40,9 +40,9 @@ pub fn next_os_window_size(
     }
 }
 
-/// Rail split so the sidecar stays [`RAIL_W`] px at `window_w`.
-pub fn rail_split_ratio(window_w: f32) -> f32 {
-    (RAIL_W / window_w.max(1.0)).clamp(0.05, 0.85)
+/// Rail split so the sidecar stays [`RAIL_W`] × `scale` physical px.
+pub fn rail_split_ratio(window_w: f32, scale: f32) -> f32 {
+    (RAIL_W * scale / window_w.max(1.0)).clamp(0.05, 0.85)
 }
 
 /// Remove glyph (U+2717), drawn in `theme::ERROR` red.
@@ -73,26 +73,28 @@ pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
         [0.72, 0.72],
     ];
 
-    let line_h = ui.text_line_height();
+    const DOT_SIZE: f32 = 3.0;
+    let scale = crate::theme::scale_px(ui, 1.0);
+    let logical_width = width / scale;
+    let size = (DOT_SIZE * scale).round().max(1.0);
     let [x, y] = ui.cursor_screen_pos();
-    let framebuffer_scale = ui.io().display_framebuffer_scale();
-    let scale_x = framebuffer_scale[0].max(0.01);
-    let scale_y = framebuffer_scale[1].max(0.01);
-    let size_px = (line_h * 0.22 * scale_x.min(scale_y)).round().max(1.0);
+    let line_h = ui.text_line_height();
     let colour = light_rgb(light);
     {
         let draw_list = ui.get_window_draw_list();
         for [cx, cy] in DOT_CENTERS {
-            let center_px = [(x + width * cx) * scale_x, (y + line_h * cy) * scale_y];
-            let min_px = [
-                (center_px[0] - size_px * 0.5).round(),
-                (center_px[1] - size_px * 0.5).round(),
+            let center = [logical_width * cx, crate::theme::PANEL_FONT_SIZE * cy];
+            // Snap the base geometry before scaling its origin; a shared
+            // physical size keeps fractional-DPI dots square.
+            let logical_min = [
+                (center[0] - DOT_SIZE * 0.5).round(),
+                (center[1] - DOT_SIZE * 0.5).round(),
             ];
-            let min = [min_px[0] / scale_x, min_px[1] / scale_y];
-            let max = [
-                (min_px[0] + size_px) / scale_x,
-                (min_px[1] + size_px) / scale_y,
+            let min = [
+                (x + logical_min[0] * scale).round(),
+                (y + logical_min[1] * scale).round(),
             ];
+            let max = [min[0] + size, min[1] + size];
             draw_list.add_rect(min, max, colour).filled(true).build();
         }
     }
@@ -194,8 +196,15 @@ mod tests {
             os_window_size(true),
             (BASE_WINDOW_W + RAIL_W, BASE_WINDOW_H)
         );
-        let r = rail_split_ratio(2000.0);
-        assert!((r * 2000.0 - RAIL_W).abs() < 0.01);
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            let width = 2000.0 * scale;
+            let ratio = rail_split_ratio(width, scale);
+            assert!(
+                (ratio * width - RAIL_W * scale).abs() < 0.01,
+                "rail stays {} physical px at {scale}× in a {width}px window",
+                RAIL_W * scale
+            );
+        }
     }
 
     #[test]
@@ -226,23 +235,27 @@ mod tests {
     }
 
     #[test]
-    fn status_dot_draws_five_pixel_aligned_squares_at_every_framebuffer_scale() {
+    fn status_dot_draws_five_pixel_aligned_squares_at_every_ui_scale() {
         let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let _ = ctx.font_atlas_mut().build();
-        ctx.io_mut().set_display_size([128.0, 96.0]);
-        ctx.io_mut().set_delta_time(1.0 / 60.0);
-
         let light = Light::Yellow;
-        let width = 18.0;
+
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
-            ctx.io_mut().set_display_framebuffer_scale([scale, scale]);
+            let mut ctx = dear_imgui_rs::Context::create();
+            crate::app::apply_ui_scale(ctx.style_mut(), scale);
+            let _ = ctx.font_atlas_mut().build();
+            ctx.io_mut().set_display_size([128.0 * scale, 96.0 * scale]);
+            ctx.io_mut().set_display_framebuffer_scale([1.0, 1.0]);
+            ctx.io_mut().set_delta_time(1.0 / 60.0);
+
             let mut row = None;
             {
                 let ui = ctx.frame();
                 ui.window("##status-dot-test")
                     .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
-                    .size([80.0, 48.0], dear_imgui_rs::Condition::Always)
+                    .size(
+                        [80.0 * scale, 48.0 * scale],
+                        dear_imgui_rs::Condition::Always,
+                    )
                     .flags(
                         dear_imgui_rs::WindowFlags::NO_TITLE_BAR
                             | dear_imgui_rs::WindowFlags::NO_RESIZE
@@ -252,12 +265,12 @@ mod tests {
                     )
                     .build(|| {
                         row = Some((ui.cursor_screen_pos(), ui.text_line_height()));
-                        super::draw_status_dot(ui, light, width);
+                        super::draw_status_dot(ui, light, crate::theme::scale_px(ui, 18.0));
                     });
             }
             let (origin, line_h) = row.expect("the status-dot test window was drawn");
             let draw_data = ctx.render();
-            assert_eq!(draw_data.framebuffer_scale(), [scale, scale]);
+            assert_eq!(draw_data.framebuffer_scale(), [1.0, 1.0]);
             let vertices: Vec<_> = draw_data
                 .draw_lists()
                 .flat_map(|list| list.vtx_buffer().iter())
@@ -304,22 +317,22 @@ mod tests {
                     .iter()
                     .map(|vertex| vertex.pos[0])
                     .fold(f32::NEG_INFINITY, f32::max);
-                let physical_bounds = [min_x * scale, min_y * scale, max_x * scale, max_y * scale];
+                let physical_bounds = [min_x, min_y, max_x, max_y];
                 assert!(
                     physical_bounds
                         .iter()
                         .all(|coordinate| (*coordinate - coordinate.round()).abs() < 0.001),
-                    "all square origins and edges must be integer framebuffer pixels at {scale}×: {physical_bounds:?}"
+                    "all square origins and edges must be integer physical pixels at {scale}×: {physical_bounds:?}"
                 );
-                let physical_width = (max_x - min_x) * scale;
-                let physical_height = (max_y - min_y) * scale;
+                let physical_width = max_x - min_x;
+                let physical_height = max_y - min_y;
                 assert!(
                     (physical_width - physical_height).abs() < 0.001,
-                    "each square must stay square in framebuffer pixels at {scale}×: {physical_width}×{physical_height}"
+                    "each square must stay square in physical pixels at {scale}×: {physical_width}×{physical_height}"
                 );
                 assert!(
                     (physical_width - physical_width.round()).abs() < 0.001,
-                    "square size must be an integer framebuffer width at {scale}×: {physical_width}"
+                    "square size must be an integer physical width at {scale}×: {physical_width}"
                 );
                 physical_sizes.push(physical_width.round() as i32);
             }

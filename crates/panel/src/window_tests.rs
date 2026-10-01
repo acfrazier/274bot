@@ -1,7 +1,11 @@
+use super::ime::{
+    physical_ime_set_data, submit_imgui_ime_area, take_test_callback_count, take_test_submissions,
+};
 use super::work_area::{
     cocoa_visible_frame_to_physical, fit_frame_to_work_area, win32_work_rect_to_physical, WorkArea,
 };
 use super::*;
+use crate::theme::PANEL_FONT_SIZE;
 
 /// Headless wgpu device/queue for the renderer-backed test. `None` when
 /// no adapter exists (headless CI) — the texture test then skips.
@@ -126,6 +130,57 @@ fn to_rgba_swaps_bgra_rows_and_leaves_rgba() {
     assert_eq!(
         to_rgba(&bgra, wgpu::TextureFormat::Rgba8UnormSrgb),
         bgra.to_vec()
+    );
+}
+
+#[test]
+fn ime_cursor_area_uses_imgui_physical_coordinates_at_fractional_scales() {
+    for (scale, (x, y), height) in [
+        (1.25_f32, (50, 30), 20),
+        (1.5, (60, 36), 24),
+        (1.75, (71, 43), 28),
+        (2.0, (81, 49), 32),
+    ] {
+        let viewport_pos = [4.2 * scale, 5.4 * scale];
+        let input_pos = [44.5 * scale, 29.7 * scale];
+        let input_line_height = 16.0 * scale;
+        let mut submitted = None;
+
+        submit_imgui_ime_area(
+            input_pos,
+            viewport_pos,
+            input_line_height,
+            |position, size| submitted = Some((position, size)),
+        );
+
+        let expected = (
+            winit::dpi::Position::Physical(winit::dpi::PhysicalPosition::new(x, y)),
+            winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(height, height)),
+        );
+        assert_eq!(submitted, Some(expected), "wrong IME area at {scale}×");
+    }
+}
+
+#[test]
+fn physical_ime_callback_ignores_null_imgui_arguments() {
+    take_test_submissions();
+    take_test_callback_count();
+    // SAFETY: null callback arguments are explicitly checked before dereference.
+    unsafe {
+        physical_ime_set_data(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    }
+    assert!(
+        take_test_submissions().is_empty(),
+        "null arguments must not submit"
+    );
+    assert_eq!(
+        take_test_callback_count(),
+        0,
+        "null data must not be consumed"
     );
 }
 
@@ -396,6 +451,287 @@ fn draw_known_rect(context: &mut imgui::Context) -> &mut imgui::DrawData {
             .build();
     }
     context.render()
+}
+#[derive(Debug)]
+struct DpiLayoutFrame {
+    text_vertex_bounds: [f32; 4],
+    text_row_origin_y: Vec<f32>,
+    text_row_bounds: Vec<[f32; 4]>,
+    status_bounds: Vec<[f32; 4]>,
+    rail_item_bounds: Vec<[f32; 4]>,
+}
+/// First-glyph bearing used to recover the emitted row origin from draw-list vertices.
+fn baked_glyph_y0(ui: &imgui::Ui, codepoint: char) -> f32 {
+    let font = ui.current_font();
+    // SAFETY: the current baked font and its glyph buffer remain owned by
+    // this live ImGui context throughout the frame.
+    unsafe {
+        let baked = (*font.raw()).LastBaked;
+        assert!(!baked.is_null(), "current font has a baked size");
+        let glyphs = &(*baked).Glyphs;
+        assert!(glyphs.Size > 0 && !glyphs.Data.is_null());
+        std::slice::from_raw_parts(glyphs.Data, glyphs.Size as usize)
+            .iter()
+            .find(|glyph| glyph.Codepoint() == codepoint as u32)
+            .unwrap_or_else(|| panic!("current font contains {codepoint:?}"))
+            .Y0
+    }
+}
+
+fn draw_dpi_layout_frame(scale: f32) -> DpiLayoutFrame {
+    let mut context = imgui::Context::create();
+    context
+        .io_mut()
+        .set_backend_flags(imgui::BackendFlags::RENDERER_HAS_TEXTURES);
+    crate::app::apply_ui_scale(context.style_mut(), scale);
+    assert!(add_panel_font(&mut context));
+    let _ = context.font_atlas_mut().build();
+    context
+        .io_mut()
+        .set_display_size([320.0 * scale, 180.0 * scale]);
+    context.io_mut().set_display_framebuffer_scale([1.0, 1.0]);
+    context.io_mut().set_delta_time(1.0 / 60.0);
+
+    let mut text_row_glyphs = Vec::new();
+    let mut text_row_bounds = Vec::new();
+    let mut rail_item_bounds = Vec::new();
+    let mut status_colour = [0.0; 4];
+    {
+        let ui = context.frame();
+        ui.window("##dpi-text")
+            .position([0.0, 0.0], imgui::Condition::Always)
+            .size([300.0 * scale, 80.0 * scale], imgui::Condition::Always)
+            .flags(
+                imgui::WindowFlags::NO_TITLE_BAR
+                    | imgui::WindowFlags::NO_RESIZE
+                    | imgui::WindowFlags::NO_MOVE
+                    | imgui::WindowFlags::NO_SAVED_SETTINGS
+                    | imgui::WindowFlags::NO_BACKGROUND,
+            )
+            .build(|| {
+                for row in ["first rail row", "second rail row", "third rail row"] {
+                    let first_glyph = row.chars().find(|c| !c.is_whitespace()).unwrap();
+                    ui.text(row);
+                    let y0 = baked_glyph_y0(ui, first_glyph);
+                    let min = ui.item_rect_min();
+                    let max = ui.item_rect_max();
+                    text_row_bounds.push([min[0], min[1], max[0], max[1]]);
+                    let glyph_count = row.chars().filter(|c| !c.is_whitespace()).count();
+                    text_row_glyphs.push((glyph_count, y0));
+                }
+            });
+        ui.window("##dpi-rail")
+            .position([0.0, 80.0 * scale], imgui::Condition::Always)
+            .size([300.0 * scale, 80.0 * scale], imgui::Condition::Always)
+            .flags(
+                imgui::WindowFlags::NO_TITLE_BAR
+                    | imgui::WindowFlags::NO_RESIZE
+                    | imgui::WindowFlags::NO_MOVE
+                    | imgui::WindowFlags::NO_SAVED_SETTINGS
+                    | imgui::WindowFlags::NO_BACKGROUND,
+            )
+            .build(|| {
+                (rail_item_bounds, status_colour) = crate::app::draw_test_rail_cap(
+                    ui,
+                    crate::theme::scale_px(ui, crate::rail::RAIL_W),
+                );
+            });
+    }
+    let draw_data = context.render();
+    let vertices: Vec<_> = draw_data
+        .draw_lists()
+        .flat_map(|list| list.vtx_buffer().iter())
+        .collect();
+    let is_colour = |vertex: &imgui::DrawVert, expected: [f32; 4]| {
+        imgui::Color::from_imgui_u32(vertex.col)
+            .to_array()
+            .into_iter()
+            .zip(expected)
+            .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
+    };
+    let text_vertices: Vec<_> = vertices
+        .iter()
+        .filter(|vertex| is_colour(vertex, [1.0, 1.0, 1.0, 1.0]))
+        .collect();
+    let mut text_row_origin_y = Vec::with_capacity(text_row_glyphs.len());
+    let mut next_text_vertex = 0;
+    for (glyph_count, glyph_y0) in text_row_glyphs {
+        let row_vertices = text_vertices
+            .get(next_text_vertex..next_text_vertex + glyph_count * 4)
+            .expect("all text-row glyphs appear in the draw list");
+        text_row_origin_y.push(row_vertices[0].pos[1] - glyph_y0);
+        next_text_vertex += row_vertices.len();
+    }
+    let text_vertex_bounds = text_vertices.iter().fold(
+        [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ],
+        |[min_x, min_y, max_x, max_y], vertex| {
+            [
+                min_x.min(vertex.pos[0]),
+                min_y.min(vertex.pos[1]),
+                max_x.max(vertex.pos[0]),
+                max_y.max(vertex.pos[1]),
+            ]
+        },
+    );
+    let status_vertices: Vec<_> = vertices
+        .iter()
+        .filter(|vertex| is_colour(vertex, status_colour))
+        .map(|vertex| [vertex.pos[0], vertex.pos[1]])
+        .collect();
+    let (status_quads, status_remainder) = status_vertices.as_slice().as_chunks::<4>();
+    assert!(
+        status_remainder.is_empty(),
+        "status vertices must form complete rectangle quads"
+    );
+    let mut status_bounds: Vec<_> = status_quads
+        .iter()
+        .map(|quad| {
+            let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+            let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+            for [x, y] in quad {
+                min_x = min_x.min(*x);
+                min_y = min_y.min(*y);
+                max_x = max_x.max(*x);
+                max_y = max_y.max(*y);
+            }
+            [min_x, min_y, max_x, max_y]
+        })
+        .collect();
+    status_bounds.sort_by(|left, right| {
+        left[1]
+            .total_cmp(&right[1])
+            .then_with(|| left[0].total_cmp(&right[0]))
+    });
+    DpiLayoutFrame {
+        text_row_origin_y,
+        text_vertex_bounds,
+        text_row_bounds,
+        status_bounds,
+        rail_item_bounds,
+    }
+}
+
+#[test]
+fn dpi_layout_draw_list_keeps_text_rows_and_rail_items_pixel_aligned() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let reference = draw_dpi_layout_frame(1.0);
+    assert_eq!(
+        reference.rail_item_bounds.len(),
+        4,
+        "status, name, fold, remove"
+    );
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        let frame = if scale == 1.0 {
+            DpiLayoutFrame {
+                text_row_origin_y: reference.text_row_origin_y.clone(),
+                text_vertex_bounds: reference.text_vertex_bounds,
+                text_row_bounds: reference.text_row_bounds.clone(),
+                status_bounds: reference.status_bounds.clone(),
+                rail_item_bounds: reference.rail_item_bounds.clone(),
+            }
+        } else {
+            draw_dpi_layout_frame(scale)
+        };
+        assert_eq!(
+            frame.text_row_origin_y.len(),
+            reference.text_row_origin_y.len()
+        );
+        for (origin, baseline) in frame
+            .text_row_origin_y
+            .iter()
+            .zip(&reference.text_row_origin_y)
+        {
+            assert!(
+                (*origin - origin.round()).abs() < 0.001,
+                "text row origin must be a physical pixel at {scale}×: {origin}"
+            );
+            assert!(
+                (origin - baseline * scale).abs() <= 1.0,
+                "text row origin at {scale}× must match 1× within one pixel: {origin} vs {baseline}"
+            );
+        }
+        assert_eq!(frame.text_row_bounds.len(), reference.text_row_bounds.len());
+        for (actual, baseline) in frame.text_row_bounds.iter().zip(&reference.text_row_bounds) {
+            assert!(
+                (actual[0] - baseline[0] * scale).abs() <= 1.0
+                    && (actual[1] - baseline[1] * scale).abs() <= 1.0
+                    && ((actual[3] - actual[1]) - (baseline[3] - baseline[1]) * scale).abs()
+                        <= 1.0,
+                "text row origin/height at {scale}× must match 1× within one pixel: {actual:?} vs {baseline:?}"
+            );
+        }
+        for rows in frame.text_row_bounds.windows(2) {
+            assert!(
+                rows[0][3] <= rows[1][1],
+                "text rows must not overlap at {scale}×: {rows:?}"
+            );
+        }
+        let [min_x, min_y, max_x, max_y] = frame.text_vertex_bounds;
+        assert!(
+            min_x >= 0.0 && min_y >= 0.0 && max_x <= 300.0 * scale && max_y <= 160.0 * scale,
+            "text must remain visible within the window at {scale}×: {:?}",
+            frame.text_vertex_bounds
+        );
+        assert_eq!(
+            frame.status_bounds.len(),
+            5,
+            "five marker squares are drawn"
+        );
+        for (square, baseline) in frame.status_bounds.iter().zip(&reference.status_bounds) {
+            assert!(
+                square
+                    .iter()
+                    .all(|edge| (*edge - edge.round()).abs() < 0.001),
+                "rail status square edges are physical pixels at {scale}×: {square:?}"
+            );
+            assert!(
+                square
+                    .iter()
+                    .zip(baseline)
+                    .all(|(actual, baseline)| (actual - baseline * scale).abs() <= 1.0),
+                "status square at {scale}× must match 1× within one pixel: {square:?} vs {baseline:?}; all {:?} vs {:?}; text rows {:?} vs {:?}; rail items {:?} vs {:?}",
+                frame.status_bounds,
+                reference.status_bounds,
+                frame.text_row_bounds,
+                reference.text_row_bounds,
+                frame.rail_item_bounds,
+                reference.rail_item_bounds
+            );
+        }
+        assert_eq!(frame.rail_item_bounds.len(), 4);
+        for (item, baseline) in frame
+            .rail_item_bounds
+            .iter()
+            .zip(&reference.rail_item_bounds)
+        {
+            assert!(
+                (item[1] - item[1].round()).abs() < 0.001,
+                "every rail item origin must be a physical pixel at {scale}×: {item:?}"
+            );
+            assert!(
+                item.iter()
+                    .zip(baseline)
+                    .all(|(actual, baseline)| (actual - baseline * scale).abs() <= 1.0),
+                "rail item at {scale}× must match 1× within one pixel: {item:?} vs {baseline:?}"
+            );
+        }
+        assert!(
+            frame.rail_item_bounds[0][2] <= frame.rail_item_bounds[1][0]
+                && frame.rail_item_bounds[1][2] <= frame.rail_item_bounds[2][0]
+                && frame.rail_item_bounds[2][2] <= frame.rail_item_bounds[3][0],
+            "rail marker, name, fold and remove items must not overlap at {scale}×: {:?}",
+            frame.rail_item_bounds
+        );
+        assert!(
+            frame.text_row_bounds.last().unwrap()[3] <= frame.rail_item_bounds[0][1],
+            "rail cap must not overlap the preceding text rows at {scale}×"
+        );
+    }
 }
 
 /// The panel's production surface-config shape at the capture test size,

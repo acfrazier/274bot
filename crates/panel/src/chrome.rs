@@ -180,7 +180,7 @@ mod tests {
         multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_HOST_ROW, CONFIG_MIN,
         CONFIG_SCRIPT_ROW, HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
     };
-    use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
+    use crate::theme::{apply_amber, panel_scale, ACCENT, PANEL_WIDTH};
 
     #[test]
     fn heading_order_defaults_and_merges() {
@@ -297,11 +297,13 @@ mod tests {
     }
 
     #[test]
-    fn integer_ui_scale_retina_is_2_and_never_below_1() {
-        assert_eq!(integer_ui_scale(2.0), 2.0);
-        assert_eq!(integer_ui_scale(1.0), 1.0);
-        assert_eq!(integer_ui_scale(1.75), 2.0);
-        assert_eq!(integer_ui_scale(0.5), 1.0);
+    fn panel_scale_preserves_fractional_monitor_density() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            assert_eq!(panel_scale(scale), scale);
+        }
+        for invalid in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+            assert_eq!(panel_scale(invalid), 1.0);
+        }
     }
 
     #[test]

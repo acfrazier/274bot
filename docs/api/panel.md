@@ -97,20 +97,29 @@ picker can change focus.
 Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
-main viewport). Default dock: **game left**, **330px panel right**.
-Panel and rail widths are **fixed** (330 / 264); they grow **vertically**
-with the OS window. Splitters, undock, the tab-bar corner menu, and
-imgui.ini restore are off.
-**Only grid mode** scales the 274 blit with the window; single-bot and
-rail keep a native **765×503** (logical) applet centred in the leftover
-pane. DPI is **winit + imgui `HiDpiMode::Default`** — we do not
-`ScaleAllSizes` on top of that (it would double Retina).
+main viewport). Default dock: **game left**, panel right. At 100% scale the
+panel is **330 px** wide and the MultiBox rail is **264 px**; both keep that
+logical width as the window grows vertically. The rail's tile body is
+**236×155 px** at 100% scale. Splitters, undock, the tab-bar corner menu,
+and imgui.ini restore are off.
+Only grid mode fits the 274 blit to the resizable pane; single-bot and rail
+keep the native **765×503 logical** applet centered in the leftover pane,
+scaled by display DPI in physical framebuffer coordinates. The window loop
+uses `HiDpiMode::Locked(1.0)` so ImGui's layout coordinates are physical
+pixels. The 3270 font remains **14 logical px** and is rasterized at the
+monitor scale; `ScaleAllSizes` and the panel's custom dimensions use that
+same scale, including scrollbar widths. A monitor change restores and rescales
+the unscaled base style before layout resumes. With renderer-managed textures,
+ImGui lazily re-bakes fonts at the new scale on the next frame.
+The panel owns its IME window association independently of the backend's
+userdata and submits text-input caret areas in physical pixels, including at
+fractional display scales.
 Single-bot hides the dock tab strip (`AUTO_HIDE_TAB_BAR`). The MultiBox
 **rail** keeps a tab so its close X is visible; closing it turns MultiBox
-off and **shrinks** the OS window by the 264px strip (same falling edge as
-the 274bot MultiBox toggle). Opening the sidecar **grows** the OS window
-if the 765×503 blit would sit under the panel or rail; a window the
-operator already stretched keeps the extra. The Game blit is flush to the
+off and **shrinks** the OS window by the 264 logical px strip (same falling
+edge as the 274bot MultiBox toggle). Opening the sidecar **grows** the OS
+window if the 765×503 logical blit would sit under the panel or rail; a
+window the operator already stretched keeps the extra. The Game blit is
 panel (right-aligned in the leftover pane).
 The Game pane title is the focused profile name when the tab bar is visible. Closing the Game pane sets
 `game_pane_open = false` (`set_draw` off) and turns capture off. The UI
