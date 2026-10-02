@@ -381,6 +381,13 @@ centered on the requested tile, even when a loc or decoration occupies it.
 A goal is loc-backed only when the caller explicitly supplies loc identity
 (native `WalkRequest.loc_id`, as used by Gatherer and loc interaction recovery).
 Compat `walkTo(x,z,r)`, Quester stand tiles and bank stands are plain tile goals.
+Their packed endpoint filter and observed arrival share one reach rule: both
+exact reach and open-wall adjacency to a solid target use a reach-work budget
+of `(2 * radius + 1)^2`, the size of the requested goal region, rather than a
+fixed step limit. Live probes read the current player's cached flood ranks;
+packed probes borrow collision data with bounded, call-local scratch. This
+adds no retained per-bot state and does not widen the Chebyshev margin or
+weaken wall checks where collision is observable.
 For an identified loc in scene with a known footprint, distance is measured
 to its full rotated footprint rectangle, not its south-west anchor. A legal
 stand must fit that margin and pass the shared live wall/force-approach rule.
