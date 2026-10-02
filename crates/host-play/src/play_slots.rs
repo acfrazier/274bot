@@ -1451,6 +1451,7 @@ fn spawn_slot_thread(
                             );
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
+                                crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
                                 crate::combat_proof::record_observation(name, *script_tick, exclusive);
                             }
                             c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
