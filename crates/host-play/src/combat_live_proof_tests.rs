@@ -25,7 +25,7 @@ use vault::{Profile, ProfileSettings};
 use super::combat_proof::{self, CaptureRegistration, CombatCapture};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/COMBAT-S3A-1";
+const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/COMBAT-S3A-2";
 const IMP_START: WorldTile = WorldTile {
     x: 2632,
     z: 3222,
@@ -91,24 +91,26 @@ const M6_ITEMS: &[(&str, i32)] = &[
     ("tbwt_cooked_karambwan", 4),
 ];
 
-// Selected R289 content drop tables/scripts/imp.rs2: white is 5 of 128 rolls.
-// n = ceil(ln(0.05) / ln(123/128)) = 76 kills for >=95% white coverage.
-// cbenhwadzq_0: 17 corpse episodes, first Attack120, final frame1998, 0.6s/tick:
-// cadence = (1998-120)*0.6/17 = 66.28235294s/kill (includes search/loot).
-// Overhead: measured initial walk/bank120*0.6 =72s; hand-in Manhattan route
-// (|3103-2632|+|3163-3222|)*0.6 =318s; existing settle window8s.
-// Total ceil(76*66.28235294 +72+318+8) =5436s. This bound is fixed before
-// the single authorized rerun; a miss is FAIL, not grounds to extend it.
+// Selected content drop tables/scripts/imp.rs2:10-19 has four mutually
+// exclusive 5/128 buckets. Inclusion-exclusion gives 95% joint coverage at
+// 110 kills, not the 76 kills needed for one specified colour. This is a
+// probabilistic kill bound, never a guarantee about wall-clock acquisition.
+// COMBAT-S3A-2 authorizes one natural experiment of up to 2.5 hours.
 fn m1_coverage_budget() -> (u64, f64, u64) {
-    let kills = (0.05_f64.ln() / (123.0_f64 / 128.0).ln()).ceil() as u64;
-    let cadence = (1998.0 - 120.0) * 0.6 / 17.0;
-    let deadline = (kills as f64 * cadence + 72.0 + 318.0 + 8.0).ceil() as u64;
-    (kills, cadence, deadline)
+    let coverage = |n: i32| {
+        1.0 - 4.0 * (123.0_f64 / 128.0).powi(n) + 6.0 * (118.0_f64 / 128.0).powi(n)
+            - 4.0 * (113.0_f64 / 128.0).powi(n)
+            + (108.0_f64 / 128.0).powi(n)
+    };
+    let kills = (1..).find(|n| coverage(*n) >= 0.95).unwrap() as u64;
+    let observed_cadence = 3970.38 / 51.0;
+    (kills, observed_cadence, 9_000)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Case {
     M1,
+    M1HandIn,
     M2,
     M3,
     M4,
@@ -120,6 +122,7 @@ impl Case {
     fn key(self) -> &'static str {
         match self {
             Self::M1 => "M1",
+            Self::M1HandIn => "M1-staged-hand-in",
             Self::M2 => "M2",
             Self::M3 => "M3",
             Self::M4 => "M4",
@@ -131,6 +134,7 @@ impl Case {
     fn label(self) -> &'static str {
         match self {
             Self::M1 => "combat_m1_imp_production",
+            Self::M1HandIn => "combat_m1_staged_hand_in",
             Self::M2 => "combat_m2_melee_upkeep",
             Self::M3 => "combat_m3_melee_food_only",
             Self::M4 => "combat_m4_unattackable_tree",
@@ -141,7 +145,7 @@ impl Case {
 
     fn path_relative(self) -> &'static str {
         match self {
-            Self::M1 | Self::M5 => "imp.json",
+            Self::M1 | Self::M1HandIn | Self::M5 => "imp.json",
             Self::M2 => "fixtures/combat_melee_upkeep.json",
             Self::M3 | Self::M6 => "fixtures/combat_melee_food_only.json",
             Self::M4 => "fixtures/combat_unattackable.json",
@@ -151,6 +155,13 @@ impl Case {
     fn items(self) -> &'static [(&'static str, i32)] {
         match self {
             Self::M1 => M1_ITEMS,
+            Self::M1HandIn => &[
+                ("bronze_scimitar", 1),
+                ("red_bead", 1),
+                ("yellow_bead", 1),
+                ("black_bead", 1),
+                ("white_bead", 1),
+            ],
             Self::M2 => M2_ITEMS,
             Self::M3 => M3_ITEMS,
             Self::M4 => M4_ITEMS,
@@ -162,6 +173,7 @@ impl Case {
     fn timeout(self) -> Duration {
         match self {
             Self::M1 => Duration::from_secs(m1_coverage_budget().2),
+            Self::M1HandIn => Duration::from_secs(1_200),
             Self::M5 => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 => Duration::from_secs(900),
             Self::M4 => Duration::from_secs(300),
@@ -170,7 +182,7 @@ impl Case {
 
     fn stand(self, world: &nav::world::NavWorld) -> Result<WorldTile, String> {
         match self {
-            Self::M1 | Self::M5 => Ok(IMP_START),
+            Self::M1 | Self::M1HandIn | Self::M5 => Ok(IMP_START),
             Self::M2 | Self::M3 | Self::M6 => standable_neighbor(world, WARLORD_ANCHOR),
             Self::M4 => world
                 .collision
@@ -308,18 +320,32 @@ impl LiveState {
         // Startup ClearPrayers consumes the seed. Imp Path does not keep
         // Protect through Engage, so the Maze hold freezes the live Attack
         // owner and this staging click restores Protect before injection.
-        // A real IF_BUTTON, not CLIENT_CHEAT: measured-window cheats are
-        // forbidden, and the hold makes this the tick's only producer.
+        // A real IF_BUTTON on a later observed host tick, never a cheat or
+        // a second producer on the Attack plan's exclusive tick.
         if self.case == Case::M5 && self.started {
             let protect_on = combat_proof::protect_from_melee_active(&self.snapshot);
-            let (pending, already) = {
+            let host_tick =
+                combat_proof::host_tick_for_snapshot(&self.account, self.snapshot.tick());
+            let (pending, already, attack_tick) = {
                 let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
                 (
                     capture.maze_pending && !capture.maze_injected,
                     capture.maze_prayer_restaged,
+                    capture
+                        .actions
+                        .iter()
+                        .rev()
+                        .find(|action| is_npc_attack(action))
+                        .and_then(|action| action["tick"].as_u64()),
                 )
             };
-            if pending && !protect_on && !already {
+            if pending
+                && !protect_on
+                && !already
+                && host_tick
+                    .zip(attack_tick)
+                    .is_some_and(|(now, attack)| now > attack)
+            {
                 let mut staged = false;
                 if let Some(component_id) = self.selected.prayers().iter().find_map(|prayer| {
                     prayer
@@ -328,34 +354,37 @@ impl LiveState {
                         .then_some(prayer.button_com)
                 }) {
                     if let Some(widget) = ReadContext::new(&self.snapshot).component(component_id) {
+                        use api::interact::Driver;
+                        let checkpoint = client.packet_checkpoint();
                         if matches!(
                             Interactions::new(&self.snapshot, client).if_button(widget),
                             SendResult::Sent { .. }
                         ) {
                             combat_proof::record_other_request(
                                 &self.account,
-                                u64::from(self.snapshot.tick()),
+                                host_tick,
+                                &self.snapshot,
                                 "staging",
                                 "if-button Protect from Melee",
                             );
+                            let mut opcodes = Vec::new();
+                            let decoded = checkpoint.is_some_and(|checkpoint| {
+                                client
+                                    .trace_packets(*checkpoint, &mut |opcode| opcodes.push(opcode))
+                            });
+                            let mut capture =
+                                self.capture.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Some(action) = capture.actions.last_mut() {
+                                action["accepted"] = json!(true);
+                                action["wire_decoded"] = json!(decoded);
+                                action["wire_opcodes"] = json!(opcodes);
+                            }
                             staged = true;
                         }
                     }
                 }
-                if !staged
-                    && matches!(
-                        api::interact::cheat(client, "setvar prayer14 1"),
-                        client::CheatSend::Sent
-                    )
-                {
-                    combat_proof::record_other_request(
-                        &self.account,
-                        u64::from(self.snapshot.tick()),
-                        "staging",
-                        "setvar prayer14 1",
-                    );
-                    staged = true;
-                }
+                // No cheat fallback in the measured window (R4 §5 common
+                // fixture contract). A missing widget cannot manufacture proof.
                 if staged {
                     self.capture
                         .lock()
@@ -424,21 +453,15 @@ impl EvidenceWriter {
             let (kills, cadence, deadline) = m1_coverage_budget();
             json!({
                 "content_source": "drop tables/scripts/imp.rs2",
-                "white_probability": "5/128",
-                "coverage": 0.95,
-                "kill_formula": "ceil(ln(0.05)/ln(123/128))",
+                "each_colour_probability": "5/128 (mutually exclusive)",
+                "joint_coverage": 0.950827,
+                "kill_formula": "min n: 1-4*(123/128)^n+6*(118/128)^n-4*(113/128)^n+(108/128)^n >= .95",
                 "required_kills": kills,
-                "reference_receipt": "M1-cbenhwadzq_0-receipt.json",
-                "reference_kills": 17,
-                "first_attack_tick": 120,
-                "final_tick": 1998,
-                "tick_seconds": 0.6,
-                "seconds_per_kill": cadence,
-                "initial_walk_bank_seconds": 72,
-                "hand_in_route_tiles": 530,
-                "hand_in_route_seconds": 318,
-                "settle_seconds": 8,
-                "deadline_formula": "ceil(required_kills*seconds_per_kill+72+318+8)",
+                "reference_receipt": "M1-cb1rquyywv_0-receipt.json",
+                "reference_corpse_episodes": 51,
+                "reference_distinct_killed": 49,
+                "seconds_per_corpse_episode": cadence,
+                "deadline_basis": "COMBAT-S3A-2 authorized 2.5h wall experiment; no guarantee of 110 kills or acquisition",
                 "deadline_seconds": deadline,
             })
         } else {
@@ -470,6 +493,7 @@ impl EvidenceWriter {
             "m5_clear_prayers_before_next_operation": m5_clear,
             "m1_content_deadline": m1_deadline,
             "combat_outcomes": combat_outcomes(&capture),
+            "imp_corpse_classification": imp_corpse_classification(&capture),
         });
         drop(capture);
 
@@ -621,11 +645,9 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
-            budget_ticks: if case == Case::M1 {
-                (case.timeout().as_secs() * 5).div_ceil(3) as u32
-            } else {
-                4_000
-            },
+            // Await counts dirty snapshots, not 600ms engine ticks. Only the
+            // monotonic wall deadline in run_case bounds this measured wait.
+            budget_ticks: u32::MAX,
         },
     });
     scenario.proof = Proof::Stat { id: 0, min: 1 };
@@ -636,7 +658,7 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
 
 fn preparation_steps(case: Case) -> Vec<Step> {
     let stats: &[(&'static str, i32, i32)] = match case {
-        Case::M1 => &[
+        Case::M1 | Case::M1HandIn => &[
             ("attack", 0, 40),
             ("strength", 2, 40),
             ("defence", 1, 40),
@@ -680,7 +702,7 @@ fn preparation_steps(case: Case) -> Vec<Step> {
         })
         .collect::<Vec<_>>();
     match case {
-        Case::M1 => steps.push(wear_step(BRONZE_SCIMITAR_ID)),
+        Case::M1 | Case::M1HandIn => steps.push(wear_step(BRONZE_SCIMITAR_ID)),
         Case::M2 => {
             steps.push(cheat_step(
                 "drain Prayer to the upkeep floor before Start",
@@ -778,7 +800,7 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
         return Some("Start baseline is not an attached in-game scene".to_owned());
     }
     match case {
-        Case::M1 => {
+        Case::M1 | Case::M1HandIn => {
             if stat_pair(baseline, "attack") != Some((40, 40))
                 || stat_pair(baseline, "strength") != Some((40, 40))
                 || stat_pair(baseline, "defence") != Some((40, 40))
@@ -795,6 +817,10 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 || item_count(baseline, SUPER_ATTACK_4_ID) != 0
             {
                 return Some("M1 Start baseline contains a consumable".into());
+            }
+            if case == Case::M1HandIn && !IMP_BEADS.iter().all(|id| item_count(baseline, *id) == 1)
+            {
+                return Some("staged hand-in requires all four seed beads".into());
             }
         }
         Case::M6 if item_count(baseline, COOKED_KARAMBWAN_ID) == 0 => {
@@ -901,6 +927,7 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
     }
     match case {
         Case::M1 => m1_ready(capture),
+        Case::M1HandIn => m1_hand_in_ready(capture),
         Case::M2 => m2_ready(capture),
         Case::M3 => m3_ready(capture),
         Case::M4 => m4_ready(capture),
@@ -909,7 +936,43 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
     }
 }
 
+// This proves only the production hand-in, never natural bead acquisition.
+// wizard_mizgog.rs2:3-19,39-52 requires quest start then a second talk.
+fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
+    capture
+        .start_baseline
+        .as_ref()
+        .is_some_and(|baseline| IMP_BEADS.iter().all(|id| item_count(baseline, *id) == 1))
+        && capture
+            .statuses
+            .iter()
+            .any(|status| status["fields"]["stage"] == json!("imp:2"))
+        && capture
+            .frames
+            .last()
+            .is_some_and(|frame| IMP_BEADS.iter().all(|id| item_count(frame, *id) == 0))
+        && !capture
+            .actions
+            .iter()
+            .any(|action| action["kind"] == json!("other-request"))
+}
+
+fn capture_has_death(capture: &CombatCapture) -> bool {
+    capture.statuses.iter().any(|status| {
+        status["fields"]["combat_end"] == json!("Died")
+            || integer(status, "deaths").is_some_and(|count| count > 0)
+    })
+}
+
 fn case_invalid_reason(case: Case, capture: &CombatCapture) -> Option<String> {
+    if matches!(case, Case::M3 | Case::M6)
+        && report_with_end(capture, "Aborted(Unprotected(NoFood))").is_some()
+    {
+        return Some(format!(
+            "{} exhausted its staged food (NoFood); not a kill proof",
+            case.key()
+        ));
+    }
     if case == Case::M3
         && report_with_end(capture, "Killed").is_some()
         && m3_no_eligible_eat(capture)
@@ -1042,7 +1105,9 @@ fn m3_ready(capture: &CombatCapture) -> bool {
 }
 
 fn m6_combo_receipt(capture: &CombatCapture) -> Value {
-    let onset = first_warlord_attack_onset(capture);
+    // Base design §2.1: facing us with an open hit bar is live by fact,
+    // even when the visible sequence is his defend animation.
+    let onset = first_warlord_live_fact(capture);
     let plans = batch_plans(capture);
     let mut first_eligible = None;
     let mut combos = 0;
@@ -1074,7 +1139,7 @@ fn m6_combo_receipt(capture: &CombatCapture) -> Value {
             let next_output = capture
                 .frames
                 .iter()
-                .find(|frame| frame["tick"].as_i64().is_some_and(|tick| tick > plan.tick));
+                .rfind(|frame| frame["tick"].as_i64() == Some(plan.tick + 1));
             let combo_output = next_output.is_some_and(|frame| {
                 stat_effective(frame, "hitpoints") == Some(40)
                     && item_count(frame, LOBSTER_ID)
@@ -1099,7 +1164,7 @@ fn m6_combo_receipt(capture: &CombatCapture) -> Value {
             json!({
                 "tick": plan.tick,
                 "decision_hp": hp,
-                "after_first_warlord_onset": after_onset,
+                "after_first_warlord_live_fact": after_onset,
                 "eligible_combo": eligible,
                 "combo": combo,
                 "ordered_plan": ordered,
@@ -1112,7 +1177,8 @@ fn m6_combo_receipt(capture: &CombatCapture) -> Value {
         })
         .collect::<Vec<_>>();
     json!({
-        "first_warlord_onset": onset,
+        "first_warlord_live_fact": onset,
+        "first_warlord_attack_onset": first_warlord_attack_onset(capture),
         "first_eligible_decision": first_eligible,
         "combo_count": combos,
         "food_rows": food_rows,
@@ -1218,7 +1284,51 @@ fn m5_ready(capture: &CombatCapture) -> bool {
     };
     m5_owner_preempted(capture, injection)
         && clear_prayers_before_next_operation(capture, injection)
+        && m5_prefix_contract(capture, injection)
         && has_real_attack_packet(capture)
+}
+
+fn m5_prefix_contract(capture: &CombatCapture, injection: &Value) -> bool {
+    let Some(injected) = injection["action_sequence_at_injection"].as_u64() else {
+        return false;
+    };
+    let Some(next) = capture.actions.iter().find(|action| {
+        action["sequence"]
+            .as_u64()
+            .is_some_and(|seq| seq > injected)
+            && action["request"]["op"] != json!("if-button")
+    }) else {
+        return false;
+    };
+    let Some(end) = next["sequence"].as_u64() else {
+        return false;
+    };
+    let mut prefix = CombatCapture::default();
+    prefix.actions = capture
+        .actions
+        .iter()
+        .filter(|action| action["sequence"].as_u64().is_some_and(|seq| seq <= end))
+        .cloned()
+        .collect();
+    prefix.observations = capture.observations.clone();
+    // Unknown-clock old staging cannot establish exclusivity.
+    prefix.actions.iter().all(|action| {
+        action["kind"] != json!("other-request")
+            || (action["origin"] == json!("staging")
+                && action["request"] == json!("if-button Protect from Melee")
+                && action["host_tick"].as_u64().is_some()
+                && accepted(action)
+                && action["wire_decoded"] == json!(true)
+                && wire_opcodes(action)
+                    == Some(vec![i64::from(client::io::ClientProt289::IF_BUTTON.id)])
+                && action["host_tick"] == action["tick"])
+    }) && native_interactions_wire_valid(&prefix)
+        && prefix
+            .actions
+            .iter()
+            .filter(|action| is_npc_attack(action))
+            .all(|action| action["batch"].as_u64().is_some_and(|batch| batch > 0))
+        && batch_plan_contract(&prefix, &batch_plans(&prefix))
 }
 
 fn report_with_end<'a>(capture: &'a CombatCapture, end: &str) -> Option<&'a Value> {
@@ -1240,7 +1350,7 @@ fn has_corpse(capture: &CombatCapture, report: &Value) -> bool {
     capture.frames.iter().any(|frame| {
         frame["tick"]
             .as_i64()
-            .is_some_and(|tick| tick >= evidence_tick)
+            .is_some_and(|tick| tick == evidence_tick)
             && frame["nearby_npcs"].as_array().is_some_and(|npcs| {
                 npcs.iter().any(|npc| {
                     npc["index"].as_i64() == Some(index)
@@ -1262,30 +1372,40 @@ fn every_killed_report_has_corpse(capture: &CombatCapture) -> bool {
 }
 
 fn combat_outcomes(capture: &CombatCapture) -> Vec<&Value> {
-    let mut outcomes = capture
+    let mut seen = std::collections::HashSet::new();
+    capture
         .statuses
         .iter()
         .map(|status| &status["fields"])
         .filter(|fields| fields["combat_end"].is_string())
-        .collect::<Vec<_>>();
-    outcomes.dedup_by(|a, b| {
-        a["combat_evidence_tick"] == b["combat_evidence_tick"]
-            && a["combat_evidence_sequence"] == b["combat_evidence_sequence"]
-            && a["combat_end"] == b["combat_end"]
-    });
-    outcomes
+        .filter(|fields| {
+            seen.insert((
+                fields["combat_evidence_tick"].as_i64(),
+                fields["combat_evidence_sequence"].as_i64(),
+                fields["combat_engaged_index"].as_i64(),
+                fields["combat_end"].as_str(),
+            ))
+        })
+        .collect()
 }
 
-fn every_imp_corpse_has_outcome(capture: &CombatCapture) -> bool {
+// COMBAT-S3A-2 operator decision: Budget stays Budget. A same-target corpse
+// may be an in-flight hit, not a Killed outcome and not an orphan. Bronze
+// scimitar attackrate=4 (combat.param:76-79, scimitars.obj:1-28); melee
+// npc_queue(2, damage, 0) (player_melee.rs2:47) runs next NPC phase because
+// World.ts:367-369 processes NPCs before players (Npc.ts:561-575): 4 + 1.
+const M1_POST_BUDGET_HIT_WINDOW: i64 = 5;
+
+fn imp_corpse_classification(capture: &CombatCapture) -> Value {
     let outcomes = combat_outcomes(capture);
     let mut active = std::collections::HashMap::new();
     let mut corpses = Vec::new();
     for frame in &capture.frames {
         let Some(tick) = frame["tick"].as_i64() else {
-            return false;
+            return json!({"malformed": true, "episodes": []});
         };
         let Some(npcs) = frame["nearby_npcs"].as_array() else {
-            return false;
+            return json!({"malformed": true, "episodes": []});
         };
         let dead = npcs
             .iter()
@@ -1314,17 +1434,59 @@ fn every_imp_corpse_has_outcome(capture: &CombatCapture) -> bool {
             .into_iter()
             .map(|(index, (start, end))| (index, start, end)),
     );
-    !corpses.is_empty()
-        && corpses.iter().all(|(index, start, end)| {
-            outcomes.iter().any(|fields| {
-                fields["combat_end"] == json!("Killed")
-                    && fields["combat_engaged_index"].as_i64() == Some(*index)
+    corpses.sort_unstable_by_key(|(index, start, _)| (*start, *index));
+    let episodes = corpses
+        .into_iter()
+        .map(|(index, start, end)| {
+            let same_target = |fields: &&Value| {
+                fields["combat_engaged_index"].as_i64() == Some(index)
                     && fields["combat_engaged_npc_type"] == json!(708)
+            };
+            let killed = outcomes.iter().copied().filter(same_target).any(|fields| {
+                fields["combat_end"] == json!("Killed")
                     && fields["combat_evidence_tick"]
                         .as_i64()
-                        .is_some_and(|tick| (*start..=*end).contains(&tick))
-            })
+                        .is_some_and(|tick| (start..=end).contains(&tick))
+            });
+            let budget_tick = outcomes
+                .iter()
+                .copied()
+                .filter(same_target)
+                .filter_map(|fields| {
+                    (fields["combat_end"] == json!("Budget"))
+                        .then(|| fields["combat_evidence_tick"].as_i64())
+                        .flatten()
+                        .filter(|tick| start > *tick && start <= *tick + M1_POST_BUDGET_HIT_WINDOW)
+                })
+                .max();
+            let class = if killed {
+                "killed"
+            } else if budget_tick.is_some() {
+                "post_budget_kill"
+            } else {
+                "orphan"
+            };
+            json!({"index": index, "npc_type": 708, "first_corpse_tick": start,
+            "last_corpse_tick": end, "class": class, "budget_tick": budget_tick})
         })
+        .collect::<Vec<_>>();
+    json!({
+        "malformed": false,
+        "post_budget_window_ticks": M1_POST_BUDGET_HIT_WINDOW,
+        "killed": episodes.iter().filter(|row| row["class"] == json!("killed")).count(),
+        "post_budget_kill": episodes.iter().filter(|row| row["class"] == json!("post_budget_kill")).count(),
+        "orphan": episodes.iter().filter(|row| row["class"] == json!("orphan")).count(),
+        "episodes": episodes,
+    })
+}
+
+fn every_imp_corpse_has_outcome(capture: &CombatCapture) -> bool {
+    let classification = imp_corpse_classification(capture);
+    classification["malformed"] == json!(false)
+        && classification["episodes"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+        && classification["orphan"] == json!(0)
 }
 
 fn has_real_attack_packet(capture: &CombatCapture) -> bool {
@@ -1472,6 +1634,35 @@ fn held_opcode(action: &Value) -> Option<i64> {
     opheld_opcode(index)
 }
 
+// Legacy receipts predate structured Obj/OpenStand capture. Parse the complete
+// emitted Debug grammar, not a substring (unknown debug requests fail closed).
+fn legacy_caller_opcode(request: &Value) -> Option<i64> {
+    use client::io::ClientProt289;
+    let debug = request["debug"].as_str()?;
+    let (mut rest, bank) = if let Some(rest) = debug.strip_prefix("OpenStand { ") {
+        (rest, true)
+    } else {
+        (debug.strip_prefix("Obj { ")?, false)
+    };
+    for (field, maximum) in [("x: ", 16383), ("z: ", 16383), ("level: ", 3)] {
+        let (number, after) = rest.strip_prefix(field)?.split_once(", ")?;
+        let coordinate = number.parse::<i32>().ok()?;
+        if !(0..=maximum).contains(&coordinate) {
+            return None;
+        }
+        rest = after;
+    }
+    if bank {
+        (rest == "kind: \"booth\", name: Some(\"Bank booth\"), stand_op: Some(2), choose: None }")
+            .then_some(i64::from(ClientProt289::OPLOC2.id))
+    } else {
+        ["Red bead", "Yellow bead", "Black bead", "White bead"]
+            .iter()
+            .any(|name| rest == format!("name: Some(\"{name}\"), action: \"Take\" }}"))
+            .then_some(i64::from(ClientProt289::OPOBJ3.id))
+    }
+}
+
 fn action_wire_valid(action: &Value) -> bool {
     use client::io::{ClientProt, ClientProt289};
     if !accepted(action) || action["wire_decoded"] != json!(true) {
@@ -1488,6 +1679,20 @@ fn action_wire_valid(action: &Value) -> bool {
         }
         Some("held" | "wear") => held_opcode(action).is_some_and(|expected| actual == [expected]),
         Some("if-button" | "set-retaliate") => actual == [opcode(ClientProt289::IF_BUTTON)],
+        Some("obj") if action["request"]["action"] == json!("Take") => {
+            let expected = opcode(ClientProt289::OPOBJ3);
+            actual == [expected] || actual == [opcode(ClientProt289::MOVE_OPCLICK), expected]
+        }
+        Some("open-stand")
+            if action["request"]["kind"] == json!("booth")
+                && action["request"]["stand_op"] == json!(2) =>
+        {
+            let expected = opcode(ClientProt289::OPLOC2);
+            actual == [expected] || actual == [opcode(ClientProt289::MOVE_OPCLICK), expected]
+        }
+        None => legacy_caller_opcode(&action["request"]).is_some_and(|expected| {
+            actual == [expected] || actual == [opcode(ClientProt289::MOVE_OPCLICK), expected]
+        }),
         _ => false,
     }
 }
@@ -1713,6 +1918,23 @@ fn local_attack_onsets(capture: &CombatCapture, engaged_index: i64) -> Vec<i64> 
     onsets
 }
 
+fn first_warlord_live_fact(capture: &CombatCapture) -> Option<i64> {
+    capture.frames.iter().find_map(|frame| {
+        let self_slot = frame["self_slot"].as_i64()?;
+        frame["nearby_npcs"]
+            .as_array()?
+            .iter()
+            .any(|npc| {
+                npc["type"] == json!(477)
+                    && npc["in_combat"] == json!(true)
+                    && npc["target"]["kind"] == json!("Player")
+                    && npc["target"]["index"] == json!(self_slot)
+            })
+            .then(|| frame["tick"].as_i64())
+            .flatten()
+    })
+}
+
 fn first_warlord_attack_onset(capture: &CombatCapture) -> Option<i64> {
     let mut previous_animations = std::collections::HashMap::<i64, Option<i64>>::new();
     for frame in &capture.frames {
@@ -1735,7 +1957,9 @@ fn first_warlord_attack_onset(capture: &CombatCapture) -> Option<i64> {
             if npc["in_combat"] == json!(true)
                 && npc["target"]["kind"] == json!("Player")
                 && npc["target"]["index"] == json!(self_slot)
-                && animation.is_some_and(|animation| animation >= 0)
+                // gnome_battlefield.npc attack_anim=human_blunt_pound (401);
+                // human_blunt_def (404) is not an attack onset.
+                && animation == Some(401)
                 && animation != previous
             {
                 return frame["tick"].as_i64();
@@ -2688,6 +2912,11 @@ fn run_case(case: Case) {
             combat_proof::record_status(&account, &status);
         }
         let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
+        if capture_has_death(&capture_snapshot) {
+            terminal_error = Some("death observed during the measured window".into());
+            writer.outcome = "FAIL".to_owned();
+            break;
+        }
         if let Some(reason) = capture_snapshot.invalid_reason.clone() {
             terminal_error = Some(reason);
             writer.outcome = "INVALID".to_owned();
@@ -2801,6 +3030,12 @@ fn run_case(case: Case) {
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_combat_m1_production_imp_four_beads() {
     run_case(Case::M1);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the isolated local R289 engine"]
+fn live_combat_m1_staged_hand_in() {
+    run_case(Case::M1HandIn);
 }
 
 #[test]
@@ -3115,6 +3350,7 @@ fn m5_ready_accepts_interrupt_hygiene_while_the_path_continues() {
         "kind": "interaction", "sequence": 1, "tick": 10, "accepted": true,
         "wire_decoded": true, "wire_opcodes": attack_opcodes,
         "run": "run-1", "action_id": 7, "request_id": 9,
+        "batch": 9,
         "request": {"op": "npc", "action": "Attack"}
     });
     let clear = json!({
@@ -3152,13 +3388,110 @@ fn m5_ready_accepts_interrupt_hygiene_while_the_path_continues() {
     capture.prayer_facts = vec![json!({"varp": 97, "button_com": 5623})];
     capture.random_events = vec![injection.clone()];
     capture.actions = vec![attack, clear, next, later_attack, bank];
+    capture.observations = vec![json!({"tick": 10, "exclusive": true})];
     assert!(
         m5_ready(&capture),
         "later Imp attacks and a bank OpenStand must not un-prove interrupt hygiene"
     );
+    let duplicate = capture.actions[0].clone();
+    capture.actions.insert(1, duplicate);
+    assert!(
+        !m5_ready(&capture),
+        "duplicate Attack breaks the admitted prefix"
+    );
+    capture.actions.remove(1);
+    capture.actions.insert(
+        1,
+        json!({
+            "kind": "other-request", "origin": "staging", "sequence": 1,
+            "tick": 11, "host_tick": 11, "request": "setvar prayer14 1"
+        }),
+    );
+    assert!(
+        !m5_ready(&capture),
+        "a measured-window cheat cannot stage proof"
+    );
+    capture.actions[1]["request"] = json!("if-button Protect from Melee");
+    capture.actions[1]["accepted"] = json!(true);
+    capture.actions[1]["wire_decoded"] = json!(true);
+    capture.actions[1]["wire_opcodes"] = json!([ClientProt289::IF_BUTTON.id]);
+    assert!(
+        m5_ready(&capture),
+        "a captured real prayer click on its own later tick is admissible"
+    );
+    capture.actions[1]["tick"] = json!(10);
+    capture.actions[1]["host_tick"] = json!(10);
+    assert!(
+        !m5_ready(&capture),
+        "a staging click cannot share the exclusive Attack tick"
+    );
+    capture.actions.remove(1);
     capture.random_events[0]["prayer_varps_at_injection"] = json!(varps(false));
     assert!(
         !m5_ready(&capture),
         "an all-off injection snapshot is not a Protect-from-Melee interrupt"
     );
+}
+
+#[test]
+fn legacy_caller_wire_rejects_unknown_debug_and_wrong_packets() {
+    use client::io::ClientProt289;
+    let mut action = json!({
+        "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPOBJ3.id],
+        "request": {"debug": "Obj { x: 2638, z: 3224, level: 0, name: Some(\"Red bead\"), action: \"Take\" }"}
+    });
+    assert!(action_wire_valid(&action));
+    action["request"]["debug"] =
+        json!("Obj { x: 2638, z: 3224, level: 0, name: Some(\"Red bead\"), action: \"Destroy\" }");
+    assert!(!action_wire_valid(&action));
+    action["request"]["debug"] = json!("OpenStand { x: 2656, z: 3283, level: 0, kind: \"booth\", name: Some(\"Bank booth\"), stand_op: Some(2), choose: None }");
+    assert!(!action_wire_valid(&action));
+    action["wire_opcodes"] = json!([ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPLOC2.id]);
+    assert!(action_wire_valid(&action));
+    action["request"]["debug"] = json!("arbitrary OpenStand Take");
+    assert!(!action_wire_valid(&action));
+}
+
+#[test]
+fn warlord_live_fact_is_not_a_defend_animation_attack() {
+    let mut capture = CombatCapture::default();
+    capture.frames.push(json!({
+        "tick": 43, "self_slot": 7, "nearby_npcs": [{
+            "type": 477, "name": "Khazard Warlord", "index": 8,
+            "in_combat": true, "animation": 404,
+            "target": {"kind": "Player", "index": 7}
+        }]
+    }));
+    assert_eq!(first_warlord_live_fact(&capture), Some(43));
+    assert_eq!(first_warlord_attack_onset(&capture), None);
+    capture.frames[0]["nearby_npcs"][0]["animation"] = json!(401);
+    assert_eq!(first_warlord_attack_onset(&capture), Some(43));
+    capture.frames[0]["nearby_npcs"][0]["target"]["index"] = json!(9);
+    assert_eq!(first_warlord_live_fact(&capture), None);
+}
+
+#[path = "combat_receipt_replay_tests.rs"]
+mod receipt_replay;
+
+#[test]
+fn post_budget_kill_is_separate_and_rejects_late_or_different_npc() {
+    let mut capture = CombatCapture::default();
+    capture.statuses.push(json!({"fields": {
+        "combat_end": "Budget", "combat_evidence_tick": 20,
+        "combat_evidence_sequence": 20, "combat_engaged_index": 123,
+        "combat_engaged_npc_type": 708
+    }}));
+    capture.frames.push(json!({"tick": 25, "nearby_npcs": [{
+        "index": 123, "type": 708, "health": 0, "total_health": 8
+    }]}));
+    let classified = imp_corpse_classification(&capture);
+    assert_eq!(classified["post_budget_kill"], json!(1));
+    assert_eq!(classified["killed"], json!(0));
+    assert!(every_imp_corpse_has_outcome(&capture));
+    capture.frames[0]["tick"] = json!(26);
+    assert!(!every_imp_corpse_has_outcome(&capture));
+    capture.frames[0]["tick"] = json!(25);
+    capture.frames[0]["nearby_npcs"][0]["index"] = json!(124);
+    assert!(!every_imp_corpse_has_outcome(&capture));
 }

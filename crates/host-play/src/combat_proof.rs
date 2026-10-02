@@ -93,6 +93,16 @@ pub(crate) fn record_frame(account: &str, tick: u64, snapshot: &GameSnapshot) {
     }
 }
 
+pub(crate) fn host_tick_for_snapshot(account: &str, snapshot_tick: u32) -> Option<u64> {
+    let capture = capture_for(account)?;
+    let capture = capture.lock().unwrap_or_else(|e| e.into_inner());
+    capture.frames.iter().rev().find_map(|frame| {
+        (frame["snapshot_tick"].as_u64() == Some(u64::from(snapshot_tick)))
+            .then(|| frame["host_tick"].as_u64())
+            .flatten()
+    })
+}
+
 pub(crate) fn record_start_baseline(account: &str, snapshot: &GameSnapshot) {
     if let Some(capture) = capture_for(account) {
         capture
@@ -115,14 +125,21 @@ pub(crate) fn record_status(account: &str, status: &ScriptStatus) {
     }
 }
 
-pub(crate) fn record_observation(account: &str, tick: u64, exclusive: bool) {
+pub(crate) fn record_observation(
+    account: &str,
+    host_tick: u64,
+    snapshot: &GameSnapshot,
+    exclusive: bool,
+) {
     if let Some(capture) = capture_for(account) {
         capture
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .observations
             .push(json!({
-                "tick": tick,
+                "tick": host_tick,
+                "host_tick": host_tick,
+                "snapshot_tick": snapshot.tick(),
                 "exclusive": exclusive,
             }));
     }
@@ -154,6 +171,8 @@ pub(crate) fn record_interaction(
         "sequence": sequence,
         "kind": "interaction",
         "tick": tick,
+        "host_tick": tick,
+        "snapshot_tick": snapshot.tick(),
         "run": format!("{:?}", authority.run()),
         "action_id": authority.action_id().get(),
         "request_id": request_id,
@@ -178,7 +197,6 @@ pub(crate) fn record_interaction(
         capture.maze_pending = true;
     }
 }
-
 pub(crate) fn record_shim_interactions(
     account: &str,
     tick: u64,
@@ -199,6 +217,8 @@ pub(crate) fn record_shim_interactions(
             "kind": "other-interaction",
             "origin": "shim",
             "tick": tick,
+            "host_tick": tick,
+            "snapshot_tick": snapshot.tick(),
             "batch": 0,
             "request_id": null,
             "request": interaction_value(request),
@@ -210,23 +230,33 @@ pub(crate) fn record_shim_interactions(
     }
 }
 
-pub(crate) fn record_other_request(account: &str, tick: u64, origin: &str, request: &str) {
+pub(crate) fn record_other_request(
+    account: &str,
+    host_tick: Option<u64>,
+    snapshot: &GameSnapshot,
+    origin: &str,
+    request: &str,
+) {
     let Some(capture) = capture_for(account) else {
         return;
     };
     let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
     let sequence = capture.actions.len() as u64 + 1;
+    let snapshot_tick = u64::from(snapshot.tick());
     capture.actions.push(json!({
         "sequence": sequence,
         "kind": "other-request",
         "origin": origin,
-        "tick": tick,
+        "tick": host_tick.unwrap_or(snapshot_tick),
+        "host_tick": host_tick,
+        "snapshot_tick": snapshot.tick(),
         "batch": 0,
         "request_id": null,
         "request": request,
         "accepted": null,
         "wire_decoded": false,
         "wire_opcodes": [],
+        "snapshot": snapshot_facts(snapshot, host_tick),
     }));
 }
 
@@ -247,6 +277,8 @@ pub(crate) fn record_walk(
         "sequence": sequence,
         "kind": "walk",
         "tick": tick,
+        "host_tick": tick,
+        "snapshot_tick": snapshot.tick(),
         "run": format!("{run:?}"),
         "request_id": request_id,
         "request": {
@@ -289,6 +321,7 @@ pub(crate) fn protect_from_melee_active(snapshot: &GameSnapshot) -> bool {
 
 pub(crate) fn record_maze_injection(
     account: &str,
+    host_tick: Option<u64>,
     snapshot: &GameSnapshot,
     claim: impl std::fmt::Debug,
     owner_live_before: Option<bool>,
@@ -304,7 +337,7 @@ pub(crate) fn record_maze_injection(
         // record_frame runs after this observe's injection check, so
         // frames.last() is the previous tick (often still all-off). Use the
         // same snapshot that gated protect_from_melee_active.
-        let facts = snapshot_facts(snapshot, Some(u64::from(snapshot.tick())));
+        let facts = snapshot_facts(snapshot, host_tick);
         let prayer_varps_at_injection = facts["prayer_varps"].clone();
         let active_combat_owner = capture.m5_attack_owner.as_ref().map(|authority| {
             json!({
@@ -317,6 +350,8 @@ pub(crate) fn record_maze_injection(
             "kind": "Maze",
             "name": "combat-live-proof synthetic Maze hold",
             "observer_tick": snapshot.tick(),
+            "host_tick": host_tick,
+            "snapshot_tick": snapshot.tick(),
             "claim": format!("{claim:?}"),
             "delivery": "Play.observe -> PlaySlotScript.on_random",
             "hold": true,
@@ -354,6 +389,38 @@ fn interaction_value(request: &InteractReq) -> Value {
         InteractReq::Held { name, action, slot } => {
             json!({"op": "held", "name": name, "action": action, "slot": slot})
         }
+        InteractReq::OpenStand {
+            x,
+            z,
+            level,
+            kind,
+            name,
+            stand_op,
+            choose,
+        } => json!({
+            "op": "open-stand",
+            "x": x,
+            "z": z,
+            "level": level,
+            "kind": kind,
+            "name": name,
+            "stand_op": stand_op,
+            "choose": choose,
+        }),
+        InteractReq::Obj {
+            x,
+            z,
+            level,
+            name,
+            action,
+        } => json!({
+            "op": "obj",
+            "x": x,
+            "z": z,
+            "level": level,
+            "name": name,
+            "action": action,
+        }),
         InteractReq::IfButton { component_id } => {
             json!({"op": "if-button", "component_id": component_id})
         }
@@ -486,6 +553,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
     });
     json!({
         "tick": host_tick.unwrap_or_else(|| u64::from(snapshot.tick())),
+        "host_tick": host_tick,
         "snapshot_tick": snapshot.tick(),
         "ingame": snapshot.ingame(),
         "scene_state": snapshot.scene_state(),
@@ -497,5 +565,11 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "inventory": inventory,
         "equipment": equipment,
         "nearby_npcs": nearby_npcs,
+        // New receipts distinguish an observed bead drop from inventory-only
+        // absence; old receipts cannot establish that a colour never dropped.
+        "ground_items": snapshot.ground_items().iter().map(|item| json!({
+            "id": item.def.id, "count": item.count, "tile": item.tile,
+            "actions": item.actions,
+        })).collect::<Vec<_>>(),
     })
 }

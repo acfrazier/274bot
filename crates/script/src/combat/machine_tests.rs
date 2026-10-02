@@ -2710,3 +2710,69 @@ fn case44_ordinary_and_combo_food_share_only_a_proven_safe_lock() {
     attack_row(&plain, 1);
     assert_eq!(strict_harness.machine.input_lock(), None);
 }
+
+fn leash_fight(scene: &mut Scene, budget_ticks: u16) -> Harness {
+    let stand = scene.local.player.actor.tile;
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.lost_radius = 12;
+    request.budget_ticks = budget_ticks;
+    let mut harness = Harness::new(scene, request);
+    attack(harness.pending(scene, 1));
+    scene.install();
+    scene.refresh();
+    assert!(harness.pending(scene, 2).is_none());
+    assert_eq!(harness.machine.phase, Phase::Fight);
+    harness
+}
+
+#[test]
+fn stand_leash_loss_walks_off_the_server_chase_before_target_gone() {
+    let mut scene = Scene::new("imp");
+    let stand = scene.local.player.actor.tile;
+    let mut harness = leash_fight(&mut scene, 50);
+    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].distance = 13;
+    scene.refresh();
+
+    let mut walked = false;
+    for tick in 3..=5 {
+        match harness.pending(&scene, tick) {
+            Some(HostEffect::Walk(request)) => {
+                assert_eq!(request.target, tile(stand.x - 2, stand.z));
+                assert_eq!(request.radius, 1);
+                walked = true;
+            }
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. }))
+                if action == "Attack" =>
+            {
+                panic!("an out-of-leash target must not receive another Attack");
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        walked,
+        "leash cancellation must move the player off the live chase"
+    );
+    assert_eq!(harness.ready(&scene, 6).end, CombatEnd::TargetGone);
+}
+
+#[test]
+fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
+    let mut scene = Scene::new("imp");
+    let stand = scene.local.player.actor.tile;
+    let mut harness = leash_fight(&mut scene, 4);
+    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].distance = 13;
+    scene.refresh();
+    assert!(matches!(
+        harness.pending(&scene, 3),
+        Some(HostEffect::Walk(request))
+            if request.target == tile(stand.x - 2, stand.z)
+    ));
+
+    scene.npcs[0].health = 0;
+    scene.refresh();
+    assert_eq!(harness.ready(&scene, 4).end, CombatEnd::Killed);
+}

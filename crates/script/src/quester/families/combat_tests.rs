@@ -408,3 +408,265 @@ fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
         );
     });
 }
+
+struct NeverStop;
+
+impl PredicatePlan for NeverStop {
+    fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+        Truth::False
+    }
+}
+
+fn combat_test_run(
+    target: Target,
+    stand: Option<api::WorldTile>,
+    until: Option<Arc<dyn PredicatePlan>>,
+    loot: Vec<LootItem>,
+) -> CombatRun {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let tables = CombatTables::build(selected).unwrap();
+    let request = CombatRequest {
+        target,
+        stand,
+        lost_radius: 12,
+        ..CombatRequest::default()
+    };
+    CombatRun {
+        request: Arc::new(request),
+        tables,
+        until,
+        win: None,
+        loot: Arc::from(loot),
+        action: None,
+        phase: Phase::Combat,
+        loot_index: 0,
+        last_report: None,
+        last_outcome: None,
+        target_gone_restarts: 0,
+    }
+}
+
+fn imp_target(data: &SelectedGameData) -> Target {
+    Target::Npc {
+        types: Arc::from([data.npc_by_config("imp").unwrap().id]),
+        pick: Pick::Random,
+        not_targeting_others: true,
+    }
+}
+
+fn with_step_context<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
+    super::super::tests::with_tick(snapshot, ledger, tick, |native| {
+        let quests = QuestCatalog::empty();
+        let required_after = native.cx.evidence();
+        let bank = crate::quester::bank_memo::BankMemo::default();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        f(&mut StepContext {
+            tick: native,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            bank: &bank,
+            banks: &banks,
+        })
+    })
+}
+
+#[test]
+fn boss_abort_blocks_but_m4_unattackable_report_completes_for_walkout() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let target = imp_target(&data);
+    let never_stop = || Arc::new(NeverStop) as Arc<dyn PredicatePlan>;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+
+    let mut boss = combat_test_run(target, None, Some(never_stop()), Vec::new());
+    let result = with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        boss.on_combat_report(report(CombatEnd::Aborted(AbortReason::Unattackable)), cx)
+    });
+    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert_eq!(
+        boss.last_report.map(|report| report.end),
+        Some(CombatEnd::Aborted(AbortReason::Unattackable))
+    );
+
+    let mut m4 = combat_test_run(
+        Target::Attacker {
+            npcs: true,
+            players: false,
+        },
+        None,
+        Some(never_stop()),
+        Vec::new(),
+    );
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        m4.on_combat_report(report(CombatEnd::Aborted(AbortReason::Unattackable)), cx)
+    });
+    let Poll::Ready(Ok(outcome)) = result else {
+        panic!("M4 Unattackable must complete so the caller walk-out can run");
+    };
+    let receipt = outcome
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("M4 must retain its Combat report");
+    assert_eq!(
+        receipt.report.end,
+        CombatEnd::Aborted(AbortReason::Unattackable)
+    );
+}
+
+#[test]
+fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
+    assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Walk(request)
+            if request.target == stand && request.radius == 1
+    ));
+
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.on_return_walk(
+            WalkReceipt {
+                request_id: 1,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::Arrived,
+            },
+            cx,
+        )
+    });
+    assert!(result.is_pending());
+    assert_eq!(run.target_gone_restarts, 1);
+    assert!(matches!(&run.phase, Phase::Combat));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+    let receipt = run
+        .last_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("restarted combat must retain the TargetGone report");
+    assert_eq!(receipt.target_gone_restarts, 1);
+}
+
+#[test]
+fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.on_return_walk(
+            WalkReceipt {
+                request_id: 1,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::RouteEnded,
+            },
+            cx,
+        )
+    });
+    assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(run.action.is_none());
+}
+
+#[test]
+fn killed_report_enters_loot_and_takes_the_observed_drop() {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("white_bead").unwrap();
+    let item_id = item.id;
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("White bead"));
+    let stand = api::WorldTile {
+        x: 3253,
+        z: 3401,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&selected),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![LootItem {
+            id: item_id,
+            name: item_name.clone(),
+        }],
+    );
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_ground_items(vec![api::snapshot::GroundItemView {
+        def: api::obj_names::ItemDefView {
+            id: item_id,
+            name: Some(item_name.to_string()),
+            stackable: false,
+            members: false,
+            base_value: 1,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        count: 1,
+        actions: vec![Some("Take".into())],
+        tile: stand,
+        distance: 0,
+    }]);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(matches!(&run.phase, Phase::Loot));
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            x,
+            z,
+            action,
+            ..
+        }) if *x == stand.x && *z == stand.z && action == "Take"
+    ));
+}
