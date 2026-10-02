@@ -118,6 +118,7 @@ pub(super) fn brass_key_door_edges(
         ] {
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at,
                 to,
                 loc_id: door_id,

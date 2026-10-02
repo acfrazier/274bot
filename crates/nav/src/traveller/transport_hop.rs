@@ -683,6 +683,22 @@ impl FollowRun {
             arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
         } else if edge.kind == TransportKind::Glider {
             arrived(edge.to, GLIDER_ARRIVE_RADIUS)
+        } else if edge.player_delta.is_some() {
+            // The content displaces the player's actual takeoff stand. A
+            // route's planned landing is not proof if live admission used a
+            // different stand, and an unchanged tile cannot prove a crossing.
+            let landing = hop
+                .sent_tile
+                .and_then(|sent| edge.landing_from(sent).map(|to| (sent, to)));
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                landing.is_some_and(|(sent, to)| {
+                    now.world_tile().is_some_and(|here| {
+                        here != sent
+                            && here.level == to.level
+                            && (here.x - to.x).abs().max((here.z - to.z).abs()) <= close_enough
+                    })
+                })
+            })
         } else if matches!(edge.kind, TransportKind::Ladder | TransportKind::Stairs)
             && edge.at.level != edge.to.level
             && edge.at.x == edge.to.x

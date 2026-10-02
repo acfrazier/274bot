@@ -684,6 +684,7 @@ fn roundtrip_collision_and_transport_graph() {
     let mut graph = TransportGraph::default();
     let door = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -710,6 +711,7 @@ fn roundtrip_collision_and_transport_graph() {
     };
     let ladder = TransportEdge {
         kind: TransportKind::Stairs,
+        player_delta: None,
         at: WorldTile {
             x: 3200,
             z: 3200,
@@ -740,6 +742,7 @@ fn roundtrip_collision_and_transport_graph() {
     graph.edges.push(ladder);
     let glider = TransportEdge {
         kind: TransportKind::Glider,
+        player_delta: None,
         at: WorldTile {
             x: 2465,
             z: 3501,
@@ -770,6 +773,7 @@ fn roundtrip_collision_and_transport_graph() {
     // the same wire byte without a version bump.
     let spirit = TransportEdge {
         kind: TransportKind::SpiritTree,
+        player_delta: None,
         at: WorldTile {
             x: 2460,
             z: 3445,
@@ -798,6 +802,7 @@ fn roundtrip_collision_and_transport_graph() {
     graph.edges.push(spirit);
     let npc = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 2500,
             z: 3500,
@@ -828,6 +833,7 @@ fn roundtrip_collision_and_transport_graph() {
     // edge in the same array, split back out on decode.
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -1349,6 +1355,7 @@ fn v8_roundtrips_worn_req() {
     };
     let door = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -1405,6 +1412,7 @@ fn v9_roundtrips_members_req_true_and_false() {
     };
     let edge = |members_req| TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 0,
@@ -1456,6 +1464,9 @@ fn v13_decode_rejects_older_version_bytes() {
         flags: None,
     };
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+    // v13 lacks the player-relative landing mode and must not be guessed.
+    bytes[4] = 13;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(13))));
     bytes[4] = 8;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
     bytes[4] = 9;
@@ -1489,6 +1500,7 @@ fn v9_decode_rejects_invalid_members_req_flag() {
     };
     let door = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 0,
@@ -2193,6 +2205,7 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
     };
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -2245,6 +2258,7 @@ fn tiny_collision() -> WorldCollision {
 fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 0,
@@ -2271,6 +2285,103 @@ fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
     }
 }
 
+#[test]
+fn relative_stairs_wire_preserves_actual_takeoff_and_backward_proof() {
+    use crate::router::{find_first_with, FindOptions, Leg, RouteError};
+
+    let width = 3;
+    let height = 24;
+    let plane = width * height;
+    let mut flags = vec![CollisionFlag::WR_GRND as u32; 4 * plane];
+    for z in 7..=20 {
+        flags[z * width + 1] = 0;
+    }
+    flags[plane + 3 * width + 1] = 0;
+    let (walk, blocked) = pack_walk(&flags);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut edge = gated_door(None);
+    edge.kind = TransportKind::Stairs;
+    edge.dir = None;
+    edge.at = WorldTile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    edge.to = WorldTile {
+        x: 1,
+        z: 0,
+        level: 1,
+    };
+    edge.player_delta = Some(WorldTile {
+        x: 0,
+        z: -4,
+        level: 1,
+    });
+    edge.ticks = 2;
+    let graph = TransportGraph {
+        edges: vec![edge],
+        approaches: vec![Some(LocApproach {
+            width: 1,
+            length: 3,
+            blocked_sides: 14,
+        })],
+        ..TransportGraph::default()
+    };
+    let bytes = encode(&collision, &graph, &[]);
+    let (collision, mut graph, _) = decode(&bytes).unwrap();
+    let from = WorldTile {
+        x: 1,
+        z: 20,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 1,
+        z: 3,
+        level: 1,
+    };
+    let state = crate::WorldState::empty();
+    let search = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &[to],
+        FindOptions::default(),
+        &state,
+    );
+    let route = search
+        .route()
+        .expect("backward proof must use the north-face takeoff, not seal the nominal landing");
+    assert_eq!(route.dest, to);
+    assert_eq!(route.ticks, 8.5);
+    assert!(route
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.to == to),));
+
+    // The same absolute edge really lands on the sealed nominal tile.
+    graph.edges[0].player_delta = None;
+    let search = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &[to],
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(search.route().unwrap_err(), RouteError::NoPath);
+}
+
 /// v11 binds the quest family in the header and carries each edge's typed
 /// stage gates: an equality window, an upper-only window and a completed
 /// quest come back exactly, keys and open bounds included. A bake that
@@ -2295,6 +2406,7 @@ fn v11_roundtrips_quest_family_and_stage_gates() {
     let completed = QuestGates::new(family, [QuestGate::Complete(FactKey::new("tbwt"))]).unwrap();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         ..gated_door(Some(completed))
     });
     let bytes = encode(&tiny_collision(), &graph, &[]);

@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 13, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 14, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -25,7 +25,11 @@
 //! open_loc_id)` i32le plus requirement vectors, membership and wilderness
 //! caps, and quest-stage gates. Version 13 appends one approach-geometry
 //! tag per edge after its quest gates (`0` absent, `1` + footprint width,
-//! length, and blocked-side mask). The any-tile teleport layer
+//! length, and blocked-side mask). Version 14 reserves bit 7 of the existing
+//! kind byte for a player-relative ladder/stairs landing. The low seven bits
+//! retain the kind; flagged `to - at` encodes the content displacement, resolved
+//! against each actual takeoff stand. Absolute edge records are unchanged and
+//! the flag adds no wire bytes. The any-tile teleport layer
 //! (`TransportGraph::teleports`) round-trips inside the same edge array as
 //! kind-4 edges; [`decode`] splits them back out and never indexes them into
 //! `at`. After the edges come the content-derived bank stand table, then the
@@ -37,14 +41,14 @@
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v13 stream has `Some(ZoneTable)`, even when every row count
+//! Every decoded v14 stream has `Some(ZoneTable)`, even when every row count
 //! is zero; legacy grids and synthetic in-memory graphs use `None`.
 //! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v12 or older whole-world stream is
+//! return [`PackError::BadLength`]. A v13 or older whole-world stream is
 //! [`PackError::BadVersion`], never compat-loaded. The raw flags, paint-reach
 //! bitset, and canlight bitset remain sidecars: flags use magic `b"274F"`,
 //! reach `b"274R"`, and canlight `b"274L"`. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v13.
+//! old `.navpack` files; `nav-pack` now writes v14.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -102,15 +106,18 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// teleport caps and the Wilderness-level formula. v11 binds the selected
 /// quest family and appends typed quest-stage gates. v12 appends the
 /// content-derived zone table after Wilderness. v13 appends per-edge
-/// approach geometry after quest gates. [`decode`] accepts version 13 only.
-pub const VERSION: u8 = 13;
+/// approach geometry after quest gates. v14 flags player-relative landings in
+/// the kind byte. [`decode`] accepts version 14 only.
+pub const VERSION: u8 = 14;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V13";
+pub const FORMAT_ID: &str = "274V14";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
+/// High bit of a ladder/stairs kind byte: `to - at` is a player displacement.
+const PLAYER_RELATIVE: u8 = 0x80;
 /// Largest grid side a pack may decode (16384×16384 tiles ≈ 256 MB of walk
 /// bytes; the whole-world bbox is 1792×9088, comfortably under).
 const MAX_GRID: usize = 16384;
@@ -412,7 +419,7 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v13 pack byte format. The graph's `at` index is not
+/// zone tables to the v14 pack byte format. The graph's `at` index is not
 /// stored; [`decode`] rebuilds it from the edges and collision. Teleports
 /// (kind-4 edges) are written after ordinary edges and always carry absent
 /// approach geometry. The raw flags are not on the wire (see the flags
@@ -465,9 +472,24 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
     for (edge_index, e) in graph.edges.iter().chain(&graph.teleports).enumerate() {
-        out.push(kind_to_u8(e.kind));
+        assert!(
+            e.player_delta.is_none()
+                || matches!(e.kind, TransportKind::Ladder | TransportKind::Stairs),
+            "player-relative landing is only valid for ladders and stairs"
+        );
+        out.push(
+            kind_to_u8(e.kind)
+                | if e.player_delta.is_some() {
+                    PLAYER_RELATIVE
+                } else {
+                    0
+                },
+        );
+        let to = e
+            .landing_from(e.at)
+            .expect("transport landing overflows from its packed anchor");
         for v in [
-            e.at.x, e.at.z, e.at.level, e.to.x, e.to.z, e.to.level, e.loc_id, e.option, e.ticks,
+            e.at.x, e.at.z, e.at.level, to.x, to.z, to.level, e.loc_id, e.option, e.ticks,
         ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -508,7 +530,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
-/// Version 13 is the only accepted wire; older streams are rejected rather
+/// Version 14 is the only accepted wire; older streams are rejected rather
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
 /// a gate without one, or malformed gate or approach geometry, is rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
@@ -565,9 +587,17 @@ fn decode_pack_body<R: PackRead>(
         ..Default::default()
     };
     for _ in 0..n_edges {
-        let kind = kind_from_u8(read_u8(&mut r)?)?;
-        let edge = TransportEdge {
+        let packed_kind = read_u8(&mut r)?;
+        let kind = kind_from_u8(packed_kind & !PLAYER_RELATIVE)?;
+        let player_relative = packed_kind & PLAYER_RELATIVE != 0;
+        if player_relative && !matches!(kind, TransportKind::Ladder | TransportKind::Stairs) {
+            return Err(PackError::BadLength(
+                "player-relative landing is only valid for ladders and stairs".into(),
+            ));
+        }
+        let mut edge = TransportEdge {
             kind,
+            player_delta: None,
             at: WorldTile {
                 x: read_i32(&mut r)?,
                 z: read_i32(&mut r)?,
@@ -619,6 +649,18 @@ fn decode_pack_body<R: PackRead>(
             },
             quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
         };
+        if player_relative {
+            let delta = |to: i32, at: i32| {
+                to.checked_sub(at).ok_or_else(|| {
+                    PackError::BadLength("player-relative displacement overflows i32".into())
+                })
+            };
+            edge.player_delta = Some(WorldTile {
+                x: delta(edge.to.x, edge.at.x)?,
+                z: delta(edge.to.z, edge.at.z)?,
+                level: delta(edge.to.level, edge.at.level)?,
+            });
+        }
         let approach = read_approach(&mut r, kind)?;
         if kind == TransportKind::Teleport {
             graph.teleports.push(edge);

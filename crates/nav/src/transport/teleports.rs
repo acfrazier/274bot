@@ -136,6 +136,7 @@ pub(super) fn push_spell_teleport(
     }
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: TELEPORT_PLACEHOLDER_AT,
         to: WorldTile {
             x: coord.1,
@@ -211,6 +212,7 @@ pub(super) fn jewellery_teleports(
                 for dest in &dests {
                     graph.teleports.push(TransportEdge {
                         kind: TransportKind::Teleport,
+                        player_delta: None,
                         at: TELEPORT_PLACEHOLDER_AT,
                         to: *dest,
                         loc_id: obj_id,

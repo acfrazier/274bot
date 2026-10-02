@@ -51,6 +51,7 @@ pub(super) fn web_edges(
             };
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at,
                 to,
                 loc_id: closed,
@@ -70,6 +71,7 @@ pub(super) fn web_edges(
             if !slash_blades.is_empty() {
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at,
                     to,
                     loc_id: closed,
