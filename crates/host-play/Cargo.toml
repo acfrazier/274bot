@@ -44,6 +44,10 @@ required-features = ["memory-profile"]
 name = "world_boundary_live"
 required-features = ["memory-profile"]
 
+[[test]]
+name = "script_api_live"
+required-features = ["test-support"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
