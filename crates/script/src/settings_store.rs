@@ -151,10 +151,37 @@ pub fn merge_bag(
 /// Normalize a stored setting value to the JSON shape the prelude expects.
 pub fn coerce_setting_value(ty: &str, value: &Value) -> Value {
     match ty {
+        "number" => coerce_number(value),
         "tile" => coerce_tile(value),
         "list" | "string[]" => coerce_list(value),
         _ => value.clone(),
     }
+}
+
+/// Serde rejects `12.0` for integer settings even though it is an exact
+/// integer. Preserve fractional and out-of-range numbers for typed consumers
+/// to reject rather than silently rounding them.
+fn coerce_number(value: &Value) -> Value {
+    let Some(number) = value.as_number() else {
+        return value.clone();
+    };
+    if number.is_i64() || number.is_u64() {
+        return value.clone();
+    }
+    let Some(number) = number.as_f64() else {
+        return value.clone();
+    };
+    if !number.is_finite() || number.fract() != 0.0 {
+        return value.clone();
+    }
+    if number >= 0.0 {
+        if number < u64::MAX as f64 {
+            return Value::from(number as u64);
+        }
+    } else if number >= i64::MIN as f64 {
+        return Value::from(number as i64);
+    }
+    value.clone()
 }
 
 fn coerce_tile(value: &Value) -> Value {
@@ -221,12 +248,15 @@ fn coerce_list(value: &Value) -> Value {
 fn default_for_type(ty: &str, default: &str) -> Value {
     match ty {
         "boolean" => Value::Bool(default == "true"),
-        "number" => default
-            .parse::<f64>()
-            .ok()
-            .and_then(serde_json::Number::from_f64)
-            .map(Value::Number)
-            .unwrap_or_else(|| Value::Number(0.into())),
+        "number" => {
+            let value = default
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(Value::Number)
+                .unwrap_or_else(|| Value::Number(0.into()));
+            coerce_setting_value(ty, &value)
+        }
         "string" => Value::String(default.to_string()),
         "tile" | "list" | "string[]" => {
             let raw = if default.starts_with('{') || default.starts_with('[') {
@@ -357,6 +387,41 @@ pub fn format_setting_value(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_bag_normalizes_integral_floats_without_rounding_fractions() {
+        let numeric = |id: &str, default: &str| SettingDef {
+            id: id.into(),
+            ty: "number".into(),
+            default: Some(default.into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        let schema = vec![
+            numeric("defaultRadius", "12"),
+            numeric("legacyRadius", "2"),
+            numeric("fractionalRadius", "2"),
+        ];
+        let mut overrides = Map::new();
+        overrides.insert("legacyRadius".into(), serde_json::from_str("12.0").unwrap());
+        overrides.insert("fractionalRadius".into(), serde_json::json!(12.5));
+
+        let bag = merge_bag(&schema, &overrides, None);
+
+        assert_eq!(bag["defaultRadius"].as_u64(), Some(12));
+        assert_eq!(bag["legacyRadius"].as_u64(), Some(12));
+        assert_eq!(bag["fractionalRadius"].as_f64(), Some(12.5));
+    }
 
     #[test]
     fn merge_bag_applies_defaults_then_overrides_then_inject() {

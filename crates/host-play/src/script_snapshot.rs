@@ -995,15 +995,12 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                 value: armed,
             },
         ];
-        // Selected prayer overlays 83..=97 must ride the same vector,
-        // including 0. Present snapshot rows only — do not invent 0 for
-        // an unobserved index.
-        let prayer0 = api::prayer::PRAYER_VARP0;
-        let prayer_last = prayer0 + api::prayer::PRAYER_COUNT as i32 - 1;
+        // Selected prayer overlays ride the same vector, including 0.
+        // Present snapshot rows only — do not invent 0 for an unobserved key.
         rows.extend(
             s.varps()
                 .iter()
-                .filter(|v| (prayer0..=prayer_last).contains(&v.index))
+                .filter(|v| crate::catalog_core::is_prayer_varp(v.index))
                 .map(|v| VarpInput {
                     index: v.index,
                     value: v.value,
@@ -1020,7 +1017,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                         && v.index != 108
                         && v.index != 300
                         && v.index != 301
-                        && !(prayer0..=prayer_last).contains(&v.index)
+                        && !crate::catalog_core::is_prayer_varp(v.index)
                 })
                 .map(|v| VarpInput {
                     index: v.index,

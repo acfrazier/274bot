@@ -684,6 +684,12 @@ impl Scripts {
             .and_then(|p| p.settings.script_settings.get(&key).cloned())
             .unwrap_or_default();
         let migrated = script::migrate_legacy_setting_value(name, id, &value);
+        let migrated = self
+            .js
+            .get(source, &lookup_name(source, name, path))
+            .and_then(|card| card.settings_schema.iter().find(|setting| setting.id == id))
+            .map(|setting| script::coerce_setting_value(&setting.ty, &migrated))
+            .unwrap_or(migrated);
         bag.insert(id.to_string(), migrated);
         let live = self.live_settings(core, profile, &key, source, name, path, &bag);
         let result = self.upsert_profile_settings(

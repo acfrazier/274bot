@@ -166,7 +166,14 @@ impl Scripts {
         // Do not overwrite an unknown saved schema with current defaults.
         self.compiled_overrides(core, profile, id)?;
         let key = script::compiled_identity_key(id);
-        let bag = Arc::new(self.run_bag(core, profile, (card.schema)(), &values));
+        let schema = (card.schema)();
+        let mut values = values;
+        for setting in schema {
+            if let Some(value) = values.get_mut(&setting.id) {
+                *value = script::coerce_setting_value(&setting.ty, value);
+            }
+        }
+        let bag = Arc::new(self.run_bag(core, profile, schema, &values));
         let live = super::live_fence(core, profile, &key).and_then(|(identity, generation)| {
             let run = core.play()?.script_native_run(profile)?;
             Some(LiveSettings {

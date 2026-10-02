@@ -1,18 +1,18 @@
 //! Host-owned selected 274/289 gather-tool identity, use, and wield facts.
 //!
-//! Generated game-data rows supply id/name/`wear_position: 3` only. Mining
-//! `levelrequire` and Attack opheld2 live in selected content (identical on
-//! both revisions for these objects). Axes have no woodcutting use gate.
-//! Bronze wield is the tutorial path, not Attack-gated. Black axe 1361 is
-//! in the native best-first woodcut list. Unknown names cannot wield.
+//! Generated game-data aliases supply selected item ids and display names.
+//! Mining `levelrequire` and Attack opheld2 live in selected content
+//! (identical on both revisions for these objects). Axes have no woodcutting
+//! use gate. Bronze wield is the tutorial path, not Attack-gated. Black axe
+//! 1361 is in the native best-first woodcut list. Unknown names cannot wield.
 //!
 //! These rows are posted facts; selection and wield policy live with their
 //! script consumer in `script::gather_tools`.
 
-/// One selected-world gather tool: identity plus use versus wield.
+/// One selected-world gather tool: item alias plus use versus wield.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GatherTool {
-    pub id: i32,
+    pub alias: &'static str,
     pub name: &'static str,
     pub use_skill: Option<&'static str>,
     pub use_level: Option<i32>,
@@ -20,13 +20,13 @@ pub struct GatherTool {
 }
 
 const fn pick(
-    id: i32,
+    alias: &'static str,
     name: &'static str,
     use_level: i32,
     wield_attack: Option<i32>,
 ) -> GatherTool {
     GatherTool {
-        id,
+        alias,
         name,
         use_skill: Some("mining"),
         use_level: Some(use_level),
@@ -34,9 +34,9 @@ const fn pick(
     }
 }
 
-const fn axe(id: i32, name: &'static str, wield_attack: Option<i32>) -> GatherTool {
+const fn axe(alias: &'static str, name: &'static str, wield_attack: Option<i32>) -> GatherTool {
     GatherTool {
-        id,
+        alias,
         name,
         use_skill: None,
         use_level: None,
@@ -46,42 +46,51 @@ const fn axe(id: i32, name: &'static str, wield_attack: Option<i32>) -> GatherTo
 
 /// Best-first axes: rune → bronze, including native black. No WC use gate.
 pub const AXES: &[GatherTool] = &[
-    axe(1359, "Rune axe", Some(40)),
-    axe(1357, "Adamant axe", Some(30)),
-    axe(1355, "Mithril axe", Some(20)),
-    axe(1361, "Black axe", Some(10)),
-    axe(1353, "Steel axe", Some(5)),
-    axe(1349, "Iron axe", Some(1)),
-    axe(1351, "Bronze axe", None),
+    axe("rune_axe", "Rune axe", Some(40)),
+    axe("adamant_axe", "Adamant axe", Some(30)),
+    axe("mithril_axe", "Mithril axe", Some(20)),
+    axe("black_axe", "Black axe", Some(10)),
+    axe("steel_axe", "Steel axe", Some(5)),
+    axe("iron_axe", "Iron axe", Some(1)),
+    axe("bronze_axe", "Bronze axe", None),
 ];
 
 /// Best-first pickaxes: rune → bronze. Use is mining `levelrequire`.
 pub const PICKAXES: &[GatherTool] = &[
-    pick(1275, "Rune pickaxe", 41, Some(40)),
-    pick(1271, "Adamant pickaxe", 31, Some(30)),
-    pick(1273, "Mithril pickaxe", 21, Some(20)),
-    pick(1269, "Steel pickaxe", 6, Some(5)),
-    pick(1267, "Iron pickaxe", 0, Some(1)),
-    pick(1265, "Bronze pickaxe", 0, None),
+    pick("rune_pickaxe", "Rune pickaxe", 41, Some(40)),
+    pick("adamant_pickaxe", "Adamant pickaxe", 31, Some(30)),
+    pick("mithril_pickaxe", "Mithril pickaxe", 21, Some(20)),
+    pick("steel_pickaxe", "Steel pickaxe", 6, Some(5)),
+    pick("iron_pickaxe", "Iron pickaxe", 0, Some(1)),
+    pick("bronze_pickaxe", "Bronze pickaxe", 0, None),
 ];
 
 impl GatherTool {
-    fn json(self) -> serde_json::Value {
-        serde_json::json!({
-            "id": self.id,
+    fn json(self, data: &crate::game_data::SelectedGameData) -> Option<serde_json::Value> {
+        let id = data.item_by_alias(self.alias)?.id;
+        Some(serde_json::json!({
+            "id": id,
             "name": self.name,
             "use_skill": self.use_skill,
             "use_level": self.use_level,
             "wield_attack": self.wield_attack,
-        })
+        }))
     }
 }
 
-/// Posted onto `__rs2b0t_host.content.gather_tools`. Same rows on 274 and 289.
-pub fn content_json_value() -> serde_json::Value {
+/// Posted onto `__rs2b0t_host.content.gather_tools` from selected item aliases.
+pub fn content_json_value(data: Option<&crate::game_data::SelectedGameData>) -> serde_json::Value {
+    let tools = |rows: &[GatherTool]| {
+        data.map_or_else(Vec::new, |data| {
+            rows.iter()
+                .copied()
+                .filter_map(|tool| tool.json(data))
+                .collect()
+        })
+    };
     serde_json::json!({
-        "axes": AXES.iter().copied().map(GatherTool::json).collect::<Vec<_>>(),
-        "pickaxes": PICKAXES.iter().copied().map(GatherTool::json).collect::<Vec<_>>(),
+        "axes": tools(AXES),
+        "pickaxes": tools(PICKAXES),
     })
 }
 
@@ -91,73 +100,20 @@ mod tests {
     use crate::game_data;
     use client::io::ClientRevision;
 
-    fn names(list: &[GatherTool]) -> Vec<&str> {
-        list.iter().map(|t| t.name).collect()
-    }
-
     #[test]
-    fn selected_274_289_ids_names_and_wearpos_agree() {
-        for rev in [ClientRevision::R274, ClientRevision::R289] {
-            let data = game_data::for_revision(rev).expect("generated game data");
-            for tool in AXES.iter().chain(PICKAXES) {
-                let item = data.item_by_id(tool.id).expect(tool.name);
-                assert_eq!(item.name.as_deref(), Some(tool.name));
-                assert_eq!(item.wear_position, 3, "{}", tool.name);
+    fn posted_tool_ids_follow_selected_alias_rows() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = game_data::for_revision(revision).expect("generated game data");
+            let posted = content_json_value(Some(data.as_ref()));
+            for (kind, tools) in [("axes", AXES), ("pickaxes", PICKAXES)] {
+                let rows = posted[kind].as_array().expect("tool rows");
+                assert_eq!(rows.len(), tools.len(), "{revision:?} {kind}");
+                for (row, tool) in rows.iter().zip(tools) {
+                    let selected = data.item_by_alias(tool.alias).expect(tool.alias);
+                    assert_eq!(row["id"], selected.id, "{revision:?} {}", tool.alias);
+                    assert_eq!(row["name"], selected.name.as_deref().unwrap());
+                }
             }
         }
-        assert_eq!(
-            names(AXES),
-            [
-                "Rune axe",
-                "Adamant axe",
-                "Mithril axe",
-                "Black axe",
-                "Steel axe",
-                "Iron axe",
-                "Bronze axe",
-            ]
-        );
-        assert_eq!(
-            names(PICKAXES),
-            [
-                "Rune pickaxe",
-                "Adamant pickaxe",
-                "Mithril pickaxe",
-                "Steel pickaxe",
-                "Iron pickaxe",
-                "Bronze pickaxe",
-            ]
-        );
-        let steel = PICKAXES.iter().find(|t| t.id == 1269).unwrap();
-        assert_eq!(steel.use_skill, Some("mining"));
-        assert_eq!(steel.use_level, Some(6));
-        assert_eq!(steel.wield_attack, Some(5));
-        let steel_axe = AXES.iter().find(|t| t.id == 1353).unwrap();
-        assert_eq!(steel_axe.use_skill, None);
-        assert_eq!(steel_axe.use_level, None);
-        assert_eq!(steel_axe.wield_attack, Some(5));
-        let black = AXES.iter().find(|t| t.id == 1361).unwrap();
-        assert_eq!(black.name, "Black axe");
-        assert_eq!(black.wield_attack, Some(10));
-        assert_eq!(
-            PICKAXES.iter().find(|t| t.id == 1265).unwrap().use_level,
-            Some(0)
-        );
-        assert_eq!(
-            PICKAXES.iter().find(|t| t.id == 1267).unwrap().use_level,
-            Some(0)
-        );
-        assert_eq!(
-            PICKAXES.iter().find(|t| t.id == 1273).unwrap().use_level,
-            Some(21)
-        );
-        assert_eq!(
-            PICKAXES.iter().find(|t| t.id == 1271).unwrap().use_level,
-            Some(31)
-        );
-        assert_eq!(
-            PICKAXES.iter().find(|t| t.id == 1275).unwrap().use_level,
-            Some(41)
-        );
     }
 }
