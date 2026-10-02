@@ -89,6 +89,21 @@ const M6_ITEMS: &[(&str, i32)] = &[
     ("tbwt_cooked_karambwan", 4),
 ];
 
+// Selected R289 content drop tables/scripts/imp.rs2: white is 5 of 128 rolls.
+// n = ceil(ln(0.05) / ln(123/128)) = 76 kills for >=95% white coverage.
+// cbenhwadzq_0: 17 corpse episodes, first Attack120, final frame1998, 0.6s/tick:
+// cadence = (1998-120)*0.6/17 = 66.28235294s/kill (includes search/loot).
+// Overhead: measured initial walk/bank120*0.6 =72s; hand-in Manhattan route
+// (|3103-2632|+|3163-3222|)*0.6 =318s; existing settle window8s.
+// Total ceil(76*66.28235294 +72+318+8) =5436s. This bound is fixed before
+// the single authorized rerun; a miss is FAIL, not grounds to extend it.
+fn m1_coverage_budget() -> (u64, f64, u64) {
+    let kills = (0.05_f64.ln() / (123.0_f64 / 128.0).ln()).ceil() as u64;
+    let cadence = (1998.0 - 120.0) * 0.6 / 17.0;
+    let deadline = (kills as f64 * cadence + 72.0 + 318.0 + 8.0).ceil() as u64;
+    (kills, cadence, deadline)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Case {
     M1,
@@ -144,7 +159,8 @@ impl Case {
 
     fn timeout(self) -> Duration {
         match self {
-            Self::M1 | Self::M5 => Duration::from_secs(1_200),
+            Self::M1 => Duration::from_secs(m1_coverage_budget().2),
+            Self::M5 => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 => Duration::from_secs(900),
             Self::M4 => Duration::from_secs(300),
         }
@@ -342,6 +358,30 @@ impl EvidenceWriter {
         } else {
             false
         };
+        let m1_deadline = if self.case == Case::M1 {
+            let (kills, cadence, deadline) = m1_coverage_budget();
+            json!({
+                "content_source": "drop tables/scripts/imp.rs2",
+                "white_probability": "5/128",
+                "coverage": 0.95,
+                "kill_formula": "ceil(ln(0.05)/ln(123/128))",
+                "required_kills": kills,
+                "reference_receipt": "M1-cbenhwadzq_0-receipt.json",
+                "reference_kills": 17,
+                "first_attack_tick": 120,
+                "final_tick": 1998,
+                "tick_seconds": 0.6,
+                "seconds_per_kill": cadence,
+                "initial_walk_bank_seconds": 72,
+                "hand_in_route_tiles": 530,
+                "hand_in_route_seconds": 318,
+                "settle_seconds": 8,
+                "deadline_formula": "ceil(required_kills*seconds_per_kill+72+318+8)",
+                "deadline_seconds": deadline,
+            })
+        } else {
+            Value::Null
+        };
         let mut receipt = json!({
             "proof": "COMBAT-S3A-1",
             "case": self.case.key(),
@@ -366,6 +406,7 @@ impl EvidenceWriter {
             "m6_combo": m6_combo,
             "m4_conditional_eat": m4_eat,
             "m5_clear_prayers_before_next_operation": m5_clear,
+            "m1_content_deadline": m1_deadline,
             "combat_outcomes": combat_outcomes(&capture),
         });
         drop(capture);
@@ -518,7 +559,11 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
-            budget_ticks: 4_000,
+            budget_ticks: if case == Case::M1 {
+                (case.timeout().as_secs() * 5).div_ceil(3) as u32
+            } else {
+                4_000
+            },
         },
     });
     scenario.proof = Proof::Stat { id: 0, min: 1 };
@@ -833,7 +878,15 @@ fn m1_ready(capture: &CombatCapture) -> bool {
         && integer(report, "combat_multi_op_plans") == Some(0)
         && report_multi_op_count_matches(capture, report)
         && every_killed_report_has_corpse(capture)
-        && latest_inventory_has_beads(capture)
+        && every_imp_corpse_has_outcome(capture)
+        && capture
+            .frames
+            .iter()
+            .any(|frame| IMP_BEADS.iter().all(|id| item_count(frame, *id) >= 1))
+        && capture
+            .statuses
+            .iter()
+            .any(|status| matches!(status["fields"]["stage"].as_str(), Some("imp:1" | "imp:2")))
         && !capture.actions.iter().any(is_eat_or_drink)
         && !has_prayer_clicks(capture)
         && single_action_per_native_tick(capture)
@@ -1161,6 +1214,57 @@ fn combat_outcomes(capture: &CombatCapture) -> Vec<&Value> {
             && a["combat_end"] == b["combat_end"]
     });
     outcomes
+}
+
+fn every_imp_corpse_has_outcome(capture: &CombatCapture) -> bool {
+    let outcomes = combat_outcomes(capture);
+    let mut active = std::collections::HashMap::new();
+    let mut corpses = Vec::new();
+    for frame in &capture.frames {
+        let Some(tick) = frame["tick"].as_i64() else {
+            return false;
+        };
+        let Some(npcs) = frame["nearby_npcs"].as_array() else {
+            return false;
+        };
+        let dead = npcs
+            .iter()
+            .filter(|npc| {
+                npc["type"] == json!(708)
+                    && npc["health"] == json!(0)
+                    && npc["total_health"].as_i64().is_some_and(|hp| hp > 0)
+            })
+            .filter_map(|npc| npc["index"].as_i64())
+            .collect::<std::collections::HashSet<_>>();
+        active.retain(|index, (start, end)| {
+            if dead.contains(index) {
+                *end = tick;
+                true
+            } else {
+                corpses.push((*index, *start, *end));
+                false
+            }
+        });
+        for index in dead {
+            active.entry(index).or_insert((tick, tick));
+        }
+    }
+    corpses.extend(
+        active
+            .into_iter()
+            .map(|(index, (start, end))| (index, start, end)),
+    );
+    !corpses.is_empty()
+        && corpses.iter().all(|(index, start, end)| {
+            outcomes.iter().any(|fields| {
+                fields["combat_end"] == json!("Killed")
+                    && fields["combat_engaged_index"].as_i64() == Some(*index)
+                    && fields["combat_engaged_npc_type"] == json!(708)
+                    && fields["combat_evidence_tick"]
+                        .as_i64()
+                        .is_some_and(|tick| (*start..=*end).contains(&tick))
+            })
+        })
 }
 
 fn has_real_attack_packet(capture: &CombatCapture) -> bool {
@@ -2220,13 +2324,6 @@ fn no_attack_after_report(capture: &CombatCapture, report: &Value) -> bool {
     })
 }
 
-fn latest_inventory_has_beads(capture: &CombatCapture) -> bool {
-    capture
-        .frames
-        .last()
-        .is_some_and(|frame| IMP_BEADS.iter().all(|id| item_count(frame, *id) >= 1))
-}
-
 fn is_eat_or_drink(action: &Value) -> bool {
     is_eat(action) || is_drink(action)
 }
@@ -2767,4 +2864,36 @@ fn food_oracle_discriminates_past_deadline_and_cumulative_extension() {
         m3_timing_receipt(&late_eat)["eats"][0]["exact"],
         json!(false)
     );
+}
+
+#[test]
+fn every_imp_corpse_episode_requires_its_own_exact_killed_outcome() {
+    let mut capture = CombatCapture::default();
+    for (tick, health) in [(10, 0), (11, 0), (12, 4), (20, 0)] {
+        capture.frames.push(json!({
+            "tick": tick,
+            "nearby_npcs": [{
+                "index": 123, "type": 708, "health": health, "total_health": 8
+            }]
+        }));
+    }
+    let outcome = |tick| {
+        json!({"fields": {
+            "combat_end": "Killed", "combat_evidence_tick": tick,
+            "combat_evidence_sequence": tick,
+            "combat_engaged_index": 123, "combat_engaged_npc_type": 708
+        }})
+    };
+    capture.statuses.push(outcome(11));
+    assert!(!every_imp_corpse_has_outcome(&capture));
+    capture.statuses.push(outcome(20));
+    assert!(every_imp_corpse_has_outcome(&capture));
+    capture.statuses[1]["fields"]["combat_engaged_index"] = json!(124);
+    assert!(!every_imp_corpse_has_outcome(&capture));
+    capture.statuses[1]["fields"]["combat_engaged_index"] = json!(123);
+    capture.statuses[1]["fields"]["combat_evidence_tick"] = json!(19);
+    assert!(!every_imp_corpse_has_outcome(&capture));
+    capture.statuses[1]["fields"]["combat_evidence_tick"] = json!(20);
+    capture.statuses[1]["fields"]["combat_engaged_npc_type"] = json!(477);
+    assert!(!every_imp_corpse_has_outcome(&capture));
 }
