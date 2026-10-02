@@ -1230,4 +1230,3 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     drop(prepared);
     drop(cold_prepared);
 }
-

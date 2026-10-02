@@ -420,11 +420,13 @@ fn custom_path_bank_tile_opens_observed_booth() {
                     tile: bank_tile,
                     distance: 0,
                     animation: -1,
+                    animation_frame: 0,
                     pose_animation: -1,
                     orientation: 0,
                     target_orientation: 0,
                     overhead_text: None,
                     spot_animation: -1,
+                    spot_animation_stamp: -1,
                     health: 10,
                     total_health: 10,
                     face_entity: -1,
@@ -435,6 +437,7 @@ fn custom_path_bank_tile_opens_observed_booth() {
                 },
                 combat_level: 3,
                 skill_level: 0,
+                weapon: None,
             },
             energy: 100,
             weight: 0,
@@ -1325,7 +1328,6 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
         Poll::Ready(Ok(crate::native_production::MakeReceipt { held: 20 }))
     ));
 }
-
 
 #[test]
 fn sheep_product_progress_selects_shear_spin_then_hand_in() {
@@ -2310,4 +2312,3 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
     });
     assert!(matches!(emitted(&ledger), InteractReq::ContinueDialog));
 }
-
