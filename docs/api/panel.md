@@ -168,9 +168,16 @@ checkboxes on a focused profile:
   terminally, or the operator takes over with Log in / Log out.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`
-  (left=1, right=2), and keys go to `InputEv::Key` on that slot only.
-  Off means watch-only with zero input work (`tx` is `None`; the slot does
-  no `try_recv`).
+  (left=1, right=2). New keys/text go to that slot only while the native
+  window is focused and no panel widget wants the keyboard. Releases for
+  game-held keys do not depend on Image hover: focusing a panel field,
+  leaving the native window, or turning capture off releases those keys.
+  Off means watch-only: no new input is forwarded, and the slot drains only
+  outstanding releases rather than replaying queued presses when re-enabled.
+
+ImGui settles keyboard focus over frames. A key typed in the same frame as
+clicking back to the game may be dropped; subsequent game input is forwarded
+once the panel field has relinquished keyboard focus.
 
 Capture follows focus (never two keyboards) and implies renderer.
 Capture still keeps the focused slot on the 20 ms loop for click-through;

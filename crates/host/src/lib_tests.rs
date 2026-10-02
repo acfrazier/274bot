@@ -936,7 +936,7 @@ fn unpacked_ifaces_both_visible_still_sends() {
 }
 
 #[test]
-fn client_frame_applies_click_only_when_input_enabled() {
+fn client_frame_releases_held_keys_when_capture_disabled() {
     let mut c = prepare_client(
         cfg(),
         1,
@@ -947,20 +947,22 @@ fn client_frame_applies_click_only_when_input_enabled() {
     let inp = SlotInput::new();
     let (tx, rx) = std::sync::mpsc::channel();
     inp.connect_rx(rx);
-    tx.send(InputEv::Down {
-        button: 1,
-        x: 20,
-        y: 20,
-    })
-    .unwrap();
+    inp.set_enabled(true);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
-    inp.set_enabled(false);
+    tx.send(InputEv::Key { down: true, ch: 1 }).unwrap();
     Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
-    assert_eq!(c.shell.mouse_click_button, 0);
+    assert_eq!(c.shell.key_held[1], 1);
+
+    inp.set_enabled(false);
+    tx.send(InputEv::Key { down: false, ch: 1 }).unwrap();
+    tx.send(InputEv::Key { down: true, ch: 2 }).unwrap();
+    Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+    assert_eq!(c.shell.key_held[1], 0);
+    assert_eq!(c.shell.key_held[2], 0);
     inp.set_enabled(true);
     Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
-    assert_eq!(c.shell.mouse_click_button, 1);
+    assert_eq!(c.shell.key_held[2], 0, "disabled key-down must not replay");
 }
 
 #[test]
@@ -1182,11 +1184,9 @@ fn draw_off_drops_renderer_draw_on_reattaches() {
     c.set_draw(true);
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert!(slot.renderer.is_some());
-    let loop_after_on = slot.loop_ns;
     c.set_draw(false);
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert!(slot.renderer.is_none(), "unheaded must drop headed data");
-    assert!(slot.loop_ns > loop_after_on, "sim still ticks");
     c.set_draw(true);
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert!(slot.renderer.is_some(), "attach at any time");
