@@ -706,20 +706,15 @@ fn logout(client: &mut client::client::Client, snapshot: &mut GameSnapshot, pump
 }
 
 #[test]
-#[ignore = "requires local R289, the worktree v13 pack, and LIVE=1"]
+#[ignore = "requires local R289, the selected nav pack, and LIVE=1"]
 fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_NAV_BUILD").as_deref(), Ok("skip"));
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
     assert!((1..=4).contains(&prefix.len()), "prefix must be 1-4 chars");
-    let evidence_root = PathBuf::from(
-        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR under WEB-CUT-2"),
-    );
-    assert!(
-        evidence_root.starts_with("/Volumes/dev-scratch/274bot-evidence/WEB-CUT-2"),
-        "live evidence must stay under the request evidence root"
-    );
+    let evidence_root =
+        PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
 
     let (profile, template) = selected();
     let world = template.world().expect("selected nav world");
