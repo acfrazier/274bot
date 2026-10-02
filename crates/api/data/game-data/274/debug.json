@@ -7,8 +7,8 @@
     "inputs": [
       {
         "path": "src/network/game/client/handler/ClientCheatHandler.ts",
-        "bytes": 27951,
-        "sha256": "d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552e1639b1bdcf00d69"
+        "bytes": 28649,
+        "sha256": "0eefa08b523bd1a5f8a6846a5ed7588d22ce4507b15c473d6a1c2ebe06b7144e"
       },
       {
         "path": "src/engine/entity/PlayerStat.ts",
@@ -306,6 +306,11 @@
         "path": "scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2",
         "bytes": 27156,
         "sha256": "01b049036155b81478f647c146a578d75abfd949eac2934bf16d6b4696cf0361"
+      },
+      {
+        "path": "scripts/_test/scripts/engine/debug.rs2",
+        "bytes": 510,
+        "sha256": "e7649666cbc5b97b3aa12b53e343bdfa9b2fe6c29f13be22ac7947ce34d63334"
       },
       {
         "path": "pack/obj.pack",
@@ -862,7 +867,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -924,7 +929,7 @@
           "optional": false
         }
       ],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2289,7 +2294,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2476,7 +2481,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2484,7 +2489,7 @@
       "category": "Quest",
       "description": "Complete all quests",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2668,7 +2673,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2676,7 +2681,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {

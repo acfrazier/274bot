@@ -333,6 +333,11 @@
         "sha256": "6ebd57d1e5744d9d6fcbda403f32f04b08cf304feb04dc37eff3ab50566da38a"
       },
       {
+        "path": "scripts/_test/scripts/engine/debug.rs2",
+        "bytes": 510,
+        "sha256": "e7649666cbc5b97b3aa12b53e343bdfa9b2fe6c29f13be22ac7947ce34d63334"
+      },
+      {
         "path": "pack/obj.pack",
         "bytes": 96738,
         "sha256": "b5e97146856661a96b2f78690da7f366fed1e871637a0982d4a5ebfa30ac2bf7"
@@ -895,7 +900,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -957,7 +962,7 @@
           "optional": false
         }
       ],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2341,7 +2346,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2584,7 +2589,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2592,7 +2597,7 @@
       "category": "Quest",
       "description": "Complete all quests",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2894,7 +2899,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2902,7 +2907,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {

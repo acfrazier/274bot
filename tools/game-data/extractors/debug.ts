@@ -177,7 +177,7 @@ export function parseDebugHelp(text: string): Map<string, HelpEntry> {
 }
 
 type SourceHeader = { kind: string; name: string; index: number; close: number };
-type SourceBlock = { body: string };
+export type SourceBlock = { body: string; file: string };
 
 /**
  * Destructive content commands (operator 2026-10-02): red hover and the send
@@ -188,9 +188,12 @@ type SourceBlock = { body: string };
  * are not destructive. One rule, no per-command list: the patterns match the
  * script ops that remove or regress, never the ones that grant or advance
  * (`inv_add`, `stat_advance`, `stat_boost`, `stat_heal`, quest-complete queues
- * and progress increments stay quiet). Parametric setters (`%var = $value`)
- * stay quiet too: the typed value is visible in the editor, so the flag is
- * reserved for commands that always remove no matter the arguments.
+ * and progress increments stay quiet). A command is destructive if any
+ * reachable menu branch removes: the operator picks the branch when the
+ * menu opens, so the flag cannot depend on which arm runs. Parametric setters
+ * (`%var = $value`) stay quiet too: the typed value is visible in the
+ * editor, so the flag is reserved for commands that remove no matter the
+ * arguments on at least one branch.
  */
 const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
     /\binv_clear\s*\(\s*(?:bank|inv|worn|\$[A-Za-z_][A-Za-z0-9_]*)\b/i,
@@ -267,25 +270,41 @@ function sourceBlockBody(lines: string[], header: SourceHeader, nextHeader: numb
     const body = lines.slice(header.index + 1, nextHeader).join('\n');
     return [trailing, body].filter(Boolean).join('\n');
 }
-const MENU_CALL = /\bp_choice\d+(?:_header)?\s*\(/i;
-
-function followedSourceBody(body: string, blocks: ReadonlyMap<string, SourceBlock>) {
+/**
+ * A command is destructive if ANY reachable branch is: menu (`p_choice`)
+ * arms are all followed, never cut at the prompt. `@`/`~` label and proc
+ * calls resolve in the debugproc's own file first, then anywhere under the
+ * `_test` cheat tree (that is how `~help` reaches `@debug_quests`, and how
+ * cross-file `@please_finish` resolves). Production helpers stay out of
+ * scope: the teleport post-checks consume an item (`inv_del`) and the
+ * `p_choice`/`mesbox` UI procs live outside `_test`, so teleports and help
+ * text never inherit their effects. `gosub` targets are followed the same
+ * way; `followed` is the cycle guard.
+ */
+function followedSourceBody(
+    body: string,
+    blocks: ReadonlyMap<string, SourceBlock>,
+    shared: ReadonlyMap<string, SourceBlock> = new Map(),
+    usedFiles?: Set<string>,
+) {
     const followed = new Set<string>();
-    const collect = (fragment: string, root: boolean): string => {
+    const resolve = (name: string) => blocks.get(name) ?? shared.get(name);
+    const collect = (fragment: string): string => {
         const clean = withoutSourceCommentsAndStrings(fragment);
-        const menu = root ? null : MENU_CALL.exec(clean);
-        const visible = menu ? clean.slice(0, menu.index + menu[0].length) : clean;
-        const parts = [visible];
-        for (const match of visible.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) {
-            const name = match[1].toLowerCase();
-            const target = blocks.get(name);
-            if (!target || followed.has(name)) continue;
+        const parts = [clean];
+        const follow = (name: string) => {
+            if (followed.has(name)) return;
+            const target = resolve(name);
+            if (!target) return;
             followed.add(name);
-            parts.push(collect(target.body, false));
-        }
+            if (usedFiles && target.file) usedFiles.add(target.file);
+            parts.push(collect(target.body));
+        };
+        for (const match of clean.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) follow(match[1].toLowerCase());
+        for (const match of clean.matchAll(/\bgosub\s*\(\s*([a-z][a-z0-9_]*)/gi)) follow(match[1].toLowerCase());
         return parts.join('\n');
     };
-    return collect(body, true);
+    return collect(body);
 }
 
 
@@ -307,8 +326,8 @@ function parseArgument(raw: string, source: string): DebugArgument {
 
 export type ParsedDebugproc = DebugCommand & { source: string; line: number };
 
-/** Parse all debugproc headers from one selected `.rs2` source. */
-export function parseDebugprocSource(text: string, relative: string, help = new Map<string, HelpEntry>): ParsedDebugproc[] {
+/** Every `[label,…]` and `[proc,…]` block in one `.rs2` source, keyed by lowercase name. */
+export function labelProcBlocks(text: string, file: string): Map<string, SourceBlock> {
     const lines = text.split(/\r?\n/);
     const headers: SourceHeader[] = [];
     for (let index = 0; index < lines.length; index += 1) {
@@ -316,16 +335,47 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
         if (!match) continue;
         headers.push({ kind: match[1].toLowerCase(), name: match[2], index, close: match[0].lastIndexOf(']') });
     }
-    const nextHeaderByIndex = new Map<number, number>();
-    const headerByIndex = new Map<number, SourceHeader>();
     const blocks = new Map<string, SourceBlock>();
+    for (let position = 0; position < headers.length; position += 1) {
+        const header = headers[position];
+        const nextHeader = headers[position + 1]?.index ?? lines.length;
+        if (header.kind === 'label' || header.kind === 'proc') {
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file });
+        }
+    }
+    return blocks;
+}
+
+/**
+ * Parse all debugproc headers from one selected `.rs2` source. `shared`
+ * supplies the rest of the `_test` cheat tree for cross-file `@`/`~`
+ * follows (the debugproc's own file always wins); every shared file a
+ * follow actually reaches is recorded in `usedFiles` for provenance.
+ */
+export function parseDebugprocSource(
+    text: string,
+    relative: string,
+    help = new Map<string, HelpEntry>(),
+    shared: ReadonlyMap<string, SourceBlock> = new Map(),
+    usedFiles?: Set<string>,
+): ParsedDebugproc[] {
+    const lines = text.split(/\r?\n/);
+    const headerByIndex = new Map<number, SourceHeader>();
+    const nextHeaderByIndex = new Map<number, number>();
+    const blocks = new Map<string, SourceBlock>();
+    const headers: SourceHeader[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        const match = HEADER_PATTERN.exec(lines[index]);
+        if (!match) continue;
+        headers.push({ kind: match[1].toLowerCase(), name: match[2], index, close: match[0].lastIndexOf(']') });
+    }
     for (let position = 0; position < headers.length; position += 1) {
         const header = headers[position];
         const nextHeader = headers[position + 1]?.index ?? lines.length;
         nextHeaderByIndex.set(header.index, nextHeader);
         headerByIndex.set(header.index, header);
         if (header.kind === 'label' || header.kind === 'proc') {
-            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader) });
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file: relative });
         }
     }
     const rows: ParsedDebugproc[] = [];
@@ -339,14 +389,16 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
         const header = headerByIndex.get(index);
         if (!header) throw new Error(`${relative}:${index + 1}: malformed debugproc header`);
         const body = sourceBlockBody(lines, header, nextHeaderByIndex.get(index) ?? lines.length);
-        const effectBody = followedSourceBody(body, blocks);
+        const reached = new Set<string>();
+        const effectBody = followedSourceBody(body, blocks, shared, reached);
+        for (const file of reached) if (file !== relative) usedFiles?.add(file);
         const trailing = match[3].trim();
         const hint = help.get(alias.toLowerCase());
         const inline = /\/\/\s*(.*)$/.exec(trailing)?.[1]?.trim();
         const description = hint?.description ?? inline ?? '';
         rows.push({
             name: wire,
-            category: hint?.category ?? sourceFallbackCategory(relative, alias, effectBody),
+            category: hint?.category ?? sourceFallbackCategory(relative, alias, body),
             description,
             args,
             destructive: hasDestructiveEffect(effectBody),
@@ -474,6 +526,26 @@ function uniqueByAlias(rows: DebugName[]) {
     return [...new Map(rows.map((row) => [row.alias, row])).values()];
 }
 
+/**
+ * Every `[label,…]`/`[proc,…]` block under the `_test` cheat tree, for
+ * cross-file follows (`~help` → `@debug_quests`, `@please_finish`). The
+ * debugproc's own file always wins; first file in walk order wins between
+ * shared files (walk order is sorted, so this is deterministic). Scoped to
+ * `_test` on purpose: production helpers such as the teleport post-checks
+ * are not cheat effects.
+ */
+export function sharedTestBlocks(content: string): Map<string, SourceBlock> {
+    const shared = new Map<string, SourceBlock>();
+    for (const file of walkFiles(path.join(content, 'scripts/_test'), '.rs2')) {
+        const text = fs.readFileSync(file, 'utf8');
+        const relative = path.relative(content, file).split(path.sep).join('/');
+        for (const [name, block] of labelProcBlocks(text, relative)) {
+            if (!shared.has(name)) shared.set(name, block);
+        }
+    }
+    return shared;
+}
+
 export function extractDebugCatalog(
     content: string,
     engineHandlerText: string,
@@ -482,17 +554,26 @@ export function extractDebugCatalog(
 ): DebugCatalog {
     const helpFile = path.join(content, 'scripts/_test/scripts/cheats/cheat_help.rs2');
     const help = fs.existsSync(helpFile) ? parseDebugHelp(fs.readFileSync(helpFile, 'utf8')) : new Map<string, HelpEntry>();
+    const shared = sharedTestBlocks(content);
     const debugprocFiles = walkFiles(path.join(content, 'scripts'), '.rs2');
     const commands: ParsedDebugproc[] = [];
     const inputs: InputHash[] = [];
+    const seenInputs = new Set<string>();
+    const reachedShared = new Set<string>();
     for (const file of debugprocFiles) {
         const text = fs.readFileSync(file, 'utf8');
         if (!text.includes('[debugproc,')) continue;
         const relative = path.relative(content, file).split(path.sep).join('/');
-        const rows = parseDebugprocSource(text, relative, help);
+        const rows = parseDebugprocSource(text, relative, help, shared, reachedShared);
         if (!rows.length) continue;
         commands.push(...rows);
         inputs.push(sourceFile(content, relative));
+        seenInputs.add(relative);
+    }
+    for (const relative of [...reachedShared].sort()) {
+        if (seenInputs.has(relative)) continue;
+        inputs.push(sourceFile(content, relative));
+        seenInputs.add(relative);
     }
     const seen = new Set<string>();
     for (const row of commands) {

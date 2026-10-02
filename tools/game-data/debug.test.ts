@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { assertEngineCommandDrift, engineHandlerRelative, extractDebugCatalog, parseDebugHelp, parseDebugprocSource } from './extractors/debug.ts';
+import { assertEngineCommandDrift, engineHandlerRelative, extractDebugCatalog, parseDebugHelp, parseDebugprocSource, sharedTestBlocks } from './extractors/debug.ts';
 import { revisions } from './generate.ts';
 
 const help = parseDebugHelp(`
@@ -29,23 +29,27 @@ const statText = fs.readFileSync(statPath, 'utf8');
 const handler = fs.readFileSync(handlerPath, 'utf8');
 assertEngineCommandDrift(handler);
 assert.throws(() => assertEngineCommandDrift(`${handler}\nif (cmd === 'future_command') {}`));
+const real289Content = revisions.find((spec) => spec.revision === 289)!.content;
+const shared289 = sharedTestBlocks(real289Content);
 const questRows = parseDebugprocSource(
-    fs.readFileSync(path.join(revisions.find((spec) => spec.revision === 289)!.content, 'scripts/_test/scripts/cheats/cheat_quest.rs2'), 'utf8'),
+    fs.readFileSync(path.join(real289Content, 'scripts/_test/scripts/cheats/cheat_quest.rs2'), 'utf8'),
     'scripts/_test/scripts/cheats/cheat_quest.rs2',
+    new Map(),
+    shared289,
 );
 const questByName = new Map(questRows.map((row) => [row.name, row]));
 for (const [name, destructive] of [
-    ['~quest', false],
-    ['~quests', false],
+    ['~quest', true],
+    ['~quests', true],
     ['~resetquests', true],
-    ['~completequests', false],
-    ['~cq', false],
+    ['~completequests', true],
+    ['~cq', true],
     ['~rq', true],
 ] as const) {
     assert.equal(questByName.get(name)?.destructive, destructive, `${name} destructive`);
 }
-const real289Content = revisions.find((spec) => spec.revision === 289)!.content;
-const sourceRows = (relative: string) => parseDebugprocSource(fs.readFileSync(path.join(real289Content, relative), 'utf8'), relative);
+const sourceRows = (relative: string) =>
+    parseDebugprocSource(fs.readFileSync(path.join(real289Content, relative), 'utf8'), relative, new Map(), shared289);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_maxme.rs2').find((row) => row.name === '~maxme')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_other.rs2').find((row) => row.name === '~addxp')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_clearinv.rs2').find((row) => row.name === '~clearinv')?.destructive, true);
@@ -54,7 +58,23 @@ assert.equal(sourceRows('scripts/_test/scripts/engine/debug_stat.rs2').find((row
 assert.equal(sourceRows('scripts/_test/scripts/engine/debug_stat.rs2').find((row) => row.name === '~stat_boost')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_teles.rs2').find((row) => row.name === '~east')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_serverstats.rs2').find((row) => row.name === '~lag')?.destructive, false);
-assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_help.rs2').find((row) => row.name === '~help')?.destructive, false);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_help.rs2').find((row) => row.name === '~help')?.destructive, true);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_treasuretrails.rs2').find((row) => row.name === '~giveclues')?.destructive, true);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_interactions.rs2').find((row) => row.name === '~itest')?.destructive, true);
+// A destructive arm behind a menu flags the command: every p_choice branch is followed.
+const branched = parseDebugprocSource(
+    '[debugproc,menu] @branch_menu;\n[label,branch_menu]\ndef_int $choice = ~p_choice2_header("Wipe", 0, "Leave", 1, "Pick");\nif ($choice = 0) {\ninv_clear(inv);\n} else {\nmes("kept");\n}\n[debugproc,calm] @calm_menu;\n[label,calm_menu]\ndef_int $choice = ~p_choice2_header("Greet", 0, "Leave", 1, "Pick");\nif ($choice = 0) {\nmes("hello");\n}',
+    'scripts/branched.rs2',
+);
+assert.equal(branched.find((row) => row.name === '~menu')?.destructive, true);
+assert.equal(branched.find((row) => row.name === '~calm')?.destructive, false);
+// A gosub chain is followed transitively; a cycle still terminates.
+const gosubbed = parseDebugprocSource(
+    '[debugproc,wipe] gosub(scrub);\n[proc,scrub]\ngosub(rinse);\n[proc,rinse]\ninv_clear(worn);\n[debugproc,loop] gosub(spin_a);\n[proc,spin_a]\ngosub(spin_b);\n[proc,spin_b]\ngosub(spin_a);\nmes("spinning");',
+    'scripts/gosubbed.rs2',
+);
+assert.equal(gosubbed.find((row) => row.name === '~wipe')?.destructive, true);
+assert.equal(gosubbed.find((row) => row.name === '~loop')?.destructive, false);
 const stringOnlyEffect = parseDebugprocSource(
     '[debugproc,help]\nmes("Reset your progress with give coins");',
     'scripts/string-only.rs2',
