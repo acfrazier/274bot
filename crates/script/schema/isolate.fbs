@@ -311,6 +311,9 @@ table ApiProgress {
   row: QuestProgressRow;
 }
 
+// Bounded cancellation reason for the retained host walk outcome.
+enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -531,6 +534,10 @@ table Snapshot {
   api_gather: ApiGather;
   api_gather_outcome: ApiGatherOutcome;
   api_progress: ApiProgress;
+  // Monotonic user movement intent, independent of terminal publication.
+  user_move_intent_seq: ulong = 0;
+  // Part of the walk_outcome family; replacement with None clears it.
+  walk_outcome_cancel_reason: WalkCancelReason = None;
 }
 
 table Collision {

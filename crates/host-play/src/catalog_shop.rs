@@ -97,16 +97,17 @@ fn shop_bought_id(
     {
         return None;
     }
-    if now.item_id(COINS_ID) >= before.item_id(COINS_ID) {
+    if now.item_id(catalog_item_id("coins")) >= before.item_id(catalog_item_id("coins")) {
         return None;
     }
     let mut found = None;
     for row in &before.shop_stock {
         if now.shop_item_id(row.id) < row.count && now.item_id(row.id) > before.item_id(row.id) {
-            if row.id == EMPTY_VIAL_ID {
+            if row.id == catalog_item_id("vial_empty") {
                 return Some((
-                    EMPTY_VIAL_ID,
-                    now.item_id(EMPTY_VIAL_ID) - before.item_id(EMPTY_VIAL_ID),
+                    catalog_item_id("vial_empty"),
+                    now.item_id(catalog_item_id("vial_empty"))
+                        - before.item_id(catalog_item_id("vial_empty")),
                 ));
             }
             if found.is_none() {
@@ -120,7 +121,7 @@ fn shop_bought_id(
 /// First-purchase replay: equal shop stock, carried product, and coins.
 fn shop_same_purchase(left: &Observation, right: &Observation, id: i32) -> bool {
     left.item_id(id) == right.item_id(id)
-        && left.item_id(COINS_ID) == right.item_id(COINS_ID)
+        && left.item_id(catalog_item_id("coins")) == right.item_id(catalog_item_id("coins"))
         && left.shop_stock == right.shop_stock
 }
 
@@ -180,7 +181,7 @@ impl ShopBuyoutCycle {
                 && self
                     .trip_bank_product
                     .is_some_and(|before| now.bank_item_id(id) >= before + self.earned_quantity)
-                && now.item_id(COINS_ID) >= 1
+                && now.item_id(catalog_item_id("coins")) >= 1
             {
                 self.deposited = Some(now.clone());
             }
@@ -192,10 +193,10 @@ impl ShopBuyoutCycle {
         if let Some(deposited) = &self.deposited {
             if now.bank_open && now.bank_loaded && now.bank_generation == deposited.bank_generation
             {
-                let carried_now = now.item_id(COINS_ID);
-                let carried_then = deposited.item_id(COINS_ID);
-                let bank_now = now.bank_item_id(COINS_ID);
-                let bank_then = deposited.bank_item_id(COINS_ID);
+                let carried_now = now.item_id(catalog_item_id("coins"));
+                let carried_then = deposited.item_id(catalog_item_id("coins"));
+                let bank_now = now.bank_item_id(catalog_item_id("coins"));
+                let bank_then = deposited.bank_item_id(catalog_item_id("coins"));
                 if carried_now > carried_then && bank_now < bank_then {
                     self.funding = Some(ShopFunding::TopUp {
                         carried_before: carried_then,

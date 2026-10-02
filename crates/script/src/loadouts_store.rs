@@ -409,12 +409,12 @@ impl ResolvedSettingOptions {
 }
 
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
-/// pulls names from the store; a high-alchemy item spec is resolved from
-/// borrowed selected facts without mutating the schema. Recognized imported
-/// catalog tables are a last-resort host metadata lookup. W1c equipment idents
-/// resolve from borrowed `equipment_names` facts; `AXES` / `DROP_DB` stay empty.
-/// `gather:<skill>` resolves from the pinned `gather_resources` slice and
-/// `named-banks` from the frozen `BANK_CATALOG` names.
+/// pulls names from the store; high-alchemy item specs and generated food
+/// options resolve from borrowed selected facts without mutating the schema.
+/// Recognized imported catalog tables are a last-resort host metadata lookup.
+/// W1c equipment idents resolve from borrowed `equipment_names` facts; `AXES`
+/// / `DROP_DB` stay empty. `gather:<skill>` resolves from the pinned
+/// `gather_resources` slice and `named-banks` from the frozen `BANK_CATALOG`.
 /// `gatherer-teleports` combines a literal `Off` with available selected spell facts.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
@@ -467,6 +467,9 @@ pub fn resolve_setting_options_with_labels(
             }
             return resolved;
         }
+        if from == "FOOD_OPTIONS" {
+            return resolve_food_options(game_data);
+        }
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
         }
@@ -512,6 +515,19 @@ fn equipment_row_is_selectable(row: &api::game_data::EquipmentNameEntry) -> bool
             .alias
             .as_ref()
             .is_some_and(|alias| !alias.trim().is_empty())
+}
+fn resolve_food_options(
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions::default();
+    };
+    ResolvedSettingOptions::from_values(
+        data.fixed_food_options_best_first()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+    )
 }
 
 fn resolve_w1c_equipment_options(
@@ -899,6 +915,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn food_options_follow_selected_fixed_heal_facts() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = equipment_from("FOOD_OPTIONS");
+        assert!(resolve_setting_options(&def, &store, None).is_empty());
+
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let options = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        assert!(options.values.contains(&"Lobster".to_string()));
+        assert!(options.values.contains(&"Shark".to_string()));
+        assert!(options.values.contains(&"Chocolaty milk".to_string()));
+        assert!(options
+            .values
+            .iter()
+            .all(|name| data.fixed_food_heal(name).is_some()));
+        assert_eq!(options.labels, options.values);
+        let heals: Vec<i32> = options
+            .values
+            .iter()
+            .map(|name| data.fixed_food_heal(name).unwrap())
+            .collect();
+        assert!(
+            heals.windows(2).all(|pair| pair[0] >= pair[1]),
+            "food choices list the best heal first: {heals:?}"
+        );
+    }
     #[test]
     fn w1c_equipment_options_closed_without_game_data() {
         let (_scratch, path) = tmp_path();

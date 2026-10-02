@@ -455,7 +455,7 @@ impl StepRun for BankRun {
                 .is_some_and(|here| reach::within(here.value, target, 0));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(target, 0, cx.required_after),
+                    reach::walk_request(target, 0, None, cx.required_after),
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;
@@ -628,7 +628,7 @@ impl StepRun for BuyRun {
                 .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.tile, 4, cx.required_after),
+                    reach::walk_request(self.tile, 4, None, cx.required_after),
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;
@@ -785,7 +785,7 @@ impl StepRun for MakeRun {
                 .is_some_and(|here| reach::within(here.value, self.tile, 6));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.tile, 4, cx.required_after),
+                    reach::walk_request(self.tile, 4, None, cx.required_after),
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;

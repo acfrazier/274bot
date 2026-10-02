@@ -23,6 +23,8 @@ fn snapshot(tick: u64, here: LineOfSightTile) -> SnapshotInput<'static> {
             level: here.level,
         }),
         ingame: true,
+        walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason::None,
+        user_move_intent_seq: 0,
         inv: &[],
         inv_size: 28,
         stats: &[],

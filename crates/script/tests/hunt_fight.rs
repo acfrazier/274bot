@@ -95,6 +95,7 @@ fn obs_at(here: Tile, npcs: Vec<FightNpc>) -> FightObservation {
         animating: false,
         los_override: Some(true),
         tick: 1,
+        user_move_intent_seq: 0,
     };
     let _ = &mut o;
     o

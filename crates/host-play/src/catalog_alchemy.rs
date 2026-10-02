@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use super::*;
 
 /// Noted-id withdrawal then Nature-rune consumption. Display name
@@ -45,21 +47,22 @@ pub struct AlcherSpellExpectation {
     pub staff: i32,
 }
 
-/// Low Level Alchemy on noted rune chainbodies under a Staff of fire (#744).
-pub const ALCHER_LOW_EXPECTATION: AlcherSpellExpectation = AlcherSpellExpectation {
-    spell: AlcherSpell::Low,
-    magic_xp: LOW_ALCH_MAGIC_XP,
-    coins_per_cast: RUNE_CHAINBODY_LOW_ALCH_COINS,
-    staff: STAFF_OF_FIRE_ID,
-};
+pub static ALCHER_LOW_EXPECTATION: LazyLock<AlcherSpellExpectation> =
+    LazyLock::new(|| AlcherSpellExpectation {
+        spell: AlcherSpell::Low,
+        magic_xp: LOW_ALCH_MAGIC_XP,
+        coins_per_cast: RUNE_CHAINBODY_LOW_ALCH_COINS,
+        staff: catalog_item_id("staff_of_fire"),
+    });
 
 /// High Level Alchemy on noted rune chainbodies under a Fire battlestaff.
-pub const ALCHER_FIRE_BATTLESTAFF_EXPECTATION: AlcherSpellExpectation = AlcherSpellExpectation {
-    spell: AlcherSpell::High,
-    magic_xp: HIGH_ALCH_MAGIC_XP,
-    coins_per_cast: RUNE_CHAINBODY_HIGH_ALCH_COINS,
-    staff: FIRE_BATTLESTAFF_ID,
-};
+pub static ALCHER_FIRE_BATTLESTAFF_EXPECTATION: LazyLock<AlcherSpellExpectation> =
+    LazyLock::new(|| AlcherSpellExpectation {
+        spell: AlcherSpell::High,
+        magic_xp: HIGH_ALCH_MAGIC_XP,
+        coins_per_cast: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+        staff: catalog_item_id("fire_battlestaff"),
+    });
 
 /// The fire staff worn right now, if any.
 fn worn_fire_staff(observation: &Observation) -> Option<i32> {
@@ -74,8 +77,8 @@ impl AlcherGeneratedCustomCycle {
         self.observe_target(
             baseline,
             now,
-            ADAMANT_SCIMITAR_ID,
-            CERT_ADAMANT_SCIMITAR_ID,
+            catalog_item_id("adamant_scimitar"),
+            catalog_item_id("cert_adamant_scimitar"),
             ADAMANT_SCIMITAR_ALCH_COINS,
         );
     }
@@ -94,7 +97,7 @@ impl AlcherGeneratedCustomCycle {
             && now.item_id(noted) >= 1
             && now.item_id(unnoted) == 0
             && now.item_id(noted) > baseline.item_id(noted)
-            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(catalog_item_id("naturerune")) >= 1
     }
 
     /// The High/default rows keep their own name-based guard on top of the
@@ -114,8 +117,11 @@ impl AlcherGeneratedCustomCycle {
             self.consumed |= !now.bank_open
                 && !now.bank_loaded
                 && now.item_id(noted) < withdrawn.item_id(noted)
-                && now.item_id(NATURE_RUNE_ID) < withdrawn.item_id(NATURE_RUNE_ID)
-                && now.item_id(COINS_ID) - baseline.item_id(COINS_ID) == alch_coins
+                && now.item_id(catalog_item_id("naturerune"))
+                    < withdrawn.item_id(catalog_item_id("naturerune"))
+                && now.item_id(catalog_item_id("coins"))
+                    - baseline.item_id(catalog_item_id("coins"))
+                    == alch_coins
                 && now.skill_xp("magic") - baseline.skill_xp("magic") >= HIGH_ALCH_MAGIC_XP
                 && now.item("Rune chainbody") == 0;
         }
@@ -157,10 +163,14 @@ impl AlcherGeneratedCustomCycle {
         }
         let coins = expectation.coins_per_cast * casts;
         let xp = expectation.magic_xp * casts;
-        let consumed = withdrawn.item_id(NATURE_RUNE_ID) - now.item_id(NATURE_RUNE_ID) == casts
-            && now.item_id(COINS_ID) - withdrawn.item_id(COINS_ID) == coins
+        let consumed = withdrawn.item_id(catalog_item_id("naturerune"))
+            - now.item_id(catalog_item_id("naturerune"))
+            == casts
+            && now.item_id(catalog_item_id("coins")) - withdrawn.item_id(catalog_item_id("coins"))
+                == coins
             && now.skill_xp("magic") - withdrawn.skill_xp("magic") == xp
-            && now.item_id(COINS_ID) - baseline.item_id(COINS_ID) == coins
+            && now.item_id(catalog_item_id("coins")) - baseline.item_id(catalog_item_id("coins"))
+                == coins
             && now.skill_xp("magic") - baseline.skill_xp("magic") == xp
             && worn_fire_staff(now) == Some(expectation.staff);
         if consumed {
@@ -211,14 +221,17 @@ fn high_cast(from: &Observation, now: &Observation, noted: i32, coins_per_cast: 
     if casts < 1 {
         return false;
     }
-    from.item_id(NATURE_RUNE_ID) - now.item_id(NATURE_RUNE_ID) == casts
-        && now.item_id(COINS_ID) - from.item_id(COINS_ID) == coins_per_cast * casts
+    from.item_id(catalog_item_id("naturerune")) - now.item_id(catalog_item_id("naturerune"))
+        == casts
+        && now.item_id(catalog_item_id("coins")) - from.item_id(catalog_item_id("coins"))
+            == coins_per_cast * casts
         && now.skill_xp("magic") - from.skill_xp("magic") == HIGH_ALCH_MAGIC_XP * casts
-        && worn_fire_staff(now) == Some(STAFF_OF_FIRE_ID)
+        && worn_fire_staff(now) == Some(catalog_item_id("staff_of_fire"))
 }
 
 fn rich_chainbody_exhausted(observation: &Observation) -> bool {
-    observation.item_id(CERT_RUNE_CHAINBODY_ID) == 0 && observation.item_id(RUNE_CHAINBODY_ID) == 0
+    observation.item_id(catalog_item_id("cert_rune_chainbody")) == 0
+        && observation.item_id(catalog_item_id("rune_chainbody")) == 0
 }
 
 /// Ordered High-alch interruption: first cast, targeted Swarm + positive hit,
@@ -248,13 +261,15 @@ impl AlcherSwarmDrainCycle {
         if self.baseline_staff.is_none() {
             self.baseline_staff = worn_fire_staff(baseline);
         }
-        self.wrong_staff |= worn_fire_staff(now).is_some_and(|worn| worn != STAFF_OF_FIRE_ID);
+        self.wrong_staff |=
+            worn_fire_staff(now).is_some_and(|worn| worn != catalog_item_id("staff_of_fire"));
         if self.withdrawn.is_none()
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(CERT_RUNE_CHAINBODY_ID) >= 1
-            && now.item_id(RUNE_CHAINBODY_ID) == 0
-            && now.item_id(CERT_RUNE_CHAINBODY_ID) > baseline.item_id(CERT_RUNE_CHAINBODY_ID)
-            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(catalog_item_id("cert_rune_chainbody")) >= 1
+            && now.item_id(catalog_item_id("rune_chainbody")) == 0
+            && now.item_id(catalog_item_id("cert_rune_chainbody"))
+                > baseline.item_id(catalog_item_id("cert_rune_chainbody"))
+            && now.item_id(catalog_item_id("naturerune")) >= 1
         {
             self.withdrawn = Some(now.clone());
         }
@@ -263,7 +278,7 @@ impl AlcherSwarmDrainCycle {
                 if high_cast(
                     withdrawn,
                     now,
-                    CERT_RUNE_CHAINBODY_ID,
+                    catalog_item_id("cert_rune_chainbody"),
                     RUNE_CHAINBODY_HIGH_ALCH_COINS,
                 ) {
                     self.first_cast = Some(now.clone());
@@ -302,7 +317,7 @@ impl AlcherSwarmDrainCycle {
                 if high_cast(
                     released,
                     now,
-                    CERT_RUNE_CHAINBODY_ID,
+                    catalog_item_id("cert_rune_chainbody"),
                     RUNE_CHAINBODY_HIGH_ALCH_COINS,
                 ) && rich_chainbody_exhausted(now)
                 {
@@ -318,8 +333,8 @@ impl AlcherSwarmDrainCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.bank_item_id(RUNE_CHAINBODY_ID) == 0
-            && now.bank_item_id(CERT_RUNE_CHAINBODY_ID) == 0
+            && now.bank_item_id(catalog_item_id("rune_chainbody")) == 0
+            && now.bank_item_id(catalog_item_id("cert_rune_chainbody")) == 0
             && rich_chainbody_exhausted(now)
             && near(now.tile, VARROCK_WEST_BANK, 6)
         {
@@ -328,15 +343,21 @@ impl AlcherSwarmDrainCycle {
         if self.rich_retired.is_some()
             && self.poor_withdrawn.is_none()
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(CERT_YEW_LONGBOW_ID) >= 1
-            && now.item_id(YEW_LONGBOW_ID) == 0
-            && now.item_id(CERT_YEW_LONGBOW_ID) > baseline.item_id(CERT_YEW_LONGBOW_ID)
-            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(catalog_item_id("cert_yew_longbow")) >= 1
+            && now.item_id(catalog_item_id("yew_longbow")) == 0
+            && now.item_id(catalog_item_id("cert_yew_longbow"))
+                > baseline.item_id(catalog_item_id("cert_yew_longbow"))
+            && now.item_id(catalog_item_id("naturerune")) >= 1
         {
             self.poor_withdrawn = Some(now.clone());
         }
         if let Some(poor) = &self.poor_withdrawn {
-            self.poor_consumed |= high_cast(poor, now, CERT_YEW_LONGBOW_ID, YEW_LONGBOW_ALCH_COINS);
+            self.poor_consumed |= high_cast(
+                poor,
+                now,
+                catalog_item_id("cert_yew_longbow"),
+                YEW_LONGBOW_ALCH_COINS,
+            );
         }
     }
 

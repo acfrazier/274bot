@@ -365,7 +365,7 @@ impl Pages {
             return Some(modal == -1);
         }
         self.pages += 1;
-        if self.strict && interrupted() {
+        if self.strict && interrupted(cx) {
             return Some(false);
         }
         if cont {
@@ -931,7 +931,7 @@ impl Recover {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Self, bool> {
-        if RECOVERING.with(Cell::get) || interrupted() || !missing_boat_fare(dest) {
+        if RECOVERING.with(Cell::get) || interrupted(cx) || !missing_boat_fare(dest) {
             return Err(false);
         }
         if inventory_full() && held(BANANA) == 0 {
@@ -949,7 +949,7 @@ impl Recover {
 
     /// Frozen `talk()` (`karamjaRecovery.ts:36–41`).
     fn talk(second: bool, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Stage, bool> {
-        if interrupted() {
+        if interrupted(cx) {
             return Err(false);
         }
         match Walk::begin(LUTHAS_ANCHOR, 2, TALK_WALK_MS, false, cx) {
@@ -987,7 +987,7 @@ impl Recover {
 
     /// `Some(fare_held)` once the recovery ended.
     pub(crate) fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
-        if interrupted() {
+        if interrupted(cx) {
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1013,7 +1013,7 @@ impl Recover {
                 if *second || held(COINS) >= BOAT_FARE {
                     return Some(held(COINS) >= BOAT_FARE);
                 }
-                if interrupted() {
+                if interrupted(cx) {
                     return Some(false);
                 }
                 match Fill::start(cx, logs) {
@@ -1158,6 +1158,7 @@ const SUSTAIN: usize = 1;
 
 impl Family for WalkTo {
     const NAME: &'static str = "walk-to";
+    const WALKING_OPERATION: bool = true;
     const CALLBACKS: &'static [&'static str] = &["log", "sustain"];
     /// Frozen `log(...)` is not awaited; `await Sustain.run()` is.
     const SYNC_HOOKS: &'static [usize] = &[LOG];
@@ -1208,6 +1209,12 @@ impl Family for WalkTo {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            if let Some(stop) = Family::release(self) {
+                cx.emit(stop);
+            }
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1231,7 +1238,7 @@ impl Family for WalkTo {
             // Frozen follow pass: `EventSignal.pending()` ends the walk
             // before `Sustain.run()` (`WalkExecutor.ts:844–853, 359–362`),
             // the re-walk and the recovery included; the host route stops.
-            if interrupted() {
+            if interrupted(cx) {
                 self.interrupt(cx);
                 continue;
             }

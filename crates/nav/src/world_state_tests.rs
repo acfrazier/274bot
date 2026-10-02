@@ -39,6 +39,7 @@ fn client() -> Client {
 fn gated_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3268,
             z: 3227,

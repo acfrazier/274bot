@@ -21,6 +21,17 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
+
+pub(super) fn manual_movement_message() -> Arc<str> {
+    static REASON: std::sync::LazyLock<Arc<str>> =
+        std::sync::LazyLock::new(|| Arc::from(MANUAL_MOVEMENT_MESSAGE));
+    Arc::clone(&REASON)
+}
+
+fn manual_movement_error() -> ActionError {
+    ActionError::UserInput
+}
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
     &[
@@ -973,7 +984,7 @@ struct WalkPlan {
 impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(self.tile, self.radius, cx.required_after),
+            reach::walk_request(self.tile, self.radius, None, cx.required_after),
             &mut cx.tick.cx,
         )?;
         Ok(Box::new(WalkRun { handle }))
@@ -987,6 +998,10 @@ impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(WalkReceipt {
+                end: WalkEnd::UserInput,
+                ..
+            })) => Poll::Ready(Err(manual_movement_error())),
             Poll::Ready(Ok(WalkReceipt {
                 end: WalkEnd::Arrived,
                 evidence,
@@ -1106,6 +1121,10 @@ impl StepRun for TalkRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(WalkReceipt {
+                    end: WalkEnd::UserInput,
+                    ..
+                })) => return Poll::Ready(Err(manual_movement_error())),
                 Poll::Ready(Ok(_)) => self.walk = None,
             }
         }
@@ -1116,7 +1135,7 @@ impl StepRun for TalkRun {
                     here.is_some_and(|obs| reach::within(obs.value, tile, i32::from(self.leash)));
                 if !near {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.leash, cx.required_after),
+                        reach::walk_request(tile, self.leash, None, cx.required_after),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1340,7 +1359,12 @@ impl StepRun for InteractRun {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.radius.max(1) as u16, cx.required_after),
+                        reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
+                        ),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1630,15 +1654,23 @@ struct UseOnRun {
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
-        }
+        let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Ready(Ok(WalkReceipt {
+                    end: WalkEnd::UserInput,
+                    ..
+                })) => return Poll::Ready(Err(manual_movement_error())),
+                _ if timed_out => {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
+                }
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(_)) => self.walk = None,
             }
+        }
+        if timed_out {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
         }
         if self.interaction.is_none() {
             if let Some((id, qty)) = self.until {
@@ -1662,7 +1694,12 @@ impl StepRun for UseOnRun {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.radius.max(1) as u16, cx.required_after),
+                        reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
+                        ),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1722,7 +1759,7 @@ impl StepRun for UseOnRun {
                     let index = npc.index as i32;
                     if npc.distance > 1 {
                         self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, 1, cx.required_after),
+                            reach::walk_request(tile, 1, None, cx.required_after),
                             &mut cx.tick.cx,
                         )?);
                         return Poll::Pending;

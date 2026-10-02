@@ -5,8 +5,9 @@
 //! essence-mine wizard and Elkoy's Tree Gnome Village maze escort NPC
 //! hops, and magic teleports as directed transport edges built from the
 //! Server's own content — `scripts/{doors, ladders+stairs, interface_boat,
-//! skill_magic, skill_agility}` and the Ardougne wilderness_lever pair,
-//! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
+//! skill_magic, skill_agility}`, direct climb ops across area/quest scripts,
+//! the Ardougne wilderness_lever pair, `pack/loc.pack`, and the `maps/*.jm2`
+//! loc placements — instead of a
 //! hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `api/nav/transports.ts`
@@ -98,6 +99,7 @@ use static_routes::*;
 use teleports::*;
 use toll::*;
 use vertical::*;
+pub(crate) use webs::select_web_action;
 use webs::*;
 pub(crate) use wilderness::require_wilderness_teleport_legality;
 use wilderness::*;
@@ -107,7 +109,7 @@ use zanaris::*;
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportKind {
-    /// A wall door: both sides of the loc, traversed with the `Open` op.
+    /// A closed/open directional loc crossing (wall doors and slashable webs).
     Door,
     /// A ladder placement (climb up/down per the script's op).
     Ladder,
@@ -146,11 +148,11 @@ pub enum DoorDir {
 
 /// One directed transport hop: stand on or near `at`, use `option` on the
 /// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
-/// target — the loc tile (door/ladder/stairs/agility/glider) or the
+/// target — the loc tile (door/web/ladder/stairs/agility/glider) or the
 /// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
-/// crossing direction for doors only (`None` for every other kind until
-/// steps 3/4 fill them); `open_loc_id` the open leaf id a door config's
-/// `next_loc_stage` declares (`None` when the config carries none).
+/// crossing direction for doors and slashable webs (`None` for every
+/// other edge kind until steps 3/4 fill them); `open_loc_id` names the
+/// door's open leaf or the web's slashed loc.
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
@@ -164,6 +166,10 @@ pub struct TransportEdge {
     pub kind: TransportKind,
     pub at: WorldTile,
     pub to: WorldTile,
+    /// Content `movecoord(coord, ...)` displacement from the actual operable
+    /// takeoff stand. `None` is an absolute landing. Packed in the kind byte's
+    /// high bit; the canonical graph's `to - at` supplies the displacement.
+    pub player_delta: Option<WorldTile>,
     pub loc_id: i32,
     pub option: i32,
     pub ticks: i32,
@@ -193,6 +199,33 @@ pub struct TransportEdge {
     /// snapshot varps and the quest list never do. Packed on the v11 wire
     /// after `wildy_cap`.
     pub quest_gates: Option<QuestGates>,
+}
+
+impl TransportEdge {
+    /// Resolve a landing from the actual takeoff, not the loc's anchor.
+    /// Reconstructed route edges keep their exact planned `to` while retaining
+    /// this content delta for live settlement from the stand used at send time.
+    /// Returns `None` when applying the relative displacement overflows.
+    pub fn landing_from(&self, from: WorldTile) -> Option<WorldTile> {
+        match self.player_delta {
+            Some(delta) => Some(WorldTile {
+                x: from.x.checked_add(delta.x)?,
+                z: from.z.checked_add(delta.z)?,
+                level: from.level.checked_add(delta.level)?,
+            }),
+            None => Some(self.to),
+        }
+    }
+
+    /// Whether this is one of the packed `bigweb_slashable` crossings.
+    /// Revision 289 identifies the closed/slashed loc pair as 733/734.
+    pub(crate) fn is_slashable_web(&self) -> bool {
+        self.kind == TransportKind::Door
+            && self.loc_id == 733
+            && self.open_loc_id == Some(734)
+            && self.dir.is_some()
+            && matches!(self.option, 0 | 1)
+    }
 }
 
 /// Transport edges indexed by operable footprint stands or radius-one
@@ -459,6 +492,14 @@ fn derive_transports_with_audit(
         &gates,
         &mut audit,
     );
+    scripted_climb_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
     teleport_edges(content_root, &mut graph, &mut skipped);
     // After every producer: the members gate each edge's source handler
     // declares, read once for every kind.
@@ -540,7 +581,6 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
 // ---------------------------------------------------------------------------
 
 const SKIP_NO_RULE: &str = "no rule for this placement (script reports it unhandled)";
-const SKIP_PLAYER_RELATIVE: &str = "player-relative destination with a horizontal shift";
 const SKIP_DIALOG: &str = "destination is behind a dialog";
 const SKIP_HANDOFF: &str = "destination handed to another script";
 const SKIP_RANDOM: &str = "destination is randomised";
@@ -682,22 +722,29 @@ fn pack_coord(level: i32, x: i32, z: i32) -> i32 {
     ((level & 0x3) << 28) | ((x & 0x3fff) << 14) | (z & 0x3fff)
 }
 
+/// Engine operation cost for invoking a transport.
+const OP_BASE_TICKS: i32 = 1;
+/// Standard ladder extras include the arrival delay and `p_delay(0)`.
+const ARRIVAL_DELAY_TICKS: i32 = 1;
+const P_DELAY_BASE_TICKS: i32 = 1;
+const LADDER_EXTRA_TICKS: i32 = ARRIVAL_DELAY_TICKS + P_DELAY_BASE_TICKS;
+
 /// m8aq `costs.ts` `BY_NAME` extras (ladders/stairs/shortcuts relevant to the
-/// parsed scripts). A loc name absent here is unpriced and skipped, like
-/// m8aq's `SKIP_UNPRICED`. Edge ticks = `1` (m8aq `opBase`) + extra.
+/// parsed scripts). A loc name absent here is unpriced, like `SKIP_UNPRICED`.
+/// Edge ticks = `OP_BASE_TICKS` + extra.
 const EXTRA_TICKS: &[(&str, i32)] = &[
     // ladders.rs2: two ticks for a climb, one for a shipladder / wizard tower.
-    ("ship_ladder", 2),
-    ("ship_laddertop", 2),
-    ("laddertop", 2),
-    ("ladder", 2),
-    ("laddermiddle", 2),
-    ("laddertop_directional", 2),
-    ("ladder_directional", 2),
-    ("ladder_cellar", 2),
-    ("ladder_from_cellar", 2),
-    ("ladder_from_cellar_directional", 2),
-    ("ladder_cellar_inside_down", 2),
+    ("ship_ladder", LADDER_EXTRA_TICKS),
+    ("ship_laddertop", LADDER_EXTRA_TICKS),
+    ("laddertop", LADDER_EXTRA_TICKS),
+    ("ladder", LADDER_EXTRA_TICKS),
+    ("laddermiddle", LADDER_EXTRA_TICKS),
+    ("laddertop_directional", LADDER_EXTRA_TICKS),
+    ("ladder_directional", LADDER_EXTRA_TICKS),
+    ("ladder_cellar", LADDER_EXTRA_TICKS),
+    ("ladder_from_cellar", LADDER_EXTRA_TICKS),
+    ("ladder_from_cellar_directional", LADDER_EXTRA_TICKS),
+    ("ladder_cellar_inside_down", LADDER_EXTRA_TICKS),
     // trapdoors.rs2: Open then Climb-down / p_telejump z±6400.
     ("trapdoor", 2),
     ("trapdoor_open", 2),
@@ -759,6 +806,17 @@ fn extra_ticks(name: &str) -> Option<i32> {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, extra)| *extra)
+}
+fn edge_ticks(extra: i32) -> Option<i32> {
+    OP_BASE_TICKS.checked_add(extra)
+}
+
+fn delay_ticks(delay: i32) -> Option<i32> {
+    if delay < 0 {
+        None
+    } else {
+        delay.checked_add(P_DELAY_BASE_TICKS)
+    }
 }
 
 fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usize) {

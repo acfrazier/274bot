@@ -863,6 +863,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     let mut graph = TransportGraph::default();
     graph.edges.push(TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: origin,
         to: adjacent,
         loc_id: 1,

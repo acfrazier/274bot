@@ -869,10 +869,32 @@ impl FollowRun {
                     match find_transport_target_instance(snapshot, edge, selected_npc_index) {
                         Some(target) => {
                             let to = edge.to;
+                            let action = if edge.is_slashable_web() {
+                                match current_web_action(snapshot, edge, options.edges) {
+                                    Ok(action) => action,
+                                    Err(reason) => {
+                                        fire_leg(options, &leg, LegPhase::Failed);
+                                        return Some(web_action_failure(
+                                            here,
+                                            self.leg_index,
+                                            edge,
+                                            reason,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                edge
+                            };
                             let chat_seq_at_send = chat_seq(snapshot);
                             let arrival_footprint = target.footprint();
                             let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(snapshot, &mut ix, target, edge, options) {
+                            match interact_transport(
+                                snapshot,
+                                &mut ix,
+                                target,
+                                action,
+                                &mut options.on_event,
+                            ) {
                                 SendResult::Sent { .. } => {
                                     // Already-open trapdoor: this interact is
                                     // Climb-down. Mark tries so poll_transport
@@ -1053,9 +1075,9 @@ impl WalkHop {
 /// arrival target and the stall clock. `troll` marks the automatic
 /// door-troll fallback: the hop re-reads the door's state and re-sends
 /// while closed, probes after Open, and walks when open after
-/// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
-/// watermark for fresh "I can't reach that!" evidence; NPC-backed hops
-/// refresh it at every interaction and recover only before fare dialogue.
+/// the cheap one-interact hop lapsed its budget. `chat_seq` is the watermark
+/// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
+/// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,

@@ -74,6 +74,12 @@ impl Owner {
         self.live() && self.walk.load(Ordering::Acquire) == request.get()
     }
 
+    pub fn active_walk(&self) -> Option<NonZeroU64> {
+        self.live()
+            .then(|| NonZeroU64::new(self.walk.load(Ordering::Acquire)))
+            .flatten()
+    }
+
     pub fn set_interaction(&self, request: NonZeroU64) {
         self.interaction.store(request.get(), Ordering::Release);
     }

@@ -104,6 +104,7 @@ impl Family for ReturnToAnchor {
     const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first walk goes out in the caller's turn.
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = true;
     type Args = ReturnToAnchorArgs;
     type Output = ();
 
@@ -138,6 +139,19 @@ impl Family for ReturnToAnchor {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<()> {
+        if cx.user_move_intent_interrupted() {
+            match &self.leg {
+                Leg::Start => {}
+                Leg::Long(long) => {
+                    if let Some(stop) = long.release() {
+                        cx.emit(stop);
+                    }
+                }
+                Leg::Opening(opening) => opening.abort_walk(cx),
+                Leg::WalkTo(walk) => walk.abort(cx),
+            }
+            return Step::Done(());
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -229,7 +243,7 @@ impl ReturnToAnchor {
             Leg::WalkTo(walk) => {
                 // Frozen `followPath` yields to a pending event
                 // (`WalkExecutor.ts:845–847, 360–363`).
-                if interrupted() {
+                if interrupted(cx) {
                     walk.abort(cx);
                     self.logs
                         .push_back("  walk interrupted — a random event is being handled".into());
@@ -247,6 +261,9 @@ impl ReturnToAnchor {
     /// Frozen `Anchor.ts:116–119`: the long leg that landed in the disk ends
     /// the task; otherwise the local approach follows.
     fn after_long(&mut self, cx: &mut Cx<'_>) -> bool {
+        if interrupted(cx) {
+            return true;
+        }
         if here().is_some_and(|me| distance_to(self.anchor, me) <= self.arrive_radius) {
             return true;
         }
@@ -255,6 +272,9 @@ impl ReturnToAnchor {
 
     /// Frozen `Anchor.ts:121–125`.
     fn approach(&mut self, cx: &mut Cx<'_>) -> bool {
+        if interrupted(cx) {
+            return true;
+        }
         if !self.obstacles.is_empty() {
             self.leg = Leg::Opening(WalkOpening::new(
                 self.anchor,
@@ -378,6 +398,27 @@ mod tests {
         assert!(
             machine::merge_ops(Vec::new()).is_empty(),
             "no local approach"
+        );
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(Value::Null)));
+    }
+
+    #[test]
+    fn manual_takeover_after_failed_long_leg_does_not_start_local_approach() {
+        reset();
+        post_here(-40, 0);
+        let h = running(json!({ "arriveRadius": 2, "longRangeTiles": 30 }));
+        machine::step(&mut NoJs);
+        let (_, token) = anchor_walk();
+        fail(2, token, -40, 0);
+
+        machine::on_manual_walk_takeover(2);
+        machine::on_pause();
+        machine::on_resume();
+        machine::step(&mut NoJs);
+
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
         );
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(Value::Null)));
     }

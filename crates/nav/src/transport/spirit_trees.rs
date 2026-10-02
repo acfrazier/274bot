@@ -124,6 +124,7 @@ pub(super) fn spirit_tree_edges(
                     graph,
                     TransportEdge {
                         kind: TransportKind::SpiritTree,
+                        player_delta: None,
                         at,
                         to: *to,
                         loc_id,

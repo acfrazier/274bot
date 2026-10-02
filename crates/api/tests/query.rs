@@ -1399,12 +1399,11 @@ fn is_arrived_matches_frozen_is_arrived() {
     assert!(!is_arrived(me, at(3253, 3252), 2, || &elsewhere));
 }
 
-/// Both reach probes use frozen `ARRIVAL_MAX_STEPS` (512): a walkable dest
-/// in radius whose BFS dequeue rank is 512 arrives, rank 513 does not.
+/// A nearby goal behind a long serpentine needs more reach work than its
+/// straight-line distance suggests. Increasing the requested region admits
+/// that route without changing distance, level, or blocked-wall semantics.
 #[test]
-fn is_arrived_reach_budget_is_arrival_max_steps() {
-    // A one-wide serpentine: open rows lz = 0, 2, .., 10 joined at
-    // alternating ends, so BFS rank is path length.
+fn is_arrived_bounds_exact_and_solid_reach_by_the_requested_region() {
     let mut scene = open_scene();
     scene.collision_flags.fill(CollisionFlag::SQ_BLOCKED);
     for lz in (0..=10).step_by(2) {
@@ -1420,31 +1419,104 @@ fn is_arrived_reach_budget_is_arrival_max_steps() {
         z: 3200,
         level: 0,
     };
-    let sq = SceneQuery::new(&scene, Some(me));
-    let flood = sq.flood_reach().expect("serpentine flood");
-    let view = pack_reach_query(&scene, Some(&flood));
-    let ranked = |rank: u16| {
-        let i = flood
-            .ranks()
-            .0
-            .iter()
-            .position(|&r| r == rank)
-            .expect("rank on path");
-        WorldTile {
-            x: 3200 + (i / 104) as i32,
-            z: 3200 + (i % 104) as i32,
+    let target = WorldTile {
+        x: 3202,
+        z: 3210,
+        level: 0,
+    };
+    let check = |scene: &SceneView, radius, expected| {
+        let view = arrival_view(scene, me);
+        let query = SceneQuery::new(scene, Some(me));
+        let collision = CollisionArrivalProbe::new(|tile| query.collision_at(tile));
+        assert_eq!(is_arrived(me, target, radius, || &view), expected);
+        assert_eq!(is_arrived(me, target, radius, || &collision), expected);
+        let mut candidates = vec![me];
+        retain_arrival_candidates(&mut candidates, target, radius, |tile| {
+            query.collision_at(tile)
+        });
+        assert_eq!(candidates, if expected { vec![me] } else { Vec::new() });
+    };
+    check(&scene, 12, false);
+    check(&scene, 13, true);
+    check(&scene, i32::MAX, true);
+
+    // The solid target's first legal adjacent stand is reached before the
+    // exact tile would be. Radius12 admits it, but cannot cross a closed face.
+    scene.collision_flags[2 * 104 + 10] = CollisionFlag::SQ_BLOCKED;
+    check(&scene, 12, true);
+    scene.collision_flags[2 * 104 + 10] |=
+        CollisionFlag::W_N | CollisionFlag::W_E | CollisionFlag::W_S | CollisionFlag::W_W;
+    check(&scene, 13, false);
+}
+
+#[test]
+fn batched_arrival_preserves_directed_steps_and_rank_cutoffs() {
+    let mut state = 0x0002_7402_u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for case in 0..24 {
+        let mut scene = SceneView {
+            available: true,
+            base_x: 100,
+            base_z: 100,
             level: 0,
+            width: 12,
+            height: 12,
+            collision_flags: vec![0; 144],
+        };
+        for flags in &mut scene.collision_flags {
+            let word = random();
+            for (bit, wall) in [
+                CollisionFlag::W_N,
+                CollisionFlag::W_E,
+                CollisionFlag::W_S,
+                CollisionFlag::W_W,
+                CollisionFlag::SQ_BLOCKED,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if word & (1 << bit) != 0 {
+                    *flags |= wall;
+                }
+            }
         }
-    };
-    let (at_budget, past_budget) = (ranked(512), ranked(513));
-    let budget = SceneReachOptions {
-        max_steps: Some(ARRIVAL_MAX_STEPS),
-        adjacent_ok: false,
-    };
-    assert!(sq.can_reach(at_budget, &budget));
-    assert!(!sq.can_reach(past_budget, &budget));
-    assert!(is_arrived(me, at_budget, 104, || &view));
-    assert!(!is_arrived(me, past_budget, 104, || &view));
+        // Intentionally do not mirror walls onto their neighbours.
+        let target = WorldTile {
+            x: 100 + (random() % 12) as i32,
+            z: 100 + (random() % 12) as i32,
+            level: 0,
+        };
+        let query = SceneQuery::new(&scene, None);
+        let probe = CollisionArrivalProbe::new(|tile| query.collision_at(tile));
+        for radius in [1, 4, 12] {
+            let all: Vec<_> = (0..12)
+                .flat_map(|x| {
+                    (0..12).map(move |z| WorldTile {
+                        x: 100 + x,
+                        z: 100 + z,
+                        level: 0,
+                    })
+                })
+                .filter(|&tile| query.walkable(tile))
+                .collect();
+            let expected: Vec<_> = all
+                .iter()
+                .copied()
+                .filter(|&tile| is_arrived(tile, target, radius, || &probe))
+                .collect();
+            let mut actual = all;
+            retain_arrival_candidates(&mut actual, target, radius, |tile| query.collision_at(tile));
+            assert_eq!(
+                actual, expected,
+                "directed map={case}, target={target:?}, r={radius}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2079,7 +2151,7 @@ fn booth_approach_collision_change_keeps_loc_id_and_moves_dest() {
 }
 
 #[test]
-fn arrival_stands_are_orthogonal_walkable_and_open_on_the_target_side() {
+fn arrival_stands_require_open_target_and_stand_edges() {
     let mut scene = SceneView {
         available: true,
         base_x: 0,
@@ -2093,15 +2165,69 @@ fn arrival_stands_are_orthogonal_walkable_and_open_on_the_target_side() {
     scene.collision_flags[(target.x * scene.height + target.z) as usize] =
         CollisionFlag::SQ_BLOCKED | CollisionFlag::W_W;
     scene.collision_flags[(3 * scene.height + 2) as usize] = CollisionFlag::SQ_BLOCKED;
+    scene.collision_flags[(2 * scene.height + 1) as usize] = CollisionFlag::W_N;
 
     let stands: Vec<_> = SceneQuery::new(&scene, None)
         .arrival_stands(target)
         .collect();
     assert_eq!(
         stands,
-        vec![tile(2, 1), tile(2, 3)],
-        "west is closed by the target wall, east is occupied, and diagonals are never stands"
+        vec![tile(2, 3)],
+        "west is closed by the target wall, east is occupied, south is blocked on the stand, and diagonals are never stands"
     );
+}
+#[test]
+fn straight_wall_reach_matches_engine_sides_and_step_gates() {
+    let destination = tile(6, 5);
+    for (angle, from) in [
+        (0, tile(5, 5)),
+        (1, tile(6, 6)),
+        (2, tile(7, 5)),
+        (3, tile(6, 4)),
+    ] {
+        assert!(
+            straight_wall_reachable(from, destination, 0, angle, |_, _| false),
+            "the angle-facing side must reach a straight wall for angle {angle}"
+        );
+    }
+
+    let along_wall = tile(6, 6);
+    assert!(straight_wall_reachable(
+        along_wall,
+        destination,
+        0,
+        0,
+        |from, to| from == along_wall && to == destination
+    ));
+    assert!(!straight_wall_reachable(
+        along_wall,
+        destination,
+        0,
+        0,
+        |_, _| false
+    ));
+    assert!(
+        !straight_wall_reachable(tile(7, 5), destination, 0, 0, |_, _| true),
+        "a tile on the other side is not admitted solely by proximity"
+    );
+    assert!(!straight_wall_reachable(
+        tile(5, 5),
+        destination,
+        9,
+        0,
+        |_, _| true
+    ));
+    assert!(!straight_wall_reachable(
+        WorldTile {
+            x: 5,
+            z: 5,
+            level: 1,
+        },
+        destination,
+        0,
+        0,
+        |_, _| true
+    ));
 }
 
 fn cfg() -> ClientConfig {

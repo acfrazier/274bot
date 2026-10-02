@@ -335,7 +335,12 @@ fn reading_progress_refuses_gather_and_drops_only_game_rows() {
     ]);
     let (_, rows, owned) = slot.drain_host_interacts();
     assert!(owned);
-    assert_eq!(rows, vec![InteractReq::SetCameraYaw { yaw: 777 }]);
+    assert_eq!(
+        rows.into_iter()
+            .map(|queued| queued.req)
+            .collect::<Vec<_>>(),
+        vec![InteractReq::SetCameraYaw { yaw: 777 }]
+    );
     assert!(
         matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 10, reason }) if reason.as_ref() == "busy")
     );

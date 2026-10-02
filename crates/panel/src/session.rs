@@ -42,7 +42,7 @@ use host_play::{
     map_ready_catalogue, map_ready_images, open_vault, peek_map_catalogue, run_prepared_template,
     run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
     ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
-    SharedClientTemplate, SlotStatus, ValidatedTemplate, WalkArm,
+    SharedClientTemplate, SlotFrameInput, SlotStatus, ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -2715,317 +2715,329 @@ impl Session {
             .as_ref()
             .map(|t| t.profile().map_members())
             .unwrap_or(false);
-        let per_frame =
-            move |c: &mut client::client::Client, name: &str, frame: host_play::SlotFrameInput| {
-                let hold = frame.hold;
-                let session_boundary = publish_frontend_slot(
-                    name,
-                    c,
-                    &frontend_gens,
-                    &nav_states,
-                    &travellers,
-                    &tick_latch,
-                );
-                if session_boundary && focus.lock().unwrap().focused.as_deref() == Some(name) {
-                    walk_clear.store(true, Ordering::Relaxed);
+        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
+            let hold = frame.hold;
+            if host_play::cancel_walk_arm_on_manual_input(
+                name,
+                &travellers,
+                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
+                    x,
+                    z,
+                    level,
+                }),
+                frame,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+                nav_paint_cache.lock().unwrap().invalidate(name);
+            }
+            let session_boundary = publish_frontend_slot(
+                name,
+                c,
+                &frontend_gens,
+                &nav_states,
+                &travellers,
+                &tick_latch,
+            );
+            if session_boundary && focus.lock().unwrap().focused.as_deref() == Some(name) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+            if session_boundary {
+                nav_paint_cache.lock().unwrap().invalidate(name);
+            }
+            // Flat model: every slot is a full Client; draw gates the
+            // slot's renderer per the wall policy (focused always,
+            // members when only-render-selected is off).
+            let (focused, draw) = {
+                let f = focus.lock().unwrap();
+                (f.focused.clone(), draw_for_slot(&f, name))
+            };
+            c.set_draw(draw);
+            // Nav-debug scene paint: only the focused drawing slot
+            // publishes; a slot that stops drawing stores None so a
+            // stale paint cannot linger. Flags demand is owned solely by
+            // the focused slot so a non-drawing peer never loads or drops
+            // the shared sidecar out from under the drawer.
+            let (layers, settings_generation) = {
+                let publish = nav_publish.lock().unwrap();
+                (Arc::clone(&publish.settings), publish.generation)
+            };
+            let is_focused = focused.as_deref() == Some(name);
+            let drawing = is_focused && draw;
+            let walk = match travellers.lock().unwrap().get(name).cloned() {
+                Some(arm) => {
+                    let arm = arm.lock().unwrap();
+                    (arm.route.clone(), arm.traveller.current_aim())
                 }
-                if session_boundary {
-                    nav_paint_cache.lock().unwrap().invalidate(name);
+                None => (None, None),
+            };
+            let (driven, live) = match scenario.lock().unwrap().as_ref() {
+                Some(runner) if runner.drives(name) => {
+                    (true, (runner.armed_route().cloned(), runner.current_aim()))
                 }
-                // Flat model: every slot is a full Client; draw gates the
-                // slot's renderer per the wall policy (focused always,
-                // members when only-render-selected is off).
-                let (focused, draw) = {
-                    let f = focus.lock().unwrap();
-                    (f.focused.clone(), draw_for_slot(&f, name))
-                };
-                c.set_draw(draw);
-                // Nav-debug scene paint: only the focused drawing slot
-                // publishes; a slot that stops drawing stores None so a
-                // stale paint cannot linger. Flags demand is owned solely by
-                // the focused slot so a non-drawing peer never loads or drops
-                // the shared sidecar out from under the drawer.
-                let (layers, settings_generation) = {
-                    let publish = nav_publish.lock().unwrap();
-                    (Arc::clone(&publish.settings), publish.generation)
-                };
-                let is_focused = focused.as_deref() == Some(name);
-                let drawing = is_focused && draw;
-                let walk = match travellers.lock().unwrap().get(name).cloned() {
-                    Some(arm) => {
-                        let arm = arm.lock().unwrap();
-                        (arm.route.clone(), arm.traveller.current_aim())
-                    }
-                    None => (None, None),
-                };
-                let (driven, live) = match scenario.lock().unwrap().as_ref() {
-                    Some(runner) if runner.drives(name) => {
-                        (true, (runner.armed_route().cloned(), runner.current_aim()))
-                    }
-                    _ => (false, (None, None)),
-                };
-                let script = script_nav_paint
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|h| h.of(name))
-                    .unwrap_or((None, None));
-                let (route, click) = live_or_walk_paint(driven, live, walk, script);
-                match crate::picker::pack() {
-                    Some(world) => {
-                        let here = c.local_player.as_ref().map(|lp| WorldTile {
-                            x: c.map_build_base_x + lp.route_x[0],
-                            z: c.map_build_base_z + lp.route_z[0],
-                            level: 0,
-                        });
-                        retire_client_trail(c, here);
-                        // Run orb (varp 173 / 274 overlay), not the run
-                        // animation — the anim is only true while a run
-                        // cycle plays.
-                        let run_on = c.run_enabled();
-                        let active = drawing && c.nav_debug_drawable();
-                        let facts = crate::nav_paint_cache::Facts {
-                            settings_generation,
-                            active,
-                            base_x: c.map_build_base_x,
-                            base_z: c.map_build_base_z,
-                            here,
-                            route: crate::nav_paint_cache::route_fingerprint(route.as_ref()),
-                            click,
-                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                            run_on,
+                _ => (false, (None, None)),
+            };
+            let script = script_nav_paint
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|h| h.of(name))
+                .unwrap_or((None, None));
+            let (route, click) = live_or_walk_paint(driven, live, walk, script);
+            match crate::picker::pack() {
+                Some(world) => {
+                    let here = c.local_player.as_ref().map(|lp| WorldTile {
+                        x: c.map_build_base_x + lp.route_x[0],
+                        z: c.map_build_base_z + lp.route_z[0],
+                        level: 0,
+                    });
+                    retire_client_trail(c, here);
+                    // Run orb (varp 173 / 274 overlay), not the run
+                    // animation — the anim is only true while a run
+                    // cycle plays.
+                    let run_on = c.run_enabled();
+                    let active = drawing && c.nav_debug_drawable();
+                    let facts = crate::nav_paint_cache::Facts {
+                        settings_generation,
+                        active,
+                        base_x: c.map_build_base_x,
+                        base_z: c.map_build_base_z,
+                        here,
+                        route: crate::nav_paint_cache::route_fingerprint(route.as_ref()),
+                        click,
+                        trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                        run_on,
+                    };
+                    let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
+                    if changed {
+                        // Full tryMove BFS (every scene tile, src→dest), not
+                        // the entity walk buffer (capped at 9). Materialize
+                        // it only when an active GPU consumer needs a view.
+                        let trail_world = if active {
+                            live_client_trail(c, here)
+                        } else {
+                            Vec::new()
                         };
-                        let changed = nav_paint_cache.lock().unwrap().begin_frame(name, facts);
-                        if changed {
-                            // Full tryMove BFS (every scene tile, src→dest), not
-                            // the entity walk buffer (capped at 9). Materialize
-                            // it only when an active GPU consumer needs a view.
-                            let trail_world = if active {
-                                live_client_trail(c, here)
-                            } else {
-                                Vec::new()
-                            };
-                            // Focused drawer owns ensure/drop; when focus is None
-                            // any remaining slot may release the shared sidecar.
-                            let flags_owner = is_focused || focused.is_none();
-                            publish_nav_debug(
-                                c,
-                                &world,
-                                route.as_ref(),
-                                here,
-                                &trail_world,
-                                run_on,
-                                click,
-                                &layers,
-                                active,
-                                flags_owner,
-                            );
-                            let recorded = crate::nav_paint_cache::Facts {
-                                trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
-                                ..facts
-                            };
-                            nav_paint_cache.lock().unwrap().record(name, recorded);
-                        }
-                        if drawing && layers.camera_follow {
-                            apply_path_camera(c, route.as_ref(), here);
-                        }
-                    }
-                    None => {
-                        nav_paint_cache.lock().unwrap().invalidate(name);
-                        c.set_nav_debug_paint(None);
-                    }
-                }
-                // Focused-slot speaker: at most one cpal speaker, fed by
-                // this slot's Client audio state (midi/waves/fade), gated
-                // on focus + the Music/SFX toggle — `lowmem` (toggle off)
-                // never opens cpal. The gate reconciles every frame; the
-                // open closure runs on this slot's thread.
-                let change = audio.frame(name, focused.as_deref(), || {
-                    let now = Instant::now();
-                    if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
-                        if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
-                            return None;
-                        }
-                    }
-                    match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
-                        Ok(out) => {
-                            *audio_fail.lock().unwrap() = None;
-                            slot_log(
-                                name,
-                                Level::Info,
-                                &format!("audio: speaker open ({} Hz)", out.sample_rate),
-                            );
-                            Some(out)
-                        }
-                        Err(e) => {
-                            *audio_fail.lock().unwrap() = Some((name.to_string(), now));
-                            slot_log(name, Level::Warn, &format!("audio: {e}"));
-                            None
-                        }
-                    }
-                });
-                if change == AudioChange::Closed {
-                    slot_log(name, Level::Info, "audio: speaker closed");
-                }
-                // Reconcile the client's actual `lowmem` mode to the
-                // Music/SFX gate (toggle on = highmem): a lowmem spawn
-                // skipped the sound load, so flipping the toggle
-                // mid-session must re-run it live, not on the next
-                // respawn. `set_lowmem` is idempotent — per-frame is cheap.
-                c.set_lowmem(!audio.music_on(name));
-                if c.ingame
-                    && c.scene_state == 2
-                    && seed_on_first_world(c.last_login_reconnect)
-                    && mainland_sent.lock().unwrap().insert(name.to_string())
-                {
-                    if scatter.load(Ordering::Relaxed) {
-                        let t = scatter_template.as_ref().map_or_else(
-                            || host_play::scatter_tile_for(c.login_uid),
-                            |template| template.scatter_tile_for(c.login_uid),
+                        // Focused drawer owns ensure/drop; when focus is None
+                        // any remaining slot may release the shared sidecar.
+                        let flags_owner = is_focused || focused.is_none();
+                        publish_nav_debug(
+                            c,
+                            &world,
+                            route.as_ref(),
+                            here,
+                            &trail_world,
+                            run_on,
+                            click,
+                            &layers,
+                            active,
+                            flags_owner,
                         );
-                        api::interact::seed_at(c, t.level, t.x, t.z);
+                        let recorded = crate::nav_paint_cache::Facts {
+                            trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
+                            ..facts
+                        };
+                        nav_paint_cache.lock().unwrap().record(name, recorded);
+                    }
+                    if drawing && layers.camera_follow {
+                        apply_path_camera(c, route.as_ref(), here);
+                    }
+                }
+                None => {
+                    nav_paint_cache.lock().unwrap().invalidate(name);
+                    c.set_nav_debug_paint(None);
+                }
+            }
+            // Focused-slot speaker: at most one cpal speaker, fed by
+            // this slot's Client audio state (midi/waves/fade), gated
+            // on focus + the Music/SFX toggle — `lowmem` (toggle off)
+            // never opens cpal. The gate reconciles every frame; the
+            // open closure runs on this slot's thread.
+            let change = audio.frame(name, focused.as_deref(), || {
+                let now = Instant::now();
+                if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
+                    if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
+                        return None;
+                    }
+                }
+                match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
+                    Ok(out) => {
+                        *audio_fail.lock().unwrap() = None;
                         slot_log(
                             name,
                             Level::Info,
-                            &format!("scatter seed {} {} {}", t.level, t.x, t.z),
+                            &format!("audio: speaker open ({} Hz)", out.sample_rate),
                         );
-                    } else if mainland.load(Ordering::Relaxed) {
-                        api::interact::mainland_hop(c);
-                        slot_log(name, Level::Info, "mainland hop queued");
+                        Some(out)
+                    }
+                    Err(e) => {
+                        *audio_fail.lock().unwrap() = Some((name.to_string(), now));
+                        slot_log(name, Level::Warn, &format!("audio: {e}"));
+                        None
                     }
                 }
+            });
+            if change == AudioChange::Closed {
+                slot_log(name, Level::Info, "audio: speaker closed");
+            }
+            // Reconcile the client's actual `lowmem` mode to the
+            // Music/SFX gate (toggle on = highmem): a lowmem spawn
+            // skipped the sound load, so flipping the toggle
+            // mid-session must re-run it live, not on the next
+            // respawn. `set_lowmem` is idempotent — per-frame is cheap.
+            c.set_lowmem(!audio.music_on(name));
+            if c.ingame
+                && c.scene_state == 2
+                && seed_on_first_world(c.last_login_reconnect)
+                && mainland_sent.lock().unwrap().insert(name.to_string())
+            {
+                if scatter.load(Ordering::Relaxed) {
+                    let t = scatter_template.as_ref().map_or_else(
+                        || host_play::scatter_tile_for(c.login_uid),
+                        |template| template.scatter_tile_for(c.login_uid),
+                    );
+                    api::interact::seed_at(c, t.level, t.x, t.z);
+                    slot_log(
+                        name,
+                        Level::Info,
+                        &format!("scatter seed {} {} {}", t.level, t.x, t.z),
+                    );
+                } else if mainland.load(Ordering::Relaxed) {
+                    api::interact::mainland_hop(c);
+                    slot_log(name, Level::Info, "mainland hop queued");
+                }
+            }
 
-                // Shared `--live script_*` runner: tick the scenario's
-                // driven slot and its companion slots, before the
-                // local-player gate (seeding must observe frames with no
-                // player decode yet). Hold freezes scenario follow the
-                // same way `step_nav_bot` freezes (route stays latched).
-                if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                    if runner.drives(name) {
-                        if runner.wants_script_paint() {
-                            let paint = script_start_handle
-                                .lock()
-                                .unwrap()
-                                .as_ref()
-                                .and_then(|handle| handle.paint(name));
-                            if let Some(paint) = paint {
-                                runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                            }
+            // Shared `--live script_*` runner: tick the scenario's
+            // driven slot and its companion slots, before the
+            // local-player gate (seeding must observe frames with no
+            // player decode yet). Hold freezes scenario follow the
+            // same way `step_nav_bot` freezes (route stays latched).
+            if let Some(runner) = scenario.lock().unwrap().as_mut() {
+                if runner.drives(name) {
+                    if runner.wants_script_paint() {
+                        let paint = script_start_handle
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .and_then(|handle| handle.paint(name));
+                        if let Some(paint) = paint {
+                            runner.observe_script_paint(paint.lines.iter().map(String::as_str));
                         }
-                        let pump = live_start::fire_pending_catalog_start(
-                            &mut pending_script.lock().unwrap(),
-                            runner.on_start_script(),
-                            runner.on_stop_script(),
-                            || StartArming {
-                                handle: script_start_handle.lock().unwrap().clone(),
-                                catalog: catalog_core_watch.lock().unwrap().clone(),
-                                pair: paired_core_watch.lock().unwrap().clone(),
-                            },
-                        );
-                        match pump {
-                            live_start::StartScriptPump::Hold => {}
-                            live_start::StartScriptPump::CompiledFailed(error) => {
-                                runner.fail_start(&error);
+                    }
+                    let pump = live_start::fire_pending_catalog_start(
+                        &mut pending_script.lock().unwrap(),
+                        runner.on_start_script(),
+                        runner.on_stop_script(),
+                        || StartArming {
+                            handle: script_start_handle.lock().unwrap().clone(),
+                            catalog: catalog_core_watch.lock().unwrap().clone(),
+                            pair: paired_core_watch.lock().unwrap().clone(),
+                        },
+                    );
+                    match pump {
+                        live_start::StartScriptPump::Hold => {}
+                        live_start::StartScriptPump::CompiledFailed(error) => {
+                            runner.fail_start(&error);
+                        }
+                        live_start::StartScriptPump::Continue
+                        | live_start::StartScriptPump::CompiledRunning => {
+                            if pump == live_start::StartScriptPump::CompiledRunning {
+                                runner.observe_script_running();
                             }
-                            live_start::StartScriptPump::Continue
-                            | live_start::StartScriptPump::CompiledRunning => {
-                                if pump == live_start::StartScriptPump::CompiledRunning {
-                                    runner.observe_script_running();
-                                }
-                                if runner.on_stop_script() {
-                                    runner.observe_script_idle(
-                                        script_start_handle.lock().is_ok_and(|handle| {
-                                            handle.as_ref().is_some_and(|handle| handle.idle(name))
-                                        }),
+                            if runner.on_stop_script() {
+                                runner.observe_script_idle(script_start_handle.lock().is_ok_and(
+                                    |handle| {
+                                        handle.as_ref().is_some_and(|handle| handle.idle(name))
+                                    },
+                                ));
+                            }
+                            runner.tick_with_hold(c, hold);
+                            // A relog can enter Start on the final off-world frame.
+                            // Arm it now rather than after the reconnect posts colour.
+                            if runner.on_start_script() {
+                                if let Ok(mut pending) = pending_script.lock() {
+                                    let pump = live_start::fire_pending_catalog_start(
+                                        &mut pending,
+                                        true,
+                                        false,
+                                        || StartArming {
+                                            handle: script_start_handle
+                                                .lock()
+                                                .ok()
+                                                .and_then(|handle| handle.clone()),
+                                            catalog: catalog_core_watch
+                                                .lock()
+                                                .ok()
+                                                .and_then(|watch| watch.clone()),
+                                            pair: paired_core_watch
+                                                .lock()
+                                                .ok()
+                                                .and_then(|watch| watch.clone()),
+                                        },
                                     );
-                                }
-                                runner.tick_with_hold(c, hold);
-                                // A relog can enter Start on the final off-world frame.
-                                // Arm it now rather than after the reconnect posts colour.
-                                if runner.on_start_script() {
-                                    if let Ok(mut pending) = pending_script.lock() {
-                                        let pump = live_start::fire_pending_catalog_start(
-                                            &mut pending,
-                                            true,
-                                            false,
-                                            || StartArming {
-                                                handle: script_start_handle
-                                                    .lock()
-                                                    .ok()
-                                                    .and_then(|handle| handle.clone()),
-                                                catalog: catalog_core_watch
-                                                    .lock()
-                                                    .ok()
-                                                    .and_then(|watch| watch.clone()),
-                                                pair: paired_core_watch
-                                                    .lock()
-                                                    .ok()
-                                                    .and_then(|watch| watch.clone()),
-                                            },
-                                        );
-                                        match pump {
-                                            live_start::StartScriptPump::CompiledRunning => {
-                                                runner.observe_script_running();
-                                            }
-                                            live_start::StartScriptPump::CompiledFailed(error) => {
-                                                runner.fail_start(&error);
-                                            }
-                                            _ => {}
+                                    match pump {
+                                        live_start::StartScriptPump::CompiledRunning => {
+                                            runner.observe_script_running();
                                         }
+                                        live_start::StartScriptPump::CompiledFailed(error) => {
+                                            runner.fail_start(&error);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
                         }
-                    } else if let Some(index) = runner.companion_for(name) {
-                        runner.companion_tick(index, c);
                     }
+                } else if let Some(index) = runner.companion_for(name) {
+                    runner.companion_tick(index, c);
                 }
+            }
 
-                let (rx, rz) = match &c.local_player {
-                    Some(lp) => (lp.route_x[0], lp.route_z[0]),
-                    None => return,
-                };
-                let here = Tile {
-                    x: c.map_build_base_x + rx,
-                    z: c.map_build_base_z + rz,
-                    level: c.minusedlevel,
-                };
-                // Guardian hold freezes WalkArm follow; the armed route
-                // stays latched and resumes when hold lifts.
-                if !WalkArm::may_follow(hold) {
-                    return;
-                }
-                let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
-                    return;
-                };
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
-                        return;
-                    }
-                    latch.insert(name.to_string(), (c.gens.player, here));
-                }
-                let finished = {
-                    let states = nav_states.lock().unwrap();
-                    let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
-                        return;
-                    };
-                    let mut arm = arm.lock().unwrap();
-                    let world = crate::picker::pack();
-                    host_play::step_walk_arm_follow(
-                        c,
-                        snapshot,
-                        &mut arm,
-                        world.as_deref(),
-                        (here.x, here.z, here.level),
-                        map_members,
-                        Some(name),
-                    )
-                };
-                if finished {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
+            let (rx, rz) = match &c.local_player {
+                Some(lp) => (lp.route_x[0], lp.route_z[0]),
+                None => return,
             };
+            let here = Tile {
+                x: c.map_build_base_x + rx,
+                z: c.map_build_base_z + rz,
+                level: c.minusedlevel,
+            };
+            // Guardian hold freezes WalkArm follow; the armed route
+            // stays latched and resumes when hold lifts.
+            if !WalkArm::may_follow(hold) {
+                return;
+            }
+            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
+                return;
+            };
+            {
+                let mut latch = tick_latch.lock().unwrap();
+                if latch.get(name) == Some(&(c.gens.player, here)) {
+                    return;
+                }
+                latch.insert(name.to_string(), (c.gens.player, here));
+            }
+            let finished = {
+                let states = nav_states.lock().unwrap();
+                let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
+                    return;
+                };
+                let mut arm = arm.lock().unwrap();
+                let world = crate::picker::pack();
+                host_play::step_walk_arm_follow(
+                    c,
+                    snapshot,
+                    &mut arm,
+                    world.as_deref(),
+                    (here.x, here.z, here.level),
+                    map_members,
+                    Some(name),
+                )
+            };
+            if finished {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+        };
         let play = match self.validated_template.take() {
             Some(validated) => run_prepared_template(
                 validated,

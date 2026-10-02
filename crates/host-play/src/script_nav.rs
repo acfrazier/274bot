@@ -58,6 +58,8 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
+    pub(crate) cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) user_move_intent_seq: u64,
 }
 
 /// One navigator-named gate short of a failed walk: the `MissingReq::Carry`
@@ -109,6 +111,10 @@ pub(crate) struct NavBot {
     pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
+    /// Explicit loc identity; tile walks never infer it from scene contents.
+    pub(crate) route_loc_id: Option<i32>,
+    /// Arm-time estimate inputs: target in scene, footprint modeled.
+    pub(crate) route_loc_geometry: (bool, bool),
     /// Request exclusions retained for reconnect carry and retransmission gates.
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
@@ -144,6 +150,11 @@ pub(crate) struct NavBot {
     /// The published route end is frozen `'blocked'`
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
+    pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// Every qualifying human gesture, including when no route exists.
+    pub(crate) user_move_intent_seq: u64,
+    /// Requests based on an older outcome cannot reclaim movement ownership.
+    pub(crate) manual_takeover_watermark: u64,
     /// The navigator-named gate shorts of that same published outcome: set
     /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
     /// is, so a list can never outlive the failure it belongs to.
@@ -166,6 +177,8 @@ pub(crate) struct CarriedWalk {
     /// The script run it belongs to (`SlotScript::runtime_generation`): a
     /// Stop, Start or watchdog restart since the reconnect drops it.
     runtime_generation: u64,
+    /// Route generation before `hold_script_nav` ends the session's follow.
+    route_generation: u64,
     request: script::shim::InteractReq,
 }
 
@@ -424,6 +437,38 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             exclusions,
             Some(authority),
+            request.loc_id,
+        )
+    }
+
+    /// Re-find an estimated endpoint against newly observed live geometry
+    /// without replacing the owning script action. The caller removes the old
+    /// follow first and only calls this when no worker/bank session is active.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn refresh_route_in_snapshot(
+        &self,
+        snapshot: &GameSnapshot,
+        to: WorldTile,
+        radius: i32,
+        opts: FindOptions,
+        request_id: u64,
+        exclusions: ScriptRouteExclusions,
+        authority: Option<script::native::HostAuthority>,
+        loc_id: Option<i32>,
+    ) -> bool {
+        self.queue_route_impl(
+            to.x,
+            to.z,
+            to.level,
+            opts,
+            radius,
+            true,
+            request_id,
+            Some(snapshot),
+            RouteCompletion::default(),
+            exclusions,
+            authority,
+            loc_id,
         )
     }
 
@@ -527,6 +572,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             ScriptRouteExclusions::default(),
             None,
+            None,
         )
     }
 
@@ -562,6 +608,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             ScriptRouteExclusions::default(),
             None,
+            None,
         )
     }
 
@@ -587,6 +634,7 @@ impl ScriptWalkArm {
             None,
             RouteCompletion::default(),
             exclusions,
+            None,
             None,
         )
     }
@@ -616,6 +664,7 @@ impl ScriptWalkArm {
             RouteCompletion::default(),
             exclusions,
             None,
+            None,
         )
     }
 
@@ -631,6 +680,7 @@ impl ScriptWalkArm {
         radius: i32,
         retarget: bool,
         request_id: u64,
+        loc_id: Option<i32>,
     ) -> Option<std::sync::mpsc::Receiver<()>> {
         let (completion, receiver) = RouteCompletion::channel();
         self.queue_route_impl(
@@ -645,6 +695,7 @@ impl ScriptWalkArm {
             completion,
             ScriptRouteExclusions::default(),
             None,
+            loc_id,
         )
         .then_some(receiver)
     }
@@ -660,6 +711,7 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
         native: Option<&script::native::HostAuthority>,
+        loc_id: Option<i32>,
     ) -> Option<bool> {
         if native.is_some() && bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             // The owner cancelled or replaced its previous walk: that follow
@@ -687,6 +739,7 @@ impl ScriptWalkArm {
         }
         if bot.requested_route == Some(key)
             && bot.requested_exclusions.as_deref() == exclusions.as_deref()
+            && bot.route_loc_id == loc_id
             && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
@@ -729,6 +782,7 @@ impl ScriptWalkArm {
         completion: RouteCompletion,
         exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
+        loc_id: Option<i32>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -814,6 +868,7 @@ impl ScriptWalkArm {
                 retarget,
                 request_id,
                 authority.as_ref(),
+                loc_id,
             ) {
                 return result;
             }
@@ -822,10 +877,23 @@ impl ScriptWalkArm {
         // refusal/coalescing gates, but outside the process-wide nav mutex.
         // The second gate below closes the race with another arming thread.
         let live_candidates = if radius > 0 {
-            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to))
+            snapshot.and_then(|snapshot| {
+                loc_id.and_then(|id| loc_target_approach_tiles(snapshot, to, radius, id))
+            })
         } else {
             None
         };
+        let loc_geometry = (
+            loc_id.is_some()
+                && snapshot.is_some_and(|snapshot| {
+                    api::query::SceneQuery::new(snapshot.scene(), None).contains(to)
+                }),
+            snapshot.is_some_and(|snapshot| {
+                loc_id.is_some_and(|id| {
+                    api::query::loc_approach::arrived_at(snapshot, from, to, radius, id).is_some()
+                })
+            }),
+        );
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
@@ -838,6 +906,7 @@ impl ScriptWalkArm {
                 retarget,
                 request_id,
                 authority.as_ref(),
+                loc_id,
             ) {
                 return result;
             }
@@ -846,12 +915,23 @@ impl ScriptWalkArm {
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
             bot.walk_request_id = request_id;
-            // A host or legacy walk displacing a live native walk ends it
-            // visibly; the same owner's replaced walk is already revoked.
-            bot.end_native_walk(script::native::WalkEnd::Cancelled);
+            // A geometry refresh keeps the same live action and correlation;
+            // only a genuinely replacing request cancels the previous owner.
+            let same_owner = bot
+                .native_walk
+                .as_ref()
+                .zip(authority.as_ref())
+                .is_some_and(|(old, new)| {
+                    old.run() == new.run() && old.request_id() == new.request_id()
+                });
+            if !same_owner {
+                bot.end_native_walk(script::native::WalkEnd::Cancelled);
+            }
             bot.native_walk_blocked = None;
             bot.walk_outcome_detail = None;
             bot.requested_route = Some(key);
+            bot.route_loc_id = loc_id;
+            bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
             bot.native_walk_failure = None;
@@ -862,6 +942,7 @@ impl ScriptWalkArm {
                 from,
                 to,
                 radius,
+                loc_id,
                 opts,
                 state: self.state.clone(),
                 bank: self.bank.clone(),
@@ -949,7 +1030,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let started = debug.then(Instant::now);
-                let outcome = request.calculate();
+                let (outcome, targets) = request.calculate();
                 if debug {
                     let elapsed_ms = started.unwrap().elapsed().as_millis();
                     log_walk_arm(&name, || {
@@ -963,7 +1044,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let blocked = request
-                    .blocking_zones(&outcome)
+                    .blocking_zones(&outcome, &targets)
                     .filter(|keys| !keys.is_empty());
                 let route_detail = blocked
                     .as_ref()
@@ -994,7 +1075,7 @@ impl ScriptWalkArm {
                         compat_zone_no_route_line(table, keys)
                     );
                 }
-                let native_failure = request.native_failure(&outcome, blocked.as_deref());
+                let native_failure = request.native_failure(&outcome, blocked.as_deref(), &targets);
                 let native_refused =
                     native_failure == Some(script::native::WalkEnd::Refused);
                 let mut all = navs.lock().unwrap();
@@ -1087,83 +1168,40 @@ impl ScriptWalkArm {
     }
 }
 
-const MAX_LIVE_CANDIDATES: usize = 4;
-
-/// Fixed-capacity arm-time goals. The destination tile has at most four
-/// orthogonal arrival stands, so the worker receives only inline coordinates.
-#[derive(Clone, Copy)]
-pub(crate) struct LiveCandidates {
-    tiles: [WorldTile; MAX_LIVE_CANDIDATES],
-    len: usize,
-}
-
-impl LiveCandidates {
-    fn empty(fill: WorldTile) -> Self {
-        Self {
-            tiles: [fill; MAX_LIVE_CANDIDATES],
-            len: 0,
-        }
-    }
-
-    fn push_unique(&mut self, tile: WorldTile) {
-        if self.as_slice().contains(&tile) {
-            return;
-        }
-        debug_assert!(self.len < MAX_LIVE_CANDIDATES);
-        self.tiles[self.len] = tile;
-        self.len += 1;
-    }
-
-    fn as_slice(&self) -> &[WorldTile] {
-        &self.tiles[..self.len]
-    }
-}
-
-/// For an in-scene solid destination, capture the target tile's own legal
-/// cardinal sides. A modeled footprint loc additionally requires an operable
-/// side, so a 2x2 loc cannot send a radius-1 walk to its far perimeter.
-///
-/// This deliberately does not filter by the current-scene flood: a shut door,
-/// gate, scene edge, or transport can separate `from` from a legal stand while
-/// the baked graph can still route there. `None` keeps the sequential
-/// off-scene and standable-target policy; an empty or unroutable `Some`
-/// falls back to the same radius goal set in
-/// [`ScriptRouteRequest::calculate_solid`].
-fn solid_target_approach_tiles(snapshot: &GameSnapshot, to: WorldTile) -> Option<LiveCandidates> {
-    let scene = snapshot.scene();
-    let query = api::query::SceneQuery::new(scene, None);
-    if !query.contains(to) || query.walkable(to) {
+/// Legal full-footprint stands for the caller's explicitly identified live loc.
+/// Do not filter by the scene flood: the baked graph can cross a shut door.
+fn loc_target_approach_tiles(
+    snapshot: &GameSnapshot,
+    to: WorldTile,
+    radius: i32,
+    loc_id: i32,
+) -> Option<Vec<WorldTile>> {
+    let query = api::query::SceneQuery::new(snapshot.scene(), None);
+    if !query.contains(to) {
         return None;
     }
-
-    let mut cardinal = LiveCandidates::empty(to);
-    for tile in query.arrival_stands(to) {
-        cardinal.push_unique(tile);
-    }
-
-    let mut modeled = false;
-    let mut operable_cardinal = LiveCandidates::empty(to);
-    for loc in snapshot.locs().iter().filter(|loc| loc.tile == to) {
-        let Some(operable) = query.operable_tiles(loc) else {
-            continue;
-        };
-        modeled = true;
-        for &tile in cardinal.as_slice() {
-            if operable.contains(&tile) {
-                operable_cardinal.push_unique(tile);
-            }
-        }
-    }
-    Some(if modeled { operable_cardinal } else { cardinal })
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == to && loc.id == loc_id)?;
+    api::query::loc_approach::distance_from(loc, to)?;
+    let mut tiles = query.operable_tiles(loc)?;
+    tiles.retain(|stand| {
+        api::query::loc_approach::distance_from(loc, *stand)
+            .is_some_and(|distance| distance <= radius.clamp(0, 104) as u32)
+    });
+    Some(tiles)
 }
 
-/// Candidate destinations for an explicit radius request. Exact walks retain
-/// their old routing behavior. Bound enumeration to the loaded scene size.
+/// Anchor-radius destinations. Unknown/off-scene explicit locs need only a
+/// standable approach estimate; plain tile walks retain target-side filtering.
+/// Neither estimate admission nor scene proximity proves loc arrival.
 pub(crate) fn approach_tiles(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
     radius: i32,
+    estimate: bool,
 ) -> Vec<WorldTile> {
     let r = radius.clamp(0, 104);
     let mut tiles = Vec::new();
@@ -1179,9 +1217,14 @@ pub(crate) fn approach_tiles(
             }
         }
     }
-    if world.collision.standable(to) {
-        let connected = nav::router::local_step_component(&world.collision, to, r);
-        tiles.retain(|tile| connected.contains(tile));
+    if !estimate {
+        let collision = &world.collision;
+        api::query::retain_arrival_candidates(&mut tiles, to, r, |tile: WorldTile| {
+            let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+            let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+            ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+                .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+        });
     }
     tiles.sort_by_key(|t| {
         (
@@ -1201,41 +1244,51 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) from: WorldTile,
     pub(crate) to: WorldTile,
     pub(crate) radius: i32,
+    pub(crate) loc_id: Option<i32>,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Arm-time target-cardinal goals derived from the borrowed live scene.
-    /// `None` keeps the sequential radius policy; with `Some`, the radius
-    /// goal set is the fallback when no stand routes.
-    pub(crate) live_candidates: Option<LiveCandidates>,
+    /// Explicit live-loc footprint goals; otherwise use the plain anchor radius.
+    pub(crate) live_candidates: Option<Vec<WorldTile>>,
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
+    fn targets(&self) -> Vec<WorldTile> {
+        if self.radius <= 0 {
+            vec![self.to]
+        } else if let Some(stands) = self.live_candidates.as_ref() {
+            stands.clone()
+        } else {
+            approach_tiles(
+                &self.world,
+                self.from,
+                self.to,
+                self.radius,
+                self.loc_id.is_some(),
+            )
+        }
+    }
+
     fn avoid(&self) -> &[AvoidRect] {
         self.exclusions
             .as_deref()
             .map_or(&[][..], |exclusions| exclusions.avoid.as_slice())
     }
-    fn blocking_zones(&self, outcome: &RouteOutcome) -> Option<Vec<ZoneKey>> {
+    fn blocking_zones(
+        &self,
+        outcome: &RouteOutcome,
+        targets: &[WorldTile],
+    ) -> Option<Vec<ZoneKey>> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let mut targets = Vec::new();
-        if self.radius <= 0 {
-            targets.push(self.to);
-        } else {
-            if let Some(stands) = &self.live_candidates {
-                targets.extend_from_slice(stands.as_slice());
-            }
-            targets.extend(approach_tiles(&self.world, self.from, self.to, self.radius));
-        }
         let bank_targets = if self.radius <= 0 {
-            targets.as_slice()
+            targets
         } else {
             self.live_candidates
                 .as_ref()
@@ -1256,7 +1309,7 @@ impl ScriptRouteRequest {
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1339,6 +1392,7 @@ impl ScriptRouteRequest {
         &self,
         outcome: &RouteOutcome,
         blocked: Option<&[ZoneKey]>,
+        targets: &[WorldTile],
     ) -> Option<script::native::WalkEnd> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
@@ -1348,20 +1402,12 @@ impl ScriptRouteRequest {
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let mut targets = if self.radius <= 0 {
-            vec![self.to]
-        } else {
-            approach_tiles(&self.world, self.from, self.to, self.radius)
-        };
-        if let Some(stands) = &self.live_candidates {
-            targets.extend_from_slice(stands.as_slice());
-        }
         Some(
             match nav::router::find_unresolved_quest_gates(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1407,9 +1453,9 @@ impl ScriptRouteRequest {
             .collect()
     }
 
-    /// A solid in-scene target: its arrival stands, then the radius goal set
-    /// frozen PathFinder falls back to, in order: a strict route to a stand,
-    /// a BankBudget session to a stand, a strict route to a radius tile, a
+    /// A modeled live loc or an unmodeled solid: legal stands first, then an
+    /// optional wall-aware radius fallback for unmodeled solids only. In order: a strict route to a
+    /// stand, a BankBudget session to a stand, a strict route to a radius tile, a
     /// session to a radius tile. The strict search for the stands also
     /// answers for the tiles as a search over them alone would, where that
     /// needs no more settles ([`find_first_with_fallback`]: the tiles keep
@@ -1586,7 +1632,12 @@ impl ScriptRouteRequest {
         RouteOutcome::NoPath
     }
 
-    pub(crate) fn calculate(&self) -> RouteOutcome {
+    pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
+        let targets = self.targets();
+        (self.calculate_targets(&targets), targets)
+    }
+
+    fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         if self.radius <= 0 {
@@ -1601,27 +1652,32 @@ impl ScriptRouteRequest {
             );
         }
 
-        // Frozen PathFinder falls back to the radius goal set after the
-        // target-cardinal goals fail. Standable and off-scene destinations
-        // keep the old sequential policy over the same set.
-        let generated = approach_tiles(&self.world, self.from, self.to, self.radius);
-        match self.live_candidates.as_ref() {
-            Some(stands) => self.calculate_solid(stands.as_slice(), &generated, state),
-            None => {
-                if debug_enabled() {
-                    let slot = walk_arm_worker_slot();
-                    log_walk_arm(&slot, || {
-                        format!(
-                            "approach fallback dest={:?} r={} candidates={}",
-                            self.to,
-                            self.radius,
-                            generated.len()
-                        )
-                    });
-                }
-                self.calculate_in_order(&generated, state, "approach fallback")
-            }
+        // Only explicitly identified live footprints use operable stands.
+        // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
+        if let Some(stands) = self.live_candidates.as_ref() {
+            return self.calculate_solid(stands.as_slice(), &[], state);
         }
+        if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
+            let mut stands = [self.to; 4];
+            let mut len = 0;
+            for stand in api::query::arrival_stands(
+                self.to,
+                |stand| self.world.collision.standable(stand),
+                |stand| {
+                    Some(
+                        self.world
+                            .collision
+                            .walkable_word(stand.x, stand.z, stand.level)
+                            as i32,
+                    )
+                },
+            ) {
+                stands[len] = stand;
+                len += 1;
+            }
+            return self.calculate_solid(&stands[..len], targets, state);
+        }
+        self.calculate_in_order(targets, state, "approach estimate")
     }
 }
 impl NavBot {
@@ -1730,6 +1786,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1774,6 +1831,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1786,6 +1844,16 @@ impl NavBot {
     }
 
     pub(crate) fn clear_walk_outcome(&mut self) {
+        // AbortWalk is a release of the current operation, not a script-run
+        // boundary. Preserve its published UserInput terminal until an
+        // isolate observes it.
+        if self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput {
+            return;
+        }
+        self.reset_walk_outcome();
+    }
+
+    fn reset_walk_outcome(&mut self) {
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = false;
@@ -1799,9 +1867,105 @@ impl NavBot {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
         self.walk_missing_carry.clear();
+    }
+
+    pub(crate) fn walking_decision_is_current(&self, observed_seq: u64) -> bool {
+        observed_seq >= self.manual_takeover_watermark
+    }
+
+    /// Cancel active follow/work without sending anything over the human move.
+    /// Route generation fences every late route and bank completion.
+    pub(crate) fn cancel_for_manual_input(&mut self) {
+        let current = self
+            .requested_route
+            // A live outer family may outlast an already-settled route leg.
+            .filter(|_| {
+                self.walk_request_id != 0 && self.walk_outcome_request_id != self.walk_request_id
+            })
+            .map(|(to, radius, teleports, _, _, _)| {
+                (
+                    self.walk_request_id,
+                    to,
+                    radius,
+                    teleports,
+                    self.route_generation,
+                )
+            });
+        let carried = self.carried_walk.as_deref().and_then(|walk| {
+            let (request_id, to, radius, allow_teleports) = match &walk.request {
+                script::shim::InteractReq::Walk {
+                    x,
+                    z,
+                    level,
+                    allow_teleports,
+                    request_id,
+                    ..
+                } => (
+                    *request_id,
+                    WorldTile {
+                        x: *x,
+                        z: *z,
+                        level: *level,
+                    },
+                    0,
+                    *allow_teleports,
+                ),
+                script::shim::InteractReq::WalkNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                    allow_teleports,
+                    request_id,
+                    ..
+                } => (
+                    *request_id,
+                    WorldTile {
+                        x: *x,
+                        z: *z,
+                        level: *level,
+                    },
+                    *radius,
+                    *allow_teleports,
+                ),
+                _ => return None,
+            };
+            Some((
+                request_id,
+                to,
+                radius,
+                allow_teleports,
+                walk.route_generation,
+            ))
+        });
+        let identity = current.or(carried);
+        let native_owner = self.native_walk.is_some();
+        super::script_walk::abort_walk_on_bot_with_end(self, script::native::WalkEnd::UserInput);
+        // Route-less walking families still advance the dispatch fence, but
+        // cannot manufacture a correlated receipt for legacy request id zero.
+        self.bump_walk_outcome_seq();
+        self.manual_takeover_watermark = self.walk_outcome_seq;
+        if let Some((request_id, to, radius, teleports, generation)) =
+            identity.filter(|(request_id, ..)| *request_id != 0)
+        {
+            self.walk_outcome_generation = generation;
+            self.walk_outcome_request_id = request_id;
+            self.walk_outcome_failed = true;
+            self.walk_outcome_blocked = false;
+            self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+            self.walk_outcome_x = to.x;
+            self.walk_outcome_z = to.z;
+            self.walk_outcome_level = to.level;
+            self.walk_outcome_radius = radius;
+            self.walk_outcome_allow_teleports = teleports;
+            // Native terminals travel directly to their typed owner; this
+            // isolate-only guard has no compiled-slot release path.
+            self.walk_live_refusal_id = if native_owner { 0 } else { request_id };
+        }
     }
 
     /// Whether a script walk is armed, in flight or following.
@@ -1914,7 +2078,7 @@ impl NavBot {
 pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
         end_route_follow(nav);
-        nav.clear_walk_outcome();
+        nav.reset_walk_outcome();
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
         nav.carried_walk = None;
@@ -1943,6 +2107,7 @@ pub(crate) fn hold_script_nav(
     carry: Option<u64>,
 ) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
+        let route_generation = nav.route_generation;
         // A duel's screens belong to the dropped connection.
         nav.duel_offer_partner = None;
         let armed = nav.route.is_some()
@@ -1954,6 +2119,7 @@ pub(crate) fn hold_script_nav(
             // A nearest-bank walk still choosing its bank: re-ask for it.
             nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
+                route_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
             }));
         } else if let (Some(runtime_generation), true, Some(requested), None) =
@@ -2002,6 +2168,7 @@ pub(crate) fn hold_script_nav(
             };
             nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
+                route_generation,
                 request,
             }));
         }

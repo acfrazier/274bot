@@ -595,6 +595,7 @@ impl ProfileSelection {
             content_id: cache_id.clone(),
             file_store_dir: runtime_cache.as_ref().and_then(|p| p.store_dir.clone()),
             ondemand_persist_dir: runtime_cache.as_ref().map(|p| p.persist_dir.clone()),
+            map_archive: runtime_cache.as_ref().map(|p| Arc::clone(&p.map_archive)),
         })?);
         let (game_data, game_data_status) = self.attach_game_data(runtime, &cache_id)?;
         if runtime && !game_data_status.is_attached() {

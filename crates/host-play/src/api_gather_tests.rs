@@ -496,12 +496,17 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     let receiver_generation = receiver.slot().lock().unwrap().runtime_generation();
     let receiver_channel_id = receiver_rows
         .iter()
-        .find_map(|row| match row {
+        .find_map(|row| match &row.req {
             InteractReq::ChannelOpen { channel_id, .. } => Some(*channel_id),
             _ => None,
         })
         .expect("real receiver opens its channel");
-    peers[0].pump(receiver_generation, BrokerWorld::Local, true, receiver_rows);
+    peers[0].pump(
+        receiver_generation,
+        BrokerWorld::Local,
+        true,
+        receiver_rows.into_iter().map(|queued| queued.req).collect(),
+    );
     for (id, peer) in (11..).zip(&peers[1..]) {
         peer.pump(
             1,
@@ -612,7 +617,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         rig.slot().lock().unwrap().runtime_generation(),
         BrokerWorld::Local,
         true,
-        rows,
+        rows.into_iter().map(|queued| queued.req).collect(),
     );
     let after_close = peers[0].pump(
         receiver_generation,
@@ -1103,7 +1108,10 @@ impl GatherReconnectRig {
         let mut slot = cell.lock().unwrap();
         let (policy, requests, owned) = drain_observed_host_interacts(&mut slot);
         assert!(policy.is_none(), "fixture emits no run-policy update");
-        (requests, owned)
+        (
+            requests.into_iter().map(|queued| queued.req).collect(),
+            owned,
+        )
     }
 
     fn reconnect(&self) {

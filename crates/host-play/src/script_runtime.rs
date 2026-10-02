@@ -21,6 +21,7 @@ mod script_walk;
 pub(super) use script_walk::apply_nav_follow_outcome;
 pub(super) use script_walk::{
     abort_script_walk, pause_script, session_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
+    take_manual_walk_ownership,
 };
 use script_walk::{apply_watchdog_nav_action, recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]

@@ -80,6 +80,8 @@ fn base_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }
 
@@ -885,4 +887,163 @@ export default class T extends LoopingBot {
         n >= 3,
         "walkWithHops pumps Sustain.run like walkResilient; got {fed:?}"
     );
+}
+
+#[test]
+fn manual_takeover_does_not_run_old_sustain_callbacks() {
+    for (walk, expected) in [
+        (
+            "Traversal.walkResilient({ x: 2820, z: 3556, level: 0 }, { radius: 1 })",
+            serde_json::json!(false),
+        ),
+        (
+            "Traversal.walkTo({ x: 2820, z: 3556, level: 0 }, { radius: 1 })",
+            serde_json::json!(false),
+        ),
+        (
+            "createReturnToAnchorTask({ getAnchor: () => new Tile(2820, 3556, 0), leashRadius: () => 8 }, { arriveRadius: 1 }).execute()",
+            serde_json::json!("void"),
+        ),
+    ] {
+        let src = format!(
+            r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+import {{ Sustain }} from '../../api/sustain/Sustain.js';
+import {{ createReturnToAnchorTask }} from '../../api/tasks/Anchor.js';
+import Tile from '../../geometry/Tile.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__fed = 0;
+        Sustain.set(() => {{ globalThis.__fed += 1; }});
+        const result = await {walk};
+        globalThis.__result = result === undefined ? 'void' : result;
+    }}
+}}
+"#
+        );
+        let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+        let (initial, fingerprint) = encode_snapshot_delta_with_native(
+            None,
+            &base_snapshot(1, far()),
+            NativeFactsInput::default(),
+            false,
+        );
+        iso.post_snapshot(initial);
+        iso.on_game_tick(1);
+        let fed_before = iso.probe("__fed").unwrap();
+        let request_id = match iso.drain_interacts().as_slice() {
+            [InteractReq::WalkNear { request_id, .. }] => *request_id,
+            other => panic!("active walk expected for {walk}: {other:?}"),
+        };
+        assert!(iso.live_walking_operation(), "{walk}");
+
+        let mut manual = base_snapshot(2, far());
+        manual.user_move_intent_seq = 1;
+        let (manual, _) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &manual,
+            NativeFactsInput::default(),
+            false,
+        );
+        iso.post_snapshot(manual);
+        iso.on_game_tick(2);
+        let fed_after = iso.probe("__fed").unwrap();
+        let result = iso.probe("__result").unwrap();
+        let release = iso.drain_interacts();
+        iso.join();
+
+        assert_eq!(
+            fed_after, fed_before,
+            "the interrupted {walk} must not run Sustain before yielding"
+        );
+        assert_eq!(result, expected, "{walk}");
+        assert_eq!(release, vec![InteractReq::AbortWalk { request_id }]);
+    }
+}
+
+#[test]
+fn a_new_outcome_delta_clears_user_input_reason_for_the_next_walk() {
+    let source = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__first = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 }, { radius: 1 });
+        globalThis.__second = await Traversal.walkTo(
+            { x: 2828, z: 3555, level: 0 }, { radius: 1 });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let (initial, fingerprint) = encode_snapshot_delta_with_native(
+        None,
+        &base_snapshot(1, far()),
+        NativeFactsInput::default(),
+        false,
+    );
+    iso.post_snapshot(initial);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let first_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("first walk expected: {other:?}"),
+    };
+    let mut manual = base_snapshot(2, far());
+    manual.user_move_intent_seq = 1;
+    manual.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+    let (cancelled, fingerprint) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &manual,
+        fail_native(1, 1, first_id, 2820, 3556, 1),
+        false,
+    );
+    iso.post_snapshot(cancelled);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    let second_id = iso
+        .drain_interacts()
+        .iter()
+        .find_map(|request| match request {
+            InteractReq::WalkNear { request_id, .. } if *request_id != first_id => {
+                Some(*request_id)
+            }
+            _ => None,
+        })
+        .expect("a fresh decision after observing takeover starts the next walk");
+    let arrived = TileInput {
+        x: 2828,
+        z: 3555,
+        level: 0,
+    };
+    let mut input = base_snapshot(3, arrived);
+    input.user_move_intent_seq = 1;
+    let (completed, _) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &input,
+        NativeFactsInput {
+            walk_outcome_seq: 2,
+            walk_outcome_generation: 2,
+            walk_outcome_request_id: second_id,
+            walk_outcome_x: arrived.x,
+            walk_outcome_z: arrived.z,
+            walk_outcome_level: arrived.level,
+            walk_outcome_radius: 1,
+            ..NativeFactsInput::default()
+        },
+        false,
+    );
+    iso.post_snapshot(completed);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert_eq!(
+        iso.probe("globalThis.__rs2b0t_host.snapshot.walk_outcome_cancel_reason")
+            .unwrap(),
+        "none",
+        "the new outcome replaces the cancellation reason through the delta wire"
+    );
+    iso.join();
 }

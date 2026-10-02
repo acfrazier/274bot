@@ -1084,6 +1084,7 @@ fn test_route() -> nav::router::Route {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: wt(3, 0),
                     to: wt(4, 0),
                     loc_id: 1530,

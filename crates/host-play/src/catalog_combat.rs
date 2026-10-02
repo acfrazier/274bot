@@ -1,21 +1,42 @@
 use super::*;
+use std::sync::LazyLock;
+
+static DEPOSIT_BONES: LazyLock<[i32; 1]> = LazyLock::new(|| [catalog_item_id("bones")]);
+static DEPOSIT_BIG_BONES_LIMPWURT: LazyLock<[i32; 2]> = LazyLock::new(|| {
+    [
+        catalog_item_id("big_bones"),
+        catalog_item_id("limpwurt_root"),
+    ]
+});
+static DEPOSIT_LOBSTER: LazyLock<[i32; 1]> = LazyLock::new(|| [catalog_item_id("lobster")]);
+static DEPOSIT_SAPPHIRE_CASKET: LazyLock<[i32; 2]> =
+    LazyLock::new(|| [catalog_item_id("uncut_sapphire"), catalog_item_id("casket")]);
+static DEPOSIT_DRAGON_BONES_HIDE: LazyLock<[i32; 2]> = LazyLock::new(|| {
+    [
+        catalog_item_id("dragon_bones"),
+        catalog_item_id("dragonhide_green"),
+    ]
+});
+static DEPOSIT_DRAGONHIDE: LazyLock<[i32; 1]> =
+    LazyLock::new(|| [catalog_item_id("dragonhide_green")]);
+static DEPOSIT_BIG_BONES: LazyLock<[i32; 1]> = LazyLock::new(|| [catalog_item_id("big_bones")]);
 /// Bank-only MossGiant dart Start. Worn-gear combat_baseline_ready(Ranged) is
 /// the wrong predicate here: the script has to withdraw and equip 806.
 pub fn moss_giant_dart_baseline_ready(baseline: &Observation) -> bool {
     let bank_ready = baseline.bank_open
         && baseline.bank_loaded
-        && baseline.bank_item_id(BRONZE_DART_ID) == MOSS_GIANT_DART_SUPPLY
-        && baseline.bank_item_id(LOBSTER_ID) == MOSS_GIANT_DART_BANK_FOOD;
+        && baseline.bank_item_id(catalog_item_id("bronze_dart")) == MOSS_GIANT_DART_SUPPLY
+        && baseline.bank_item_id(catalog_item_id("lobster")) == MOSS_GIANT_DART_BANK_FOOD;
     near(baseline.tile, MOSS_GIANT_BANK, 2)
         && empty_pack(baseline)
         && empty_worn(baseline)
         && baseline.level("ranged") >= MOSS_GIANT_DART_RANGED
         && baseline.level("defence") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
-        && held_id(baseline, BRONZE_DART_ID) == 0
-        && held_id(baseline, RUNE_ARROW_ID) == 0
-        && baseline.item_id(LOBSTER_ID) == 0
-        && baseline.bank_item_id(RUNE_ARROW_ID) == 0
+        && held_id(baseline, catalog_item_id("bronze_dart")) == 0
+        && held_id(baseline, catalog_item_id("rune_arrow")) == 0
+        && baseline.item_id(catalog_item_id("lobster")) == 0
+        && baseline.bank_item_id(catalog_item_id("rune_arrow")) == 0
         && bank_ready
 }
 #[derive(Debug, Clone, Copy)]
@@ -90,9 +111,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Chaos druid",
             stand: CHAOS_DRUID_FIELD,
             radius: 14,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: CHAOS_DRUID_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
@@ -105,9 +126,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Chaos druid",
             stand: CHAOS_DRUID_TOWER_FIELD,
             radius: 4,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: CHAOS_DRUID_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
@@ -120,9 +141,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Chaos druid warrior",
             stand: CHAOS_DRUID_YANILLE_FIELD,
             radius: 8,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: CHAOS_DRUID_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
@@ -133,9 +154,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Moss giant",
             stand: MOSS_GIANT_SAFESPOT,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: MOSS_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
@@ -146,9 +167,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Moss giant",
             stand: MOSS_GIANT_SAFESPOT,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: MOSS_GIANT_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
@@ -161,22 +182,22 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Moss giant",
             stand: MOSS_GIANT_SAFESPOT,
             radius: MOSS_GIANT_DART_FIELD_RADIUS,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: 0,
-            weapon_id: BRONZE_DART_ID,
+            weapon_id: catalog_item_id("bronze_dart"),
             style: CombatStyleWitness::Ranged,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
-            projectile: Some(BRONZE_DART_ID),
+            projectile: Some(catalog_item_id("bronze_dart")),
             consumable: CombatConsumable::None,
         }),
         CoreCase::HillGiant => Some(CombatSpec {
             target: "Giant",
             stand: HILL_GIANT_PIT,
             radius: 16,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: HILL_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBonesOrLimpwurt,
             extra: CombatExtra::DungeonKey,
@@ -187,9 +208,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 8,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: AUTO_FIGHTER_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
@@ -200,9 +221,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 8,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: AUTO_FIGHTER_FOOD,
-            weapon_id: STAFF_OF_FIRE_ID,
+            weapon_id: catalog_item_id("staff_of_fire"),
             style: CombatStyleWitness::FireStrike,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
@@ -216,22 +237,22 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 8,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: AUTO_FIGHTER_FOOD,
-            weapon_id: MAPLE_SHORTBOW_ID,
+            weapon_id: catalog_item_id("maple_shortbow"),
             style: CombatStyleWitness::Ranged,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
-            projectile: Some(BRONZE_ARROW_ID),
+            projectile: Some(catalog_item_id("bronze_arrow")),
             consumable: CombatConsumable::None,
         }),
         CoreCase::RockCrab => Some(CombatSpec {
             target: "Rock Crab",
             stand: ROCK_CRAB_SAFE_STAND,
             radius: 2,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: ROCK_CRAB_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::RockActivation,
@@ -244,22 +265,22 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Rock Crab",
             stand: ROCK_CRAB_SAFE_STAND,
             radius: 2,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: ROCK_CRAB_FOOD,
-            weapon_id: MAPLE_SHORTBOW_ID,
+            weapon_id: catalog_item_id("maple_shortbow"),
             style: CombatStyleWitness::Ranged,
             loot: CombatLoot::None,
             extra: CombatExtra::RockActivation,
-            projectile: Some(BRONZE_ARROW_ID),
+            projectile: Some(catalog_item_id("bronze_arrow")),
             consumable: CombatConsumable::None,
         }),
         CoreCase::GreenDragon | CoreCase::GreenDragonPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_BASE_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
             extra: CombatExtra::WornShield,
@@ -272,9 +293,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_FOOD,
-            weapon_id: STAFF_OF_FIRE_ID,
+            weapon_id: catalog_item_id("staff_of_fire"),
             style: CombatStyleWitness::FireStrike,
             loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
@@ -287,9 +308,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_FOOD,
-            weapon_id: DRAGON_DAGGER_ID,
+            weapon_id: catalog_item_id("dragon_dagger"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
@@ -302,9 +323,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
@@ -315,9 +336,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Fire giant",
             stand: FIRE_GIANT_ROOM,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: FIRE_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
@@ -328,9 +349,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Fire giant",
             stand: FIRE_GIANT_ROOM,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: FIRE_GIANT_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
@@ -341,9 +362,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 12,
-            food_id: CAKE_ID,
+            food_id: catalog_item_id("cake"),
             food_count: 0,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::StolenFood,
@@ -363,9 +384,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 8,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: AUTO_FIGHTER_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::Bones,
             extra: CombatExtra::None,
@@ -376,9 +397,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Moss giant",
             stand: MOSS_GIANT_SAFESPOT,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: MOSS_GIANT_BANK_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
@@ -389,9 +410,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Giant",
             stand: HILL_GIANT_PIT,
             radius: 16,
-            food_id: TROUT_ID,
+            food_id: catalog_item_id("trout"),
             food_count: HILL_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBonesOrLimpwurt,
             extra: CombatExtra::DungeonKey,
@@ -402,9 +423,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Chaos druid",
             stand: CHAOS_DRUID_FIELD,
             radius: 14,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: CHAOS_DRUID_BANK_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
@@ -415,9 +436,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
             radius: 12,
-            food_id: CAKE_ID,
+            food_id: catalog_item_id("cake"),
             food_count: 0,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             // The card's own DEFAULT_LOOT is already the Guard-reachable
             // names; `bankEveryItems=1` ends the trip on the first of those
@@ -433,9 +454,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Rock Crab",
             stand: ROCK_CRAB_SAFE_STAND,
             radius: 2,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: ROCK_CRAB_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::SapphireOrCasket,
             extra: CombatExtra::RockActivation,
@@ -446,9 +467,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
             extra: CombatExtra::WornShield,
@@ -459,9 +480,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_BANK_PREPARED_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
             extra: CombatExtra::WornShield,
@@ -472,9 +493,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_BANK_PREPARED_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesAndHide,
             extra: CombatExtra::WornShield,
@@ -488,9 +509,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: GREEN_DRAGON_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
@@ -501,9 +522,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: 0,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
@@ -514,9 +535,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Fire giant",
             stand: FIRE_GIANT_RAFT,
             radius: 5,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: FIRE_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::DungeonApproach,
@@ -527,9 +548,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Fire giant",
             stand: FIRE_GIANT_ROOM,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: FIRE_GIANT_FOOD,
-            weapon_id: ADAMANT_SCIMITAR_ID,
+            weapon_id: catalog_item_id("adamant_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
@@ -540,9 +561,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Fire giant",
             stand: FIRE_GIANT_ROOM,
             radius: 10,
-            food_id: LOBSTER_ID,
+            food_id: catalog_item_id("lobster"),
             food_count: FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
-            weapon_id: RUNE_SCIMITAR_ID,
+            weapon_id: catalog_item_id("rune_scimitar"),
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
@@ -595,10 +616,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // is off, so the pack only ever holds Bones because a Guard dropped
         // them and the script looted them.
         CoreCase::AutoFighterBank => Some(CombatBankSpec {
-            deposit: &[BONES_ID],
+            deposit: &DEPOSIT_BONES[..],
             stand: ARDOUGNE_EAST_BANK,
             stand_radius: 6,
-            restock: Some(TROUT_ID),
+            restock: Some(catalog_item_id("trout")),
             restock_count: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
@@ -611,10 +632,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // Script-owned Ardougne West trip: deposits everything but
         // food/runes/ammo/weapon and withdraws lobster back to the safespot.
         CoreCase::MossGiantBank => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            deposit: &DEPOSIT_BIG_BONES_LIMPWURT[..],
             stand: MOSS_GIANT_BANK,
             stand_radius: 6,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: MOSS_GIANT_SAFESPOT,
             ret_radius: 6,
@@ -626,10 +647,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         }),
         // Always-on trip end: Varrock West keeps only trout and the Brass key.
         CoreCase::HillGiantBank => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            deposit: &DEPOSIT_BIG_BONES_LIMPWURT[..],
             stand: HILL_GIANT_BANK,
             stand_radius: 6,
-            restock: Some(TROUT_ID),
+            restock: Some(catalog_item_id("trout")),
             restock_count: None,
             ret: HILL_GIANT_PIT,
             ret_radius: 16,
@@ -640,10 +661,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             forbid_death: false,
         }),
         CoreCase::HillGiantBankPrepared => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            deposit: &DEPOSIT_BIG_BONES_LIMPWURT[..],
             stand: HILL_GIANT_BANK,
             stand_radius: 6,
-            restock: Some(TROUT_ID),
+            restock: Some(catalog_item_id("trout")),
             restock_count: Some(HILL_GIANT_BANK_PREPARED_RESTOCK),
             ret: HILL_GIANT_PIT,
             ret_radius: 16,
@@ -656,10 +677,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // Edgeville trip end: `depositInventory` empties the pack, then the
         // card withdraws exactly its food back and returns through the trapdoor.
         CoreCase::ChaosDruidBank => Some(CombatBankSpec {
-            deposit: &[LOBSTER_ID],
+            deposit: &DEPOSIT_LOBSTER[..],
             stand: CHAOS_DRUID_BANK,
             stand_radius: 6,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: CHAOS_DRUID_FIELD,
             ret_radius: 14,
@@ -674,7 +695,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // food restock (the Baker's stall is this card's food). The class
         // only ever enters the pack as a Guard drop.
         CoreCase::ArdyFighterBank => Some(CombatBankSpec {
-            deposit: &GUARD_DROP_IDS,
+            deposit: &GUARD_DROP_IDS[..],
             stand: ARDY_BANK,
             stand_radius: 6,
             restock: None,
@@ -691,7 +712,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // loot and returns to `currentSpot()`; it does not restock food
         // (`BankRun` is the food-gone restock, a different trip).
         CoreCase::RockCrabBank => Some(CombatBankSpec {
-            deposit: &[UNCUT_SAPPHIRE_ID, CASKET_ID],
+            deposit: &DEPOSIT_SAPPHIRE_CASKET[..],
             stand: SEERS_BANK,
             stand_radius: 6,
             restock: None,
@@ -707,10 +728,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // GreenDragon BankRun to Edgeville: deposit except keep-list, withdraw
         // food to `foodWithdraw` 20, walk back past the ditch.
         CoreCase::GreenDragonBank | CoreCase::GreenDragonBankPrepared => Some(CombatBankSpec {
-            deposit: &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID],
+            deposit: &DEPOSIT_DRAGON_BONES_HIDE[..],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
@@ -721,10 +742,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             forbid_death: false,
         }),
         CoreCase::GreenDragonBankDefaultPrepared => Some(CombatBankSpec {
-            deposit: &[GREEN_DRAGONHIDE_ID],
+            deposit: &DEPOSIT_DRAGONHIDE[..],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK),
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
@@ -740,7 +761,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             deposit: &[],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
@@ -754,7 +775,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             deposit: &[],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
@@ -766,10 +787,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         }),
         // Barrel exit to (2527,3413,0) then Ardougne West restock and re-entry.
         CoreCase::FireGiantBank => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID],
+            deposit: &DEPOSIT_BIG_BONES[..],
             stand: FIRE_GIANT_BANK,
             stand_radius: 6,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: None,
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
@@ -780,10 +801,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             forbid_death: false,
         }),
         CoreCase::FireGiantBankPrepared => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID],
+            deposit: &DEPOSIT_BIG_BONES[..],
             stand: FIRE_GIANT_BANK,
             stand_radius: 6,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: Some(FIRE_GIANT_BANK_PREPARED_RESTOCK),
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
@@ -796,10 +817,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // Source-specific Camelot escape: land + Magic XP, then Seers restock.
         // The Seers endpoint alone is not this via.
         CoreCase::FireGiantCamelotPrepared => Some(CombatBankSpec {
-            deposit: &[BIG_BONES_ID],
+            deposit: &DEPOSIT_BIG_BONES[..],
             stand: SEERS_BANK,
             stand_radius: 6,
-            restock: Some(LOBSTER_ID),
+            restock: Some(catalog_item_id("lobster")),
             restock_count: Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK),
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
@@ -815,22 +836,22 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
 
 pub fn combat_noted(observation: &Observation) -> bool {
     noted_herb_id_held(observation)
-        || observation.item_id(NOTED_BIG_BONES_ID) > 0
-        || observation.bank_item_id(NOTED_BIG_BONES_ID) > 0
-        || observation.item_id(NOTED_LIMPWURT_ROOT_ID) > 0
-        || observation.bank_item_id(NOTED_LIMPWURT_ROOT_ID) > 0
-        || observation.item_id(NOTED_BONES_ID) > 0
-        || observation.bank_item_id(NOTED_BONES_ID) > 0
-        || observation.item_id(NOTED_DRAGON_BONES_ID) > 0
-        || observation.bank_item_id(NOTED_DRAGON_BONES_ID) > 0
-        || observation.item_id(NOTED_GREEN_DRAGONHIDE_ID) > 0
-        || observation.bank_item_id(NOTED_GREEN_DRAGONHIDE_ID) > 0
-        || observation.item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
-        || observation.bank_item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
-        || observation.item_id(NOTED_CASKET_ID) > 0
-        || observation.bank_item_id(NOTED_CASKET_ID) > 0
-        || observation.item_id(NOTED_UNCUT_SAPPHIRE_ID) > 0
-        || observation.bank_item_id(NOTED_UNCUT_SAPPHIRE_ID) > 0
+        || observation.item_id(catalog_item_id("cert_big_bones")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_big_bones")) > 0
+        || observation.item_id(catalog_item_id("cert_limpwurt_root")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_limpwurt_root")) > 0
+        || observation.item_id(catalog_item_id("cert_bones")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_bones")) > 0
+        || observation.item_id(catalog_item_id("cert_dragon_bones")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_dragon_bones")) > 0
+        || observation.item_id(catalog_item_id("cert_dragonhide_green")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_dragonhide_green")) > 0
+        || observation.item_id(catalog_item_id("cert_antidragonbreathshield")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_antidragonbreathshield")) > 0
+        || observation.item_id(catalog_item_id("cert_casket")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_casket")) > 0
+        || observation.item_id(catalog_item_id("cert_uncut_sapphire")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_uncut_sapphire")) > 0
         || noted_stall_food(observation) > 0
 }
 
@@ -846,8 +867,8 @@ pub fn noted_herb_id_held(observation: &Observation) -> bool {
 pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
     match loot {
         CombatLoot::HerbLawNature => {
-            observation.item_id(NATURE_RUNE_ID)
-                + observation.item_id(LAW_RUNE_ID)
+            observation.item_id(catalog_item_id("naturerune"))
+                + observation.item_id(catalog_item_id("lawrune"))
                 + observation
                     .item_ids
                     .iter()
@@ -855,20 +876,23 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
                     .map(|(_, count)| *count)
                     .sum::<i32>()
         }
-        CombatLoot::BigBones => observation.item_id(BIG_BONES_ID),
+        CombatLoot::BigBones => observation.item_id(catalog_item_id("big_bones")),
         CombatLoot::BigBonesOrLimpwurt => {
-            observation.item_id(BIG_BONES_ID) + observation.item_id(LIMPWURT_ROOT_ID)
+            observation.item_id(catalog_item_id("big_bones"))
+                + observation.item_id(catalog_item_id("limpwurt_root"))
         }
         CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
-            observation.item_id(DRAGON_BONES_ID) + observation.item_id(GREEN_DRAGONHIDE_ID)
+            observation.item_id(catalog_item_id("dragon_bones"))
+                + observation.item_id(catalog_item_id("dragonhide_green"))
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS
             .iter()
             .map(|id| observation.item_id(*id))
             .sum(),
-        CombatLoot::Bones => observation.item_id(BONES_ID),
+        CombatLoot::Bones => observation.item_id(catalog_item_id("bones")),
         CombatLoot::SapphireOrCasket => {
-            observation.item_id(UNCUT_SAPPHIRE_ID) + observation.item_id(CASKET_ID)
+            observation.item_id(catalog_item_id("uncut_sapphire"))
+                + observation.item_id(catalog_item_id("casket"))
         }
         CombatLoot::None => 0,
     }
@@ -893,8 +917,8 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
                 && baseline.effective_level("magic") >= AUTO_FIGHTER_MAGE_LEVEL
                 && baseline.equipment_id(spec.weapon_id) == 1
                 && baseline.item_id(spec.weapon_id) == 0
-                && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
-                && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
+                && baseline.item_id(catalog_item_id("mindrune")) == AUTO_FIGHTER_MAGE_CASTS
+                && baseline.item_id(catalog_item_id("airrune")) == AUTO_FIGHTER_MAGE_AIR_RUNES
         }
         // Both ranged pieces worn: the bow in the weapon slot and the projectile
         // stack in the ammo slot the source fires from.
@@ -909,24 +933,24 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
     let extra_ok = match spec.extra {
         CombatExtra::None => true,
         CombatExtra::RockActivation => baseline.dormant_rocks_seen,
-        CombatExtra::DungeonKey => baseline.item_id(BRASS_KEY_ID) == 1,
+        CombatExtra::DungeonKey => baseline.item_id(catalog_item_id("edgevilledungeonkey")) == 1,
         CombatExtra::WornShield => {
-            baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+            baseline.equipment_id(catalog_item_id("antidragonbreathshield")) == 1
                 && baseline.tile.is_some_and(|tile| tile.1 >= WILDERNESS_MIN_Z)
         }
         CombatExtra::DungeonAmulet => {
-            held_id(baseline, GLARIALS_AMULET_ID) >= 1
-                && held_id(baseline, ROPE_ID) >= 1
+            held_id(baseline, catalog_item_id("glarials_amulet_waterfall_quest")) >= 1
+                && held_id(baseline, catalog_item_id("rope")) >= 1
                 && baseline.tile.is_some_and(|tile| tile.1 >= DUNGEON_MIN_Z)
         }
         CombatExtra::StolenFood => {
             baseline.level("thieving") >= 5
                 && stall_food(baseline) == 0
-                && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+                && baseline.item_id(catalog_item_id("chocolate_cake")) == 0
         }
         CombatExtra::DungeonApproach => {
-            held_id(baseline, GLARIALS_AMULET_ID) >= 1
-                && held_id(baseline, ROPE_ID) >= 1
+            held_id(baseline, catalog_item_id("glarials_amulet_waterfall_quest")) >= 1
+                && held_id(baseline, catalog_item_id("rope")) >= 1
                 && baseline.tile.is_some_and(|tile| tile.1 < DUNGEON_MIN_Z)
         }
     };
@@ -940,10 +964,10 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
                 && baseline.varp(SA_ARMED_VARP) != SA_ARMED_VALUE
         }
         CombatConsumable::Potions => {
-            baseline.item_id(SUPER_ATTACK_3_ID) >= 1
-                && baseline.item_id(SUPER_ATTACK_2_ID) == 0
-                && baseline.item_id(SUPER_STRENGTH_3_ID) >= 1
-                && baseline.item_id(SUPER_STRENGTH_2_ID) == 0
+            baseline.item_id(catalog_item_id("3dose2attack")) >= 1
+                && baseline.item_id(catalog_item_id("2dose2attack")) == 0
+                && baseline.item_id(catalog_item_id("3dose2strength")) >= 1
+                && baseline.item_id(catalog_item_id("2dose2strength")) == 0
                 && baseline.effective_level("attack") <= baseline.level("attack")
                 && baseline.effective_level("strength") <= baseline.level("strength")
         }
@@ -965,22 +989,30 @@ pub(super) fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observat
         return ["magic", "defence", "hitpoints"]
             .into_iter()
             .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
-            && baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
-            && baseline.equipment_id(STAFF_OF_FIRE_ID) == 1
-            && baseline.item_id(STAFF_OF_FIRE_ID) == 0
-            && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
-            && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
-            && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
-            && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
-            && baseline.item_id(RUNE_SCIMITAR_ID) == 0
-            && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
-            && [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
-                .into_iter()
-                .all(|id| baseline.equipment_id(id) == 0 && baseline.item_id(id) == 0);
+            && baseline.item_id(catalog_item_id("lobster")) == GREEN_DRAGON_FOOD
+            && baseline.equipment_id(catalog_item_id("staff_of_fire")) == 1
+            && baseline.item_id(catalog_item_id("staff_of_fire")) == 0
+            && baseline.equipment_id(catalog_item_id("antidragonbreathshield")) == 1
+            && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
+            && baseline.item_id(catalog_item_id("mindrune")) == AUTO_FIGHTER_MAGE_CASTS
+            && baseline.item_id(catalog_item_id("airrune")) == AUTO_FIGHTER_MAGE_AIR_RUNES
+            && baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+            && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 0
+            && [
+                catalog_item_id("rune_chainbody"),
+                catalog_item_id("rune_platelegs"),
+                catalog_item_id("rune_full_helm"),
+            ]
+            .into_iter()
+            .all(|id| baseline.equipment_id(id) == 0 && baseline.item_id(id) == 0);
     }
-    let armour_ready = [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
-        .into_iter()
-        .all(|id| baseline.equipment_id(id) == 1);
+    let armour_ready = [
+        catalog_item_id("rune_chainbody"),
+        catalog_item_id("rune_platelegs"),
+        catalog_item_id("rune_full_helm"),
+    ]
+    .into_iter()
+    .all(|id| baseline.equipment_id(id) == 1);
     let exact_stats = match case {
         CoreCase::GreenDragonSpecialPrepared => ["attack", "strength", "defence", "hitpoints"]
             .into_iter()
@@ -1008,82 +1040,91 @@ pub(super) fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observat
         _ => return false,
     };
     let exact_food = match case {
-        CoreCase::GreenDragonPrepared => baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BASE_FOOD,
+        CoreCase::GreenDragonPrepared => {
+            baseline.item_id(catalog_item_id("lobster")) == GREEN_DRAGON_BASE_FOOD
+        }
         CoreCase::GreenDragonSpecialPrepared | CoreCase::GreenDragonPotionsPrepared => {
-            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
+            baseline.item_id(catalog_item_id("lobster")) == GREEN_DRAGON_FOOD
         }
         CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
-            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BANK_PREPARED_FOOD
+            baseline.item_id(catalog_item_id("lobster")) == GREEN_DRAGON_BANK_PREPARED_FOOD
         }
-        CoreCase::GreenDragonTelePrepared => baseline.item_id(LOBSTER_ID) == 0,
-        CoreCase::FireGiantPrepared => baseline.item_id(LOBSTER_ID) == FIRE_GIANT_FOOD,
+        CoreCase::GreenDragonTelePrepared => baseline.item_id(catalog_item_id("lobster")) == 0,
+        CoreCase::FireGiantPrepared => {
+            baseline.item_id(catalog_item_id("lobster")) == FIRE_GIANT_FOOD
+        }
         CoreCase::FireGiantBankPrepared | CoreCase::FireGiantCamelotPrepared => {
-            baseline.item_id(LOBSTER_ID) == FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
+            baseline.item_id(catalog_item_id("lobster")) == FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
         }
-        CoreCase::MossGiantPrepared => baseline.item_id(LOBSTER_ID) == MOSS_GIANT_FOOD,
-        CoreCase::HillGiantBankPrepared => baseline.item_id(TROUT_ID) == HILL_GIANT_FOOD,
+        CoreCase::MossGiantPrepared => {
+            baseline.item_id(catalog_item_id("lobster")) == MOSS_GIANT_FOOD
+        }
+        CoreCase::HillGiantBankPrepared => {
+            baseline.item_id(catalog_item_id("trout")) == HILL_GIANT_FOOD
+        }
         _ => return false,
     };
     let exact_profile = exact_stats && armour_ready && exact_food;
     exact_profile
         && match case {
             CoreCase::GreenDragonPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 1
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 1
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 0
             }
             CoreCase::GreenDragonSpecialPrepared => {
-                baseline.item_id(DRAGON_DAGGER_ID) == 0
-                    && baseline.equipment_id(DRAGON_DAGGER_ID) == 1
-                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+                baseline.item_id(catalog_item_id("dragon_dagger")) == 0
+                    && baseline.equipment_id(catalog_item_id("dragon_dagger")) == 1
+                    && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
                     && baseline.varp(SA_ENERGY_VARP) >= DRAGON_DAGGER_SPECIAL_COST
             }
             CoreCase::GreenDragonPotionsPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 1
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 1
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 0
             }
             CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
-                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
-                    && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
+                    && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
+                    && baseline.equipment_id(catalog_item_id("antidragonbreathshield")) == 1
             }
             CoreCase::GreenDragonTelePrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
-                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
-                    && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
+                    && baseline.item_id(catalog_item_id("antidragonbreathshield")) == 0
+                    && baseline.equipment_id(catalog_item_id("antidragonbreathshield")) == 1
                     && baseline.level("magic") >= VARROCK_TELE_MAGIC
-                    && baseline.item_id(LAW_RUNE_ID) >= 1
-                    && baseline.item_id(AIR_RUNE_ID) >= 3
-                    && baseline.item_id(FIRE_RUNE_ID) >= 1
+                    && baseline.item_id(catalog_item_id("lawrune")) >= 1
+                    && baseline.item_id(catalog_item_id("airrune")) >= 3
+                    && baseline.item_id(catalog_item_id("firerune")) >= 1
                     && baseline.effective_level("hitpoints") == GREEN_DRAGON_TELE_PREPARED_HP
             }
             CoreCase::FireGiantPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
             }
             CoreCase::FireGiantBankPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
             }
             CoreCase::FireGiantCamelotPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
-                    && baseline.equipment_id(GLARIALS_AMULET_ID) == 1
-                    && baseline.item_id(GLARIALS_AMULET_ID) == 0
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
+                    && baseline.equipment_id(catalog_item_id("glarials_amulet_waterfall_quest"))
+                        == 1
+                    && baseline.item_id(catalog_item_id("glarials_amulet_waterfall_quest")) == 0
                     && baseline.level("magic") >= CAMELOT_TELE_MAGIC
                     && baseline.effective_level("magic") >= CAMELOT_TELE_MAGIC
-                    && baseline.item_id(AIR_RUNE_ID) >= CAMELOT_AIR_CARRY
-                    && baseline.item_id(LAW_RUNE_ID) >= CAMELOT_LAW_CARRY
+                    && baseline.item_id(catalog_item_id("airrune")) >= CAMELOT_AIR_CARRY
+                    && baseline.item_id(catalog_item_id("lawrune")) >= CAMELOT_LAW_CARRY
             }
             CoreCase::MossGiantPrepared => {
-                baseline.item_id(RUNE_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                baseline.item_id(catalog_item_id("rune_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
             }
             CoreCase::HillGiantBankPrepared => {
-                baseline.item_id(ADAMANT_SCIMITAR_ID) == 0
-                    && baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                    && baseline.item_id(BRASS_KEY_ID) == 1
+                baseline.item_id(catalog_item_id("adamant_scimitar")) == 0
+                    && baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                    && baseline.item_id(catalog_item_id("edgevilledungeonkey")) == 1
             }
             _ => false,
         }
@@ -1191,11 +1232,11 @@ impl CombatCoreCycle {
             CombatStyleWitness::FireStrike => {
                 self.style_xp |= now.skill_xp("magic") > baseline.skill_xp("magic");
                 self.autocast_armed |= now.varp(AUTOCAST_MAGIC_VARP) == AUTOCAST_ARMED_VALUE;
-                self.mind_rune_consumed |=
-                    now.item_id(MIND_RUNE_ID) < baseline.item_id(MIND_RUNE_ID);
+                self.mind_rune_consumed |= now.item_id(catalog_item_id("mindrune"))
+                    < baseline.item_id(catalog_item_id("mindrune"));
                 self.air_runes_consumed |= baseline
-                    .item_id(AIR_RUNE_ID)
-                    .saturating_sub(now.item_id(AIR_RUNE_ID))
+                    .item_id(catalog_item_id("airrune"))
+                    .saturating_sub(now.item_id(catalog_item_id("airrune")))
                     >= 2;
             }
             // `combatStyle=range`: the source picks the rapid combat mode and fires
@@ -1212,19 +1253,21 @@ impl CombatCoreCycle {
         }
         self.looted |= match spec.loot {
             CombatLoot::DragonBonesAndHide => {
-                now.item_id(DRAGON_BONES_ID) > baseline.item_id(DRAGON_BONES_ID)
-                    && now.item_id(GREEN_DRAGONHIDE_ID) > baseline.item_id(GREEN_DRAGONHIDE_ID)
+                now.item_id(catalog_item_id("dragon_bones"))
+                    > baseline.item_id(catalog_item_id("dragon_bones"))
+                    && now.item_id(catalog_item_id("dragonhide_green"))
+                        > baseline.item_id(catalog_item_id("dragonhide_green"))
             }
             _ => combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot),
         };
-        self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
-            || now.item_id(RED_DRAGONHIDE_ID) > 0
-            || now.item_id(BLUE_DRAGONHIDE_ID) > 0
-            || now.item_id(CHOCOLATE_CAKE_ID) > 0;
+        self.wrong_item |= now.item_id(catalog_item_id("dragonhide_black")) > 0
+            || now.item_id(catalog_item_id("dragonhide_red")) > 0
+            || now.item_id(catalog_item_id("dragonhide_blue")) > 0
+            || now.item_id(catalog_item_id("chocolate_cake")) > 0;
         if spec.extra == CombatExtra::WornShield {
-            self.shield_worn |= now.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1;
-            if baseline.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1
-                && now.equipment_id(DRAGONFIRE_SHIELD_ID) == 0
+            self.shield_worn |= now.equipment_id(catalog_item_id("antidragonbreathshield")) >= 1;
+            if baseline.equipment_id(catalog_item_id("antidragonbreathshield")) >= 1
+                && now.equipment_id(catalog_item_id("antidragonbreathshield")) == 0
             {
                 self.shield_continuity_break = true;
             }
@@ -1271,12 +1314,14 @@ impl CombatCoreCycle {
             // its two-dose form in a fight, and the boost has to land afterwards.
             CombatConsumable::Potions => {
                 if !self.potion_dose {
-                    let attack_sip = baseline.item_id(SUPER_ATTACK_3_ID)
-                        > now.item_id(SUPER_ATTACK_3_ID)
-                        && now.item_id(SUPER_ATTACK_2_ID) > baseline.item_id(SUPER_ATTACK_2_ID);
-                    let strength_sip = baseline.item_id(SUPER_STRENGTH_3_ID)
-                        > now.item_id(SUPER_STRENGTH_3_ID)
-                        && now.item_id(SUPER_STRENGTH_2_ID) > baseline.item_id(SUPER_STRENGTH_2_ID);
+                    let attack_sip = baseline.item_id(catalog_item_id("3dose2attack"))
+                        > now.item_id(catalog_item_id("3dose2attack"))
+                        && now.item_id(catalog_item_id("2dose2attack"))
+                            > baseline.item_id(catalog_item_id("2dose2attack"));
+                    let strength_sip = baseline.item_id(catalog_item_id("3dose2strength"))
+                        > now.item_id(catalog_item_id("3dose2strength"))
+                        && now.item_id(catalog_item_id("2dose2strength"))
+                            > baseline.item_id(catalog_item_id("2dose2strength"));
                     if (attack_sip || strength_sip) && now.local_in_combat {
                         self.potion_dose = true;
                     }
@@ -1500,12 +1545,14 @@ impl CombatDartBranchCycle {
             && baseline.bank_loaded
             && now.bank_open
             && now.bank_loaded
-            && baseline.bank_item_id(BRONZE_DART_ID) > 0
-            && now.bank_item_id(BRONZE_DART_ID) < baseline.bank_item_id(BRONZE_DART_ID);
-        self.withdrawn |= now.item_id(BRONZE_DART_ID) > 0 || bank_withdraw;
-        self.worn |= now.equipment_id(BRONZE_DART_ID) >= 1;
+            && baseline.bank_item_id(catalog_item_id("bronze_dart")) > 0
+            && now.bank_item_id(catalog_item_id("bronze_dart"))
+                < baseline.bank_item_id(catalog_item_id("bronze_dart"));
+        self.withdrawn |= now.item_id(catalog_item_id("bronze_dart")) > 0 || bank_withdraw;
+        self.worn |= now.equipment_id(catalog_item_id("bronze_dart")) >= 1;
         self.arrived |= near(now.tile, MOSS_GIANT_SAFESPOT, MOSS_GIANT_DART_FIELD_RADIUS);
-        self.wrong_ammo |= held_id(now, RUNE_ARROW_ID) > 0 || now.bank_item_id(RUNE_ARROW_ID) > 0;
+        self.wrong_ammo |= held_id(now, catalog_item_id("rune_arrow")) > 0
+            || now.bank_item_id(catalog_item_id("rune_arrow")) > 0;
     }
 
     pub fn qualified(&self) -> bool {
@@ -1525,16 +1572,22 @@ impl CombatDartBranchCycle {
 pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
     match loot {
         CombatLoot::HerbLawNature => {
-            unidentified_herb_id(id) || id == NATURE_RUNE_ID || id == LAW_RUNE_ID
+            unidentified_herb_id(id)
+                || id == catalog_item_id("naturerune")
+                || id == catalog_item_id("lawrune")
         }
-        CombatLoot::BigBones => id == BIG_BONES_ID,
-        CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
+        CombatLoot::BigBones => id == catalog_item_id("big_bones"),
+        CombatLoot::BigBonesOrLimpwurt => {
+            id == catalog_item_id("big_bones") || id == catalog_item_id("limpwurt_root")
+        }
         CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
-            id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID
+            id == catalog_item_id("dragon_bones") || id == catalog_item_id("dragonhide_green")
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
-        CombatLoot::Bones => id == BONES_ID,
-        CombatLoot::SapphireOrCasket => id == UNCUT_SAPPHIRE_ID || id == CASKET_ID,
+        CombatLoot::Bones => id == catalog_item_id("bones"),
+        CombatLoot::SapphireOrCasket => {
+            id == catalog_item_id("uncut_sapphire") || id == catalog_item_id("casket")
+        }
         CombatLoot::None => false,
     }
 }
@@ -1700,15 +1753,15 @@ pub struct ChickenKillerBankCycle {
 impl ChickenKillerBankCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.combat_loot |= now.skill_xp("strength") > baseline.skill_xp("strength")
-            && now.item_id(FEATHER_ID) >= 1
-            && baseline.item_id(FEATHER_ID) == 0;
+            && now.item_id(catalog_item_id("feather")) >= 1
+            && baseline.item_id(catalog_item_id("feather")) == 0;
         if self.combat_loot
             && self.deposited.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(FEATHER_ID) == 0
-            && now.bank_item_id(FEATHER_ID) >= 1
+            && now.item_id(catalog_item_id("feather")) == 0
+            && now.bank_item_id(catalog_item_id("feather")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -1722,7 +1775,7 @@ impl ChickenKillerBankCycle {
         if self.returned {
             if let Some(deposited) = &self.deposited {
                 self.further |= now.skill_xp("strength") > deposited.skill_xp("strength")
-                    || now.item_id(FEATHER_ID) >= 1;
+                    || now.item_id(catalog_item_id("feather")) >= 1;
             }
         }
     }
