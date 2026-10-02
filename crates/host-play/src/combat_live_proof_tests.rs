@@ -1151,6 +1151,10 @@ fn m4_ready(capture: &CombatCapture) -> bool {
         .and_then(|frame| stat_effective(frame, "hitpoints"));
     let no_tree_attack = !capture.actions.iter().any(is_npc_attack_request);
     start_hp == Some(8)
+        && capture
+            .frames
+            .iter()
+            .any(|frame| stat_effective(frame, "hitpoints").is_some_and(|hp| hp < 8))
         && end_tick >= hit_tick
         && end_tick - hit_tick <= 10
         && no_tree_attack
@@ -2235,14 +2239,13 @@ fn m3_no_eligible_eat(capture: &CombatCapture) -> bool {
 fn m4_first_tree_hit_tick(capture: &CombatCapture) -> Option<i64> {
     capture.frames.iter().find_map(|frame| {
         let self_slot = frame["self_slot"].as_i64()?;
-        let hp = stat_effective(frame, "hitpoints")?;
         let tree_targets_player = frame["nearby_npcs"].as_array()?.iter().any(|npc| {
             npc["type"] == json!(152)
                 && npc["animation"] == json!(73)
                 && npc["target"]["kind"] == json!("Player")
                 && npc["target"]["index"] == json!(self_slot)
         });
-        (hp < 8 && tree_targets_player)
+        tree_targets_player
             .then(|| frame["tick"].as_i64())
             .flatten()
     })
@@ -2401,9 +2404,9 @@ fn accepted(action: &Value) -> bool {
 fn caller_walked_out(capture: &CombatCapture) -> bool {
     capture.actions.iter().any(|action| {
         action["kind"] == json!("walk")
-            && action["request"]
-                .as_str()
-                .is_some_and(|request| request.contains("3093") && request.contains("3243"))
+            && action["request"]["target"]["x"] == json!(WALK_OUT.x)
+            && action["request"]["target"]["z"] == json!(WALK_OUT.z)
+            && action["request"]["target"]["level"] == json!(WALK_OUT.level)
     })
 }
 
@@ -2857,11 +2860,35 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
     let mut capture = CombatCapture::default();
     capture.frames.push(baseline.clone());
     assert_eq!(m4_first_tree_hit_tick(&capture), Some(20));
+    capture.frames[0]["stats"][0]["effective"] = json!(8);
+    assert_eq!(
+        m4_first_tree_hit_tick(&capture),
+        Some(20),
+        "tree attack animation 73 targeting the player is the hit onset, including before HP drops"
+    );
     baseline["stats"][0]["effective"] = json!(8);
     baseline["nearby_npcs"][0]["type"] = json!(1226);
     assert!(start_preflight(Case::M4, &baseline).is_some());
     capture.frames[0]["nearby_npcs"][0]["type"] = json!(1226);
     assert_eq!(m4_first_tree_hit_tick(&capture), None);
+}
+
+#[test]
+fn m4_walk_out_oracle_reads_the_captured_walk_target_object() {
+    let mut capture = CombatCapture::default();
+    capture.actions.push(json!({
+        "kind": "walk",
+        "request": "Walk 3093,3243"
+    }));
+    assert!(
+        !caller_walked_out(&capture),
+        "debug-string walk requests are not the capture schema"
+    );
+    capture.actions.push(json!({
+        "kind": "walk",
+        "request": { "target": { "x": 3093, "z": 3243, "level": 0 }, "radius": 2 }
+    }));
+    assert!(caller_walked_out(&capture));
 }
 
 #[test]
