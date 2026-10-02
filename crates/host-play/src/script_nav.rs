@@ -151,6 +151,8 @@ pub(crate) struct NavBot {
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
     pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
+    pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
     pub(crate) user_move_intent_seq: u64,
     /// Requests based on an older outcome cannot reclaim movement ownership.
@@ -913,6 +915,7 @@ impl ScriptWalkArm {
                 opts.essence = Some(ess);
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
+            bot.manual_walk_cancelled_detail = false;
             bot.walk_request_id = request_id;
             // A geometry refresh keeps the same live action and correlation;
             // only a genuinely replacing request cancels the previous owner.
@@ -1691,6 +1694,7 @@ impl ScriptRouteRequest {
 }
 impl NavBot {
     fn bump_walk_outcome_seq(&mut self) {
+        self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
         if self.walk_outcome_seq == 0 {
             self.walk_outcome_seq = 1;
@@ -1975,6 +1979,7 @@ impl NavBot {
             // isolate-only guard has no compiled-slot release path.
             self.walk_live_refusal_id = if native_owner { 0 } else { request_id };
         }
+        self.manual_walk_cancelled_detail = true;
     }
 
     /// Whether a script walk is armed, in flight or following.
@@ -2097,6 +2102,9 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
 
 /// Keep the pending script receipt identity when watchdog nav replaces its route.
 /// This reuses the rare carry allocation but never grants recovery a resend.
+///
+/// The reconstructed request payload is only a receipt placeholder: it does
+/// not retain the original walk mode or exclusions and must never be replayed.
 pub(super) fn preserve_recovery_walk_identity(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
@@ -2105,6 +2113,9 @@ pub(super) fn preserve_recovery_walk_identity(
     let Some(bot) = bots.get_mut(name) else {
         return;
     };
+    if bot.native_walk.is_some() {
+        return;
+    }
     if bot.carried_walk.is_some()
         || bot.walk_request_id == 0
         || bot.walk_outcome_request_id == bot.walk_request_id

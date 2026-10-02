@@ -1315,11 +1315,9 @@ fn live_manual_click_panel_group_capture() {
     run_group_capture().unwrap();
 }
 
-#[test]
-#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
-fn live_manual_click_panel_route_less_resilient() {
+fn run_route_less_resilient(pause_owner: bool) {
     let inputs = live_inputs().unwrap();
-    let (mut session, name) = prepare_session(&inputs, false).unwrap();
+    let (mut session, name) = prepare_session(&inputs, pause_owner).unwrap();
     let here = player_tile(&session, &name).unwrap();
     let world = session
         .core
@@ -1355,7 +1353,12 @@ fn live_manual_click_panel_route_less_resilient() {
             vec![],
         )
         .unwrap();
-    let (stamp, dir) = prepare_evidence(&inputs, "panel-route-less-resilient", &name).unwrap();
+    let scenario = if pause_owner {
+        "panel-route-less-resilient-pause-resume"
+    } else {
+        "panel-route-less-resilient"
+    };
+    let (stamp, dir) = prepare_evidence(&inputs, scenario, &name).unwrap();
     let deadline = Instant::now() + TERMINAL_WAIT;
     let before = loop {
         session.pump_status();
@@ -1384,6 +1387,35 @@ fn live_manual_click_panel_route_less_resilient() {
     )
     .unwrap();
     send_minimap_click(&session).unwrap();
+    if pause_owner {
+        let expected_intent = before["nav"]["user_move_intent_seq"]
+            .as_u64()
+            .map(|seq| seq + 1);
+        let deadline = Instant::now() + TERMINAL_WAIT;
+        let paused = loop {
+            session.pump_status();
+            let proof = current_probe(&session, &name).unwrap();
+            if proof["script"]["run_state"] == "Paused"
+                && proof["nav"]["user_move_intent_seq"].as_u64() == expected_intent
+            {
+                break proof;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "route-less takeover pause deadline: {proof}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        capture(
+            &session,
+            &dir,
+            &stamp,
+            "02-route-less-takeover-paused",
+            &paused,
+        )
+        .unwrap();
+        session.core.play().unwrap().script_resume(&name);
+    }
     let deadline = Instant::now() + TERMINAL_WAIT;
     let after = loop {
         session.pump_status();
@@ -1440,4 +1472,16 @@ fn live_manual_click_panel_route_less_resilient() {
         "PASS route-less resilient account={name} before={before} after={after} settled={settled}"
     );
     session.core.set_play(None);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
+fn live_manual_click_panel_route_less_resilient() {
+    run_route_less_resilient(false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
+fn live_manual_click_panel_route_less_resilient_pause_resume() {
+    run_route_less_resilient(true);
 }
