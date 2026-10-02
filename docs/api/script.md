@@ -380,12 +380,14 @@ When the script remains running, Gatherer parks retryably with code
 `manual-movement`; Quester parks its current step without advancing it or
 charging an attempt or failure streak. Compat walking calls settle false without
 internal retries, hunt callers do not re-walk, and ReturnToAnchor settles its void
-call without starting an approach leg. Pause → manual movement → Resume preserves
-the carried compat walk: its intent baseline is refreshed from the first Running
-observation, because the host posts no snapshots while Paused. A click after
-Resume, even before the isolate processes that command, instead cancels the carry
-with one `UserInput` receipt for the original request. Reconnect-carried script
-work is not cancelled by carry alone; an independent active WalkArm still yields.
+call without starting an approach leg. Pause → manual movement → Resume and
+reconnect hold → manual movement → relog both preserve the carried compat walk:
+the same post-hold rebaseline refreshes its intent from the first Running
+observation. Movement during either hold is not a takeover of the idle carry.
+A click after Resume, even before the isolate processes that command, instead
+cancels the carry with one `UserInput` receipt for the original request. A click
+after a completed route does not replace its terminal receipt; retained request
+metadata is only for deduplication. An independent active WalkArm still yields.
 Other slots are unaffected. A fresh top-level decision is admitted only after it
 observes the takeover snapshot. If an in-flight tick sees the atomic takeover
 notice before that snapshot, a new walking operation keeps the tick's observed

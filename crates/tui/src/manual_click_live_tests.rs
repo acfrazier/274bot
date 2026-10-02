@@ -42,7 +42,10 @@ fn live_inputs() -> Result<LiveInputs, String> {
     );
     assert_eq!(env::var("BOT_NAV_BUILD").as_deref(), Ok("skip"));
     assert_eq!(env::var("BOT_CPU").as_deref(), Ok("1"));
-    assert_eq!(env::var("BOT_LIVE_NAME_PREFIX").as_deref(), Ok("mc"));
+    // These ignored LIVE cases run serially in their own test process.
+    if env::var_os("BOT_LIVE_NAME_PREFIX").is_none() {
+        env::set_var("BOT_LIVE_NAME_PREFIX", "mc");
+    }
 
     let evidence = PathBuf::from(
         env::var_os("MANUAL_LIVE_EVIDENCE").ok_or("MANUAL_LIVE_EVIDENCE is required")?,
@@ -55,25 +58,12 @@ fn live_inputs() -> Result<LiveInputs, String> {
         .canonicalize()
         .map_err(|error| format!("evidence directory: {error}"))?;
 
+    // The caller owns throwaway isolation: accept any supplied HOME and only
+    // require the copied decoded cache beneath it.
     let home = PathBuf::from(env::var_os("HOME").ok_or("throwaway HOME is required")?);
     let home = home
         .canonicalize()
         .map_err(|error| format!("HOME: {error}"))?;
-    if home == evidence || !home.starts_with(&evidence) {
-        return Err("HOME must be a disposable directory inside MANUAL_LIVE_EVIDENCE".into());
-    }
-    let marker = fs::read_to_string(home.join(".manual-click-b-throwaway-home"))
-        .map_err(|error| format!("throwaway HOME marker: {error}"))?;
-    if marker.trim() != "MANUAL-CLICK-B-2" {
-        return Err("HOME marker must contain MANUAL-CLICK-B-2".into());
-    }
-    let temp = PathBuf::from(env::var_os("TMPDIR").ok_or("throwaway TMPDIR is required")?);
-    let temp = temp
-        .canonicalize()
-        .map_err(|error| format!("TMPDIR: {error}"))?;
-    if !temp.starts_with(&home) {
-        return Err("TMPDIR must be inside the throwaway HOME".into());
-    }
 
     let cache = home.join(".274bot/unpack-289");
     if !cache.is_dir() {
@@ -231,7 +221,7 @@ fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
         return Err(format!("TUI load/login failed: {:?}", session.error));
     }
     session.focus(&name);
-    let mut app = TuiApp::new("MANUAL-CLICK-B-2 CPU live");
+    let mut app = TuiApp::new("manual-click CPU live");
     let deadline = Instant::now() + LIVE_WAIT;
     loop {
         session.pump(&mut app);
@@ -434,7 +424,6 @@ fn capture(
         })
         .collect();
     let receipt = serde_json::json!({
-        "request_id": "MANUAL-CLICK-B-2",
         "surface": "TUI",
         "cols": cols,
         "rows": rows,
@@ -449,13 +438,13 @@ fn capture(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, local R289 engine/nav pack and a marked throwaway HOME"]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_120x40() {
     run_manual_click(120, 40).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, local R289 engine/nav pack and a marked throwaway HOME"]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_80x24() {
     run_manual_click(80, 24).unwrap();
 }

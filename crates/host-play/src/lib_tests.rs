@@ -18000,6 +18000,65 @@ fn manual_resume_pause_click_resume_preserves_carried_compat_walk() {
 }
 
 #[test]
+fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let armed = rig.armed();
+    let initial_walks = rig.walks();
+    let outcome_seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    rig.boundary(true);
+    // The slot pump passes ingame && !session_boundary to the takeover seam.
+    assert!(!take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        crate::SlotFrameInput {
+            manual_steps: 1,
+            ..crate::SlotFrameInput::default()
+        },
+        false,
+        2,
+    ));
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(bot.carried_walk.is_some());
+        assert_eq!(bot.user_move_intent_seq, 1);
+        assert_eq!(bot.walk_outcome_seq, outcome_seq);
+        assert_eq!(bot.manual_takeover_watermark, 0);
+    }
+    rig.frames(3);
+    rig.frames(4);
+    let result = rig.slot().lock().unwrap().probe("__rs_ok").unwrap();
+    eprintln!(
+        "reconnect-click-relog request={} result={result} armed={:?} walks={:?} outcome_seq={}",
+        armed.0,
+        rig.armed(),
+        rig.walks(),
+        rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+    );
+    assert_eq!(
+        result,
+        serde_json::Value::Null,
+        "held click keeps the await"
+    );
+    assert_eq!(rig.armed(), armed, "relog restores the original request");
+    assert_eq!(
+        rig.walks(),
+        vec![initial_walks[0], initial_walks[0]],
+        "the carry is restored exactly once"
+    );
+    assert_eq!(
+        rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+        outcome_seq
+    );
+    rig.here = (40, 40, 0);
+    rig.frames(5);
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), true);
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
 fn manual_resume_click_after_resume_receipts_carried_request_once() {
     let mut rig = manual_resume_rig();
     rig.frames(1);

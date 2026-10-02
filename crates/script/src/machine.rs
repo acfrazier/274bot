@@ -1176,9 +1176,9 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
     if row.rebaseline_on_resume {
-        // Pause produces no observations. Refresh on the first eligible
-        // post-Resume step, after the host's Running snapshot, not at Resume.
-        // An actual post-Resume takeover (including its early atomic notice)
+        // Pause and reconnect holds produce no runnable observations. Refresh
+        // on the first eligible resumed step, after its Running snapshot.
+        // An actual post-hold takeover (including its early atomic notice)
         // must never be absorbed into the carried operation's baseline.
         if !SESSION_HELD.with(Cell::get)
             && HOST.with(|host| host.borrow().takeover_seq()) <= row.intent_baseline
@@ -1318,12 +1318,10 @@ pub(crate) fn drop_ops() {
 
 pub(crate) fn on_pause() {
     let intent = user_move_intent_seq();
-    let reconnect = SESSION_HELD.with(Cell::get);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
         for row in &mut host.rows {
-            row.rebaseline_on_resume =
-                row.carries_walk_baseline && !reconnect && intent <= row.intent_baseline;
+            row.rebaseline_on_resume = row.carries_walk_baseline && intent <= row.intent_baseline;
         }
         let held = host.held;
         host.set_freeze(true, held);

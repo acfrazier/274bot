@@ -1014,6 +1014,77 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
 }
 
 #[test]
+fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
+    let before = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(bot.route.is_none());
+        assert!(bot.requested_route.is_some(), "dedupe retains the identity");
+        (
+            bot.walk_outcome_seq,
+            bot.walk_outcome_request_id,
+            bot.route_generation,
+        )
+    };
+    let taken = crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        2,
+    );
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        eprintln!(
+            "click-after-arrival taken={taken} outcome_seq={} request={} failed={} reason={:?} intent={}",
+            bot.walk_outcome_seq,
+            bot.walk_outcome_request_id,
+            bot.walk_outcome_failed,
+            bot.walk_outcome_cancel_reason,
+            bot.user_move_intent_seq,
+        );
+        assert!(!taken, "a completed request is not active walking");
+        assert_eq!(
+            (
+                bot.walk_outcome_seq,
+                bot.walk_outcome_request_id,
+                bot.route_generation
+            ),
+            before,
+            "the click must not replace the completed receipt"
+        );
+        assert!(!bot.walk_outcome_failed);
+        assert_eq!(
+            bot.walk_outcome_cancel_reason,
+            script::isolate_fb::WalkCancelReason::None
+        );
+        assert_eq!(bot.manual_takeover_watermark, 0);
+        assert_eq!(bot.user_move_intent_seq, 1, "idle intent is still observed");
+    }
+    rig.observe(3);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
+    assert_eq!(rig.shared.lock().results.len(), 1);
+}
+
+#[test]
 fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
     let mut rig = open_rig(false);
     rig.observe(1);
