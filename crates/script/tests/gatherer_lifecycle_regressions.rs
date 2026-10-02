@@ -1042,6 +1042,96 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 
+#[test]
+fn gather_progress_must_not_hide_a_later_idle_stall() {
+    use api::gather_methods::{known_rows, TargetClass};
+    use api::selected::EntityId;
+
+    let selected = selected();
+    let mut slot = started(4290, &selected);
+    let mut frame = depleted_snapshot(&selected);
+    let catalog = api::gather_methods::cached(&selected).unwrap();
+    let method = catalog.methods_for_resource("normal").next().unwrap();
+    let EntityId::Loc(id) = known_rows(&method.targets)
+        .iter()
+        .find(|row| row.class == TargetClass::Resource)
+        .unwrap()
+        .entity
+    else {
+        panic!("normal woodcutting has loc resources");
+    };
+    let mut target = frame.locs()[0].clone();
+    target.id = id;
+    target.name = Some("Tree".into());
+    target.actions = vec![Some("Chop down".into())];
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = WorldTile {
+        x: target.tile.x + 1,
+        ..target.tile
+    };
+    player.player.actor.animation = -1;
+    frame.seed_local_player(player);
+    frame.seed_locs(vec![target]);
+
+    let mut chops = Vec::new();
+    let mut gain_seeded = false;
+    for now in 1..80 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            if matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Loc { action, .. })
+                    if action == "Chop down"
+            ) {
+                chops.push(now);
+            }
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: now,
+                        sequence: now,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+        }
+        if !chops.is_empty() && !gain_seeded {
+            frame.seed_inventory(vec![log(0)], 28);
+            let mut stats = frame.stats().to_vec();
+            stats.iter_mut().find(|row| row.index == 8).unwrap().xp = 25;
+            frame.seed_stats(stats);
+            gain_seeded = true;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    for (key, expected) in [("yielded", 1), ("xp", 25)] {
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == key)
+                .unwrap()
+                .value,
+            script::native::StatusValue::Integer(expected),
+            "the first yield remains counted after the idle attempt ends"
+        );
+    }
+    slot.stop();
+    assert!(
+        gain_seeded,
+        "must reach the real GatherRun and observe its first product/XP gain"
+    );
+    assert!(
+        chops.len() >= 2,
+        "after an observed gain, an unchanged idle target must be retried instead of waiting forever; chops={chops:?}"
+    );
+}
+
 /// A level-up's unlock page is a new modal, not a failed close of the first page.
 #[test]
 fn chained_level_up_pages_receive_separate_continues() {

@@ -156,6 +156,11 @@ gameplay cap across depleted groups rather than restarting it at each group.
 A recreated card starts with a fresh wait baseline rather than immediately
 treating the wait as expired.
 
+When gathering becomes idle, the content-derived stall window permits one
+retry before reselection. Each fresh product or XP gain resets that window;
+an earlier gain cannot keep a later idle attempt alive. Confirmed yield and
+XP totals remain intact across the retry.
+
 Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
 anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
