@@ -5,7 +5,7 @@
 //! beyond the second web at 3093/3957.
 //! Run with `LIVE=1`, `BOT_CPU=1`, `BOT_NAV_BUILD=skip`,
 //! `BOT_LIVE_NAME_PREFIX` (1-4 chars), `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`,
-//! and `LIVE_EVIDENCE_DIR` set to the WEB-CUT-1 evidence root.
+//! and `LIVE_EVIDENCE_DIR` set to the WEB-CUT-2 evidence root.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -714,10 +714,10 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
     assert!((1..=4).contains(&prefix.len()), "prefix must be 1-4 chars");
     let evidence_root = PathBuf::from(
-        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR under WEB-CUT-1"),
+        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR under WEB-CUT-2"),
     );
     assert!(
-        evidence_root.starts_with("/Volumes/dev-scratch/274bot-evidence/WEB-CUT-1"),
+        evidence_root.starts_with("/Volumes/dev-scratch/274bot-evidence/WEB-CUT-2"),
         "live evidence must stay under the request evidence root"
     );
 
@@ -821,7 +821,7 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
         let (attempt_scene, observed_loc_changes) =
             validate_attempt_scene(&attempts, &observations);
         let receipt = json!({
-            "request": "WEB-CUT-1",
+            "request": "WEB-CUT-2",
             "scenario": scenario,
             "account": &username,
             "revision": 289,

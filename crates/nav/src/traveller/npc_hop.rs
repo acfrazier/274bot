@@ -262,7 +262,13 @@ impl FollowRun {
         }
         let watermark = chat_seq(snapshot);
         let mut ix = Interactions::new(snapshot, d);
-        match interact_transport(snapshot, &mut ix, TransportTarget::Npc(npc), edge, options) {
+        match interact_transport(
+            snapshot,
+            &mut ix,
+            TransportTarget::Npc(npc),
+            edge,
+            &mut options.on_event,
+        ) {
             SendResult::Sent { .. } => {
                 hop.tries += 1;
                 hop.chat_seq = watermark;
