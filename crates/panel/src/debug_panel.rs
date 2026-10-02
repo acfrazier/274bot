@@ -685,6 +685,7 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
             session.debug_panel.picker_query.clear();
         }
         if picker {
+            ui.same_line();
             let clicked = ui.small_button(format!("Pick##debug-pick-{index}"));
             if clicked {
                 session.debug_panel.picker_arg = Some(index);

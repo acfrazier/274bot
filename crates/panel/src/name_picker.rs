@@ -315,7 +315,7 @@ pub(crate) fn prepare_popup(
         sys::igSetNextWindowSizeConstraints(
             sys::ImVec2_c { x: 0.0, y: 0.0 },
             sys::ImVec2_c {
-                x: max_window_width,
+                x: desired_window_width,
                 y: constrained_height,
             },
             None,
