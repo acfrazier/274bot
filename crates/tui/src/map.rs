@@ -34,12 +34,8 @@ pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 /// Read the shared panel/TUI special-area preference from an explicitly
 /// configured store. `MapView::new` does not touch the operator's home.
 fn persisted_wilderness(path: &Path) -> bool {
-    frontend_core::nav_preference_at(
-        path,
-        frontend_core::NavPreference::ShowSpecialAreas,
-        None,
-    )
-    .unwrap_or(false)
+    frontend_core::nav_preference_at(path, frontend_core::NavPreference::ShowSpecialAreas, None)
+        .unwrap_or(false)
 }
 
 fn persist_wilderness(path: &Path, enabled: bool) -> io::Result<()> {

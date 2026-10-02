@@ -520,7 +520,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn manual_movement_pause_row_is_reachable_persistent_and_visible_at_common_sizes() {
         for (width, height) in [(120, 40), (80, 24)] {

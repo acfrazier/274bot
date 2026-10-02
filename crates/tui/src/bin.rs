@@ -2114,8 +2114,7 @@ impl TuiSession {
 
     /// Set the global pause policy before binding or arming a TUI live run.
     pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
-        self.core
-            .set_pause_script_on_manual_walk_abort(enabled);
+        self.core.set_pause_script_on_manual_walk_abort(enabled);
     }
 
     /// The remembered terrain-bake choice, shared with the panel through

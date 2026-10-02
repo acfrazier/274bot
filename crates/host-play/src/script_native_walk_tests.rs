@@ -723,6 +723,7 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     rig.observe(2);
     assert_eq!(rig.end(), Some(Ok(WalkEnd::UserInput)));
@@ -831,6 +832,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     assert_eq!(
         play.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
@@ -925,6 +927,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
         frame,
         true,
         1,
+        false,
     ));
     assert!(
         !rig.walk_armed(),
@@ -942,7 +945,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
     assert_eq!(
         rig.slot().lock().unwrap().state(),
         script::RunState::Running,
-        "slice B does not force the slice C pause policy"
+        "OFF cancels without forcing the owning script to pause"
     );
     let mut bots = rig.navs.lock().unwrap();
     let bot = bots.get_mut("alice").unwrap();
@@ -972,6 +975,42 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
 }
 
 #[test]
+fn manual_config_on_native_pause_revokes_action_resume_makes_fresh_decision() {
+    let mut rig = two_walk_rig();
+    let original = rig.navs.lock().unwrap()["alice"].walk_request_id;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert!(!rig.slot().lock().unwrap().has_native_actions());
+    assert!(rig.navs.lock().unwrap()["alice"].carried_walk.is_none());
+    rig.observe(2);
+    rig.step();
+    assert_eq!(rig.driver.walked, None);
+    assert_eq!(rig.shared.lock().begun, 1, "no decision while Paused");
+    rig.slot().lock().unwrap().resume();
+    let ends = drive_second_walk(&mut rig, 3);
+    assert_eq!(ends.len(), 2);
+    assert_eq!(
+        ends[1],
+        Ok(WalkEnd::Failed),
+        "the explicit Resume permits a fresh decision"
+    );
+    let shared = rig.shared.lock();
+    let next = shared.results[1].as_ref().unwrap();
+    assert_ne!(
+        next.request_id, original,
+        "the next walk is not replay of the cancelled request"
+    );
+}
+
+#[test]
 fn held_manual_click_still_cancels_and_other_slot_survives() {
     let mut rig = open_rig(false);
     rig.observe(1);
@@ -992,6 +1031,7 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
         manual_frame(true),
         true,
         1,
+        false,
     ));
     assert!(!rig.walk_armed());
     assert!(rig.navs.lock().unwrap()["bob"].script_walk_armed());
@@ -1005,6 +1045,7 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
             manual_frame(true),
             true,
             2,
+            false,
         ),
         "an already ended operation cannot produce a second terminal"
     );
@@ -1049,6 +1090,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
         manual_frame(false),
         true,
         2,
+        false,
     );
     {
         let navs = rig.navs.lock().unwrap();
@@ -1102,6 +1144,7 @@ fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let bots = rig.navs.lock().unwrap();
     assert_eq!(bots["alice"].walk_outcome_seq, old_seq);
@@ -1138,6 +1181,7 @@ fn reconnect_gated_owner_is_not_taken_over_before_its_ready_observation() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let bots = rig.navs.lock().unwrap();
     assert_eq!(
@@ -1169,6 +1213,7 @@ fn takeover_during_pending_worker_cannot_reinstall_follow() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     rig.navs
@@ -1251,6 +1296,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     let original = rig.navs.lock().unwrap()["alice"].walk_outcome_request_id;
