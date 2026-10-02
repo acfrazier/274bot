@@ -1725,12 +1725,6 @@ impl Gatherer {
     }
 }
 
-fn adjacent(here: Option<WorldTile>, target: WorldTile) -> bool {
-    here.is_some_and(|here| {
-        here.level == target.level && (here.x - target.x).abs().max((here.z - target.z).abs()) <= 1
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

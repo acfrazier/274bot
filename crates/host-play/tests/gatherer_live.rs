@@ -22,6 +22,8 @@
 //! `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT` paths. G3 bank trips default
 //! to proven oak/fishing origins; cost-ranking and real-timeout cells need
 //! explicit origin tiles.
+//! `BOT_CACHE_DIR` selects the read-only copied JAG source; `CLIENT_UNPACK_DIR`
+//! selects its copied unpack root, which retains the complete versioned snapshot.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -3695,6 +3697,7 @@ fn selected_profile(
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(2080),
         ),
+        cache_dir: std::env::var_os("BOT_CACHE_DIR").map(PathBuf::from),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(engine_dir),

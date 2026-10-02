@@ -1325,7 +1325,12 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let mut script = Quester::new(run, path, quests);
+        let mut script = Quester::new(
+            run,
+            path,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_quest_statuses(
