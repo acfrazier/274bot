@@ -900,6 +900,26 @@ fn tutorial_cellar_ladder_routes_and_reverse_proof_use_the_actual_takeoff() {
 }
 
 #[test]
+fn tutorial_cellar_ladder_up_routes_from_non_anchor_stand() {
+    assert_relative_climb_from_non_anchor(
+        3031,
+        "newbieladdertop2",
+        WorldTile {
+            x: 3111,
+            z: 3126,
+            level: 0,
+        },
+        WorldTile {
+            x: 0,
+            z: 6400,
+            level: 0,
+        },
+        "scripts/tutorial/scripts/tut_doors_and_gates.rs2",
+        "[oploc1,newbieladdertop2]\np_arrivedelay;\n~climb_ladder(movecoord(coord, 0, 0, 6400), false);\n",
+    );
+}
+
+#[test]
 fn boardgames_rank_guard_stays_anchor_absolute_but_unconditional_down_climbs_are_relative() {
     let fx = Fixture::new();
     write_stage_engine(&fx);
