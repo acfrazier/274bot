@@ -928,18 +928,9 @@ fn bank_pick_spawn_failure_settles_selection_or_refuses_walk_without_arming() {
 }
 
 #[test]
-fn native_bank_access_resolves_teller_and_object_metadata() {
+fn declared_teller_access_does_not_require_packed_geometry() {
     let flags = vec![0; 4 * 16 * 16];
     let (walk, blocked) = pack_walk(&flags);
-    let teller = nav::pack::BankStand {
-        name: "Gundai".to_owned(),
-        tile: tile(8, 8),
-        access: nav::pack::BankAccess::Npc {
-            name: "Gundai".to_owned(),
-            op: 4,
-            choose: None,
-        },
-    };
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: tile(0, 0),
@@ -950,7 +941,7 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
             flags: None,
         },
         TransportGraph::default(),
-        vec![teller],
+        Vec::new(),
     );
     let definition = api::named_banks::BANK_CATALOG
         .iter()
@@ -958,16 +949,16 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         .unwrap();
     let mage_bank = api::named_banks::NamedBank {
         name: definition.name,
-        tile: tile(8, 8),
+        tile: definition.tile,
         definition: Some(definition),
         routable: true,
     };
     let (access_tile, access) = native_bank_access(&world, mage_bank, tile(1, 1)).unwrap();
-    assert_ne!(access_tile, access.stand_tile);
-    assert_eq!(access_tile.level, access.stand_tile.level);
+    assert_eq!(access_tile, definition.tile);
+    assert_eq!(access.stand_tile, definition.tile);
     assert_eq!(access.kind, NativeAccessKind::Teller);
     assert_eq!(access.name.as_deref(), Some("Gundai"));
-    assert_eq!(access.stand_op, 4);
+    assert_eq!(access.stand_op, 0);
     assert_eq!(
         access.choose.as_deref(),
         Some("I'd like to access my bank account")
@@ -989,4 +980,5 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
     assert_eq!(access.kind, NativeAccessKind::Booth);
     assert_eq!(access.name.as_deref(), Some("Shantay chest"));
     assert_eq!(access.stand_op, 0);
+    assert!(native_bank_access(&world, bank("Unmapped", 8, 8), tile(1, 1)).is_none());
 }
