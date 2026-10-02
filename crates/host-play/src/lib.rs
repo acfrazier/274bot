@@ -74,6 +74,8 @@ mod play_wires;
 mod resource_view;
 mod rss;
 mod scatter;
+#[cfg(feature = "test-support")]
+mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod walk_arm;
