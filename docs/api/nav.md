@@ -416,7 +416,12 @@ The planner clamps both the goal box and its reach-work radius to 104.
 It classifies packed candidates in batches, sharing directed collision steps
 and reach-rank bounds; shortest path distance alone is not the arrival rule.
 Only undecided ranks need an ordered forward probe, preserving the shared
-predicate even for asymmetric walls or paths that leave the cached window.
+predicate even for asymmetric walls. Floods leaving the initial collision
+window continue through lazily populated 32-by-32 dense pages shared by the
+landmark bounds, batched wavefronts and ordered probes. Epoch-stamped marks
+reuse the exact-probe scratch; a cache edge is never treated as collision.
+These call-local structures avoid repeated per-tile world lookups during a
+flood and add no retained per-bot state.
 Failure diagnostics reuse the same computed goal list rather than filtering
 it a second time.
 For an identified loc in scene with a known footprint, distance is measured
