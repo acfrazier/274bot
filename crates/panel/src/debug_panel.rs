@@ -11,7 +11,7 @@ use api::debug_commands::{DebugCatalog, DebugCommand, DebugName};
 use dear_imgui_rs::{StyleColor, TreeNodeFlags, Ui};
 use serde::{Deserialize, Serialize};
 
-use crate::name_picker::{self, NameHitRow};
+use crate::name_picker;
 use crate::session::Session;
 use crate::theme::{scale_px, ACCENT, ERROR, GREEN};
 
@@ -151,10 +151,7 @@ pub struct DebugPanelState {
     values: Vec<String>,
     picker_arg: Option<usize>,
     picker_query: String,
-    /// Containing-panel width (same px as the font measures) recorded by the
-    /// command editor each frame; the name picker clamps to it so the popup
-    /// stays inside the panel bounds.
-    picker_parent_width: f32,
+    picker_anchor: Option<[[f32; 2]; 2]>,
     pending_send: Option<PendingSend>,
     status: Option<PanelStatus>,
     target_mode: DebugTargetMode,
@@ -165,6 +162,7 @@ pub struct DebugPanelState {
     picker_cached_kind: String,
     picker_cached_query: String,
     picker_hits: Vec<DebugName>,
+    picker_rows: name_picker::PickerRows,
     /// Decoded only while the Debug window is open. The selected game facts
     /// never retain this catalog.
     catalog: Option<Arc<DebugCatalog>>,
@@ -611,9 +609,11 @@ fn select_command(session: &mut Session, name: &str) {
     session.debug_panel.values = values;
     session.debug_panel.picker_arg = None;
     session.debug_panel.picker_query.clear();
+    session.debug_panel.picker_anchor = None;
     session.debug_panel.picker_cached_kind.clear();
     session.debug_panel.picker_cached_query.clear();
     session.debug_panel.picker_hits.clear();
+    session.debug_panel.picker_rows.invalidate();
     session.debug_panel.pending_send = None;
     session.debug_panel.status = None;
 }
@@ -623,9 +623,11 @@ fn reset_selection_state(state: &mut DebugPanelState) {
     state.values.clear();
     state.picker_arg = None;
     state.picker_query.clear();
+    state.picker_anchor = None;
     state.picker_cached_kind.clear();
     state.picker_cached_query.clear();
     state.picker_hits.clear();
+    state.picker_rows.invalidate();
     state.pending_send = None;
     state.status = None;
 }
@@ -635,9 +637,7 @@ fn clear_selection(session: &mut Session) {
 }
 
 fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
-    // Remember the containing-panel width every frame the editor draws, so
-    // the name picker popup can clamp to it and stay inside the panel.
-    session.debug_panel.picker_parent_width = ui.content_region_avail()[0].max(0.0);
+    // The popup uses the current window work rect and its Pick button anchor.
     ui.separator();
     ui.text_colored(ACCENT, format!("{}  [{}]", command.name, command.category));
     if command.destructive {
@@ -685,8 +685,8 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
             session.debug_panel.picker_query.clear();
         }
         if picker {
-            ui.same_line();
-            if ui.small_button(format!("Pick##debug-pick-{index}")) {
+            let clicked = ui.small_button(format!("Pick##debug-pick-{index}"));
+            if clicked {
                 session.debug_panel.picker_arg = Some(index);
                 session.debug_panel.picker_query = session
                     .debug_panel
@@ -695,6 +695,9 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
                     .cloned()
                     .unwrap_or_default();
                 ui.open_popup(PICKER_POPUP);
+            }
+            if session.debug_panel.picker_arg == Some(index) {
+                session.debug_panel.picker_anchor = Some([ui.item_rect_min(), ui.item_rect_max()]);
             }
         }
         if argument.optional {
@@ -782,24 +785,21 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
     };
 
     refresh_picker_hits(session, catalog, &kind);
+    let work_area = name_picker::PopupWorkArea::current(ui);
+    let anchor = session
+        .debug_panel
+        .picker_anchor
+        .unwrap_or([work_area.min, work_area.min]);
+    let layout = name_picker::prepare_popup(
+        ui,
+        work_area,
+        anchor,
+        &session.debug_panel.picker_hits,
+        &mut session.debug_panel.picker_rows,
+    );
     ui.popup(PICKER_POPUP, || {
         ui.text(format!("Pick {kind}"));
-        // Size the popup from its content (longest name plus secondary
-        // text), clamped to the panel so it never leaves its bounds. The
-        // old width read the popup's own content region, which starts
-        // narrow and stayed narrow — truncating every row.
-        let width = {
-            let hits = &session.debug_panel.picker_hits;
-            name_picker::popup_width_for(
-                ui,
-                session.debug_panel.picker_parent_width,
-                name_picker::name_column_width(ui, hits),
-                hits.iter()
-                    .map(|hit| name_picker::text_width(ui, &hit.hit_secondary()))
-                    .fold(0.0, f32::max),
-            )
-        };
-        ui.set_next_item_width(width);
+        ui.set_next_item_width(layout.content_width);
         ui.input_text(
             "##debug-picker-search",
             &mut session.debug_panel.picker_query,
@@ -807,9 +807,11 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         .hint("Search name or alias")
         .build();
 
-        // Typing narrows the hits; refresh after the search field so the rows
-        // never lag a frame behind the query.
         refresh_picker_hits(session, catalog, &kind);
+        session
+            .debug_panel
+            .picker_rows
+            .ensure(ui, &session.debug_panel.picker_hits);
         if session.debug_panel.picker_hits.is_empty() {
             ui.text_disabled("No matches.");
         }
@@ -820,15 +822,13 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
             .get(index)
             .cloned()
             .unwrap_or_default();
+        let state = &mut session.debug_panel;
+        let selected = name_picker::selected_row(&state.picker_hits, &current);
         let picked = ui
             .child_window("##debug-picker-hits")
-            .size([width, scale_px(ui, name_picker::PICKER_LIST_HEIGHT)])
+            .size([layout.content_width, layout.list_height])
             .build(ui, || {
-                name_picker::draw_hit_rows(
-                    ui,
-                    &session.debug_panel.picker_hits,
-                    name_picker::selected_row(&session.debug_panel.picker_hits, &current),
-                )
+                name_picker::draw_hit_rows(ui, &state.picker_hits, &mut state.picker_rows, selected)
             })
             .flatten();
 
@@ -844,6 +844,7 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         }
         if ui.button("Close##debug-picker-close") {
             session.debug_panel.picker_arg = None;
+            session.debug_panel.picker_anchor = None;
             ui.close_current_popup();
         }
     });
@@ -863,6 +864,7 @@ fn refresh_picker_hits(session: &mut Session, catalog: Option<&DebugCatalog>, ki
     session.debug_panel.picker_hits = catalog
         .map(|catalog| catalog.search_names(kind, &query, NAME_PICKER_LIMIT))
         .unwrap_or_default();
+    session.debug_panel.picker_rows.invalidate();
 }
 
 fn set_picked_value(session: &mut Session, index: usize, value: &str) {
@@ -871,6 +873,7 @@ fn set_picked_value(session: &mut Session, index: usize, value: &str) {
     }
     session.debug_panel.picker_arg = None;
     session.debug_panel.picker_query.clear();
+    session.debug_panel.picker_anchor = None;
 }
 
 fn same_targets(left: &[TargetRow], right: &[TargetRow]) -> bool {
