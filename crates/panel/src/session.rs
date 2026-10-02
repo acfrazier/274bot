@@ -3547,10 +3547,10 @@ impl Session {
         // the outgoing and incoming slots); `focus.focused` is the render
         // mirror the slot threads read. Destination is not a bot: switching
         // focus keeps the pending tile.
-        self.core.select(name);
         let (old, capture) = {
             let focus = self.focus.lock().unwrap();
             if focus.focused.as_deref() == Some(name) {
+                self.core.select(name);
                 return;
             }
             (focus.focused.clone(), focus.capture)
@@ -3572,6 +3572,9 @@ impl Session {
         } else {
             self.capture_tx = None;
         }
+        // Detach before waking the outgoing worker: its first disabled
+        // drain releases held input even if the UI has not run ownership.
+        self.core.select(name);
         // The General config mirrors the profile's raster/mem so the pane
         // shows what the slot actually runs (display only — no write-back,
         // no re-role). The profile editor's fields stay on the profile
@@ -3694,8 +3697,8 @@ impl Session {
     }
 
     /// Capture checkbox. On: attach a fresh channel and enable the focused
-    /// slot's drain. Off: disable the drain and drop the sender so the UI
-    /// cannot enqueue (the slot thread does no `try_recv` while disabled).
+    /// slot's drain. Off: detach user input; the consumer releases its own
+    /// held keys/buttons even without queued ups or before reattachment.
     pub fn set_capture(&mut self, on: bool) {
         self.focus.lock().unwrap().capture = on;
         if self.persist_ui {

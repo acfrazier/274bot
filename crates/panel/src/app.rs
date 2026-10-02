@@ -44,7 +44,7 @@ use host_play::progress::{
     ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
 };
 
-use crate::input_capture::{capture_keys, discard_unconsumed_native_capture, stream_capture};
+use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_stop_enabled, ProfilePreparationCompletion, Session,
@@ -144,6 +144,7 @@ struct PanelState {
     memory: Option<host_play::memory::Run>,
     game_view: Option<GameView>,
     session: Session,
+    keyboard: KeyboardOwner,
     dock_inited: bool,
     /// Which dock layout the tree was last built with; `None` before the
     /// first init. A MultiBox toggle rebuilds the tree when this differs.
@@ -560,6 +561,7 @@ impl PanelState {
             memory: None,
             game_view: None,
             session,
+            keyboard: KeyboardOwner::default(),
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -1366,8 +1368,11 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 ui.is_mouse_clicked(MouseButton::Right),
                 ui.is_mouse_released(MouseButton::Left),
                 ui.is_mouse_released(MouseButton::Right),
-                &capture_keys(ui),
+                &[],
             );
+            state
+                .keyboard
+                .capture_keys(ui, state.session.capture_tx.as_ref());
         }
     } else {
         ui.text_disabled("renderer off");
@@ -1443,8 +1448,11 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     ui.is_mouse_clicked(MouseButton::Right),
                     ui.is_mouse_released(MouseButton::Left),
                     ui.is_mouse_released(MouseButton::Right),
-                    &capture_keys(ui),
+                    &[],
                 );
+                state
+                    .keyboard
+                    .capture_keys(ui, state.session.capture_tx.as_ref());
             }
             draw_queue_card_for(ui, row.queue, image_min);
             if is_focused {
@@ -5498,6 +5506,25 @@ fn ui_frame(
     panel_window(ui, &mut state.session, progress);
     floating_log_window(ui, &mut state.session);
     crate::fleet::window(ui, &mut state.session);
+    {
+        let focus = state.session.focus.lock().unwrap();
+        let tx = if should_capture(&focus) {
+            state.session.capture_tx.as_ref()
+        } else {
+            None
+        };
+        if let Some(slot) = focus
+            .focused
+            .as_deref()
+            .and_then(|name| state.session.core.slot_io(name))
+        {
+            slot.input
+                .set_keyboard_enabled(crate::input_capture::game_keyboard_available(ui));
+        }
+        state
+            .keyboard
+            .process_ownership(ui, tx, focus.focused.as_deref());
+    }
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
     // the Game window build closure so a rebind cannot keep stale buffers.
