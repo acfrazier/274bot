@@ -469,24 +469,22 @@ fn search_popup(ui: &Ui, session: &mut Session) {
         } else if hits.is_empty() {
             ui.text_disabled("No matches.");
         }
-        let mut picked: Option<(String, i32)> = None;
-        ui.child_window("##loadout-search-hits")
+        // Shared name-hit rows with the Debug picker: full display name first,
+        // `#id alias` dimmed right, first row highlighted. Popup size is
+        // unchanged here (460 px already fits item rows).
+        let picked_row: Option<usize> = ui
+            .child_window("##loadout-search-hits")
             .size([scale_px(ui, 460.0), scale_px(ui, 180.0)])
             .build(ui, || {
-                for hit in &hits {
-                    let label = if hit.alias.is_empty() {
-                        format!("#{}  {}", hit.id, hit.name)
-                    } else {
-                        format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
-                    };
-                    if ui.selectable_config(&label).build() {
-                        picked = Some((hit.name.clone(), hit.id));
-                    }
-                    if ui.is_item_hovered() {
-                        ui.tooltip_text(&label);
-                    }
-                }
-            });
+                crate::name_picker::draw_hit_rows(ui, &hits, None)
+            })
+            .flatten();
+        let mut picked: Option<(String, i32)> = None;
+        if let Some(row) = picked_row {
+            if let Some(hit) = hits.get(row) {
+                picked = Some((hit.name.clone(), hit.id));
+            }
+        }
         if let Some((name, _)) = picked {
             if let Some(slot) = session.loadouts_search_slot.clone() {
                 assign_slot(session, &slot, Some(name));

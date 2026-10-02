@@ -11,6 +11,7 @@ use api::debug_commands::{DebugCatalog, DebugCommand, DebugName};
 use dear_imgui_rs::{StyleColor, TreeNodeFlags, Ui};
 use serde::{Deserialize, Serialize};
 
+use crate::name_picker::{self, NameHitRow};
 use crate::session::Session;
 use crate::theme::{scale_px, ACCENT, ERROR, GREEN};
 
@@ -150,6 +151,10 @@ pub struct DebugPanelState {
     values: Vec<String>,
     picker_arg: Option<usize>,
     picker_query: String,
+    /// Containing-panel width (same px as the font measures) recorded by the
+    /// command editor each frame; the name picker clamps to it so the popup
+    /// stays inside the panel bounds.
+    picker_parent_width: f32,
     pending_send: Option<PendingSend>,
     status: Option<PanelStatus>,
     target_mode: DebugTargetMode,
@@ -630,6 +635,9 @@ fn clear_selection(session: &mut Session) {
 }
 
 fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
+    // Remember the containing-panel width every frame the editor draws, so
+    // the name picker popup can clamp to it and stay inside the panel.
+    session.debug_panel.picker_parent_width = ui.content_region_avail()[0].max(0.0);
     ui.separator();
     ui.text_colored(ACCENT, format!("{}  [{}]", command.name, command.category));
     if command.destructive {
@@ -773,11 +781,25 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         return;
     };
 
+    refresh_picker_hits(session, catalog, &kind);
     ui.popup(PICKER_POPUP, || {
         ui.text(format!("Pick {kind}"));
-        let picker_width =
-            ui.content_region_avail()[0].clamp(scale_px(ui, 180.0), scale_px(ui, 460.0));
-        ui.set_next_item_width(picker_width);
+        // Size the popup from its content (longest name plus secondary
+        // text), clamped to the panel so it never leaves its bounds. The
+        // old width read the popup's own content region, which starts
+        // narrow and stayed narrow — truncating every row.
+        let width = {
+            let hits = &session.debug_panel.picker_hits;
+            name_picker::popup_width_for(
+                ui,
+                session.debug_panel.picker_parent_width,
+                name_picker::name_column_width(ui, hits),
+                hits.iter()
+                    .map(|hit| name_picker::text_width(ui, &hit.hit_secondary()))
+                    .fold(0.0, f32::max),
+            )
+        };
+        ui.set_next_item_width(width);
         ui.input_text(
             "##debug-picker-search",
             &mut session.debug_panel.picker_query,
@@ -785,40 +807,38 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         .hint("Search name or alias")
         .build();
 
-        if session.debug_panel.picker_cached_kind != kind
-            || session.debug_panel.picker_cached_query != session.debug_panel.picker_query
-        {
-            let query = session.debug_panel.picker_query.clone();
-            session.debug_panel.picker_cached_kind.clone_from(&kind);
-            session.debug_panel.picker_cached_query = query.clone();
-            session.debug_panel.picker_hits = catalog
-                .map(|catalog| catalog.search_names(&kind, &query, NAME_PICKER_LIMIT))
-                .unwrap_or_default();
-        }
+        // Typing narrows the hits; refresh after the search field so the rows
+        // never lag a frame behind the query.
+        refresh_picker_hits(session, catalog, &kind);
         if session.debug_panel.picker_hits.is_empty() {
             ui.text_disabled("No matches.");
         }
 
-        let mut picked = None;
-        ui.child_window("##debug-picker-hits")
-            .size([picker_width, scale_px(ui, 180.0)])
+        let current = session
+            .debug_panel
+            .values
+            .get(index)
+            .cloned()
+            .unwrap_or_default();
+        let picked = ui
+            .child_window("##debug-picker-hits")
+            .size([width, scale_px(ui, name_picker::PICKER_LIST_HEIGHT)])
             .build(ui, || {
-                for hit in &session.debug_panel.picker_hits {
-                    let label = if hit.alias.is_empty() {
-                        format!("#{}  {}", hit.id, hit.name)
-                    } else {
-                        format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
-                    };
-                    if ui.selectable_config(&label).build() {
-                        picked = Some(hit.alias.clone());
-                    }
-                    if ui.is_item_hovered() {
-                        ui.tooltip_text(&label);
-                    }
-                }
-            });
+                name_picker::draw_hit_rows(
+                    ui,
+                    &session.debug_panel.picker_hits,
+                    name_picker::selected_row(&session.debug_panel.picker_hits, &current),
+                )
+            })
+            .flatten();
 
-        if let Some(name) = picked {
+        if let Some(row) = picked {
+            let name = session
+                .debug_panel
+                .picker_hits
+                .get(row)
+                .map(|hit| hit.alias.clone())
+                .unwrap_or_default();
             set_picked_value(session, index, &name);
             ui.close_current_popup();
         }
@@ -827,6 +847,22 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
             ui.close_current_popup();
         }
     });
+}
+
+/// Re-run the name search when the kind or query changed since the last
+/// frame; only returned rows are kept.
+fn refresh_picker_hits(session: &mut Session, catalog: Option<&DebugCatalog>, kind: &str) {
+    if session.debug_panel.picker_cached_kind == kind
+        && session.debug_panel.picker_cached_query == session.debug_panel.picker_query
+    {
+        return;
+    }
+    let query = session.debug_panel.picker_query.clone();
+    session.debug_panel.picker_cached_kind = kind.to_string();
+    session.debug_panel.picker_cached_query = query.clone();
+    session.debug_panel.picker_hits = catalog
+        .map(|catalog| catalog.search_names(kind, &query, NAME_PICKER_LIMIT))
+        .unwrap_or_default();
 }
 
 fn set_picked_value(session: &mut Session, index: usize, value: &str) {
