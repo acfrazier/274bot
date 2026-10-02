@@ -581,9 +581,12 @@ impl TuiApp {
             &mut self.nav,
             &mut self.map_bake,
             &mut self.settings_state,
-        );
+        )
+        .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort);
         pane.memory = self.settings_memory;
-        match pane.on_key(key) {
+        let outcome = pane.on_key(key);
+        drop(pane);
+        match outcome {
             SettingsKey::Changed => {
                 self.settings_dirty = true;
                 // The draft moved on: a notice about its last save no
@@ -596,6 +599,9 @@ impl TuiApp {
                 }
             }
             SettingsKey::MapBake => self.map_bake_dirty = true,
+            SettingsKey::PauseScriptOnManualWalkAbort => {
+                self.pause_script_on_manual_walk_abort_dirty = true;
+            }
             SettingsKey::Consumed | SettingsKey::Ignored => {}
         }
         AppAction::None
@@ -695,7 +701,7 @@ impl TuiApp {
         let popup = SettingsPane::popup_rect(self.regions.area);
         let first = popup.y + 1;
         if contains(popup, col, row) && row >= first && row < popup.y + popup.height - 1 {
-            self.settings_state.row = usize::from(row - first).min(7);
+            self.settings_state.row = usize::from(row - first).min(8);
             return self.settings_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         AppAction::None

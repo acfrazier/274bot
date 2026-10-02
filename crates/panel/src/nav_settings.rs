@@ -36,6 +36,8 @@ pub struct NavSettings {
     pub show_special_areas: bool,
     /// Ease orbit yaw toward the remaining path (rs2b0t `navCameraFollow`).
     pub camera_follow: bool,
+    /// Pause the owning script after qualifying manual movement cancels its walk.
+    pub pause_script_on_manual_walk_abort: bool,
 }
 
 impl Default for NavSettings {
@@ -62,6 +64,7 @@ impl Default for NavSettings {
             component_flood: false,
             show_special_areas: false,
             camera_follow: false,
+            pause_script_on_manual_walk_abort: true,
         }
     }
 }
@@ -102,7 +105,7 @@ pub fn apply_paint_override(saved: &NavSettings, choice: Option<bool>) -> NavSet
 
 /// Map a scenario's session-only nav bag onto panel settings. Colours stay
 /// the rs2b0t Path-paint defaults (the scenario does not author HTML).
-pub fn from_scenario(n: &scenario::ScenarioNav) -> NavSettings {
+pub fn from_scenario(n: &scenario::ScenarioNav, saved: &NavSettings) -> NavSettings {
     NavSettings {
         allow_teleports: n.allow_teleports,
         allow_wilderness: n.allow_wilderness,
@@ -115,6 +118,7 @@ pub fn from_scenario(n: &scenario::ScenarioNav) -> NavSettings {
         client_trail: n.client_trail,
         component_flood: n.component_flood,
         camera_follow: n.camera_follow,
+        pause_script_on_manual_walk_abort: saved.pause_script_on_manual_walk_abort,
         ..NavSettings::default()
     }
 }
@@ -209,6 +213,32 @@ mod tests {
         };
         let e = effective(&saved, false);
         assert_eq!(e, saved);
+    }
+
+    #[test]
+    fn manual_walk_pause_defaults_on_for_legacy_nav_preferences() {
+        assert!(NavSettings::default().pause_script_on_manual_walk_abort);
+        let legacy: NavSettings = serde_json::from_str(r#"{"allow_teleports":true}"#).unwrap();
+        assert!(legacy.pause_script_on_manual_walk_abort);
+    }
+
+    #[test]
+    fn saved_pause_off_survives_scenario_and_paint_overlays() {
+        let saved = NavSettings {
+            pause_script_on_manual_walk_abort: false,
+            ..NavSettings::default()
+        };
+        let scenario_nav = scenario::nav_test_paints();
+        let scenario_overlay = super::from_scenario(&scenario_nav, &saved);
+        assert!(!scenario_overlay.pause_script_on_manual_walk_abort);
+        assert!(!effective(&saved, true).pause_script_on_manual_walk_abort);
+        for choice in [None, Some(true), Some(false)] {
+            assert!(
+                !super::apply_paint_override(&saved, choice)
+                    .pause_script_on_manual_walk_abort,
+                "paint choice {choice:?} must not replace the saved pause preference"
+            );
+        }
     }
 
     #[test]

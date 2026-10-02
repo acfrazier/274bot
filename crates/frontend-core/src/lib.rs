@@ -22,6 +22,7 @@ pub mod group_walk;
 pub mod log;
 pub mod log_file;
 pub mod map_bake;
+pub mod nav_prefs;
 pub mod marked;
 pub mod operations;
 pub mod profile_form;
@@ -42,6 +43,7 @@ pub use map_bake::{
     load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
     MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
+pub use nav_prefs::{nav_preference_at, NavPreference};
 pub use marked::{
     assign_and_restart_marked, assign_marked, login_marked, logout_marked,
     prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,

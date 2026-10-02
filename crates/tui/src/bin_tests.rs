@@ -2515,6 +2515,46 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
 }
 
 #[test]
+fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
+    let iso = IsolatedEnv::enter("tui-manual-walk-pause");
+    let path = host_play::panel_ui_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"capture":false,"nav":{"pause_script_on_manual_walk_abort":false,"show_special_areas":true}}"#,
+    )
+    .unwrap();
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("tui");
+    app.restore_preferences(path.clone());
+    assert!(!app.pause_script_on_manual_walk_abort);
+
+    app.pause_script_on_manual_walk_abort = true;
+    app.pause_script_on_manual_walk_abort_dirty = true;
+    session.pump(&mut app);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(prefs["capture"], false);
+    assert_eq!(prefs["nav"]["show_special_areas"], true);
+    assert_eq!(prefs["nav"]["pause_script_on_manual_walk_abort"], true);
+    assert!(!app.pause_script_on_manual_walk_abort_dirty);
+
+    let blocker = iso.dir.join("not-a-directory");
+    std::fs::write(&blocker, b"file").unwrap();
+    app.restore_preferences(blocker.join("panel-ui.json"));
+    app.pause_script_on_manual_walk_abort = false;
+    app.pause_script_on_manual_walk_abort_dirty = true;
+    session.pump(&mut app);
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: pause script on manual movement:")),
+        "failed writes must reach the TUI error surface: {:?}",
+        app.error
+    );
+}
+
+#[test]
 fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     let iso = IsolatedEnv::enter("tui-reap-finished");
     let mut play = empty_play();
