@@ -146,6 +146,12 @@ Power mode drops selected logs, ores or fish in bounded batches, counts drops on
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
 
+With random-event handling enabled, a lost axe or pickaxe head is picked up
+before the two held pieces are reattached. Recovery is bounded to twelve
+seconds, including time for the flying head to land. If it cannot settle,
+Gatherer revalidates the headless tool as missing and makes a replacement-tool
+bank trip instead of remaining held until the watchdog restarts it.
+
 Incidental uncut gems are power-dropped along with mining products. Tools,
 fishing bait and other non-products are kept. If protected items fill the pack
 and no selected product can be dropped, the card stops with `inventory-blocked`
@@ -197,6 +203,16 @@ Named bank deposits use one content `Deposit All` operation for all held copies
 of that item, rather than sending an operation for each occupied slot. Other
 item types and configured keep items are untouched; observed inventory changes,
 not accepted dispatch alone, still settle the transfer.
+
+Supply targets are upper bounds, not a requirement that the bank contain the
+entire refill. Each withdrawal targets the lesser of the configured count and
+the combined held and loaded-bank stock. A usable partial refill continues
+gathering; `supply-missing` means a required tool, bait, configured food or a
+complete reserve cast is unavailable. Coins never gate a trip. Available
+withdrawals, including the tool, settle before another unavailable supply is
+reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
+not a missing-supply or full-inventory label. Product deposits succeed only
+after inventory confirms that no unprotected gathering products remain.
 
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank

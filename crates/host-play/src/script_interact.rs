@@ -264,7 +264,6 @@ where
                 kind,
                 name,
                 stand_op,
-                choose,
                 ..
             } => {
                 let accepted = if kind == "booth" {
@@ -288,49 +287,34 @@ where
                         })
                     })
                 } else if kind == "npc" {
-                    let answer = choose.as_deref().and_then(|wanted| {
-                        let wanted = wanted.to_lowercase();
-                        snapshot.chat_options().iter().position(|row| {
-                            !row.text.is_empty() && row.text.to_lowercase().contains(&wanted)
-                        })
-                    });
-                    if let Some(option) = answer {
-                        matches!(
-                            ix.answer_choice(i32::try_from(option + 1).unwrap_or(i32::MAX)),
-                            SendResult::Sent { .. }
-                        )
-                    } else if choose.is_some() && snapshot.chat_continue_component_id() >= 0 {
-                        matches!(ix.continue_dialog(), SendResult::Sent { .. })
-                    } else {
-                        let npc = snapshot.npcs().iter().find(|npc| {
-                            npc.tile.x == x
-                                && npc.tile.z == z
-                                && npc.tile.level == level
-                                && name.as_deref().is_some_and(|wanted| {
-                                    npc.name
-                                        .as_deref()
-                                        .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
-                                })
-                        });
-                        npc.is_some_and(|npc| {
-                            let op = stand_op
-                                .filter(|&op| {
-                                    op >= 1
-                                        && npc
-                                            .actions
-                                            .get((op as usize).saturating_sub(1))
-                                            .and_then(|action| action.as_deref())
-                                            .is_some_and(|action| !action.is_empty())
-                                })
-                                .or_else(|| action_slot(&npc.actions, "Bank"));
-                            op.is_some_and(|op| {
-                                matches!(
-                                    ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op),),
-                                    SendResult::Sent { .. }
-                                )
+                    let npc = snapshot.npcs().iter().find(|npc| {
+                        npc.tile.x == x
+                            && npc.tile.z == z
+                            && npc.tile.level == level
+                            && name.as_deref().is_some_and(|wanted| {
+                                npc.name
+                                    .as_deref()
+                                    .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
                             })
+                    });
+                    npc.is_some_and(|npc| {
+                        let op = stand_op
+                            .filter(|&op| {
+                                op >= 1
+                                    && npc
+                                        .actions
+                                        .get((op as usize).saturating_sub(1))
+                                        .and_then(|action| action.as_deref())
+                                        .is_some_and(|action| !action.is_empty())
+                            })
+                            .or_else(|| action_slot(&npc.actions, "Bank"));
+                        op.is_some_and(|op| {
+                            matches!(
+                                ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
+                                SendResult::Sent { .. }
+                            )
                         })
-                    }
+                    })
                 } else {
                     false
                 };
