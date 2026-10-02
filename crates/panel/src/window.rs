@@ -1672,7 +1672,8 @@ where
                     // Add only the missing key lifecycle and record the
                     // produced/named capture ch in event order: text must
                     // not be queued a second time, and key-repeat must not
-                    // extra-deliver.
+                    // extra-deliver. The frame owner handles releases
+                    // before hover-gating new presses in `capture_keys`.
                     if !event.repeat {
                         crate::input_capture::add_shifted_key_event(
                             window.imgui.context.io_mut(),
