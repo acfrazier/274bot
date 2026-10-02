@@ -422,9 +422,9 @@ impl NativeMachine for BankMachine {
                         let Some(loc) = locs.value.iter().find(|loc| {
                             loc.tile == access.stand_tile
                                 && wanted_name.is_none_or(|wanted| {
-                                    loc.name.as_deref().is_some_and(|actual| {
-                                        actual.eq_ignore_ascii_case(wanted)
-                                    })
+                                    loc.name
+                                        .as_deref()
+                                        .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
                                 })
                         }) else {
                             return Poll::Pending;
@@ -1594,7 +1594,10 @@ mod tests {
             index,
             r#type: None,
             name: Some(name.to_owned()),
-            actions: actions.iter().map(|action| Some((*action).to_owned())).collect(),
+            actions: actions
+                .iter()
+                .map(|action| Some((*action).to_owned()))
+                .collect(),
             tile,
             distance: 2,
             animation: -1,
@@ -1624,7 +1627,12 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
-        let access = teller_access(catalog_bank("Mage Arena"), Some("wrong packed name"), 0, None);
+        let access = teller_access(
+            catalog_bank("Mage Arena"),
+            Some("wrong packed name"),
+            0,
+            None,
+        );
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
             let handle = tick
@@ -1703,7 +1711,9 @@ mod tests {
         let receipt = with_tick(&snapshot, &mut ledger, 9, |tick| {
             match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Ready(Ok(receipt)) => receipt,
-                other => panic!("loaded teller bank should open after all dialogue pages: {other:?}"),
+                other => {
+                    panic!("loaded teller bank should open after all dialogue pages: {other:?}")
+                }
             }
         });
         assert!(receipt.complete);

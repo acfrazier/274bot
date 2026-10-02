@@ -209,7 +209,11 @@ impl NpcAccess {
                                 !chat.can_continue
                             };
                         if acked {
-                            let ticks = if self.choice { CHOICE_TICKS } else { CONTINUE_TICKS };
+                            let ticks = if self.choice {
+                                CHOICE_TICKS
+                            } else {
+                                CONTINUE_TICKS
+                            };
                             self.due = Some(chat.tick.saturating_add(ticks));
                             return Ok(Step::Wait);
                         }
@@ -264,7 +268,9 @@ pub(crate) fn name_matches(actual: &str, wanted: &str) -> bool {
     if actual.is_ascii() && wanted.is_ascii() {
         actual.eq_ignore_ascii_case(wanted)
     } else {
-        actual.chars().flat_map(char::to_lowercase)
+        actual
+            .chars()
+            .flat_map(char::to_lowercase)
             .eq(wanted.chars().flat_map(char::to_lowercase))
     }
 }
@@ -280,13 +286,20 @@ pub(crate) fn action_matches(actual: &str, index: usize, wanted: NpcOp<'_>) -> b
 }
 
 pub(crate) fn option_matches(actual: &str, wanted: &str) -> bool {
-    if wanted.is_empty() { return false; }
+    if wanted.is_empty() {
+        return false;
+    }
     if actual.is_ascii() && wanted.is_ascii() {
-        return actual.as_bytes().windows(wanted.len())
+        return actual
+            .as_bytes()
+            .windows(wanted.len())
             .any(|window| window.eq_ignore_ascii_case(wanted.as_bytes()));
     }
     actual.char_indices().any(|(at, _)| {
         let mut actual = actual[at..].chars().flat_map(char::to_lowercase);
-        wanted.chars().flat_map(char::to_lowercase).all(|wanted| actual.next() == Some(wanted))
+        wanted
+            .chars()
+            .flat_map(char::to_lowercase)
+            .all(|wanted| actual.next() == Some(wanted))
     })
 }

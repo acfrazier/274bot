@@ -73,7 +73,7 @@ impl BankPickState {
             native.authority.clone(),
             NativeBankPickReceipt {
                 request_id: native.authority.request_id().get(),
-                evidence: native.evidence.clone(),
+                evidence: native.evidence,
                 selected: request.selected(index, kind),
             },
         ));
@@ -606,7 +606,7 @@ fn queue_bank(
                     native.authority.clone(),
                     NativeBankPickReceipt {
                         request_id,
-                        evidence: native.evidence.clone(),
+                        evidence: native.evidence,
                         selected: native_no_candidate(),
                     },
                 ));
@@ -981,7 +981,8 @@ pub(super) fn dispatch_observed_withdraw_x(
     })?;
     let op = action_slot(&item.actions, action)?;
     if !matches!(
-        Interactions::new(snapshot, driver).interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+        Interactions::new(snapshot, driver)
+            .interact(OpTarget::Item(item), ActionSpec::Operation(op)),
         SendResult::Sent { .. }
     ) {
         return None;

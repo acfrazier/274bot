@@ -11,9 +11,9 @@
 //! access option. Both end with the frozen `openedReady` item-list wait.
 //! Log lines go to the caller's `log` through the callback path.
 
+use crate::bank::npc;
 use crate::bank_op::BankView;
 use crate::bank_open::{BankOpen, BankOpenArgs};
-use crate::bank::npc;
 use crate::dialog::{CHOICE_TICKS, CONTINUE_TICKS, PAGE_ACK_MS};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Scene, Text};
@@ -55,7 +55,6 @@ impl Chat {
             }
         })
     }
-
 }
 
 fn posted_tick() -> u64 {

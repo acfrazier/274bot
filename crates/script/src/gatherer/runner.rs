@@ -294,7 +294,7 @@ impl Gatherer {
             }
             TripStep::Access => {
                 if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 0, tick);
+                    self.trip_walk(selected.access_tile, 1, tick);
                 }
             }
             TripStep::Open => {
@@ -304,7 +304,14 @@ impl Gatherer {
                 let Some(access) = &selected.access else {
                     self.fail(
                         "bank-unavailable",
-                        "selected bank has no observed access",
+                        format!(
+                            "bank-unavailable:{}: no packed stand or declared NPC access",
+                            self.prepared
+                                .banks
+                                .banks()
+                                .get(usize::from(selected.bank_index))
+                                .map_or(self.settings().bank.as_str(), |bank| bank.name)
+                        ),
                         true,
                     );
                     return;

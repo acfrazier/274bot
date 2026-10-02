@@ -7653,7 +7653,10 @@ fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
                         .unwrap(),
                 );
             }
-            match tick.actions.poll(self.handle.as_ref().unwrap(), &mut tick.cx) {
+            match tick
+                .actions
+                .poll(self.handle.as_ref().unwrap(), &mut tick.cx)
+            {
                 Poll::Ready(Ok(receipt)) => {
                     assert!(receipt.complete);
                     *self.complete.lock().unwrap() = true;
@@ -7738,7 +7741,10 @@ fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
         observe(&mut c, &snap, 1, &[]);
         let before = c.out.pos;
         observe(&mut c, &snap, 2, &[]);
-        assert!(c.out.pos > before, "native withdrawal must reach the driver");
+        assert!(
+            c.out.pos > before,
+            "native withdrawal must reach the driver"
+        );
         let phase = slot
             .lock()
             .unwrap()
@@ -7760,7 +7766,10 @@ fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
             snap.rebuild(&c);
             let before = c.out.pos;
             observe(&mut c, &snap, 3, &[]);
-            assert!(c.out.pos > before, "fresh count dialog must receive an amount");
+            assert!(
+                c.out.pos > before,
+                "fresh count dialog must receive an amount"
+            );
             assert!(matches!(
                 slot.lock().unwrap().pending_withdraw_x().unwrap().phase,
                 script::slot::PendingWithdrawXPhase::Settlement
@@ -7777,7 +7786,10 @@ fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
         c.bump_gens(ServerProt::UPDATE_INV_FULL);
         snap.rebuild(&c);
         observe(&mut c, &snap, 4, &[(2, target)]);
-        assert!(*complete.lock().unwrap(), "fresh inventory must settle the exact native target");
+        assert!(
+            *complete.lock().unwrap(),
+            "fresh inventory must settle the exact native target"
+        );
         assert!(slot.lock().unwrap().pending_withdraw_x().is_none());
     }
 }
