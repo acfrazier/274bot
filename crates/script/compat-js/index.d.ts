@@ -426,12 +426,6 @@ export function paintClueProgress(p: PaintFrame, idle?: string): void;
 
 }
 
-declare module '*api/ai/clues/data/cluedb.js' {
-export const CLUE_DB: {};
-export const CASKET_IDS: {};
-
-}
-
 declare module '*api/ai/clues/data/toolAcquire.js' {
 export const SPADE_NAME = "Spade";
 export const TRIO: readonly [
