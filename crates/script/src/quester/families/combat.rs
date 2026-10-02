@@ -598,6 +598,11 @@ impl CombatRun {
         let Some(target) = target else {
             return self.request.stand;
         };
+        // The engine drops a melee NPC's target only once the player is more
+        // than `maxrange + 1` from the NPC's spawn, which the client never
+        // sees, and the NPC itself may be up to `maxrange` from that spawn.
+        // Measured from the NPC's current tile, the chase envelope is
+        // therefore up to `2 * maxrange + attackrange` (Npc.ts:652-667).
         let chase_range = if report
             .engaged
             .is_some_and(|actor| actor.kind == api::snapshot::ActorKind::Npc)
@@ -605,7 +610,12 @@ impl CombatRun {
             self.tables
                 .selected()
                 .npc_name(report.engaged_npc_type)
-                .map(|npc| npc.maxrange.saturating_add(npc.attackrange).max(0))
+                .map(|npc| {
+                    npc.maxrange
+                        .saturating_mul(2)
+                        .saturating_add(npc.attackrange)
+                        .max(0)
+                })
                 .unwrap_or(10)
         } else {
             0
@@ -616,7 +626,7 @@ impl CombatRun {
             }
         }
 
-        let retreat_distance = chase_range.saturating_add(2).max(2);
+        let retreat_distance = chase_range.saturating_add(3).max(2);
         let dx = (here.x - target.x).signum();
         let dz = (here.z - target.z).signum();
         [(dx, dz), (dx, 0), (0, dz), (1, 0), (-1, 0), (0, 1), (0, -1)]
