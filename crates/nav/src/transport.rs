@@ -107,7 +107,7 @@ use zanaris::*;
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportKind {
-    /// A wall door: both sides of the loc, traversed with the `Open` op.
+    /// A closed/open directional loc crossing (wall doors and slashable webs).
     Door,
     /// A ladder placement (climb up/down per the script's op).
     Ladder,
@@ -146,11 +146,11 @@ pub enum DoorDir {
 
 /// One directed transport hop: stand on or near `at`, use `option` on the
 /// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
-/// target — the loc tile (door/ladder/stairs/agility/glider) or the
+/// target — the loc tile (door/web/ladder/stairs/agility/glider) or the
 /// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
-/// crossing direction for doors only (`None` for every other kind until
-/// steps 3/4 fill them); `open_loc_id` the open leaf id a door config's
-/// `next_loc_stage` declares (`None` when the config carries none).
+/// crossing direction for doors and slashable webs (`None` for every
+/// other edge kind until steps 3/4 fill them); `open_loc_id` names the
+/// door's open leaf or the web's slashed loc.
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare (empty when the source
@@ -193,6 +193,18 @@ pub struct TransportEdge {
     /// snapshot varps and the quest list never do. Packed on the v11 wire
     /// after `wildy_cap`.
     pub quest_gates: Option<QuestGates>,
+}
+
+impl TransportEdge {
+    /// Whether this is one of the packed `bigweb_slashable` crossings.
+    /// Revision 289 identifies the closed/slashed loc pair as 733/734.
+    pub(crate) fn is_slashable_web(&self) -> bool {
+        self.kind == TransportKind::Door
+            && self.loc_id == 733
+            && self.open_loc_id == Some(734)
+            && self.dir.is_some()
+            && matches!(self.option, 0 | 1)
+    }
 }
 
 /// Transport edges indexed by operable footprint stands or radius-one

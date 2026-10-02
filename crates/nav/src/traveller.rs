@@ -1053,9 +1053,9 @@ impl WalkHop {
 /// arrival target and the stall clock. `troll` marks the automatic
 /// door-troll fallback: the hop re-reads the door's state and re-sends
 /// while closed, probes after Open, and walks when open after
-/// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
-/// watermark for fresh "I can't reach that!" evidence; NPC-backed hops
-/// refresh it at every interaction and recover only before fare dialogue.
+/// the cheap one-interact hop lapsed its budget. `chat_seq` is the watermark
+/// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
+/// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,

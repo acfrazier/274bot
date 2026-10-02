@@ -2128,6 +2128,132 @@ fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
 }
 
 #[test]
+fn follow_web_retries_each_observed_cut_failure_and_accepts_the_slashed_loc() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut edge = door_edge();
+    edge.loc_id = 733;
+    edge.option = 0;
+    edge.item_req = vec![(946, 1)];
+    edge.open_loc_id = Some(734);
+    edge.dir = Some(DoorDir::E);
+    let dest = edge.to;
+    let route = Route {
+        legs: vec![Leg::Transport { edge }],
+        dest,
+        ticks: 2.0,
+    };
+    let mut options = TravelOptions::default();
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1, "the initial cut uses the held knife");
+
+    c.add_chat(0, "You fail to cut through it.", "");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 2,
+        "one observed 50% failure immediately permits one retry"
+    );
+
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 2,
+        "the same failure message must not trigger multiple retries"
+    );
+
+    c.add_chat(0, "You fail to cut through it.", "");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 3, "each fresh failure permits one retry");
+
+    plant_loc(&mut c, 734, "Web", "Slash", 1, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 3,
+        "loc_change to 734 succeeds without reclicking"
+    );
+    assert!(
+        rec.walked.contains(&(3, 0)),
+        "the follower walks through the slashed web"
+    );
+
+    plant_player(&mut c, 3, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at: dest })
+    );
+}
+
+#[test]
+fn follow_web_does_not_retry_from_elapsed_time_without_a_failure_message() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut edge = door_edge();
+    edge.loc_id = 733;
+    edge.option = 0;
+    edge.item_req = vec![(946, 1)];
+    edge.open_loc_id = Some(734);
+    edge.dir = Some(DoorDir::E);
+    let route = Route {
+        legs: vec![Leg::Transport { edge: edge.clone() }],
+        dest: edge.to,
+        ticks: 2.0,
+    };
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 1,
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1);
+    let outcome = loop {
+        bump_rebuild(&mut c, &mut snap);
+        if let Some(outcome) = traveller.follow(&mut rec, &snap, route.clone(), &mut options) {
+            break outcome;
+        }
+        assert!(snap.tick() < 8, "web did not settle within the hop budget");
+    };
+    assert!(
+        matches!(outcome, TravelOutcome::Stalled { .. }),
+        "without an observed fail message, wait for the ordinary hop timeout: {outcome:?}"
+    );
+    assert_eq!(
+        rec.loc_uses, 1,
+        "the 50% retry is event-driven, never an automatic timed door troll"
+    );
+}
+
+#[test]
 fn follow_npc_edge_sends_op_npc_and_arrives() {
     // Task 2: a `TransportKind::Npc` edge (cart, essence wizard,
     // Elkoy) must interact with the driver NPC — an `OP_NPC1` on the
