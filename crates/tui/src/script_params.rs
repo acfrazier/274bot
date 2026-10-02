@@ -383,7 +383,7 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
 
 fn value_from_scratch(def: &SettingDef, scratch: &str) -> Result<serde_json::Value, String> {
     match def.ty.as_str() {
-        "number" => parse_number(scratch),
+        "number" => parse_number(scratch).map(|value| coerce_setting_value(&def.ty, &value)),
         "string" => Ok(serde_json::Value::String(scratch.to_string())),
         "tile" => {
             if !tile_scratch_ok(scratch) {
@@ -727,19 +727,26 @@ mod tests {
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
         type_replace(&mut pane, "40");
         assert_eq!(pane.on_key(KeyCode::Esc), ParamsKey::Cancel);
-        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_f64()), Some(27.0));
+        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(27));
         assert!(!pane.state.editing);
 
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
         type_replace(&mut pane, "40");
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
-        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_f64()), Some(40.0));
+        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(40));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved["catalog:Alcher"]["alchs"].as_u64(),
+            Some(40),
+            "the TUI writes integral settings as JSON integers"
+        );
         let reloaded = ScriptSettingsStore::at(path);
         let start = reloaded.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
         assert_eq!(
-            start.get("alchs").and_then(|v| v.as_f64()),
-            Some(40.0),
-            "Start merge must see the saved number"
+            start.get("alchs").and_then(|v| v.as_u64()),
+            Some(40),
+            "Start merge must load the saved integer"
         );
     }
 
