@@ -440,6 +440,8 @@ pub enum ActionError {
     BudgetExhausted,
     Stale,
     Cancelled,
+    /// A step adapter was interrupted by manual movement, not owner revocation.
+    UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
     /// The step cannot continue safely without an explicit operator retry.

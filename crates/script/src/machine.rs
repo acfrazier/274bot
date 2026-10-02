@@ -795,20 +795,12 @@ fn with_walk_baseline<T>(baseline: Option<u64>, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+fn observed_user_move_intent_seq() -> u64 {
+    crate::observed::with(|scene| scene.since_login().user_move_intent_seq().unwrap_or(0))
+}
+
 pub(crate) fn user_move_intent_seq() -> u64 {
-    let observed =
-        crate::observed::with(|scene| scene.since_login().user_move_intent_seq().unwrap_or(0));
-    let notified = HOST.with(|host| {
-        host.borrow()
-            .walking_publication
-            .as_ref()
-            .map_or(0, |publication| {
-                publication
-                    .takeover
-                    .load(std::sync::atomic::Ordering::Acquire)
-            })
-    });
-    TAKEOVER_SEQ.with(Cell::get).max(observed).max(notified)
+    observed_user_move_intent_seq().max(HOST.with(|host| host.borrow().takeover_seq()))
 }
 
 impl Host {
@@ -826,19 +818,22 @@ impl Host {
         }
     }
 
-    fn walking_baseline(&self) -> Option<u64> {
-        if SESSION_HELD.with(Cell::get) {
-            return None;
-        }
-        let takeover = self
-            .walking_publication
+    fn takeover_seq(&self) -> u64 {
+        self.walking_publication
             .as_ref()
             .map_or(0, |publication| {
                 publication
                     .takeover
                     .load(std::sync::atomic::Ordering::Acquire)
             })
-            .max(TAKEOVER_SEQ.with(Cell::get));
+            .max(TAKEOVER_SEQ.with(Cell::get))
+    }
+
+    fn walking_baseline(&self) -> Option<u64> {
+        if SESSION_HELD.with(Cell::get) {
+            return None;
+        }
+        let takeover = self.takeover_seq();
         self.rows
             .iter()
             .filter(|row| row.walking_operation)
@@ -963,7 +958,9 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
     };
     let inherited_baseline = WALK_BASELINE.with(Cell::get);
-    let intent_baseline = inherited_baseline.unwrap_or_else(user_move_intent_seq);
+    // A new decision belongs to the snapshot that will stamp its actions,
+    // not an atomic notice whose outcome snapshot this tick has not seen.
+    let intent_baseline = inherited_baseline.unwrap_or_else(observed_user_move_intent_seq);
     let carries_walk_baseline = inherited_baseline.is_some() || F::WALKING_OPERATION;
     let mut clock = HOST.with(|host| host.borrow().fresh_clock());
     let mut ops = Vec::new();
@@ -1178,6 +1175,18 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// One row's steps for this pass; `Some` when it ended. Stops, leaving
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    if row.rebaseline_on_resume {
+        // Pause produces no observations. Refresh on the first eligible
+        // post-Resume step, after the host's Running snapshot, not at Resume.
+        // An actual post-Resume takeover (including its early atomic notice)
+        // must never be absorbed into the carried operation's baseline.
+        if !SESSION_HELD.with(Cell::get)
+            && HOST.with(|host| host.borrow().takeover_seq()) <= row.intent_baseline
+        {
+            row.intent_baseline = observed_user_move_intent_seq();
+        }
+        row.rebaseline_on_resume = false;
+    }
     let baseline = row.carries_walk_baseline.then_some(row.intent_baseline);
     with_walk_baseline(baseline, || drive_inner(row, js, at))
 }
@@ -1322,16 +1331,8 @@ pub(crate) fn on_pause() {
 }
 
 pub(crate) fn on_resume() {
-    let intent = user_move_intent_seq();
-    let reconnect = SESSION_HELD.with(Cell::get);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
-        for row in &mut host.rows {
-            if row.rebaseline_on_resume && !reconnect {
-                row.intent_baseline = intent;
-            }
-            row.rebaseline_on_resume = false;
-        }
         let held = host.held;
         host.set_freeze(false, held);
     });

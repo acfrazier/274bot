@@ -214,11 +214,7 @@ pub(crate) fn post_user_input_walk_receipt(
 }
 
 fn assert_manual_movement(result: Poll<Result<StepOutcome, ActionError>>) {
-    assert!(matches!(
-        result,
-        Poll::Ready(Err(ActionError::Blocked(reason)))
-            if reason.as_ref() == super::MANUAL_MOVEMENT_MESSAGE
-    ));
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
 }
 fn wall_door_reach_view() -> api::query::ReachQueryView {
     let mut reachable = vec![0u32];

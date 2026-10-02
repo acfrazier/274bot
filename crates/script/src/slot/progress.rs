@@ -72,6 +72,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted => "busy".into(),
         ActionError::Stale => "stale".into(),
         ActionError::Cancelled => "cancelled".into(),
+        ActionError::UserInput => "manual-movement".into(),
         ActionError::Unavailable(reason) => format!("unavailable:{reason}").into(),
         ActionError::Failed(reason) | ActionError::Blocked(reason) => {
             format!("failed:{reason}").into()

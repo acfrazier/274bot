@@ -30,6 +30,12 @@ const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
     "journal read retry limit reached (journal ownership repeatedly lost)";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuesterFailureKind {
+    Other,
+    ManualMovement,
+}
+
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
@@ -59,6 +65,7 @@ pub struct Quester {
     empty_reads: u8,
     park_reason: &'static str,
     last_error: Option<Arc<str>>,
+    last_error_kind: QuesterFailureKind,
     waiting: Option<(&'static str, Arc<str>)>,
     deaths: u8,
     attempts: u8,
@@ -102,6 +109,7 @@ impl Quester {
             empty_reads: 0,
             park_reason: "no progress",
             last_error: None,
+            last_error_kind: QuesterFailureKind::Other,
             waiting: None,
             deaths: 0,
             attempts: 0,
@@ -144,13 +152,10 @@ impl Quester {
 
     fn blocked_failure(&self) -> ScriptFailure {
         ScriptFailure {
-            code: Arc::from(
-                if self.last_error.as_deref() == Some(super::families::MANUAL_MOVEMENT_MESSAGE) {
-                    "manual-movement"
-                } else {
-                    "parked"
-                },
-            ),
+            code: Arc::from(match self.last_error_kind {
+                QuesterFailureKind::ManualMovement => "manual-movement",
+                QuesterFailureKind::Other => "parked",
+            }),
             message: self
                 .last_error
                 .clone()
@@ -159,14 +164,32 @@ impl Quester {
         }
     }
 
+    fn clear_last_error(&mut self) {
+        self.last_error = None;
+        self.last_error_kind = QuesterFailureKind::Other;
+    }
+
+    fn set_last_error(&mut self, kind: QuesterFailureKind, message: Arc<str>) {
+        self.last_error = Some(message);
+        self.last_error_kind = kind;
+        self.dirty = true;
+    }
+
     fn record_failure(&mut self, error: ActionError) {
-        self.last_error = Some(match error {
+        let (kind, message) = match error {
+            ActionError::UserInput => (
+                QuesterFailureKind::ManualMovement,
+                super::families::manual_movement_message(),
+            ),
             ActionError::Unavailable(reason)
             | ActionError::Failed(reason)
-            | ActionError::Blocked(reason) => reason,
-            error => Arc::from(format!("step error: {error:?}")),
-        });
-        self.dirty = true;
+            | ActionError::Blocked(reason) => (QuesterFailureKind::Other, reason),
+            error => (
+                QuesterFailureKind::Other,
+                Arc::from(format!("step error: {error:?}")),
+            ),
+        };
+        self.set_last_error(kind, message);
     }
 
     fn update_wait(&mut self) {
@@ -294,7 +317,7 @@ impl Quester {
         if self.waiting.take().is_some() {
             self.dirty = true;
         }
-        self.last_error = None;
+        self.clear_last_error();
     }
 
     fn current_step(&self) -> Option<&CompiledStep> {
@@ -317,7 +340,7 @@ impl Quester {
             if self.unreadable_reads >= 2 {
                 self.parked = true;
                 self.park_reason = reason;
-                self.last_error = None;
+                self.clear_last_error();
                 self.dirty = true;
             }
         }
@@ -329,16 +352,19 @@ impl Quester {
         if self.parked {
             if let Some(chat) = tick.cx.snapshot().chat_modal() {
                 if chat.value.root != -1 || !chat.value.texts.is_empty() {
-                    self.last_error = Some(Arc::from(format!(
-                        "journal blocked by modal root {}{}",
-                        chat.value.root,
-                        chat.value
-                            .texts
-                            .iter()
-                            .find(|text| !text.is_empty())
-                            .map(|text| format!(" ({text})"))
-                            .unwrap_or_default()
-                    )));
+                    self.set_last_error(
+                        QuesterFailureKind::Other,
+                        Arc::from(format!(
+                            "journal blocked by modal root {}{}",
+                            chat.value.root,
+                            chat.value
+                                .texts
+                                .iter()
+                                .find(|text| !text.is_empty())
+                                .map(|text| format!(" ({text})"))
+                                .unwrap_or_default()
+                        )),
+                    );
                 }
             }
         }
@@ -358,8 +384,7 @@ impl Quester {
         if self.journal_attempts >= JOURNAL_READ_ATTEMPTS {
             self.parked = true;
             self.park_reason = "journal read retry limit reached";
-            self.last_error = Some(Arc::from(limit));
-            self.dirty = true;
+            self.set_last_error(QuesterFailureKind::Other, Arc::from(limit));
             return false;
         }
         self.wait_for_read(tick, reason)
@@ -493,7 +518,7 @@ impl Quester {
             if self.last_read.is_some() {
                 self.parked = true;
                 self.park_reason = "no journal rule matched or stage has no sequence";
-                self.last_error = None;
+                self.clear_last_error();
                 return false;
             }
             return self.wait_for_read(tick, "quest colour unavailable or unknown stage");
@@ -696,7 +721,7 @@ impl Script for Quester {
                     if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
                         self.parked = true;
                         self.park_reason = "skip predicate evidence unavailable";
-                        self.last_error = None;
+                        self.clear_last_error();
                         self.dirty = true;
                     }
                     self.publish(tick.output);
@@ -709,7 +734,7 @@ impl Script for Quester {
                 if self.empty_reads >= 2 {
                     self.parked = true;
                     self.park_reason = "no step for stage";
-                    self.last_error = None;
+                    self.clear_last_error();
                     self.dirty = true;
                 }
                 self.needs_read = true;
@@ -738,7 +763,7 @@ impl Script for Quester {
                 Ok(run) => {
                     self.step = Some(run);
                     self.dirty = true;
-                    self.last_error = None;
+                    self.clear_last_error();
                 }
                 Err(error) => {
                     self.attempts = self.attempts.saturating_add(1);
@@ -799,7 +824,7 @@ impl Script for Quester {
                         .map(|step| step.plan.settle_timeout())
                         .unwrap_or_default();
             }
-            Poll::Ready(Err(error @ ActionError::Blocked(_))) => {
+            Poll::Ready(Err(error @ (ActionError::Blocked(_) | ActionError::UserInput))) => {
                 self.step = None;
                 self.parked = true;
                 self.record_failure(error);
@@ -887,7 +912,7 @@ impl Script for Quester {
         self.journal_attempts = 0;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
-        self.last_error = None;
+        self.clear_last_error();
         self.waiting = None;
         self.park_reason = "no progress";
         self.dirty = true;
@@ -1322,9 +1347,7 @@ mod tests {
                     script.tick(native).unwrap()
                 }),
                 ScriptFlow::Blocked(failure)
-                    if failure.code.as_ref() == "manual-movement"
-                        && failure.message.as_ref() == "cancelled by user input"
-                        && failure.retryable
+                    if failure.code.as_ref() == "manual-movement" && failure.retryable
             ));
             assert_eq!((script.seq_index, script.step_index), cursor);
             assert_eq!(script.attempts, 4);
@@ -1337,6 +1360,39 @@ mod tests {
 
         script.retry().unwrap();
         assert!(!script.parked, "only explicit Retry resumes the step");
+        // Generic owner revocation is not manual movement. After Retry starts
+        // another real walk, its revoked handle follows normal failure policy.
+        let mut revoked_at = None;
+        for tick in poll_tick + 3..=poll_tick + 14 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
+            });
+            if ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .any(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+            }) {
+                ledger.as_mut().unwrap().revoke();
+                revoked_at = Some(tick);
+                break;
+            }
+        }
+        let revoked_at = revoked_at.expect("Retry starts the current walk again");
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, revoked_at + 1, |native| {
+                script.tick(native).unwrap()
+            }),
+            ScriptFlow::Continue
+        ));
+        assert!(
+            !script.parked,
+            "generic cancellation must not report manual-movement"
+        );
+        assert_eq!(
+            script.fail_streak, 1,
+            "generic cancellation keeps ordinary failure policy"
+        );
     }
 }
 

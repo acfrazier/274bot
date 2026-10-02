@@ -618,6 +618,7 @@ export default class T extends LoopingBot {
         })
         .expect("initial WalkToSpot request");
     iso.pause();
+    iso.resume();
     let mut paused = empty_snapshot(
         2,
         TileInput {
@@ -628,13 +629,16 @@ export default class T extends LoopingBot {
     );
     paused.user_move_intent_seq = 6;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&paused));
-    iso.on_game_tick(2);
-    iso.resume();
     iso.on_game_tick(3);
+    iso.probe("true").unwrap();
     let after_resume = iso.drain_interacts();
     assert!(
         after_resume.is_empty(),
-        "a user intent observed during operator pause must rebaseline, not abort or replay: {after_resume:?}"
+        "paused-period intent first observed after Resume must keep the walk: {after_resume:?}"
+    );
+    assert!(
+        iso.live_walking_operation(),
+        "the carried Hunt walk remains live after paused-period movement"
     );
 
     let mut takeover = empty_snapshot(
@@ -648,7 +652,12 @@ export default class T extends LoopingBot {
     takeover.user_move_intent_seq = 7;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&takeover));
     iso.on_game_tick(4);
+    iso.probe("true").unwrap();
     let after_takeover = iso.drain_interacts();
+    assert!(
+        !iso.live_walking_operation(),
+        "the interrupted Hunt walk must relinquish ownership"
+    );
     assert!(
         after_takeover.iter().all(|req| matches!(
             req,

@@ -17945,6 +17945,110 @@ fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     rig.slot().lock().unwrap().stop();
 }
 
+fn manual_resume_rig() -> ReconnectRig {
+    ReconnectRig::with_source(
+        once_src(
+            "import { Traversal } from '../../api/walking/Traversal.js';",
+            "Traversal.walkResilient({ x: 40, z: 40, level: 0 }, { radius: 1 })",
+        ),
+        open_world(64, 64),
+        (3, 3, 0),
+    )
+}
+
+fn manual_resume_click(rig: &ReconnectRig, tick: u64) -> bool {
+    take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        crate::SlotFrameInput {
+            manual_steps: 1,
+            ..crate::SlotFrameInput::default()
+        },
+        true,
+        tick,
+    )
+}
+
+#[test]
+fn manual_resume_pause_click_resume_preserves_carried_compat_walk() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let armed = rig.armed();
+    let initial_walks = rig.walks();
+    rig.operator_pause();
+    assert!(!manual_resume_click(&rig, 2));
+    // No snapshot is produced in this frame: the slot is still Paused.
+    rig.frames(2);
+    rig.resume();
+    rig.frames(3);
+    rig.frames(4);
+    let result = rig.slot().lock().unwrap().probe("__rs_ok").unwrap();
+    eprintln!(
+        "pause-click-resume request={} result={result} armed={:?} walks={:?}",
+        armed.0,
+        rig.armed(),
+        rig.walks()
+    );
+    assert_eq!(result, serde_json::Value::Null, "carried walk remains live");
+    assert_eq!(rig.armed(), armed, "Resume restores the same request");
+    assert_eq!(rig.walks(), vec![initial_walks[0], initial_walks[0]]);
+    rig.here = (40, 40, 0);
+    rig.frames(5);
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), true);
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
+fn manual_resume_click_after_resume_receipts_carried_request_once() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let armed = rig.armed();
+    let initial_walks = rig.walks();
+    let original_generation = rig.navs.lock().unwrap()["alice"].route_generation;
+    rig.operator_pause();
+    rig.resume();
+    assert!(manual_resume_click(&rig, 2));
+    let (seq, receipt_id, receipt_generation, reason) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        (
+            bot.walk_outcome_seq,
+            bot.walk_outcome_request_id,
+            bot.walk_outcome_generation,
+            bot.walk_outcome_cancel_reason,
+        )
+    };
+    eprintln!(
+        "resume-click carry request={} receipt={receipt_id} reason={reason:?}",
+        armed.0
+    );
+    assert_eq!(
+        receipt_id, armed.0,
+        "carry must not disappear without a receipt"
+    );
+    assert_eq!(reason, script::isolate_fb::WalkCancelReason::UserInput);
+    assert_eq!(
+        receipt_generation, original_generation,
+        "carry retains route correlation"
+    );
+    rig.frames(2);
+    rig.frames(3);
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), false);
+    assert_eq!(
+        rig.walks(),
+        initial_walks,
+        "the cancelled carry is never replayed"
+    );
+    assert!(
+        !manual_resume_click(&rig, 4),
+        "one terminal per cancelled request"
+    );
+    rig.frames(4);
+    assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, seq);
+    rig.slot().lock().unwrap().stop();
+}
+
 /// Pause, Resume, Pause again before any observation, observe while
 /// paused, Resume: the walk goes out once more in all, not once per Resume.
 #[test]
