@@ -749,10 +749,12 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
             {
                 return Some("M4 did not reach HP30/current8, Prayer1, lobster×4".into());
             }
-            if !named_npcs(baseline, "nasty tree")
-                .iter()
-                .any(|npc| TREE_SPAWNS.iter().any(|tile| tile_is(&npc["tile"], *tile)))
-            {
+            if !baseline["nearby_npcs"].as_array().is_some_and(|npcs| {
+                npcs.iter().any(|npc| {
+                    npc["type"] == json!(152)
+                        && TREE_SPAWNS.iter().any(|tile| tile_is(&npc["tile"], *tile))
+                })
+            }) {
                 return Some(
                     "M4 static Draynor Manor nasty_tree was not present at its source-backed spawn"
                         .into(),
@@ -1056,15 +1058,7 @@ fn m4_ready(capture: &CombatCapture) -> bool {
         .start_baseline
         .as_ref()
         .and_then(|frame| stat_effective(frame, "hitpoints"));
-    let no_tree_attack = !capture.actions.iter().any(|action| {
-        action["request"]["op"] == json!("npc")
-            && action["request"]["name"]
-                .as_str()
-                .is_some_and(|name| name.eq_ignore_ascii_case("nasty tree"))
-            && action["request"]["action"]
-                .as_str()
-                .is_some_and(|verb| verb.eq_ignore_ascii_case("attack"))
-    });
+    let no_tree_attack = !capture.actions.iter().any(is_npc_attack_request);
     start_hp == Some(8)
         && end_tick >= hit_tick
         && end_tick - hit_tick <= 10
@@ -2050,8 +2044,9 @@ fn m4_first_tree_hit_tick(capture: &CombatCapture) -> Option<i64> {
     capture.frames.iter().find_map(|frame| {
         let self_slot = frame["self_slot"].as_i64()?;
         let hp = stat_effective(frame, "hitpoints")?;
-        let tree_targets_player = named_npcs(frame, "nasty tree").iter().any(|npc| {
-            npc["in_combat"] == json!(true)
+        let tree_targets_player = frame["nearby_npcs"].as_array()?.iter().any(|npc| {
+            npc["type"] == json!(152)
+                && npc["animation"] == json!(73)
                 && npc["target"]["kind"] == json!("Player")
                 && npc["target"]["index"] == json!(self_slot)
         });
@@ -2628,4 +2623,33 @@ fn corpse_identity_and_terminal_prayer_off_are_checked_in_their_own_shapes() {
     assert!(protect_plan_ends_with_terminal(&capture));
     capture.actions[0]["snapshot"]["prayer_varps"][0]["value"] = Value::Null;
     assert!(!protect_plan_ends_with_terminal(&capture));
+}
+
+#[test]
+fn static_tree_identity_uses_selected_type_not_debug_name() {
+    let mut baseline = json!({
+        "ingame": true, "scene_state": 2, "self_slot": 1,
+        "stats": [
+            {"name": "hitpoints", "base": 30, "effective": 8},
+            {"name": "prayer", "base": 1, "effective": 1}
+        ],
+        "inventory": [{"id": LOBSTER_ID, "count": 4}],
+        "nearby_npcs": [{
+            "index": 4328, "type": 152, "name": "Tree",
+            "tile": {"x": 3108, "z": 3346, "level": 0},
+            "in_combat": false, "animation": 73,
+            "target": {"kind": "Player", "index": 1}
+        }]
+    });
+    assert_eq!(start_preflight(Case::M4, &baseline), None);
+    baseline["stats"][0]["effective"] = json!(7);
+    baseline["tick"] = json!(20);
+    let mut capture = CombatCapture::default();
+    capture.frames.push(baseline.clone());
+    assert_eq!(m4_first_tree_hit_tick(&capture), Some(20));
+    baseline["stats"][0]["effective"] = json!(8);
+    baseline["nearby_npcs"][0]["type"] = json!(1226);
+    assert!(start_preflight(Case::M4, &baseline).is_some());
+    capture.frames[0]["nearby_npcs"][0]["type"] = json!(1226);
+    assert_eq!(m4_first_tree_hit_tick(&capture), None);
 }
