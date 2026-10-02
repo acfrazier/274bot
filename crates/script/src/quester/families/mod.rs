@@ -22,6 +22,10 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
+/// One UseOn attempt inside an `until` loop. A silent miss must not consume
+/// the whole step `settle_ms` (240s for Sheep Shearer). Successful shear is
+/// two `p_delay(0)` ticks; 8s also covers a lagged inventory post.
+const USE_ON_ROUND_MS: u64 = 8_000;
 
 pub(super) fn manual_movement_message() -> Arc<str> {
     static REASON: std::sync::LazyLock<Arc<str>> =
@@ -1625,6 +1629,7 @@ impl StepPlan for UseOnPlan {
             walk: None,
             interaction: None,
             round_before: None,
+            round_deadline: None,
             accepted: false,
             chat_since: 0,
         }))
@@ -1651,233 +1656,273 @@ struct UseOnRun {
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
     round_before: Option<i32>,
+    round_deadline: Option<Duration>,
     chat_since: i32,
 }
+impl UseOnRun {
+    fn clear_round(&mut self) {
+        self.interaction = None;
+        self.accepted = false;
+        self.round_before = None;
+        self.round_deadline = None;
+    }
+}
+
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Ready(Ok(receipt)) if receipt.end == WalkEnd::UserInput => {
-                    return Poll::Ready(Err(manual_movement_error()))
-                }
-                _ if timed_out => {
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
-                }
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
-                    walk_step_evidence(receipt)?;
-                    self.walk = None;
-                }
-            }
-        }
-        if timed_out {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
-        }
-        if self.interaction.is_none() {
-            if let Some((id, qty)) = self.until {
-                if cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
-                    inventory
-                        .value
-                        .iter()
-                        .filter(|item| item.def.id == id)
-                        .map(|item| item.count)
-                        .sum::<i32>()
-                        >= qty
-                }) {
-                    return Poll::Ready(Ok(StepOutcome {
-                        progress: None,
-                        evidence: cx.tick.cx.evidence(),
-                        receipt: None,
-                    }));
+        loop {
+            let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
+            if let Some(handle) = &self.walk {
+                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                    Poll::Ready(Ok(receipt)) if receipt.end == WalkEnd::UserInput => {
+                        return Poll::Ready(Err(manual_movement_error()))
+                    }
+                    _ if timed_out => {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
+                    }
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(receipt)) => {
+                        walk_step_evidence(receipt)?;
+                        self.walk = None;
+                    }
                 }
             }
-            if let Some(tile) = self.tile {
-                let here = cx.tick.cx.snapshot().here();
-                if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
-                    self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(
-                            tile,
-                            self.radius.max(1) as u16,
-                            None,
-                            cx.required_after,
-                        ),
-                        &mut cx.tick.cx,
-                    )?);
-                    return Poll::Pending;
-                }
+            if timed_out {
+                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
             }
-            self.deadline
-                .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
-            let snapshot = cx.tick.cx.snapshot();
-            let Some(inventory) = snapshot.inventory() else {
-                return Poll::Pending;
-            };
-            let observed_id = self.until.map(|(id, _)| id).or(self.product);
-            self.round_before = observed_id.map(|id| {
-                inventory
-                    .value
-                    .iter()
-                    .filter(|row| row.def.id == id)
-                    .map(|row| row.count)
-                    .sum()
-            });
-            let Some(source) = inventory
-                .value
-                .iter()
-                .find(|row| row.def.id == self.item_id && row.count > 0)
-            else {
-                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on source missing"))));
-            };
-            let (tile, index, target_item_slot) = match self.kind.as_ref() {
-                "loc" => {
-                    let Some(loc) = reach::nearest_loc(
-                        &cx.tick.cx,
-                        Some(self.target_id),
-                        None,
-                        None,
-                        self.radius,
-                    ) else {
-                        return Poll::Pending;
-                    };
-                    (loc.tile, None, None)
+            if self.interaction.is_none() {
+                if let Some((id, qty)) = self.until {
+                    if cx.tick.cx.snapshot().inventory().is_some_and(|inventory| {
+                        inventory
+                            .value
+                            .iter()
+                            .filter(|item| item.def.id == id)
+                            .map(|item| item.count)
+                            .sum::<i32>()
+                            >= qty
+                    }) {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: None,
+                        }));
+                    }
                 }
-                "npc" => {
-                    let Some(npcs) = snapshot.npcs() else {
-                        return Poll::Pending;
-                    };
-                    let Some(npc) = npcs
-                        .value
-                        .iter()
-                        .filter(|row| {
-                            row.r#type == Some(self.target_id as usize)
-                                && row.distance <= self.radius
-                        })
-                        .min_by_key(|row| row.distance)
-                    else {
-                        return Poll::Pending;
-                    };
-                    let tile = npc.tile;
-                    let index = npc.index as i32;
-                    if npc.distance > 1 {
+                if let Some(tile) = self.tile {
+                    let here = cx.tick.cx.snapshot().here();
+                    if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                         self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, 1, None, cx.required_after),
+                            reach::walk_request(
+                                tile,
+                                self.radius.max(1) as u16,
+                                None,
+                                cx.required_after,
+                            ),
                             &mut cx.tick.cx,
                         )?);
                         return Poll::Pending;
                     }
-                    (tile, Some(index), None)
                 }
-                _ => {
-                    let Some(target) = inventory
+                if self.until.is_some()
+                    && cx.tick.cx.snapshot().chat_modal().is_some_and(|chat| {
+                        chat.value.root >= 0 && chat.value.continue_component_id >= 0
+                    })
+                {
+                    self.interaction = Some(
+                        cx.tick
+                            .actions
+                            .begin::<UseOnAction>(InteractReq::ContinueDialog, &mut cx.tick.cx)?,
+                    );
+                    return Poll::Pending;
+                }
+                self.deadline
+                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
+                let snapshot = cx.tick.cx.snapshot();
+                let Some(inventory) = snapshot.inventory() else {
+                    return Poll::Pending;
+                };
+                let observed_id = self.until.map(|(id, _)| id).or(self.product);
+                self.round_before = observed_id.map(|id| {
+                    inventory
                         .value
                         .iter()
-                        .find(|row| row.def.id == self.target_id)
-                    else {
-                        return Poll::Pending;
-                    };
-                    (
-                        WorldTile {
-                            x: 0,
-                            z: 0,
-                            level: 0,
-                        },
-                        None,
-                        Some(target.slot),
-                    )
-                }
-            };
-            let request = InteractReq::UseOn {
-                name: self.item.to_string(),
-                kind: self.kind.to_string(),
-                target_name: self.target_name.as_ref().map(|n| n.to_string()),
-                x: tile.x,
-                z: tile.z,
-                level: tile.level,
-                index,
-                source_item_id: Some(source.def.id),
-                source_item_slot: Some(source.slot),
-                target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
-                target_item_slot,
-            };
-            self.interaction = Some(
-                cx.tick
-                    .actions
-                    .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
-            );
-            return Poll::Pending;
-        }
-        if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(chat_since)) => {
-                    self.accepted = true;
-                    self.chat_since = chat_since;
-                }
-            }
-        }
-        let pred = PredicateContext {
-            cx: &cx.tick.cx,
-            quests: cx.quests,
-            progress: cx.progress,
-            required_after: cx.required_after,
-            chat_since: self.chat_since,
-            outcome: None,
-            bank: cx.bank,
-        };
-        if self
-            .no_product
-            .as_ref()
-            .is_some_and(|predicate| predicate.evaluate(&pred) == Truth::True)
-        {
-            // Authored negative feedback completes a no-product round within
-            // the same bounded until loop, rather than failing the whole step.
-            if self.until.is_some() {
-                self.interaction = None;
-                self.accepted = false;
-                self.round_before = None;
+                        .filter(|row| row.def.id == id)
+                        .map(|row| row.count)
+                        .sum()
+                });
+                let Some(source) = inventory
+                    .value
+                    .iter()
+                    .find(|row| row.def.id == self.item_id && row.count > 0)
+                else {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "use_on source missing",
+                    ))));
+                };
+                let (tile, index, target_item_slot) = match self.kind.as_ref() {
+                    "loc" => {
+                        let Some(loc) = reach::nearest_loc(
+                            &cx.tick.cx,
+                            Some(self.target_id),
+                            None,
+                            None,
+                            self.radius,
+                        ) else {
+                            return Poll::Pending;
+                        };
+                        (loc.tile, None, None)
+                    }
+                    "npc" => {
+                        let Some(npcs) = snapshot.npcs() else {
+                            return Poll::Pending;
+                        };
+                        let Some(npc) = npcs
+                            .value
+                            .iter()
+                            .filter(|row| {
+                                row.r#type == Some(self.target_id as usize)
+                                    && row.distance <= self.radius
+                            })
+                            .min_by_key(|row| row.distance)
+                        else {
+                            return Poll::Pending;
+                        };
+                        let tile = npc.tile;
+                        let index = npc.index as i32;
+                        if npc.distance > 1 {
+                            self.walk = Some(cx.tick.actions.begin::<Walk>(
+                                reach::walk_request(tile, 1, None, cx.required_after),
+                                &mut cx.tick.cx,
+                            )?);
+                            return Poll::Pending;
+                        }
+                        (tile, Some(index), None)
+                    }
+                    _ => {
+                        let Some(target) = inventory
+                            .value
+                            .iter()
+                            .find(|row| row.def.id == self.target_id)
+                        else {
+                            return Poll::Pending;
+                        };
+                        (
+                            WorldTile {
+                                x: 0,
+                                z: 0,
+                                level: 0,
+                            },
+                            None,
+                            Some(target.slot),
+                        )
+                    }
+                };
+                let request = InteractReq::UseOn {
+                    name: self.item.to_string(),
+                    kind: self.kind.to_string(),
+                    target_name: self.target_name.as_ref().map(|n| n.to_string()),
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level,
+                    index,
+                    source_item_id: Some(source.def.id),
+                    source_item_slot: Some(source.slot),
+                    target_item_id: (self.kind.as_ref() == "item").then_some(self.target_id),
+                    target_item_slot,
+                };
+                self.interaction = Some(
+                    cx.tick
+                        .actions
+                        .begin::<UseOnAction>(request, &mut cx.tick.cx)?,
+                );
                 return Poll::Pending;
             }
-            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
-        }
-        let held = |id| {
-            cx.tick.cx.snapshot().inventory().map(|inv| {
-                inv.value
-                    .iter()
-                    .filter(|row| row.def.id == id)
-                    .map(|row| row.count)
-                    .sum::<i32>()
-            })
-        };
-        if let Some(before) = self.round_before {
-            let observed_id = self.until.map(|(id, _)| id).or(self.product);
-            if observed_id
-                .and_then(held)
-                .is_none_or(|count| count <= before)
+            if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
+                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(chat_since)) => {
+                        self.accepted = true;
+                        self.chat_since = chat_since;
+                        if self.until.is_some() && self.round_before.is_some() {
+                            self.round_deadline = Some(
+                                cx.tick.cx.active_now() + Duration::from_millis(USE_ON_ROUND_MS),
+                            );
+                        }
+                    }
+                }
+            }
+            if self.until.is_some() && self.round_before.is_none() {
+                // ContinueDialog for an objbox/page is not a product round.
+                self.clear_round();
+                return Poll::Pending;
+            }
+            let pred = PredicateContext {
+                cx: &cx.tick.cx,
+                quests: cx.quests,
+                progress: cx.progress,
+                required_after: cx.required_after,
+                chat_since: self.chat_since,
+                outcome: None,
+                bank: cx.bank,
+            };
+            if self
+                .no_product
+                .as_ref()
+                .is_some_and(|predicate| predicate.evaluate(&pred) == Truth::True)
+            {
+                // Authored negative feedback completes a no-product round within
+                // the same bounded until loop, rather than failing the whole step.
+                if self.until.is_some() {
+                    self.clear_round();
+                    continue;
+                }
+                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
+            }
+            let held = |id| {
+                cx.tick.cx.snapshot().inventory().map(|inv| {
+                    inv.value
+                        .iter()
+                        .filter(|row| row.def.id == id)
+                        .map(|row| row.count)
+                        .sum::<i32>()
+                })
+            };
+            if let Some(before) = self.round_before {
+                let observed_id = self.until.map(|(id, _)| id).or(self.product);
+                if observed_id
+                    .and_then(held)
+                    .is_none_or(|count| count <= before)
+                {
+                    if self.until.is_some()
+                        && self
+                            .round_deadline
+                            .is_some_and(|d| cx.tick.cx.active_now() >= d)
+                    {
+                        self.clear_round();
+                        continue;
+                    }
+                    return Poll::Pending;
+                }
+            }
+            if let Some((id, qty)) = self.until {
+                if !held(id).is_some_and(|count| count >= qty) {
+                    self.clear_round();
+                    continue;
+                }
+            } else if self
+                .product
+                .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
             {
                 return Poll::Pending;
             }
+            return Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }));
         }
-        if let Some((id, qty)) = self.until {
-            if !held(id).is_some_and(|count| count >= qty) {
-                self.interaction = None;
-                self.accepted = false;
-                self.round_before = None;
-                return Poll::Pending;
-            }
-        } else if self
-            .product
-            .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
-        {
-            return Poll::Pending;
-        }
-        Poll::Ready(Ok(StepOutcome {
-            progress: None,
-            evidence: cx.tick.cx.evidence(),
-            receipt: None,
-        }))
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.walk = None;

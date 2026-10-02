@@ -88,7 +88,10 @@
               "anchor": { "tile": [3197, 3266, 0], "source": "A exec/wool.ts:20-37" },
               "radius": 8, "product": "wool",
               "until": { "obj": "wool", "qty": { "progress": { "quest": "sheep", "flag": "sheep:balls_to_go" }, "minus_item": "ball_of_wool" } },
-              "no_product": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["The sheep manages to get away from you!"] } } },
+              "no_product": { "Fact": { "kind": "message", "version": 1, "args": { "any": [
+                "The sheep manages to get away from you!",
+                "This sheep has already been shorn."
+              ] } } },
               "settle_ms": 240000
             },
             "skip_if": { "Any": [
