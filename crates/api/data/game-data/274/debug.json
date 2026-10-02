@@ -308,6 +308,11 @@
         "sha256": "01b049036155b81478f647c146a578d75abfd949eac2934bf16d6b4696cf0361"
       },
       {
+        "path": "scripts/_test/scripts/engine/debug.rs2",
+        "bytes": 510,
+        "sha256": "e7649666cbc5b97b3aa12b53e343bdfa9b2fe6c29f13be22ac7947ce34d63334"
+      },
+      {
         "path": "pack/obj.pack",
         "bytes": 91021,
         "sha256": "358e01a1f2e3751e3d1f8c6704b2f248f8f160567a73eddfc53feeaaf49c7f77"
@@ -398,7 +403,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -430,7 +435,7 @@
       "category": "Account",
       "description": "Restore your run energy",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -446,7 +451,7 @@
       "category": "Account",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -468,7 +473,7 @@
       "category": "Account",
       "description": "Set all your stats to level 99",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -533,7 +538,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -690,7 +695,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -706,7 +711,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -730,7 +735,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -754,7 +759,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -792,7 +797,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -800,7 +805,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -854,7 +859,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -862,7 +867,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -948,7 +953,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -964,7 +969,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -972,7 +977,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -980,7 +985,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -988,7 +993,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -996,7 +1001,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1004,7 +1009,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1206,7 +1211,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1512,7 +1517,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1520,7 +1525,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1536,7 +1541,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1610,7 +1615,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1648,7 +1653,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1670,7 +1675,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1692,7 +1697,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1700,7 +1705,7 @@
       "category": "Client & Engine",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1727,7 +1732,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1746,7 +1751,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1760,7 +1765,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1768,7 +1773,7 @@
       "category": "Client & Engine",
       "description": "Close the open overlay.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1825,7 +1830,7 @@
       "category": "Client & Engine",
       "description": "Fill the inventory with random items.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1839,7 +1844,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1863,7 +1868,7 @@
           "optional": true
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1877,7 +1882,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1891,7 +1896,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1910,7 +1915,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1932,7 +1937,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1946,7 +1951,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1960,7 +1965,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1976,7 +1981,7 @@
       "category": "Client & Engine",
       "description": "Reboot the world immediately.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -1984,7 +1989,7 @@
       "category": "Client & Engine",
       "description": "Rebuild world scripts.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -1992,7 +1997,7 @@
       "category": "Client & Engine",
       "description": "Reload world scripts.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2000,7 +2005,7 @@
       "category": "Client & Engine",
       "description": "Disconnect the player.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2019,7 +2024,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2043,7 +2048,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -2057,7 +2062,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -2071,7 +2076,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -2079,7 +2084,7 @@
       "category": "Client & Engine",
       "description": "Write a V8 heap snapshot.",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2093,7 +2098,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2107,7 +2112,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -2121,7 +2126,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": true
     },
     {
@@ -2221,7 +2226,7 @@
       "category": "Item",
       "description": "Give yourself items to test fishing",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2289,7 +2294,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2297,7 +2302,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2305,7 +2310,7 @@
       "category": "Item",
       "description": "Give yourself items to test magic",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2329,7 +2334,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2353,7 +2358,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2361,7 +2366,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2369,7 +2374,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2377,7 +2382,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2385,7 +2390,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2393,7 +2398,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2401,7 +2406,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2409,7 +2414,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2425,7 +2430,7 @@
       "category": "Item",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2452,7 +2457,7 @@
           "optional": true
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2556,7 +2561,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2572,7 +2577,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2668,7 +2673,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2676,7 +2681,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": false,
+      "destructive": true,
       "production_only": false
     },
     {
@@ -2722,7 +2727,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2736,7 +2741,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2750,7 +2755,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2769,7 +2774,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2788,7 +2793,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2802,7 +2807,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2842,7 +2847,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2856,7 +2861,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2880,7 +2885,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2894,7 +2899,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2910,7 +2915,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2924,7 +2929,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -2948,7 +2953,7 @@
       "category": "Quest",
       "description": "",
       "args": [],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     },
     {
@@ -3194,7 +3199,7 @@
           "optional": false
         }
       ],
-      "destructive": true,
+      "destructive": false,
       "production_only": false
     }
   ],
