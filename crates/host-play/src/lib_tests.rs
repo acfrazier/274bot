@@ -3171,7 +3171,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
             Some(nearby),
             "stale nearby worker result must not replace the exact request"
         );
-        bot.publish_route(2, 0, false, pending.calculate());
+        bot.publish_route(2, 0, false, pending.calculate().0);
         assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
     }
 
@@ -4720,7 +4720,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         max_z: 3,
         level: Some(0),
     };
-    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate() else {
+    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate().0 else {
         panic!("open floor routes");
     };
     // Every tile stepped, the waypoints' straight/diagonal runs expanded.
@@ -4749,7 +4749,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "without the rectangle the cheapest route crosses it: {:?}",
         straight
     );
-    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate() else {
+    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate().0 else {
         panic!("a detour exists north of the rectangle");
     };
     assert_eq!(around.dest.x, 11);
@@ -4763,7 +4763,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         ..thrower
     };
     assert!(matches!(
-        request(vec![sealed]).calculate(),
+        request(vec![sealed]).calculate().0,
         RouteOutcome::NoPath
     ));
 }
@@ -4794,7 +4794,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("open floor should route");
     };
     assert_eq!(
@@ -4841,7 +4841,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("same-room approach should route");
     };
     assert_ne!(
@@ -4893,7 +4893,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("occupied target should route to a neighbour");
     };
     assert_ne!(route.dest, target);
@@ -4958,7 +4958,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     };
     assert!(component.contains(&same_side));
     assert!(!component.contains(&far_side), "component={component:?}");
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("same-side WALL_L approach should route");
     };
     assert!(component.contains(&route.dest));
@@ -5006,7 +5006,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         z: 3,
         level: 0
     }));
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("global detour should still leave a local approach");
     };
     assert!(component.contains(&route.dest));
@@ -5053,7 +5053,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("actual 289 route should exist");
     };
     assert_ne!(
@@ -22309,12 +22309,203 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     assert_eq!(route.map(|route| route.dest), Some(stand));
 }
 
-/// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear
-/// in open terrain routes to an approach tile 12 tiles from the dest, where
-/// the BFS rank of the dest is past the 512 arrival budget, so `is_arrived`
-/// is false. When the follow reaches that route end it must publish a
-/// settled (not failed) outcome for the armed request id, or the isolate
-/// wait hangs to the caller timeout.
+/// Compare every admitted and rejected candidate, including directed walls
+/// and detours whose distance alone cannot decide the dequeue-rank budget.
+#[test]
+fn real_v13_batched_arrival_matches_every_forward_predicate() {
+    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
+        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+        return;
+    };
+    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v13 pack");
+    let tile = |x, z, level| WorldTile { x, z, level };
+    let cases = [
+        (tile(3017, 3170, 0), 12),
+        (tile(3005, 3182, 0), 12),
+        (tile(2553, 3406, 0), 10),
+        (tile(3096, 3814, 0), 22),
+        (tile(3110, 9832, 0), 16),
+        (tile(2575, 9893, 0), 10),
+    ];
+    let collision_at = |tile: WorldTile| {
+        let collision = &world.collision;
+        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+            .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+    };
+    let check = |target, radius| {
+        let all = approach_tiles(&world, target, target, radius, true);
+        let probe = api::query::CollisionArrivalProbe::new(collision_at);
+        let expected: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|&stand| api::query::is_arrived(stand, target, radius, || &probe))
+            .collect();
+        let actual = approach_tiles(&world, target, target, radius, false);
+        assert_eq!(actual, expected, "target={target:?}, radius={radius}");
+        all.len()
+    };
+    let reviewed: usize = cases
+        .iter()
+        .map(|&(target, radius)| check(target, radius))
+        .sum();
+    assert_eq!(reviewed, 4_059, "the reviewer's complete real-pack corpus");
+    let mut state = 0x2742_8902_u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut random_candidates = 0;
+    // Reproducible random targets around each reviewed outdoor/dungeon region,
+    // on all levels, and across the complete pack (including its boundaries).
+    for index in 0..72 {
+        let center = cases[index % cases.len()].0;
+        let target = if index < 48 {
+            tile(
+                center.x + (random() % 97) as i32 - 48,
+                center.z + (random() % 97) as i32 - 48,
+                if index < 36 {
+                    center.level
+                } else {
+                    (random() % 4) as i32
+                },
+            )
+        } else {
+            tile(
+                world.collision.origin.x + (random() % world.collision.width as u64) as i32,
+                world.collision.origin.z + (random() % world.collision.height as u64) as i32,
+                (random() % 4) as i32,
+            )
+        };
+        let radius = [1, 4, 10, 12, 16, 22][index % 6];
+        random_candidates += check(target, radius);
+    }
+    assert_eq!(
+        approach_tiles(&world, cases[0].0, cases[0].0, i32::from(u16::MAX), false),
+        approach_tiles(&world, cases[0].0, cases[0].0, 104, false),
+        "the box and the reach budget share the planning clamp"
+    );
+    eprintln!("NAV-ARRIVAL-2 differential: {reviewed} reviewed + {random_candidates} random candidates; no disagreements");
+}
+
+/// NAV-ARRIVAL-1: the real Return route and the native snapshot must agree.
+/// Set NAV_ARRIVAL_PACK to a v13 pack; its raw flags sidecar supplies the
+/// endpoint scene without connecting to the game engine.
+#[test]
+fn real_v13_return_radius_endpoint_is_native_arrival() {
+    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
+        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let mut world = NavWorld::load_pack(&path).expect("real v13 pack");
+    let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
+        .expect("matching raw flags");
+    assert_eq!(flags.origin, world.collision.origin);
+    assert_eq!(
+        (flags.width, flags.height),
+        (world.collision.width, world.collision.height)
+    );
+    world.collision.flags = Some(Arc::try_unwrap(flags.flags).expect("sole flags owner"));
+    let origin = WorldTile {
+        x: 3185,
+        z: 3440,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 3017,
+        z: 3170,
+        level: 0,
+    };
+    let endpoint = WorldTile {
+        x: 3005,
+        z: 3182,
+        level: 0,
+    };
+    let candidates = approach_tiles(&world, origin, target, 12, false);
+    assert_eq!(candidates.first(), Some(&endpoint));
+    let request = ScriptRouteRequest {
+        generation: 1,
+        request_id: 1,
+        world: Arc::new(world),
+        from: origin,
+        to: target,
+        radius: 12,
+        loc_id: None,
+        opts: FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            ..FindOptions::default()
+        },
+        state: None,
+        bank: Vec::new(),
+        live_candidates: None,
+        exclusions: None,
+        completion: Default::default(),
+    };
+    let route = nav::router::find_with_avoid(
+        &request.world.collision,
+        &request.world.graph,
+        origin,
+        endpoint,
+        request.opts,
+        &nav::WorldState::empty(),
+        &[],
+    )
+    .expect("reported fallback endpoint routes");
+    assert_eq!(route.dest, endpoint);
+    let mut client = nav_client();
+    client.map_build_base_x = 2960;
+    client.map_build_base_z = 3160;
+    for lx in 0..104 {
+        for lz in 0..104 {
+            client.collision[0].flags[lx][lz] =
+                request
+                    .world
+                    .collision
+                    .flag(2960 + lx as i32, 3160 + lz as i32, 0) as i32;
+        }
+    }
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, endpoint.x, endpoint.z);
+    let flood = api::query::SceneQuery::new(snapshot.scene(), Some(endpoint))
+        .flood_reach()
+        .expect("fresh endpoint flood");
+    let view = api::query::pack_reach_query(snapshot.scene(), Some(&flood));
+    let index = (target.x - view.base_x) as usize * view.height as usize
+        + (target.z - view.base_z) as usize;
+    eprintln!("NAV-ARRIVAL-1 endpoint={endpoint:?} scene_available={} target_walkable={} exact_rank={} adjacent_rank={} component_size={}",
+        view.available, view.walkable(target), view.exact_rank[index],
+        view.adjacent_rank[index], candidates.len());
+    assert!(view.available && view.probeable(target));
+    assert_eq!(
+        view.exact_rank[(endpoint.x - view.base_x) as usize * view.height as usize
+            + (endpoint.z - view.base_z) as usize],
+        0
+    );
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: snapshot.tick() as u64,
+        sequence: 1,
+    };
+    assert!(
+        api::snapshot::SnapshotView::new(Some(&snapshot), stamp)
+            .with_reach(Some(&view))
+            .walk_arrived(endpoint, target, 12),
+        "planner endpoint must satisfy the native arrival predicate"
+    );
+}
+
+/// A radius walk settling at its arrival-capable approach tile publishes a
+/// successful outcome keyed to the original destination and request id.
 #[test]
 fn radius_walk_route_end_publishes_a_settled_outcome() {
     let world = Arc::new(NavWorld::from_parts(
@@ -22359,8 +22550,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         12,
         "the route ends on the near edge of the radius box"
     );
-    // Open reach around the approach tile, wide enough that ring 12 is a
-    // full BFS ring: the reach-aware rule says not arrived there.
+    // A complete open-scene radius ring fits the radius-derived reach budget.
     let open_reach = move || {
         let scene = api::snapshot::SceneView {
             available: true,
@@ -22374,7 +22564,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         let flood = api::query::SceneQuery::new(&scene, Some(approach)).flood_reach();
         Arc::new(api::query::pack_reach_query(&scene, flood.as_ref()))
     };
-    assert!(!api::query::is_arrived(approach, dest, 12, open_reach));
+    assert!(api::query::is_arrived(approach, dest, 12, open_reach));
 
     let mut d = NavRec::default();
     let mut c = nav_client();
