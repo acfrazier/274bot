@@ -252,6 +252,15 @@ jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
 
+Direct ladder/stair ops are also scanned across area and quest scripts.
+Unconditional `p_telejump`, `p_teleport`, and the canonical `climb_ladder`
+helper can derive fixed `movecoord(coord, dx, dlevel, dz)` landings, including
+horizontal offsets such as the Mage Arena bank cellar. Presentation and
+literal delays are allowed; branches, dialogs, queues, dynamic destinations,
+and additional gameplay side effects are not flattened into ungated edges.
+Existing specialized edges retain their requirements and measured prices.
+New direct climbs price literal script/helper delays plus the interaction.
+
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked
 approach sides are held in `TransportGraph::approaches`, aligned with ordinary
@@ -374,7 +383,15 @@ observed loc actually clicked. Arrival is on the destination plane within
 that footprint expanded by the hop's one-tile landing tolerance, rather
 than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
-distant tile, or the old plane. Other transport arrival rules are unchanged.
+distant tile, or the old plane.
+
+For horizontal Ladder/Stairs moves, the follower accepts the existing
+absolute destination or the exact takeoff tile translated by `to - at`,
+using the caller's unchanged `close_enough`. The v13 graph still stores
+the loc-anchor-derived `to`; it can be blocked when a relative script lands
+the player beside that anchor. This remains a landing-model limitation,
+not a reason to enlarge arrival tolerance. The follower continues the
+existing route from the observed landing.
 
 Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
 centered on the requested tile, even when a loc or decoration occupies it.

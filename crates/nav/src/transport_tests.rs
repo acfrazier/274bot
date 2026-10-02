@@ -2743,10 +2743,13 @@ fn parse_landing_handles_movecoord_forms() {
             dz: 0
         })
     ));
-    // A horizontal shift relative to the player is skipped, not faked.
     assert!(matches!(
-        parse_landing("movecoord(coord, 0, 1, -4)"),
-        Outcome::Skipped(SKIP_PLAYER_RELATIVE)
+        parse_landing("movecoord(coord, -549, 0, 756)"),
+        Outcome::Landing(Landing::PlayerDelta {
+            dx: -549,
+            d_level: 0,
+            dz: 756
+        })
     ));
     assert!(matches!(
         parse_landing("movecoord(1_34_77_30_5, $randomX, 0, $randomZ)"),
@@ -8913,6 +8916,83 @@ p_teleport($end);
         .iter()
         .filter(|e| e.loc_id == 2068)
         .all(|e| e.skill_req.is_empty() && e.worn_req.is_empty() && e.open_loc_id.is_none()));
+}
+
+#[test]
+fn direct_relative_climbs_scan_area_scripts_without_erasing_gates() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "9001=area_descent\n9002=area_ascent\n9003=guarded_climb\n",
+    );
+    fx.write("maps/m48_61.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 19 53: 9001 10\n0 20 53: 9002 10\n0 21 53: 9003 10\n");
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[proc,climb_ladder](coord $coord, boolean $up)
+if ($up = true) { anim(human_reachforladder, 0); } else { anim(human_pickupfloor, 0); }
+p_delay(2);
+p_telejump($coord);
+",
+    );
+    fx.write(
+        "scripts/areas/area_example/scripts/climbs.rs2",
+        "\
+[oploc1,area_descent]
+p_arrivedelay;
+anim(human_reachforladder, 0);
+p_delay(1);
+p_telejump(movecoord(coord, -549, 0, 756));
+mes(\"You climb down.\");
+[oploc1,area_ascent] ~climb_ladder(movecoord(coord(), 549, 0, -756), true);
+[label,not_an_op](coord $dest)
+p_telejump($dest);
+[oploc1,guarded_climb]
+if (%quest = 2) { p_telejump(movecoord(coord, -549, 0, 756)); }
+",
+    );
+    let defs = LocDefs::from_locs(&[9001, 9002, 9003].map(|id| LocType {
+        id,
+        op: vec![Some("Climb-down".into())],
+        ..Default::default()
+    }));
+    let graph = derive_transports(
+        fx.path(),
+        &defs,
+        &bake_collision(&fx, &defs, &HashSet::new()),
+    );
+    let down = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9001)
+        .expect("area descent");
+    assert_eq!(
+        down.to,
+        WorldTile {
+            x: 2542,
+            z: 4713,
+            level: 0
+        }
+    );
+    assert_eq!(down.ticks, 3, "interaction plus source p_delay(1)");
+    let up = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9002)
+        .expect("inline area ascent");
+    assert_eq!(
+        up.to,
+        WorldTile {
+            x: 3641,
+            z: 3201,
+            level: 0
+        }
+    );
+    assert_eq!(up.ticks, 4, "interaction plus helper's source p_delay(2)");
+    assert!(
+        !graph.edges.iter().any(|edge| edge.loc_id == 9003),
+        "a conditional offset is not an unconditional crossing"
+    );
 }
 
 #[path = "transport/stage_doors_tests.rs"]

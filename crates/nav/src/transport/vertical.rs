@@ -1,3 +1,4 @@
+use super::rs2_syntax::{lex, parse_body, parse_expr, Expr, Stmt};
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ pub(super) enum Landing {
     LocDelta { dx: i32, d_level: i32, dz: i32 },
     FromLevel { d: i32 },
     FromZ { d: i32 },
+    PlayerDelta { dx: i32, d_level: i32, dz: i32 },
 }
 
 /// A parsed `[oplocN,name]` script block: destinations keyed by the loc's
@@ -230,24 +232,36 @@ pub(super) fn parse_statement(line: &str) -> Option<Outcome> {
 /// A landing expression: a coordinate literal or a `movecoord` call (m8aq
 /// `parseLanding`).
 pub(super) fn parse_landing(expr: &str) -> Outcome {
-    if let Some((level, x, z)) = coord_literal(expr) {
-        return Outcome::Landing(Landing::Abs { level, x, z });
-    }
-    let Some(mv) = call_args(expr, "movecoord") else {
+    let Some(expr) = lex(expr).and_then(|tokens| parse_expr(&tokens)) else {
         return Outcome::Skipped(SKIP_UNPARSED);
     };
-    if mv.len() != 4 {
+    landing_expr(&expr)
+}
+
+fn landing_expr(expr: &Expr) -> Outcome {
+    if let Expr::Word(coord) = expr {
+        if let Some((level, x, z)) = coord_literal(coord) {
+            return Outcome::Landing(Landing::Abs { level, x, z });
+        }
+    }
+    let Expr::Call(name, args) = expr else {
+        return Outcome::Skipped(SKIP_UNPARSED);
+    };
+    if name != "movecoord" {
         return Outcome::Skipped(SKIP_UNPARSED);
     }
-    let (Some(dx), Some(d_level), Some(dz)) = (
-        int_or_null(&mv[1]),
-        int_or_null(&mv[2]),
-        int_or_null(&mv[3]),
-    ) else {
+    let [base, dx, d_level, dz] = args.as_slice() else {
+        return Outcome::Skipped(SKIP_UNPARSED);
+    };
+    let (Expr::Num(dx), Expr::Num(d_level), Expr::Num(dz)) = (dx, d_level, dz) else {
         return Outcome::Skipped(SKIP_RANDOM);
     };
-    let base = mv[0].trim();
-    let base = base.strip_suffix("()").unwrap_or(base);
+    let (dx, d_level, dz) = (*dx, *d_level, *dz);
+    let base = match base {
+        Expr::Word(name) => name.as_str(),
+        Expr::Call(name, args) if args.is_empty() => name.as_str(),
+        _ => return Outcome::Skipped(SKIP_UNPARSED),
+    };
     if base == "loc_coord" {
         return Outcome::Landing(Landing::LocDelta { dx, d_level, dz });
     }
@@ -258,7 +272,7 @@ pub(super) fn parse_landing(expr: &str) -> Outcome {
         if dx == 0 && d_level == 0 && dz.abs() == CELLAR_SHIFT {
             return Outcome::Landing(Landing::FromZ { d: dz });
         }
-        return Outcome::Skipped(SKIP_PLAYER_RELATIVE);
+        return Outcome::Landing(Landing::PlayerDelta { dx, d_level, dz });
     }
     if let Some((level, x, z)) = coord_literal(base) {
         return Outcome::Landing(Landing::Abs {
@@ -293,7 +307,99 @@ pub(super) fn ladder_stair_edges(
             parse_script(&text, kind, &mut rules);
         }
     }
+    resolve_ladder_stair_rules(
+        &rules,
+        &HashMap::new(),
+        ids,
+        positions,
+        loc_defs,
+        graph,
+        skipped,
+    );
+}
 
+/// Complete the same vertical extractor with direct area/quest climbs after
+/// specialized producers. Their already-derived edges and prices stay intact.
+pub(super) fn scripted_climb_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let climb_ticks =
+        fs::read_to_string(content_root.join("scripts/ladders+stairs/scripts/ladders.rs2"))
+            .ok()
+            .and_then(|text| climb_helper_ticks(&text));
+    let mut rules = HashMap::new();
+    // Area/quest scripts also declare direct climb ops. Admit only the same
+    // unconditional presentation + fixed-move shape, not arbitrary scripted
+    // gates, choices, labels or queues. Existing coordinate/angle rules win.
+    let mut scripted_ticks = HashMap::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (op, name, body) in script_blocks(text) {
+            let Some(option) = oploc_option(&op) else {
+                continue;
+            };
+            let key = (name.clone(), option);
+            let Some((landing, ticks)) = direct_climb(&body, climb_ticks) else {
+                continue;
+            };
+            if matches!(landing, Landing::Abs { .. }) {
+                continue;
+            }
+            let Some(&id) = ids.get(&name) else {
+                continue;
+            };
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.loc_id == id && edge.option == option)
+            {
+                continue;
+            }
+            let Some(def) = loc_defs.loc(id) else {
+                continue;
+            };
+            if !def.ops.iter().any(|op| op.starts_with("Climb")) {
+                continue;
+            }
+            let kind = if name.contains("stair") {
+                TransportKind::Stairs
+            } else {
+                TransportKind::Ladder
+            };
+            rules.entry(key.clone()).or_insert((
+                kind,
+                ScriptRule {
+                    fallback: Some(Outcome::Landing(landing)),
+                    ..ScriptRule::default()
+                },
+            ));
+            scripted_ticks.insert(key, ticks);
+        }
+    });
+    resolve_ladder_stair_rules(
+        &rules,
+        &scripted_ticks,
+        ids,
+        positions,
+        loc_defs,
+        graph,
+        skipped,
+    );
+}
+
+fn resolve_ladder_stair_rules(
+    rules: &HashMap<(String, i32), (TransportKind, ScriptRule)>,
+    scripted_ticks: &HashMap<(String, i32), i32>,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
     let mut keys: Vec<_> = rules.keys().cloned().collect();
     keys.sort();
     for (loc_name, option) in keys {
@@ -303,7 +409,11 @@ pub(super) fn ladder_stair_edges(
         let Some(_def) = loc_defs.loc(id) else {
             continue;
         };
-        let Some(extra) = extra_ticks(&loc_name) else {
+        let ticks = if let Some(&ticks) = scripted_ticks.get(&(loc_name.clone(), option)) {
+            ticks
+        } else if let Some(extra) = extra_ticks(&loc_name) {
+            1 + extra
+        } else {
             bump(
                 skipped,
                 SKIP_UNPRICED,
@@ -311,7 +421,6 @@ pub(super) fn ladder_stair_edges(
             );
             continue;
         };
-        let ticks = 1 + extra;
         let (kind, rule) = &rules[&(loc_name, option)];
         let Some(placements) = positions.get(&id) else {
             continue;
@@ -362,6 +471,57 @@ pub(super) fn ladder_stair_edges(
             }
         }
     }
+}
+
+/// Read the canonical animation-only climb helper's delay. A changed helper
+/// with an extra gate or side effect cannot certify a new direct climb.
+fn climb_helper_ticks(text: &str) -> Option<i32> {
+    let bodies = proc_bodies(text, "climb_ladder");
+    let [body] = bodies.as_slice() else {
+        return None;
+    };
+    let flat = normalized_body(body);
+    let delay = flat
+        .strip_prefix(
+            "if($up=true){anim(human_reachforladder,0);}else{anim(human_pickupfloor,0);}p_delay(",
+        )?
+        .strip_suffix(");p_telejump($coord);")?;
+    let delay = int_or_null(delay)?;
+    (delay >= 0).then(|| delay.checked_add(1)).flatten()
+}
+
+/// A direct climb's one landing and source delay cost. The AST parser rejects
+/// control flow and unknown side effects rather than silently losing gates.
+fn direct_climb(body: &str, climb_ticks: Option<i32>) -> Option<(Landing, i32)> {
+    let mut landing = None;
+    let mut ticks = 1i32; // interaction
+    for statement in parse_body(body)? {
+        let Stmt::Call(name, args) = statement else {
+            return None;
+        };
+        match (name.as_str(), args.as_slice()) {
+            ("p_arrivedelay", []) => {}
+            ("p_delay", [Expr::Num(delay)]) if *delay >= 0 => {
+                ticks = ticks.checked_add(delay.checked_add(1)?)?;
+            }
+            ("anim", [Expr::Word(_), Expr::Num(_)]) => {}
+            ("mes", [Expr::Str(calls)]) if calls.is_empty() => {}
+            ("p_telejump" | "p_teleport", [dest]) | ("~climb_ladder", [dest, Expr::Word(_)]) => {
+                if landing.is_some() {
+                    return None;
+                }
+                let Outcome::Landing(to) = landing_expr(dest) else {
+                    return None;
+                };
+                if name == "~climb_ladder" {
+                    ticks = ticks.checked_add(climb_ticks?)?;
+                }
+                landing = Some(to);
+            }
+            _ => return None,
+        }
+    }
+    landing.map(|landing| (landing, ticks))
 }
 
 /// Closed trapdoor placements (`trapdoors.rs2`) plus already-open leaves.
@@ -503,6 +663,11 @@ pub(super) fn landing_tile(landing: &Landing, loc: &Placement, at: &WorldTile) -
             level: at.level,
             x: at.x,
             z: at.z + d,
+        },
+        Landing::PlayerDelta { dx, d_level, dz } => WorldTile {
+            level: at.level + d_level,
+            x: at.x + dx,
+            z: at.z + dz,
         },
     }
 }
