@@ -1272,45 +1272,53 @@ fn spawn_slot_thread(
                                 && !session_boundary
                                 && crate::combat_proof::maze_injection_pending(name)
                             {
-                                match script_slot(&slot_scripts, name) {
-                                    Some(slot) => match slot.lock() {
-                                        Ok(mut slot) => {
-                                            let event = DetectedRandom {
-                                                kind: host::RandomKind::Maze,
-                                                name: "combat-live-proof synthetic Maze hold"
-                                                    .to_owned(),
-                                                ours: true,
-                                                npc_index: None,
-                                            };
-                                            let owner_live_before =
-                                                crate::combat_proof::maze_attack_owner_live(name);
-                                            let claim = slot.on_random(&event);
-                                            let owner_live_after =
-                                                crate::combat_proof::maze_attack_owner_live(name);
-                                            crate::combat_proof::record_maze_injection(
-                                                name,
-                                                nav_snapshot.tick(),
-                                                claim,
-                                                owner_live_before,
-                                                owner_live_after,
-                                            );
-                                            true
-                                        }
-                                        Err(_) => {
+                                if crate::combat_proof::protect_from_melee_active(&nav_snapshot) {
+                                    match script_slot(&slot_scripts, name) {
+                                        Some(slot) => match slot.lock() {
+                                            Ok(mut slot) => {
+                                                let event = DetectedRandom {
+                                                    kind: host::RandomKind::Maze,
+                                                    name: "combat-live-proof synthetic Maze hold"
+                                                        .to_owned(),
+                                                    ours: true,
+                                                    npc_index: None,
+                                                };
+                                                let owner_live_before =
+                                                    crate::combat_proof::maze_attack_owner_live(
+                                                        name,
+                                                    );
+                                                let claim = slot.on_random(&event);
+                                                let owner_live_after =
+                                                    crate::combat_proof::maze_attack_owner_live(
+                                                        name,
+                                                    );
+                                                crate::combat_proof::record_maze_injection(
+                                                    name,
+                                                    nav_snapshot.tick(),
+                                                    claim,
+                                                    owner_live_before,
+                                                    owner_live_after,
+                                                );
+                                                true
+                                            }
+                                            Err(_) => {
+                                                crate::combat_proof::record_maze_injection_failure(
+                                                    name,
+                                                    "script slot mutex poisoned at Maze injection",
+                                                );
+                                                false
+                                            }
+                                        },
+                                        None => {
                                             crate::combat_proof::record_maze_injection_failure(
                                                 name,
-                                                "script slot mutex poisoned at Maze injection",
+                                                "script slot absent at Maze injection",
                                             );
                                             false
                                         }
-                                    },
-                                    None => {
-                                        crate::combat_proof::record_maze_injection_failure(
-                                            name,
-                                            "script slot absent at Maze injection",
-                                        );
-                                        false
                                     }
+                                } else {
+                                    true
                                 }
                             } else {
                                 false

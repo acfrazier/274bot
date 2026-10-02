@@ -303,6 +303,35 @@ impl LiveState {
             }
         }
 
+        // Startup ClearPrayers consumes the seed. Imp Path does not request
+        // Protect, so Fight would drop a restage unless Combat is already held.
+        // After the first Imp Attack the Maze hold freezes the owner; restage
+        // Protect, then inject once varp 97 is observed on.
+        if self.case == Case::M5 && self.started {
+            let protect_on = combat_proof::protect_from_melee_active(&self.snapshot);
+            let (pending, already) = {
+                let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
+                (capture.maze_pending, capture.maze_prayer_restaged)
+            };
+            if pending && !protect_on && !already {
+                if matches!(
+                    api::interact::cheat(client, "setvar prayer14 1"),
+                    client::CheatSend::Sent
+                ) {
+                    combat_proof::record_other_request(
+                        &self.account,
+                        u64::from(self.snapshot.tick()),
+                        "cheat",
+                        "setvar prayer14 1",
+                    );
+                    self.capture
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .maze_prayer_restaged = true;
+                }
+            }
+        }
+
         if matches!(
             self.runner.status(),
             RunnerStatus::Passed | RunnerStatus::Failed(_)
