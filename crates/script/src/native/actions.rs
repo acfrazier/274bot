@@ -901,7 +901,6 @@ mod tests {
                     |cx| {
                         let request = WalkRequest {
                             target,
-                            loc_id: None,
                             radius,
                             options: FindOptions::default(),
                             required_after: cx.evidence(),

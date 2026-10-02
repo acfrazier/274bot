@@ -200,7 +200,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => {
                 "gatherer_wc_bank_unwieldable"
             }
-            (Self::Woodcutting, LiveCase::BankCost) => "gatherer_bank_cost",
+            (Self::Mining, LiveCase::BankCost) => "gatherer_mining_bank_cost_walk_ranked",
             (Self::Woodcutting, LiveCase::BankCostAirFallback) => "gatherer_bank_cost_t1",
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => "gatherer_bank_cost_no_candidate",
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
@@ -223,7 +223,6 @@ impl Cell {
             LiveCase::LocationAuto => "GATHERER_AUTO_START_TILE",
             LiveCase::WoodcuttingBank => "GATHERER_WC_BANK_TILE",
             LiveCase::WoodcuttingBankUnwieldable => "GATHERER_WC_BANK_TILE",
-            LiveCase::BankCost => "GATHERER_BANK_COST_TILE",
             LiveCase::BankCostAirFallback => "GATHERER_BANK_T1_TILE",
             LiveCase::BankCostNoCandidate => "GATHERER_BANK_NO_CANDIDATE_TILE",
             LiveCase::FishBait => "GATHERER_FISH_BAIT_TILE",
@@ -261,6 +260,7 @@ impl Cell {
         match (self, case) {
             (Self::Fishing, LiveCase::FishNet) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
+            (Self::Mining, LiveCase::BankCost) => "bronze_pickaxe",
             (Self::Mining, _) => "steel_pickaxe",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => "rune_axe",
             _ => "bronze_axe",
@@ -271,6 +271,7 @@ impl Cell {
         match (self, case) {
             (Self::Fishing, LiveCase::FishNet) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
+            (Self::Mining, LiveCase::BankCost) => 1265,
             (Self::Mining, _) => 1269,
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => 1359,
             _ => 1351,
@@ -285,7 +286,6 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCost
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
@@ -293,6 +293,7 @@ impl Cell {
                 | LiveCase::ReconnectReturn,
             ) => 15,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 20,
+            (Self::Mining, LiveCase::BankCost) => 1,
             (Self::Mining, _) => 30,
             _ => 1,
         }
@@ -306,7 +307,6 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCost
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
@@ -336,7 +336,6 @@ impl Cell {
                     | LiveCase::OakAbsentArea
                     | LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
-                    | LiveCase::BankCost
                     | LiveCase::BankCostAirFallback
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::PauseResumeOtherPlane
@@ -347,6 +346,9 @@ impl Cell {
                 "normal"
             }
             .into()],
+            Self::Mining if case == LiveCase::BankCost => {
+                vec!["copper".into(), "tin".into()]
+            }
             Self::Mining if case == LiveCase::GasHazard => vec!["iron".into()],
             Self::Mining => std::env::var("GATHERER_MINE_RESOURCES")
                 .unwrap_or_else(|_| "iron,coal".into())
@@ -368,7 +370,7 @@ impl Cell {
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable,
             ) => Some("GATHERER_WC_BANK_LEVEL"),
-            (Self::Woodcutting, LiveCase::BankCost) => Some("GATHERER_BANK_COST_LEVEL"),
+            (Self::Mining, LiveCase::BankCost) => Some("GATHERER_BANK_COST_LEVEL"),
             (Self::Woodcutting, LiveCase::BankCostAirFallback) => Some("GATHERER_BANK_T1_LEVEL"),
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => {
                 Some("GATHERER_BANK_NO_CANDIDATE_LEVEL")
@@ -398,7 +400,6 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCost
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
@@ -411,6 +412,7 @@ impl Cell {
             }
             (Self::Woodcutting, _) => std::env::var("GATHERER_WC_TOOL")
                 .unwrap_or_else(|_| self.default_tool_alias(case).into()),
+            (Self::Mining, LiveCase::BankCost) => self.default_tool_alias(case).into(),
             (Self::Mining, _) => std::env::var("GATHERER_MINE_TOOL")
                 .unwrap_or_else(|_| self.default_tool_alias(case).into()),
             _ => self.default_tool_alias(case).into(),
@@ -425,7 +427,6 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCost
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
@@ -435,6 +436,7 @@ impl Cell {
                 Some("GATHERER_COIN_TOOL_ID")
             }
             (Self::Woodcutting, _) => Some("GATHERER_WC_TOOL_ID"),
+            (Self::Mining, LiveCase::BankCost) => None,
             (Self::Mining, _) => Some("GATHERER_MINE_TOOL_ID"),
             (Self::Fishing, _) => None,
         };
@@ -486,7 +488,7 @@ impl Cell {
         bag.insert(
             "radius".into(),
             json!(match case {
-                LiveCase::OakRespawn | LiveCase::LocationAuto => 32,
+                LiveCase::OakRespawn | LiveCase::LocationAuto | LiveCase::BankCost => 32,
                 LiveCase::OakNearEdge => 64,
                 LiveCase::OakAbsentArea => 2,
                 LiveCase::GasHazard => 12,
@@ -632,7 +634,7 @@ impl LiveCase {
             Self::GasHazard => "gas-hazard",
             Self::WoodcuttingBank => "woodcutting-bank",
             Self::WoodcuttingBankUnwieldable => "woodcutting-bank-unwieldable",
-            Self::BankCost => "bank-cost",
+            Self::BankCost => "mining-bank-cost-walk-ranked",
             Self::BankCostAirFallback => "bank-cost-t1-air-fallback",
             Self::BankCostNoCandidate => "bank-cost-no-candidate",
             Self::FishBait => "fish-bait-bank",
@@ -666,10 +668,6 @@ impl LiveCase {
                 | Self::PauseResumeOtherPlane
                 | Self::ReconnectReturn
         )
-    }
-
-    const fn has_unwieldable_better_axe(self) -> bool {
-        matches!(self, Self::WoodcuttingBankUnwieldable)
     }
 }
 
@@ -779,7 +777,6 @@ struct FixturePlan {
     bank_cost_air_banks: Vec<(String, WorldTile)>,
     bank_cost_air_nearest: Option<String>,
     bank_cost_origin: Option<WorldTile>,
-    bank_cost_teller_candidates: Vec<String>,
     bank_cost_gated_candidates: Vec<String>,
 }
 
@@ -937,15 +934,12 @@ struct Witness {
     waiting_for_bank_yield: bool,
     waiting_for_return_yield: bool,
     tool_worn_observed: bool,
-    tool_inventory_observed: bool,
     coin_seed_count: i32,
     coin_balance_exact: bool,
-    power_to_bank_configured: bool,
     pause_observed: bool,
     resume_observed: bool,
     reconnect_observed: bool,
     reconnect_offline_observed: bool,
-    bank_deposit_confirmations: u32,
     last_status_event: Option<String>,
     last_status_bank: Option<String>,
     bait_exact: bool,
@@ -1800,10 +1794,6 @@ impl GatherSlot {
             self.case,
             LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable
         ) {
-            self.witness.tool_inventory_observed |= observation
-                .inventory
-                .values()
-                .any(|item| item.id == self.tool_id);
             self.witness.tool_worn_observed |= self
                 .snapshot
                 .equipment()
@@ -2221,9 +2211,9 @@ impl GatherSlot {
                         send_cheat(client, "givebank rune_pickaxe 1")?;
                         send_cheat(client, &interact::tele_args(0, 2809, 3441))?;
                         self.phase = Prep::OpenBank;
-                    } else if self.case.bank_tool_only() {
-                        self.phase = Prep::Ready;
-                    } else if matches!(self.cell, Cell::Fishing | Cell::Mining) {
+                    } else if self.case.bank_tool_only()
+                        || matches!(self.cell, Cell::Fishing | Cell::Mining)
+                    {
                         self.phase = Prep::Ready;
                     } else {
                         self.phase = Prep::Equip;
@@ -2349,6 +2339,9 @@ impl GatherSlot {
                 !self.item_in_inventory() && !self.item_equipped()
             }
             Cell::Woodcutting => self.item_equipped(),
+            Cell::Mining if self.case == LiveCase::BankCost => {
+                !self.item_in_inventory() && !self.item_equipped()
+            }
             Cell::Mining if self.case == LiveCase::Power => {
                 self.item_in_inventory() && self.witness.banked_unusable_tool.is_some()
             }
@@ -2440,11 +2433,6 @@ impl GatherSlot {
         let current_trips = integer_field(status, "trips").unwrap_or(self.witness.status_trips);
         let current_deposited =
             integer_field(status, "deposited").unwrap_or(self.witness.status_deposited);
-        let deposit_delta = current_deposited - self.witness.status_deposited;
-        if deposit_delta > 0 {
-            self.witness.bank_deposit_confirmations =
-                self.witness.bank_deposit_confirmations.saturating_add(1);
-        }
         if current_trips > self.witness.status_trips {
             self.witness.bank_arrivals = self
                 .witness
@@ -2472,8 +2460,7 @@ impl GatherSlot {
         self.witness.last_status_bank = text_field(status, "bank").map(str::to_owned);
         if let Some(bank) = self.witness.last_status_bank.as_deref() {
             if let Some((_, step)) = bank.rsplit_once("; ") {
-                self.witness.bank_loaded_observed |=
-                    matches!(step, "Deposit" | "Withdraw" | "Close");
+                self.witness.bank_loaded_observed |= self.snapshot.bank_loaded();
                 self.witness.bank_return_step_seen |= step == "Return";
                 if step == "Return" {
                     self.witness.bank_return_after_pause |= self.case
@@ -3046,38 +3033,37 @@ impl GatherSlot {
             LiveCase::BankCost => {
                 let selected = self.selected_bank_name();
                 let expected_air_nearest = self.plan.bank_cost_air_nearest.as_deref();
-                let teller_only = selected.is_some_and(|selected| {
-                    self.plan
-                        .bank_cost_teller_candidates
-                        .iter()
-                        .any(|candidate| candidate == selected)
-                });
                 let selected_is_gate_disabled = selected.is_some_and(|selected| {
                     self.plan
                         .bank_cost_gated_candidates
                         .iter()
                         .any(|candidate| candidate == selected)
                 });
-                if !self.complete_bank_selection()
+                let has_required_gates = ["Zanaris", "Fishing Guild"].into_iter().all(|required| {
+                    self.plan
+                        .bank_cost_gated_candidates
+                        .iter()
+                        .any(|candidate| candidate.as_str() == required)
+                });
+                let mining_area_selected = self
+                    .witness
+                    .last_area
+                    .as_deref()
+                    .is_some_and(|area| area != "—");
+                if self.cell != Cell::Mining
+                    || !mining_area_selected
+                    || self.plan.bank_cost_origin != Some(world_tile(3016, 9840))
+                    || !self.complete_bank_selection()
                     || self.selected_bank_kind() != Some("Reachable")
                     || selected.is_none()
+                    || expected_air_nearest.is_none()
                     || selected == expected_air_nearest
-                    || !teller_only
                     || selected_is_gate_disabled
-                    || self.plan.bank_cost_gated_candidates.is_empty()
+                    || !has_required_gates
                     || !self.witness.bank_loaded_observed
-                    || !self.witness.bank_closed_observed
-                    || !self.witness.bank_withdrawal_confirmed
-                    || !self.status_integer_seen("trips", 1)
-                    || self.witness.post_bank_yields == 0
-                    || self.witness.last_status_yielded <= 0
-                    || self
-                        .latest
-                        .as_ref()
-                        .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
-                        "{} did not prove a reachable teller-only cost winner distinct from the eligible air-nearest bank while excluding gate-disabled candidates: {:?}",
+                        "{} did not admit the Dwarven Mine mining area and open a reachable cost winner distinct from the eligible air-nearest bank while excluding disabled Zanaris/Fishing Guild: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -3112,7 +3098,6 @@ impl GatherSlot {
                 if self.witness.failure_code.as_deref() != Some("bank-unavailable")
                     || self.witness.bank_selected
                     || self.witness.bank_loaded_observed
-                    || !self.status_seen("phase", "Blocked")
                     || self.witness.status_trips != 0
                     || self.witness.last_status_yielded != 0
                     || self
@@ -3318,19 +3303,6 @@ impl GatherSlot {
                 .as_deref()
                 .is_some_and(|bank| bank.contains("; access:"))
     }
-
-    fn tool_held_or_worn(&self) -> bool {
-        self.latest.as_ref().is_some_and(|observation| {
-            observation
-                .inventory
-                .values()
-                .any(|item| item.id == self.tool_id)
-        }) || self
-            .snapshot
-            .equipment()
-            .iter()
-            .any(|item| item.def.id == self.tool_id)
-    }
 }
 
 fn integer_field(status: &script::native::ScriptStatus, key: &str) -> Option<i64> {
@@ -3399,6 +3371,57 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required for Gatherer live qualification"))
 }
 
+fn save_live_capture(
+    client: &mut client::client::Client,
+    directory: &Path,
+    receipt: &Value,
+) -> Result<(), String> {
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_secs();
+    let stem = format!("{epoch}Z_01-final");
+    let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
+    let was_draw = client.draw;
+    client.set_draw(true);
+    let frame = renderer.mainredraw(client);
+    client.set_draw(was_draw);
+    let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
+        return Err("live capture did not return a CPU PixMap".into());
+    };
+    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
+    for pixel in &pixels.pixels {
+        rgba.extend_from_slice(&[
+            ((pixel >> 16) & 0xff) as u8,
+            ((pixel >> 8) & 0xff) as u8,
+            (pixel & 0xff) as u8,
+            u8::MAX,
+        ]);
+    }
+    let file = std::fs::File::create(directory.join(format!("{stem}.png")))
+        .map_err(|error| error.to_string())?;
+    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .map_err(|error| error.to_string())?
+        .write_image_data(&rgba)
+        .map_err(|error| error.to_string())?;
+    let mut receipt = receipt.clone();
+    receipt["frame"] = json!({
+        "ingame": client.ingame,
+        "scene_state": client.scene_state,
+        "renderer": "real Client CpuPix3D framebuffer",
+    });
+    std::fs::write(
+        directory.join(format!("{stem}.json")),
+        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn parse_tile(name: &str, raw: &str) -> Result<WorldTile, String> {
     let mut parts = raw.split(',').map(str::trim);
     let x = parts
@@ -3443,34 +3466,6 @@ fn bank_air_distance(from: WorldTile, to: WorldTile) -> i64 {
     dx * dx + dz * dz
 }
 
-fn teller_only_bank(world: &nav::world::NavWorld, bank: &api::named_banks::NamedBank) -> bool {
-    let Some(definition) = bank.definition else {
-        return false;
-    };
-    let Some(npc) = definition.npc else {
-        return false;
-    };
-    if definition.object.is_some() || definition.open_first.is_some() {
-        return false;
-    }
-    let mut has_matching_teller = false;
-    let mut has_booth = false;
-    for stand in world.banks().iter().filter(|stand| {
-        stand.tile.level == bank.tile.level
-            && stand.tile.x.abs_diff(bank.tile.x) <= nav::bank_fetch::SAME_BANK as u32
-            && stand.tile.z.abs_diff(bank.tile.z) <= nav::bank_fetch::SAME_BANK as u32
-    }) {
-        match &stand.access {
-            nav::pack::BankAccess::Booth { .. } => has_booth = true,
-            nav::pack::BankAccess::Npc { name, .. } if name.eq_ignore_ascii_case(npc.name) => {
-                has_matching_teller = true;
-            }
-            nav::pack::BankAccess::Npc { .. } => {}
-        }
-    }
-    has_matching_teller && !has_booth
-}
-
 fn configure_bank_cost_plan(
     template: &SharedClientTemplate,
     plan: &mut FixturePlan,
@@ -3478,6 +3473,13 @@ fn configure_bank_cost_plan(
     let world = template
         .world()
         .ok_or("BankCost selected template has no navigation world")?;
+    if world.named_bank_facts().is_none() {
+        let data = template
+            .profile()
+            .game_data()
+            .ok_or("BankCost selected profile has no game data")?;
+        world.bind_named_bank_facts(&data)?;
+    }
     let facts = world
         .named_bank_facts()
         .ok_or("BankCost selected template has no bound named-bank facts")?;
@@ -3488,14 +3490,14 @@ fn configure_bank_cost_plan(
     for bank in facts.banks().iter().filter(|bank| eligible(bank)) {
         plan.bank_cost_air_banks
             .push((bank.name.to_owned(), bank.air_tile()));
-        if bank.routable && teller_only_bank(&world, bank) {
-            plan.bank_cost_teller_candidates.push(bank.name.to_owned());
-        }
     }
     for bank in facts.banks().iter().filter(|bank| {
         bank.routable
             && bank.definition.is_some_and(|definition| {
-                (definition.setting.is_some() || definition.quest.is_some()) && !eligible(bank)
+                (definition.skill.is_some()
+                    || definition.setting.is_some()
+                    || definition.quest.is_some())
+                    && !eligible(bank)
             })
     }) {
         plan.bank_cost_gated_candidates.push(bank.name.to_owned());
@@ -3503,16 +3505,19 @@ fn configure_bank_cost_plan(
     if plan.bank_cost_air_banks.is_empty() {
         return Err("BankCost selected navigation data has no eligible named banks".into());
     }
-    if plan.bank_cost_teller_candidates.is_empty() {
-        return Err(
-            "BankCost selected navigation data has no eligible routable teller-only bank".into(),
-        );
-    }
-    if plan.bank_cost_gated_candidates.is_empty() {
-        return Err(
-            "BankCost selected navigation data has no routable quest- or preference-gated bank"
-                .into(),
-        );
+    let missing_gates: Vec<_> = ["Zanaris", "Fishing Guild"]
+        .into_iter()
+        .filter(|required| {
+            !plan
+                .bank_cost_gated_candidates
+                .iter()
+                .any(|candidate| candidate.as_str() == *required)
+        })
+        .collect();
+    if !missing_gates.is_empty() {
+        return Err(format!(
+            "BankCost selected navigation data does not expose disabled Zanaris and Fishing Guild candidates: {missing_gates:?}"
+        ));
     }
     Ok(())
 }
@@ -3528,8 +3533,8 @@ fn fixture_plan(
             plan.bank_seed.push(("bronze_axe".into(), 1));
             plan.bank_seed.push(("rune_axe".into(), 1));
         }
-        LiveCase::BankCost
-        | LiveCase::BankCostAirFallback
+        LiveCase::BankCost => plan.bank_seed.push(("bronze_pickaxe".into(), 1)),
+        LiveCase::BankCostAirFallback
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => plan.bank_seed.push(("bronze_axe".into(), 1)),
         LiveCase::FishBait => plan.bank_seed.push(("feather".into(), 7)),
@@ -3619,7 +3624,8 @@ fn fixture_plan(
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
-        LiveCase::BankCost | LiveCase::BankCostAirFallback => {
+        LiveCase::BankCost => world_tile(3016, 9840),
+        LiveCase::BankCostAirFallback => {
             parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?
         }
         _ => parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?,
@@ -3836,6 +3842,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let frame_helper_account = helper_account.clone();
     let frame_helper_state = helper_state.clone();
     let frame_helper_needs_progress = case == LiveCase::GasHazard;
+    let capture_request = Arc::new(Mutex::new(None::<(PathBuf, Value)>));
+    let capture_result = Arc::new(Mutex::new(None::<Result<(), String>>));
+    let frame_capture_request = Arc::clone(&capture_request);
+    let frame_capture_result = Arc::clone(&capture_result);
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
         true,
@@ -3936,6 +3946,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             if let Ok(mut slot) = frame_state.lock() {
                 slot.frame(client, hold, None);
             }
+            let capture = frame_capture_request
+                .lock()
+                .ok()
+                .and_then(|mut request| request.take());
+            if let Some((directory, receipt)) = capture {
+                let result = save_live_capture(client, &directory, &receipt);
+                if let Ok(mut completion) = frame_capture_result.lock() {
+                    *completion = Some(result);
+                }
+            }
         },
     )?;
     if let Ok(mut handle) = start_handle.lock() {
@@ -3970,11 +3990,10 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "use_mage_bank": BANK_COST_FIXTURE_INTENT.use_mage_bank,
                 "allow_wilderness": BANK_COST_FIXTURE_INTENT.allow_wilderness,
                 "use_zanaris_bank": BANK_COST_FIXTURE_INTENT.use_zanaris_bank,
-                "prerequisite": "selected nav facts must expose an enabled routable teller-only bank and a different gated candidate",
+                "prerequisite": "selected nav facts expose eligible banks and explicitly disable Zanaris plus Fishing Guild",
             })),
             "bank_cost_oracle": (case == LiveCase::BankCost).then(|| json!({
                 "eligible_air_candidates": plan.bank_cost_air_banks,
-                "teller_only_candidates": plan.bank_cost_teller_candidates,
                 "gate_disabled_candidates": plan.bank_cost_gated_candidates,
                 "air_nearest_is_measured_at": "bank trip due using the observed live tile",
             })),
@@ -4394,12 +4413,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.last_status_yielded > 0
                     && witness.bank_closed_observed
             }
-            LiveCase::BankCost => {
-                witness.status_trips >= 1
-                    && witness.post_bank_yields >= 1
-                    && witness.bank_closed_observed
-                    && witness.last_status_yielded > 0
-            }
+            LiveCase::BankCost => witness.bank_loaded_observed,
             LiveCase::BankCostAirFallback => {
                 witness.status_trips >= 1
                     && witness.post_bank_yields >= 1
@@ -4531,15 +4545,36 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "last_area": witness.last_area,
             "last_event": witness.last_event,
     });
-    let mut fixture_receipt = json!({
+    let bank_receipt = json!({
             "bank": witness.last_status_bank,
+            "bank_trips": witness.status_trips,
+            "deposited": witness.status_deposited,
+            "nonzero_deposit_returns": witness.bank_nonzero_roundtrips,
+            "post_bank_yields": witness.post_bank_yields,
+            "bank_loaded": witness.bank_loaded_observed,
+            "bank_closed": witness.bank_closed_observed,
+            "tool_selected": witness.tool_selected_observed,
+            "tool_worn": witness.tool_worn_observed,
+            "bait_exact": witness.bait_exact,
+            "coin_balance_exact": witness.coin_balance_exact,
+            "reserve_runes_intact": witness.reserve_runes_intact,
+            "pending_boundary": witness.power_to_bank_edit_pending,
+            "power_to_bank_applied": witness.power_to_bank_applied,
+            "other_plane_observed": witness.other_plane_observed,
+            "return_after_pause": witness.bank_return_after_pause,
+            "reconnect_offline": witness.reconnect_offline_observed,
+            "return_after_reconnect": witness.bank_return_after_reconnect,
+            "failure_code": witness.failure_code,
+            "failure_message": witness.failure_message,
+    });
+    receipt["bank_trip"] = bank_receipt;
+    let mut fixture_receipt = json!({
             "bank_selection_elapsed_ms": witness
                 .bank_selection_elapsed
                 .map(|elapsed| elapsed.as_millis()),
             "bank_cost_oracle": (case == LiveCase::BankCost).then(|| json!({
                 "origin": fixture_plan.bank_cost_origin,
                 "air_nearest": fixture_plan.bank_cost_air_nearest,
-                "teller_only_candidates": fixture_plan.bank_cost_teller_candidates,
                 "gate_disabled_candidates": fixture_plan.bank_cost_gated_candidates,
             })),
             "fixture_chop_observed": witness.fixture_chop_observed,
@@ -4584,6 +4619,32 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             .expect("fixture receipt object"),
     );
     println!("{receipt}");
+    if let Some(root) = std::env::var_os("LIVE_EVIDENCE_DIR") {
+        let epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs();
+        let directory = PathBuf::from(root).join(format!("{cell_name}_{account}_{epoch}Z"));
+        *capture_request
+            .lock()
+            .map_err(|_| "capture request poisoned")? = Some((directory.clone(), receipt));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(completion) = capture_result
+                .lock()
+                .map_err(|_| "capture result poisoned")?
+                .take()
+            {
+                completion?;
+                println!("live-evidence={}", directory.display());
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("final live evidence capture timed out".into());
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
     play.script_stop(&account);
     play.stop_slot(&account);
     if let Some(helper_account) = &helper_account {
@@ -4718,7 +4779,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         |_| (None, None),
         move |client, username, hold| {
             if username == frame_account {
-                frame_state.lock().unwrap().frame(client, hold);
+                frame_state.lock().unwrap().frame(client, hold.hold);
             }
         },
     )?;
@@ -4902,9 +4963,9 @@ fn gatherer_wc_bank_trip_unwieldable_tool() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_BANK_COST_TILE with a real cost-vs-air origin, and local 289 engine"]
-fn gatherer_bank_cost_teller_only() {
-    run_cell(Cell::Woodcutting, LiveCase::BankCost).unwrap();
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT and a local 289 engine"]
+fn gatherer_mining_bank_cost_walk_ranked() {
+    run_cell(Cell::Mining, LiveCase::BankCost).unwrap();
 }
 
 #[test]
