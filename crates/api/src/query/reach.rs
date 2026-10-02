@@ -554,10 +554,7 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for CollisionArrivalProbe<F> 
 
 struct WindowReachScratch {
     marks: Vec<u32>,
-    // The radius-104 cache has at most 627² cells.
-    queue: Vec<u32>,
-    continuation: Vec<(i32, i32)>,
-    outside: std::collections::HashSet<(i32, i32)>,
+    queue: Vec<usize>,
     epoch: u32,
 }
 
@@ -565,7 +562,7 @@ struct WindowReachScratch {
 fn window_reach<const ADJACENT: bool>(
     cache: &mut ArrivalStepCache<'_>,
     marks: &mut [u32],
-    queue: &mut Vec<u32>,
+    queue: &mut Vec<usize>,
     target: usize,
     goals: &[usize],
     budget: usize,
@@ -575,7 +572,7 @@ fn window_reach<const ADJACENT: bool>(
     let offsets = [-side, side, -1, 1, -side - 1, side - 1, -side + 1, side + 1];
     let mut head = 0;
     while head < queue.len() {
-        let index = queue[head] as usize;
+        let index = queue[head];
         if index == target || (ADJACENT && goals.contains(&index)) {
             return (true, head);
         }
@@ -591,7 +588,7 @@ fn window_reach<const ADJACENT: bool>(
                 let next = index.wrapping_add_signed(offset);
                 if marks[next] != epoch {
                     marks[next] = epoch;
-                    queue.push(next as u32);
+                    queue.push(next);
                 }
             }
         };
@@ -607,8 +604,8 @@ fn window_reach<const ADJACENT: bool>(
     (false, head)
 }
 
-/// Exact forward dequeue order over cached steps, with sparse continuation
-/// outside the window. The cache boundary never becomes a collision wall.
+/// Exact forward dequeue order over cached steps, continuing through lazy
+/// dense pages outside the window. Its boundary never becomes a collision wall.
 struct WindowArrivalProbe<'a, F> {
     fallback: &'a CollisionArrivalProbe<F>,
     cache: std::cell::RefCell<ArrivalStepCache<'a>>,
@@ -647,15 +644,14 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for WindowArrivalProbe<'_, F>
             scratch.marks.fill(0);
             scratch.epoch = 1;
         }
-        scratch.marks.resize(self.side * self.side, 0);
-        scratch.outside.clear();
+        scratch.marks.resize(cache.steps.len(), 0);
         let epoch = scratch.epoch;
         let budget = options.max_steps.unwrap_or(400) as usize;
         scratch.queue.clear();
         scratch
             .queue
             .reserve((budget.saturating_mul(8) + 1).min(self.side * self.side));
-        scratch.queue.push(start as u32);
+        scratch.queue.push(start);
         scratch.marks[start] = epoch;
         let target_x = destination.x - self.base.x;
         let target_z = destination.z - self.base.z;
@@ -669,85 +665,26 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for WindowArrivalProbe<'_, F>
         if arrived || head >= budget || head == queue.len() {
             return arrived;
         }
-        // Preserve the queue and dequeue rank when the flood first reaches a
-        // boundary; only its representation changes for sparse continuation.
-        let WindowReachScratch {
-            queue,
-            continuation,
-            ..
-        } = &mut *scratch;
-        continuation.clear();
-        continuation.extend(queue.iter().map(|&index| {
-            let index = index as usize;
-            ((index / self.side) as i32, (index % self.side) as i32)
-        }));
-        let flags = |x: i32, z: i32| {
-            self.base
-                .x
-                .checked_add(x)
-                .zip(self.base.z.checked_add(z))
-                .and_then(|(x, z)| {
-                    (self.fallback.collision_at)(WorldTile {
-                        x,
-                        z,
-                        level: origin.level,
-                    })
-                })
-        };
-        while head < scratch.continuation.len() {
-            let (x, z) = scratch.continuation[head];
-            if (x == target_x && z == target_z)
-                || (options.adjacent_ok
-                    && x.abs_diff(target_x) + z.abs_diff(target_z) == 1
-                    && can_reach_adjacent_tile(
-                        &flags,
-                        target_x,
-                        target_z,
-                        target_x - x,
-                        target_z - z,
-                    ))
-            {
+        // Handles remain stable across page growth, preserving every queued
+        // tile, visited mark and dequeue rank at the dense-window boundary.
+        while head < scratch.queue.len() {
+            let index = scratch.queue[head];
+            if index == target || (options.adjacent_ok && self.goals.contains(&index)) {
                 return true;
             }
             if head >= budget {
                 return false;
             }
             head += 1;
-            let cached_mask = if x >= 0 && z >= 0 && x < self.side as i32 && z < self.side as i32 {
-                cache.mask(x as usize * self.side + z as usize)
-            } else {
-                None
-            };
-            let mut mask = if let Some(mask) = cached_mask {
-                mask
-            } else {
-                let mut mask = 0;
-                for (bit, &(dx, dz)) in DIRS.iter().enumerate() {
-                    if can_step_local(&flags, x, z, dx, dz) {
-                        mask |= 1 << bit;
-                    }
-                }
-                mask
-            };
+            let mut mask = cache.forward_mask(index);
+            scratch.marks.resize(cache.steps.len(), 0);
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 mask &= mask - 1;
-                let (dx, dz) = DIRS[bit];
-                let (nx, nz) = (x + dx, z + dz);
-                let unseen = if nx >= 0 && nz >= 0 && nx < self.side as i32 && nz < self.side as i32
-                {
-                    let next = nx as usize * self.side + nz as usize;
-                    if scratch.marks[next] == epoch {
-                        false
-                    } else {
-                        scratch.marks[next] = epoch;
-                        true
-                    }
-                } else {
-                    scratch.outside.insert((nx, nz))
-                };
-                if unseen {
-                    scratch.continuation.push((nx, nz));
+                let next = cache.neighbor(index, bit);
+                if scratch.marks[next] != epoch {
+                    scratch.marks[next] = epoch;
+                    scratch.queue.push(next);
                 }
             }
         }
@@ -770,10 +707,158 @@ struct ArrivalStepCache<'a> {
     flags: &'a [Option<i32>],
     steps: Vec<u16>,
     side: usize,
+    base: WorldTile,
+    collision_at: &'a dyn Fn(WorldTile) -> Option<i32>,
+    pages: std::collections::HashMap<(i32, i32), usize>,
+    page_origins: Vec<(i32, i32)>,
+    page_flags: Vec<Option<i32>>,
+    page_neighbors: Vec<[usize; 8]>,
+    boundary_neighbors: Vec<[usize; 8]>,
 }
 
 impl ArrivalStepCache<'_> {
     const PREPARED: u16 = 1 << 8;
+    const FLAGS_LOADED: u16 = 1 << 9;
+    const PAGED: u16 = 1 << 10;
+    const WALKABLE: u16 = 1 << 11;
+    const PAGE_SIDE: usize = 32;
+    const PAGE_CELLS: usize = Self::PAGE_SIDE * Self::PAGE_SIDE;
+
+    fn coordinates(&self, index: usize) -> (i32, i32) {
+        if index < self.flags.len() {
+            return ((index / self.side) as i32, (index % self.side) as i32);
+        }
+        let offset = index - self.flags.len();
+        let (x, z) = self.page_origins[offset / Self::PAGE_CELLS];
+        let local = offset % Self::PAGE_CELLS;
+        (
+            x + (local / Self::PAGE_SIDE) as i32,
+            z + (local % Self::PAGE_SIDE) as i32,
+        )
+    }
+
+    fn index(&mut self, x: i32, z: i32) -> usize {
+        if x >= 0 && z >= 0 && x < self.side as i32 && z < self.side as i32 {
+            return x as usize * self.side + z as usize;
+        }
+        let page_side = Self::PAGE_SIDE as i32;
+        let page = (x.div_euclid(page_side), z.div_euclid(page_side));
+        let count = self.page_origins.len();
+        let slot = *self.pages.entry(page).or_insert_with(|| {
+            self.page_origins
+                .push((page.0 * page_side, page.1 * page_side));
+            self.page_flags.resize((count + 1) * Self::PAGE_CELLS, None);
+            self.page_neighbors
+                .resize((count + 1) * Self::PAGE_CELLS, [0; 8]);
+            self.steps.resize(
+                self.flags.len() + (count + 1) * Self::PAGE_CELLS,
+                Self::PAGED,
+            );
+            count
+        });
+        self.flags.len()
+            + slot * Self::PAGE_CELLS
+            + x.rem_euclid(page_side) as usize * Self::PAGE_SIDE
+            + z.rem_euclid(page_side) as usize
+    }
+
+    #[inline]
+    fn neighbor(&self, index: usize, bit: usize) -> usize {
+        if self.steps[index] & Self::PAGED == 0 {
+            let (dx, dz) = DIRS[bit];
+            return index.wrapping_add_signed(dx as isize * self.side as isize + dz as isize);
+        }
+        if index >= self.flags.len() {
+            return self.page_neighbors[index - self.flags.len()][bit];
+        }
+        self.boundary_neighbors[self.boundary_slot(index)][bit]
+    }
+
+    fn boundary_slot(&self, index: usize) -> usize {
+        let (x, z) = (index / self.side, index % self.side);
+        if x == 0 {
+            z
+        } else if x + 1 == self.side {
+            self.side + z
+        } else if z == 0 {
+            self.side * 2 + x
+        } else {
+            self.side * 3 + x
+        }
+    }
+
+    fn flag(&mut self, index: usize) -> Option<i32> {
+        if index < self.flags.len() {
+            return self.flags[index];
+        }
+        if self.steps[index] & Self::FLAGS_LOADED == 0 {
+            let (x, z) = self.coordinates(index);
+            self.page_flags[index - self.flags.len()] = self
+                .base
+                .x
+                .checked_add(x)
+                .zip(self.base.z.checked_add(z))
+                .and_then(|(x, z)| {
+                    (self.collision_at)(WorldTile {
+                        x,
+                        z,
+                        level: self.base.level,
+                    })
+                });
+            self.steps[index] |= Self::FLAGS_LOADED;
+        }
+        self.page_flags[index - self.flags.len()]
+    }
+
+    #[inline]
+    fn forward_mask(&mut self, index: usize) -> u8 {
+        if self.prepared(index) {
+            return self.steps[index] as u8;
+        }
+        self.prepare_forward_mask(index)
+    }
+
+    fn prepare_forward_mask(&mut self, index: usize) -> u8 {
+        if index < self.flags.len() {
+            if let Some(mask) = self.mask(index) {
+                return mask;
+            }
+        }
+        self.steps[index] |= Self::PAGED;
+        let mut mask = 0;
+        let source_flags = self.flag(index);
+        if source_flags.is_some() {
+            let (x, z) = self.coordinates(index);
+            let neighbors = DIRS.map(|(dx, dz)| self.index(x + dx, z + dz));
+            if index < self.flags.len() {
+                let slot = self.boundary_slot(index);
+                self.boundary_neighbors[slot] = neighbors;
+            } else {
+                self.page_neighbors[index - self.flags.len()] = neighbors;
+            }
+            let mut flags = [None; 8];
+            for (flag, &next) in flags.iter_mut().zip(&neighbors) {
+                *flag = self.flag(next);
+            }
+            let w = flags_open(flags[0], CollisionFlag::PL_WALK_E);
+            let e = flags_open(flags[1], CollisionFlag::PL_WALK_W);
+            let n = flags_open(flags[2], CollisionFlag::PL_WALK_N);
+            let s = flags_open(flags[3], CollisionFlag::PL_WALK_S);
+            mask = u8::from(w) | (u8::from(e) << 1) | (u8::from(n) << 2) | (u8::from(s) << 3);
+            mask |= u8::from(w && n && flags_open(flags[4], CollisionFlag::PL_WALK_NE)) << 4;
+            mask |= u8::from(e && n && flags_open(flags[5], CollisionFlag::PL_WALK_NW)) << 5;
+            mask |= u8::from(w && s && flags_open(flags[6], CollisionFlag::PL_WALK_SE)) << 6;
+            mask |= u8::from(e && s && flags_open(flags[7], CollisionFlag::PL_WALK_SW)) << 7;
+        }
+        self.steps[index] |= u16::from(mask)
+            | Self::PREPARED
+            | if flags_open(source_flags, CollisionFlag::SQ_BLOCKED) {
+                Self::WALKABLE
+            } else {
+                0
+            };
+        mask
+    }
 
     #[inline]
     fn prepared(&self, index: usize) -> bool {
@@ -781,8 +866,20 @@ impl ArrivalStepCache<'_> {
     }
 
     #[inline]
+    fn walkable(&self, index: usize) -> bool {
+        if self.prepared(index) {
+            self.steps[index] & Self::WALKABLE != 0
+        } else {
+            flags_open(self.flags[index], CollisionFlag::SQ_BLOCKED)
+        }
+    }
+
+    #[inline]
     fn mask(&mut self, index: usize) -> Option<u8> {
         let step = self.steps[index];
+        if step & Self::PAGED != 0 {
+            return None;
+        }
         if step & Self::PREPARED != 0 {
             return Some(step as u8);
         }
@@ -816,7 +913,13 @@ impl ArrivalStepCache<'_> {
                 e && s && flags_open(self.flags[index + self.side + 1], CollisionFlag::PL_WALK_SW),
             ) << 7;
         }
-        self.steps[index] = u16::from(mask) | Self::PREPARED;
+        self.steps[index] = u16::from(mask)
+            | Self::PREPARED
+            | if flags_open(self.flags[index], CollisionFlag::SQ_BLOCKED) {
+                Self::WALKABLE
+            } else {
+                0
+            };
         Some(mask)
     }
 }
@@ -827,7 +930,7 @@ impl ArrivalStepCache<'_> {
 fn arrival_distances<const BOXED: bool>(
     cache: &ArrivalStepCache<'_>,
     seeds: &[usize],
-) -> (Vec<u32>, u32, Vec<bool>) {
+) -> (Vec<u32>, u32, Vec<bool>, Vec<u32>) {
     let mut depth = vec![u32::MAX; cache.flags.len()];
     let mut queue = Vec::with_capacity(seeds.len());
     let mut connected = if BOXED {
@@ -847,6 +950,7 @@ fn arrival_distances<const BOXED: bool>(
     let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
     let offsets = DIRS.map(|(dx, dz)| dx as isize * cache.side as isize + dz as isize);
     let mut boundary = u32::MAX;
+    let mut boundary_seeds = Vec::new();
     let mut head = 0;
     while head < queue.len() {
         let index = queue[head];
@@ -856,6 +960,9 @@ fn arrival_distances<const BOXED: bool>(
             x == 0 || z == 0 || x + 1 == cache.side as i32 || z + 1 == cache.side as i32;
         if on_boundary {
             boundary = boundary.min(depth[index]);
+            if !BOXED {
+                boundary_seeds.push(index);
+            }
         }
         for (bit, &(dx, dz)) in DIRS.iter().enumerate() {
             if on_boundary {
@@ -866,7 +973,7 @@ fn arrival_distances<const BOXED: bool>(
             }
             let predecessor = index.wrapping_add_signed(offsets[bit]);
             if depth[predecessor] != u32::MAX
-                || !flags_open(cache.flags[predecessor], CollisionFlag::SQ_BLOCKED)
+                || !cache.walkable(predecessor)
                 || (BOXED && !cache.prepared(predecessor))
             {
                 continue;
@@ -888,6 +995,11 @@ fn arrival_distances<const BOXED: bool>(
             }
         }
     }
+    let outside = if BOXED || boundary == u32::MAX {
+        Vec::new()
+    } else {
+        arrival_outside_distances(cache, &depth, &boundary_seeds)
+    };
     // Reverse reach alone omits forward-only dead ends. Include their weak
     // closure before using this set as a vertex-count upper bound.
     head = queue.len();
@@ -899,23 +1011,154 @@ fn arrival_distances<const BOXED: bool>(
             continue;
         }
         let (x, z) = ((index / cache.side) as i32, (index % cache.side) as i32);
-        for &(dx, dz) in &DIRS {
+        for (bit, &(dx, dz)) in DIRS.iter().enumerate() {
             let (nx, nz) = (x + dx, z + dz);
             if nx < 0 || nz < 0 || nx >= cache.side as i32 || nz >= cache.side as i32 {
                 continue;
             }
             let next = nx as usize * cache.side + nz as usize;
             if !connected[next]
-                && flags_open(cache.flags[next], CollisionFlag::SQ_BLOCKED)
-                && (can_step_local(&flags, x, z, dx, dz)
-                    || can_step_local(&flags, nx, nz, -dx, -dz))
+                && cache.walkable(next)
+                && ((if cache.prepared(index) {
+                    cache.steps[index] & (1 << bit) != 0
+                } else {
+                    can_step_local(&flags, x, z, dx, dz)
+                }) || (if cache.prepared(next) {
+                    cache.steps[next] & (1 << inverse[bit]) != 0
+                } else {
+                    can_step_local(&flags, nx, nz, -dx, -dz)
+                }))
             {
                 connected[next] = true;
                 queue.push(next);
             }
         }
     }
-    (depth, boundary, connected)
+    (depth, boundary, connected, outside)
+}
+
+/// Collapse unknown outside collision to an open one-tile contour. Coordinate
+/// clamping maps every real outside walk onto this contour without increasing
+/// its length. Real directed edges remain intact inside the cache, including
+/// paths that leave and re-enter several times.
+fn arrival_outside_distances(
+    cache: &ArrivalStepCache<'_>,
+    depth: &[u32],
+    boundary_seeds: &[usize],
+) -> Vec<u32> {
+    let side = cache.side;
+    let cells = cache.flags.len();
+    let span = side + 1;
+    let contour_len = span * 4;
+    let mut outside = vec![u32::MAX; cells];
+    let mut contour = vec![u32::MAX; contour_len];
+    let mut queue = Vec::new();
+    let contour_index = |x: i32, z: i32| {
+        if x == -1 && z < side as i32 {
+            (z + 1) as usize
+        } else if z == side as i32 && x < side as i32 {
+            span + (x + 1) as usize
+        } else if x == side as i32 && z > -1 {
+            span * 2 + (side as i32 - z) as usize
+        } else {
+            span * 3 + (side as i32 - x) as usize
+        }
+    };
+    let offsets = DIRS.map(|(dx, dz)| dx as isize * side as isize + dz as isize);
+    let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
+    let mut head = 0;
+    let mut seed_head = 0;
+    while seed_head < boundary_seeds.len() || head < queue.len() {
+        let seed_depth = boundary_seeds
+            .get(seed_head)
+            .map_or(u32::MAX, |&index| depth[index]);
+        let queued_depth = queue.get(head).map_or(u32::MAX, |&index| {
+            if index < cells {
+                outside[index]
+            } else {
+                contour[index - cells]
+            }
+        });
+        // Reverse BFS recorded boundary seeds in distance order. Merging those
+        // events with this unit-edge FIFO avoids a weighted priority queue.
+        let seeded = seed_depth <= queued_depth && seed_head < boundary_seeds.len();
+        let index = if seeded {
+            let index = boundary_seeds[seed_head];
+            seed_head += 1;
+            index
+        } else {
+            let index = queue[head];
+            head += 1;
+            index
+        };
+        let next_depth = seed_depth.min(queued_depth).saturating_add(1);
+        if index >= cells {
+            let ring = index - cells;
+            let offset = ring % span;
+            let (x, z) = match ring / span {
+                0 => (-1, offset as i32 - 1),
+                1 => (offset as i32 - 1, side as i32),
+                2 => (side as i32, side as i32 - offset as i32),
+                _ => (side as i32 - offset as i32, -1),
+            };
+            for next in [
+                (ring + contour_len - 1) % contour_len,
+                (ring + 1) % contour_len,
+                if offset == 1 {
+                    (ring + contour_len - 2) % contour_len
+                } else if offset + 1 == span {
+                    (ring + 2) % contour_len
+                } else {
+                    ring
+                },
+            ] {
+                if contour[next] == u32::MAX {
+                    contour[next] = next_depth;
+                    queue.push(cells + next);
+                }
+            }
+            for &(dx, dz) in &DIRS {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx >= side as i32 || nz >= side as i32 {
+                    continue;
+                }
+                let next = nx as usize * side + nz as usize;
+                if outside[next] == u32::MAX && cache.walkable(next) {
+                    outside[next] = next_depth;
+                    queue.push(next);
+                }
+            }
+            continue;
+        }
+        let (x, z) = ((index / side) as i32, (index % side) as i32);
+        let on_boundary = x == 0 || z == 0 || x + 1 == side as i32 || z + 1 == side as i32;
+        for (bit, &(dx, dz)) in DIRS.iter().enumerate() {
+            if on_boundary {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx >= side as i32 || nz >= side as i32 {
+                    let next = contour_index(nx, nz);
+                    if contour[next] == u32::MAX {
+                        contour[next] = next_depth;
+                        queue.push(cells + next);
+                    }
+                    continue;
+                }
+            }
+            // A seed denotes a known inside-only goal path. Only queued
+            // vertices have already crossed the contour.
+            if !seeded {
+                let predecessor = index.wrapping_add_signed(offsets[bit]);
+                if outside[predecessor] == u32::MAX
+                    && cache.walkable(predecessor)
+                    && cache.steps[predecessor] & (1 << inverse[bit]) != 0
+                {
+                    outside[predecessor] = next_depth;
+                    queue.push(predecessor);
+                }
+            }
+        }
+    }
+    outside
 }
 
 /// One forward landmark ball supplies a shared rank lower bound. Its tree's
@@ -925,6 +1168,9 @@ struct ArrivalLandmark {
     depth: Vec<u32>,
     reversible: Vec<bool>,
     queue: Vec<usize>,
+    goal_reachable: Vec<bool>,
+    goal_queue: Vec<usize>,
+    goal_lower: u32,
 }
 
 impl ArrivalLandmark {
@@ -932,59 +1178,118 @@ impl ArrivalLandmark {
         &mut self,
         root: usize,
         budget: u32,
+        goals: &[usize],
         cache: &mut ArrivalStepCache<'_>,
+        explore_no_goal: bool,
     ) -> (Option<u32>, u32, bool) {
         for &index in &self.queue {
             self.depth[index] = u32::MAX;
             self.reversible[index] = false;
+            if let Some(reachable) = self.goal_reachable.get_mut(index) {
+                *reachable = false;
+            }
         }
         self.queue.clear();
+        self.goal_queue.clear();
         self.queue.push(root);
         self.depth[root] = 0;
         self.reversible[root] = true;
-        let offsets = DIRS.map(|(dx, dz)| dx as isize * cache.side as isize + dz as isize);
         let inverse = [1, 0, 3, 2, 7, 6, 5, 4];
-        let mut closed = true;
-        let mut boundary = u32::MAX;
         let mut head = 0;
+        let mut ball_depth = None;
         while head < self.queue.len() {
             let index = self.queue[head];
             head += 1;
-            let Some(mut mask) = cache.mask(index) else {
-                closed = false;
-                boundary = boundary.min(self.depth[index]);
-                continue;
-            };
+            let mut mask = cache.forward_mask(index);
+            self.depth.resize(cache.steps.len(), u32::MAX);
+            self.reversible.resize(cache.steps.len(), false);
             while mask != 0 {
                 let bit = mask.trailing_zeros() as usize;
                 mask &= mask - 1;
-                let next = index.wrapping_add_signed(offsets[bit]);
+                let next = cache.neighbor(index, bit);
                 if self.depth[next] != u32::MAX {
                     continue;
                 }
                 self.depth[next] = self.depth[index] + 1;
-                self.reversible[next] = self.reversible[index]
-                    && cache
-                        .mask(next)
-                        .is_some_and(|step| step & (1 << inverse[bit]) != 0);
+                self.reversible[next] =
+                    self.reversible[index] && cache.forward_mask(next) & (1 << inverse[bit]) != 0;
                 self.queue.push(next);
                 if self.queue.len() > budget as usize {
-                    return (Some(self.depth[next]), boundary, false);
+                    let first_depth = *ball_depth.get_or_insert(self.depth[next]);
+                    if !explore_no_goal
+                        || goals.iter().any(|&goal| self.depth[goal] != u32::MAX)
+                        || self.queue.len() > budget as usize * 2
+                    {
+                        self.goal_lower = goals
+                            .iter()
+                            .map(|&goal| self.depth[goal])
+                            .min()
+                            .unwrap_or(u32::MAX)
+                            .min(self.depth[next]);
+                        for &extra in &self.queue[budget as usize + 1..] {
+                            self.depth[extra] = u32::MAX;
+                            self.reversible[extra] = false;
+                        }
+                        self.queue.truncate(budget as usize + 1);
+                        return (Some(first_depth), u32::MAX, false);
+                    }
                 }
             }
         }
-        (None, boundary, closed)
+        // The complete closure either fits the dequeue budget or contains no
+        // goal. In the former case, reverse its goal paths: a directed origin
+        // need not share the root's goal reach.
+        if goals.iter().any(|&goal| self.depth[goal] != u32::MAX) {
+            self.goal_reachable.resize(cache.steps.len(), false);
+            for &goal in goals {
+                if self.depth[goal] != u32::MAX {
+                    self.goal_reachable[goal] = true;
+                    self.goal_queue.push(goal);
+                }
+            }
+            head = 0;
+            while head < self.goal_queue.len() {
+                let index = self.goal_queue[head];
+                head += 1;
+                for (bit, &inverse_bit) in inverse.iter().enumerate() {
+                    let predecessor = cache.neighbor(index, bit);
+                    if self.depth[predecessor] != u32::MAX
+                        && !self.goal_reachable[predecessor]
+                        && cache.steps[predecessor] & (1 << inverse_bit) != 0
+                    {
+                        self.goal_reachable[predecessor] = true;
+                        self.goal_queue.push(predecessor);
+                    }
+                }
+            }
+        }
+        self.goal_lower = goals
+            .iter()
+            .map(|&goal| self.depth[goal])
+            .min()
+            .unwrap_or(u32::MAX);
+        (ball_depth, u32::MAX, true)
     }
+}
+
+/// Incoming edges read and update these states together.
+#[derive(Clone, Copy, Default)]
+struct ArrivalLayerCell {
+    visited: u64,
+    frontier: u64,
+    next: u64,
+    before: u64,
+    next_before: u64,
+    equal: u64,
 }
 
 /// Bit-parallel forward layers for up to 64 origins. Per-origin vertex counts
 /// are bit-sliced, so a shared discovery increments all its origins together.
-/// Complete layers give exact lower/upper rank bounds; only a goal in the
-/// budget-crossing layer (or outside the cache) needs its ordered replay.
+/// A canonical shortest goal path orders its prefixes lexicographically in DIRS
+/// order. Tracking paths before those prefixes also gives exact dequeue ranks
+/// in the budget-crossing layer, without replaying each origin's flood.
 struct ArrivalLayers {
-    visited: Vec<u64>,
-    frontier: Vec<u64>,
-    next: Vec<u64>,
+    cells: Vec<ArrivalLayerCell>,
     touched: Vec<usize>,
     queue: Vec<usize>,
     next_queue: Vec<usize>,
@@ -993,9 +1298,7 @@ struct ArrivalLayers {
 impl ArrivalLayers {
     fn new(cells: usize) -> Self {
         Self {
-            visited: vec![0; cells],
-            frontier: vec![0; cells],
-            next: vec![0; cells],
+            cells: vec![ArrivalLayerCell::default(); cells],
             touched: Vec::with_capacity(cells),
             queue: Vec::with_capacity(cells),
             next_queue: Vec::with_capacity(cells),
@@ -1007,16 +1310,15 @@ impl ArrivalLayers {
         starts: &[usize],
         goals: &[usize],
         budget: u32,
+        goal_depth: &[u32],
+        canonical: u64,
         cache: &mut ArrivalStepCache<'_>,
     ) -> (u64, u64) {
         for index in self.touched.drain(..) {
-            self.visited[index] = 0;
-            self.frontier[index] = 0;
-            self.next[index] = 0;
+            self.cells[index] = ArrivalLayerCell::default();
         }
         self.queue.clear();
         self.next_queue.clear();
-        let offsets = DIRS.map(|(dx, dz)| dx as isize * cache.side as isize + dz as isize);
         let all = u64::MAX >> (64 - starts.len());
         let mut active = all;
         let mut accepted = 0;
@@ -1026,21 +1328,50 @@ impl ArrivalLayers {
         let count_bits = (u32::BITS - budget.leading_zeros() + 3) as usize;
         let mut storage = [0u64; 19];
         let counts = &mut storage[..count_bits];
+        let mut prior_counts = [0u64; 19];
+        let mut positions = [usize::MAX; 64];
         counts[0] = all;
         for (bit, &start) in starts.iter().enumerate() {
-            if self.visited[start] == 0 {
+            let origin = 1 << bit;
+            let cell = &mut self.cells[start];
+            if cell.visited == 0 {
                 self.touched.push(start);
                 self.queue.push(start);
             }
-            self.visited[start] |= 1 << bit;
-            self.frontier[start] |= 1 << bit;
+            cell.visited |= origin;
+            cell.frontier |= origin;
+            if canonical & origin != 0 {
+                cell.equal |= origin;
+                positions[bit] = start;
+            }
         }
         let mut previous_above = 0;
         while !self.queue.is_empty() {
             let at_goal = goals
                 .iter()
-                .fold(0, |found, &goal| found | self.visited[goal])
+                .fold(0, |found, &goal| found | self.cells[goal].visited)
                 & active;
+            let exact = at_goal & canonical;
+            if exact != 0 {
+                // Rank is zero-based: all previous layers, followed by the
+                // current-layer vertices whose first shortest path precedes
+                // the first shortest path to any goal.
+                let mut ranks = prior_counts;
+                for &index in &self.queue {
+                    let mut carry = self.cells[index].before & exact;
+                    for plane in &mut ranks[..count_bits] {
+                        let next_carry = *plane & carry;
+                        *plane ^= carry;
+                        carry = next_carry;
+                        if carry == 0 {
+                            break;
+                        }
+                    }
+                }
+                accepted |= exact & !arrival_counts_above(&ranks[..count_bits], budget);
+                active &= !exact;
+            }
+            let at_goal = at_goal & active;
             let above = arrival_counts_above(counts, budget);
             let within = !arrival_counts_above(counts, budget + 1);
             let yes = at_goal & within;
@@ -1053,41 +1384,87 @@ impl ArrivalLayers {
                 break;
             }
             previous_above = above;
+            let mut prefix_before = [0u64; 8];
+            let mut next_positions = positions;
+            let mut prefixes = canonical & active;
+            while prefixes != 0 {
+                let bit = prefixes.trailing_zeros() as usize;
+                prefixes &= prefixes - 1;
+                let index = positions[bit];
+                let mut mask = cache.forward_mask(index);
+                while mask != 0 {
+                    let direction = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    let next = cache.neighbor(index, direction);
+                    if next < goal_depth.len()
+                        && goal_depth[next].checked_add(1) == Some(goal_depth[index])
+                    {
+                        // The first reducing DIRS edge is the canonical
+                        // shortest-path prefix. All smaller edges precede it.
+                        for before in &mut prefix_before[..direction] {
+                            *before |= 1 << bit;
+                        }
+                        next_positions[bit] = next;
+                        break;
+                    }
+                }
+            }
             self.next_queue.clear();
             for q in 0..self.queue.len() {
                 let index = self.queue[q];
-                let origins = self.frontier[index] & active;
-                self.frontier[index] = 0;
+                let cell = &mut self.cells[index];
+                let origins = cell.frontier & active;
+                let before = cell.before & origins;
+                let equal = cell.equal & origins;
+                cell.frontier = 0;
+                cell.before = 0;
                 if origins == 0 {
                     continue;
                 }
-                let Some(mut mask) = cache.mask(index) else {
-                    uncertain |= origins;
-                    active &= !origins;
-                    continue;
-                };
+                let mut mask = cache.forward_mask(index);
+                if cache.steps.len() > self.cells.len() {
+                    self.cells
+                        .resize(cache.steps.len(), ArrivalLayerCell::default());
+                }
                 while mask != 0 {
                     let bit = mask.trailing_zeros() as usize;
                     mask &= mask - 1;
-                    let next = index.wrapping_add_signed(offsets[bit]);
-                    let fresh = origins & !self.visited[next];
+                    let next = cache.neighbor(index, bit);
+                    let cell = &mut self.cells[next];
+                    let fresh = origins & !cell.visited;
+                    // A second shortest incoming path may precede the goal
+                    // prefix even when the first incoming path did not.
+                    if before | equal != 0 {
+                        let same_layer = fresh | (origins & cell.next);
+                        cell.next_before |= same_layer & (before | (equal & prefix_before[bit]));
+                    }
                     if fresh == 0 {
                         continue;
                     }
-                    if self.visited[next] == 0 {
+                    if cell.visited == 0 {
                         self.touched.push(next);
                     }
-                    self.visited[next] |= fresh;
-                    if self.next[next] == 0 {
+                    cell.visited |= fresh;
+                    if cell.next == 0 {
                         self.next_queue.push(next);
                     }
-                    self.next[next] |= fresh;
+                    cell.next |= fresh;
                 }
             }
+            let mut prefixes = canonical & active;
+            while prefixes != 0 {
+                let bit = prefixes.trailing_zeros() as usize;
+                prefixes &= prefixes - 1;
+                self.cells[positions[bit]].equal &= !(1 << bit);
+                self.cells[next_positions[bit]].equal |= 1 << bit;
+            }
+            positions = next_positions;
+            prior_counts[..count_bits].copy_from_slice(counts);
             // Coalesce discoveries at the vertex before incrementing counts,
             // instead of repeating the carry chain for its incoming edges.
             for &index in &self.next_queue {
-                let mut carry = self.next[index];
+                let cell = &mut self.cells[index];
+                let mut carry = cell.next;
                 for plane in &mut *counts {
                     let next_carry = *plane & carry;
                     *plane ^= carry;
@@ -1096,8 +1473,9 @@ impl ArrivalLayers {
                         break;
                     }
                 }
+                cell.frontier = std::mem::take(&mut cell.next);
+                cell.before = std::mem::take(&mut cell.next_before);
             }
-            std::mem::swap(&mut self.frontier, &mut self.next);
             std::mem::swap(&mut self.queue, &mut self.next_queue);
         }
         (accepted, uncertain)
@@ -1235,6 +1613,17 @@ pub fn retain_arrival_candidates(
         flags: &cached,
         steps: vec![0; cells],
         side,
+        base: WorldTile {
+            x: base_x,
+            z: base_z,
+            level: destination.level,
+        },
+        collision_at: &collision_at,
+        pages: std::collections::HashMap::new(),
+        page_origins: Vec::new(),
+        page_flags: Vec::new(),
+        page_neighbors: Vec::new(),
+        boundary_neighbors: vec![[0; 8]; side * 4],
     };
     let lo = (extent - radius) as usize;
     let hi = (extent + radius) as usize;
@@ -1264,21 +1653,26 @@ pub fn retain_arrival_candidates(
     // Exit seeds are the last in-box tile, one step before leaving the box.
     let exit_depth = arrival_distances::<true>(&cache, &exits).0;
     let (components, component_facts) = arrival_components(&cache, goals);
-    let (depth, goal_boundary, connected) = arrival_distances::<false>(&cache, goals);
-    let goal_lower_bound = |index: usize| {
-        let (x, z) = (index / side, index % side);
-        let to_outside = (x + 1).min(z + 1).min(side - x).min(side - z) as u32;
-        depth[index].min(goal_boundary.saturating_add(1).saturating_add(to_outside))
+    // Boxed certificates must see the original box exits. After they are
+    // captured, prepare the remaining dense steps once for all reverse edges.
+    for index in 0..cells {
+        cache.mask(index);
+    }
+    let (depth, goal_boundary, connected, outside) = arrival_distances::<false>(&cache, goals);
+    let outside_goal_bound = |index: usize| {
+        if goal_boundary == u32::MAX {
+            u32::MAX
+        } else {
+            outside[index]
+        }
     };
+    let goal_lower_bound = |index: usize| depth[index].min(outside_goal_bound(index));
     let stride = side + 1;
     let mut prefix = vec![0u32; stride * stride];
     for x in 0..side {
         let mut row = 0;
         for z in 0..side {
-            row += u32::from(
-                connected[x * side + z]
-                    && flags_open(cached[x * side + z], CollisionFlag::SQ_BLOCKED),
-            );
+            row += u32::from(connected[x * side + z]);
             prefix[(x + 1) * stride + z + 1] = prefix[x * stride + z + 1] + row;
         }
     }
@@ -1317,7 +1711,7 @@ pub fn retain_arrival_candidates(
             continue;
         }
         let d = depth[index];
-        if d == u32::MAX && goal_boundary == u32::MAX {
+        if d == u32::MAX && (goal_boundary == u32::MAX || outside[index] == u32::MAX) {
             continue;
         }
         if d != u32::MAX {
@@ -1352,6 +1746,7 @@ pub fn retain_arrival_candidates(
     let mut layers: Option<ArrivalLayers> = None;
     let mut landmark: Option<ArrivalLandmark> = None;
     let mut pending = Vec::new();
+    let mut nearest_root = vec![u32::MAX; candidates.len()];
     while group < uncertain.len() {
         let mut end = group + 1;
         while end < uncertain.len()
@@ -1396,15 +1791,28 @@ pub fn retain_arrival_candidates(
             depth: vec![u32::MAX; cells],
             reversible: vec![false; cells],
             queue: Vec::with_capacity(budget as usize + 1),
+            goal_reachable: Vec::new(),
+            goal_queue: Vec::new(),
+            goal_lower: 0,
         });
-        let bounds = landmark.prepare(root, budget, &mut cache);
+        let bounds = landmark.prepare(root, budget, goals, &mut cache, depth[root] == u32::MAX);
+        let mut roots = [root; 64];
+        let mut root_count = 1;
         let mut undecided = |(candidate, start): (usize, usize),
                              (ball_depth, boundary, closed): (Option<u32>, u32, bool),
-                             landmark: &ArrivalLandmark| {
+                             landmark: &ArrivalLandmark,
+                             nearest: &mut u32| {
             let root_distance = landmark.depth[start];
+            *nearest = (*nearest).min(root_distance);
+            if landmark.queue[0] == start {
+                // The landmark retained exactly the first budget+1 FIFO
+                // discoveries, so its own root needs no second flood.
+                keep[candidate] = goals.iter().any(|&goal| landmark.depth[goal] != u32::MAX);
+                return false;
+            }
             if root_distance != u32::MAX {
                 if closed {
-                    keep[candidate] = depth[start] != u32::MAX;
+                    keep[candidate] = landmark.goal_reachable.get(start).copied().unwrap_or(false);
                     return false;
                 }
                 if let Some(ball_depth) = ball_depth {
@@ -1418,7 +1826,9 @@ pub fn retain_arrival_candidates(
                         return false;
                     }
                     if landmark.reversible[start]
-                        && goal_lower_bound(start) > root_distance.saturating_add(ball_depth)
+                        && goal_lower_bound(start)
+                            .max(landmark.goal_lower.saturating_sub(root_distance))
+                            > root_distance.saturating_add(ball_depth)
                     {
                         return false;
                     }
@@ -1428,29 +1838,61 @@ pub fn retain_arrival_candidates(
         };
         pending.clear();
         for &entry in region {
-            if undecided(entry, bounds, landmark) {
+            if undecided(entry, bounds, landmark, &mut nearest_root[entry.0]) {
                 pending.push(entry);
             }
         }
         if let Some(&(_, near)) = pending.iter().min_by_key(|&&(_, start)| depth[start]) {
             if near != root {
-                let bounds = landmark.prepare(near, budget, &mut cache);
-                pending.retain(|&entry| undecided(entry, bounds, landmark));
+                let bounds =
+                    landmark.prepare(near, budget, goals, &mut cache, depth[near] == u32::MAX);
+                roots[root_count] = near;
+                root_count += 1;
+                pending.retain(|&entry| {
+                    undecided(entry, bounds, landmark, &mut nearest_root[entry.0])
+                });
             }
         }
+        // Continue the shared balls from widely separated undecided origins.
+        // A single component may wind far beyond the initial collision window.
+        while pending.len() > 64 && root_count < roots.len() {
+            let Some(&(_, root)) = pending
+                .iter()
+                .filter(|&&(_, start)| !roots[..root_count].contains(&start))
+                .max_by_key(|&&(candidate, _)| nearest_root[candidate])
+            else {
+                break;
+            };
+            roots[root_count] = root;
+            root_count += 1;
+            let bounds = landmark.prepare(root, budget, goals, &mut cache, depth[root] == u32::MAX);
+            pending.retain(|&entry| undecided(entry, bounds, landmark, &mut nearest_root[entry.0]));
+        }
         if pending.len() <= 64 {
-            // A small cohort is cheaper to replay against the shared step
-            // cache than to allocate the bit-parallel layer arrays.
+            // Small cohorts do not repay allocating the shared layer arrays.
             replay.extend(pending.iter().map(|&(candidate, _)| candidate));
         } else {
             for chunk in pending.chunks(64) {
                 let mut starts = [0; 64];
-                for (slot, &(_, start)) in starts.iter_mut().zip(chunk) {
-                    *slot = start;
+                let mut canonical = 0;
+                for (bit, &(_, start)) in chunk.iter().enumerate() {
+                    starts[bit] = start;
+                    // No outside path may be shorter OR tied: equal-length
+                    // paths could change the canonical DIRS ordering.
+                    if depth[start] < outside_goal_bound(start) {
+                        canonical |= 1 << bit;
+                    }
                 }
                 let (accepted, undecided) = layers
-                    .get_or_insert_with(|| ArrivalLayers::new(cells))
-                    .classify(&starts[..chunk.len()], goals, budget, &mut cache);
+                    .get_or_insert_with(|| ArrivalLayers::new(cache.steps.len()))
+                    .classify(
+                        &starts[..chunk.len()],
+                        goals,
+                        budget,
+                        &depth,
+                        canonical,
+                        &mut cache,
+                    );
                 for (bit, &(candidate, _)) in chunk.iter().enumerate() {
                     keep[candidate] = accepted & (1 << bit) != 0;
                     if undecided & (1 << bit) != 0 {
@@ -1474,8 +1916,6 @@ pub fn retain_arrival_candidates(
         scratch: std::cell::RefCell::new(WindowReachScratch {
             marks: Vec::new(),
             queue: Vec::new(),
-            continuation: Vec::new(),
-            outside: std::collections::HashSet::new(),
             epoch: 0,
         }),
     };

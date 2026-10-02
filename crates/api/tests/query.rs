@@ -1520,6 +1520,57 @@ fn batched_arrival_preserves_directed_steps_and_rank_cutoffs() {
 }
 
 #[test]
+fn batched_arrival_continues_past_window_edges_without_changing_dequeue_budget() {
+    for sign in [-1, 1] {
+        for far in [8, 13] {
+            for solid in [false, true] {
+                let target = WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                };
+                let origin = WorldTile {
+                    x: sign * 2,
+                    z: 0,
+                    level: 0,
+                };
+                // A one-tile-wide detour leaves the radius-2 cache (extent 7).
+                // The longer version reaches the goal only after its budget.
+                let collision = |tile: WorldTile| {
+                    let x = sign * tile.x;
+                    let z = sign * tile.z;
+                    let on_path = (z == 0 && (2..=far).contains(&x))
+                        || (x == far && (0..=2).contains(&z))
+                        || (z == 2 && (0..=far).contains(&x))
+                        || (x == 0 && (0..=2).contains(&z));
+                    (tile.level == 0 && on_path).then_some(if solid && tile == target {
+                        CollisionFlag::SQ_BLOCKED
+                    } else {
+                        0
+                    })
+                };
+                let probe = CollisionArrivalProbe::new(collision);
+                assert_eq!(is_arrived(origin, target, 2, || &probe), far == 8);
+                let mut candidates: Vec<_> = (-2..=2)
+                    .flat_map(|x| (-2..=2).map(move |z| WorldTile { x, z, level: 0 }))
+                    .collect();
+                candidates.extend([origin, target, WorldTile { level: 1, ..origin }]);
+                let expected: Vec<_> = candidates
+                    .iter()
+                    .copied()
+                    .filter(|&tile| is_arrived(tile, target, 2, || &probe))
+                    .collect();
+                retain_arrival_candidates(&mut candidates, target, 2, collision);
+                assert_eq!(
+                    candidates, expected,
+                    "sign={sign}, far={far}, solid={solid}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn pack_reach_query_word_boundaries_survive_u32_pack() {
     let mut scene = SceneView {
         available: true,
