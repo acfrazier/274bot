@@ -474,6 +474,30 @@ fn queued_start_waits_for_copy_confirmation() {
 }
 
 #[test]
+fn queued_js_copy_releases_start_after_staging_without_waiting_for_commit() {
+    let mut f = fixture("queued-js-copy-staged", &["alice", "bob"]);
+    let card = f.card("thiever.ts", "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n");
+    for name in ["alice", "bob"] {
+        f.assign(name, &card);
+    }
+    f.set("alice", &card, "target", json!("Knight of Ardougne"));
+    f.core.flush_writes();
+    f.scripts.start_all(&mut f.core, None);
+    f.prepare("alice", &card);
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    assert!(f.scripts.start_queue_place("bob").is_none());
+    f.wait_state("bob", script::RunState::Running);
+    let want = bag(&[("target", json!("Knight of Ardougne"))]);
+    assert!(f.run_has_bag("bob", &want));
+    drop(held);
+    f.core.flush_writes();
+}
+
+#[test]
 fn scenario_start_script_waits_for_copy_confirmation() {
     use host_play::live_start::{
         fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
@@ -1225,6 +1249,160 @@ fn native_fixture(test: &str, members: &[&str]) -> Fixture {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     fixture.core.play_mut().unwrap().bind_script_test_data(data);
     fixture
+}
+
+fn queued_gatherer_copy(test: &str) -> Fixture {
+    let mut f = native_fixture(test, &["alice", "bob", "carol"]);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob", "carol"] {
+        assert!(f
+            .scripts
+            .persist_assignment(&mut f.core, name, script::compiled_assignment(id)));
+    }
+    f.core.flush_writes();
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            id,
+            bag(&[("targetPreference", json!("Nearest"))]),
+        )
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.start_all(&mut f.core, None);
+    assert!(f.scripts.start_queue_place("bob").is_some());
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+    f.scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .unwrap();
+    f
+}
+
+#[test]
+fn queued_native_copy_waits_for_durable_apply() {
+    let mut f = queued_gatherer_copy("queued-native-copy-durable");
+    let id = script::CompiledId("Gatherer");
+    let place = f.scripts.start_queue_place("bob").unwrap();
+    for _ in 0..3 {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        assert_eq!(f.state("bob"), script::RunState::Idle);
+        assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+    }
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    // Exactly the next frame: no flush between Apply and admission.
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.state("bob"),
+        script::RunState::Idle,
+        "Bob must not start on his pre-copy bag while the native write is pending"
+    );
+    assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+    // Exercise the second asynchronous boundary too: preparation has staged
+    // the copied row, but the writer still cannot commit it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let key = script::compiled_identity_key(id);
+    loop {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        assert_eq!(f.state("bob"), script::RunState::Idle);
+        assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+        let staged = f.core.vault().unwrap().get("bob").unwrap();
+        if staged
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .is_some_and(|(_, values)| values.get("targetPreference") == Some(&json!("Nearest")))
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native preparation did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let durable = f.core.durable_profile("bob").unwrap();
+    assert!(!durable
+        .settings
+        .script_settings
+        .get(&key)
+        .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+        .is_some_and(|(_, values)| values.get("targetPreference") == Some(&json!("Nearest"))));
+    drop(held);
+    f.settle();
+    for name in ["bob", "carol"] {
+        f.wait_state(name, script::RunState::Running);
+        let want = f.scripts.compiled_bag(&f.core, name, id).unwrap();
+        assert_eq!(want["targetPreference"], json!("Nearest"));
+        assert!(
+            f.run_has_bag(name, &want),
+            "{name} started with the copied bag"
+        );
+        let entry = f
+            .saved_bag(name, &script::compiled_identity_key(id))
+            .unwrap();
+        let (_, values) = vault::CompiledSettingsRecord::view(&entry).unwrap();
+        assert_eq!(values["targetPreference"], json!("Nearest"));
+    }
+}
+
+#[test]
+fn failed_queued_native_copy_releases_start_on_pre_copy_bag() {
+    let mut f = queued_gatherer_copy("queued-native-copy-failure");
+    let id = script::CompiledId("Gatherer");
+    let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    let vault_file = f.dir.join("vault");
+    let aside = vault_file.with_extension("aside");
+    std::fs::rename(&vault_file, &aside).unwrap();
+    std::fs::create_dir(&vault_file).unwrap();
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert!(f.scripts.start_queue_place("bob").is_some());
+    drop(held);
+    f.settle();
+    f.wait_state("bob", script::RunState::Running);
+    assert!(
+        f.run_has_bag("bob", &before),
+        "a refused copy leaves the running bag unchanged"
+    );
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert_eq!(report.saved, 0);
+    assert_eq!(report.failed.len() + report.superseded, 2, "{report:?}");
+    std::fs::remove_dir(&vault_file).unwrap();
+    std::fs::rename(&aside, &vault_file).unwrap();
+}
+
+#[test]
+fn cancelling_a_new_prompt_does_not_release_an_accepted_native_copy() {
+    let mut f = queued_gatherer_copy("queued-native-copy-overlap");
+    let id = script::CompiledId("Gatherer");
+    let place = f.scripts.start_queue_place("bob").unwrap();
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .unwrap();
+    f.scripts.cancel_settings_sync();
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+    drop(held);
+    f.settle();
+    f.wait_state("bob", script::RunState::Running);
+    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    assert_eq!(want["targetPreference"], json!("Nearest"));
+    assert!(f.run_has_bag("bob", &want));
 }
 
 fn start_sherlock(f: &mut Fixture, name: &str) {

@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 
 use super::{LiveDelivery, LiveSettings, Scripts, SettingsResult, SettingsWrite};
 use crate::operations::{ActionKind, OperationId, Outcome};
-use crate::session::{ArmMirror, OperatorSession};
+use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
@@ -203,6 +203,7 @@ pub struct SyncReport {
     pub unmarked: Option<usize>,
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
+    copy_cancellation: Option<NativeCopyCancellation>,
     text: String,
 }
 
@@ -304,7 +305,7 @@ impl SyncReport {
 #[derive(Default)]
 pub(super) struct SyncState {
     prepared: Option<SyncScope>,
-    /// Host dispatch observes this token while the confirmation is unresolved.
+    /// Confirmation token; accepted native writes retain it until settlement.
     start_hold: Option<Arc<String>>,
     /// The newest applied sync, shown to the operator.
     last: Option<SyncReport>,
@@ -476,7 +477,7 @@ impl Scripts {
         id: script::CompiledId,
         field: Option<&str>,
     ) -> Result<&SyncScope, String> {
-        self.cancel_settings_sync();
+        self.clear_prepared_settings_sync();
         let descriptor = script::compiled_card(id).ok_or("compiled card unavailable")?;
         let mut excluded_fields: Vec<String> = descriptor
             .per_account_settings
@@ -552,9 +553,24 @@ impl Scripts {
         }
     }
 
-    pub fn cancel_settings_sync(&mut self) {
+    pub(crate) fn clear_prepared_settings_sync(&mut self) {
         self.sync.prepared = None;
         self.sync.start_hold = None;
+    }
+
+    pub fn cancel_settings_sync(&mut self) {
+        let confirming = self.sync.prepared.is_some();
+        self.clear_prepared_settings_sync();
+        if !confirming {
+            if let Some(cancellation) = self
+                .sync
+                .last
+                .as_ref()
+                .and_then(|report| report.copy_cancellation.as_ref())
+            {
+                cancellation.cancel();
+            }
+        }
     }
 
     pub fn last_settings_sync(&self) -> Option<&SyncReport> {
@@ -566,8 +582,9 @@ impl Scripts {
     /// bag. Unassigned targets are assigned the card in the same write as
     /// the accepted parameters; a rejected copy leaves the old assignment.
     /// A target whose run of the card is live at this moment receives the
-    /// merged bag once its write is durable, fenced to that run. Returns
-    /// the sync operation.
+    /// merged bag once its write is durable, fenced to that run. Native copies
+    /// also hold new Starts through preparation and persistence; JS copies
+    /// release after their bag has been staged. Returns the sync operation.
     pub fn apply_settings_sync<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -592,6 +609,8 @@ impl Scripts {
             ..
         } = scope;
         let op = core.open_operation(ActionKind::SyncSettings);
+        let copy_cancellation = matches!(selection, script::ScriptSel::Compiled(_))
+            .then(|| NativeCopyCancellation::new(op));
         let mut failed = Vec::new();
         let mut pending = Vec::new();
         let resolved_assignment = self.assignment_for(&selection, None);
@@ -671,7 +690,12 @@ impl Scripts {
                 }
             };
             match result {
-                Ok(write) => pending.push((write, target)),
+                Ok(write) => {
+                    if let (Some(token), Some(cancellation)) = (&_start_hold, &copy_cancellation) {
+                        core.hold_native_copy_start(write, Arc::clone(token), cancellation.clone());
+                    }
+                    pending.push((write, target));
+                }
                 Err(error) => failed.push((target, error)),
             }
         }
@@ -704,6 +728,7 @@ impl Scripts {
             excluded,
             unmarked,
             pending,
+            copy_cancellation,
             text: String::new(),
         };
         report.refresh();
