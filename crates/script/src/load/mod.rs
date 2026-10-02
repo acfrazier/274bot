@@ -101,7 +101,7 @@ pub use library::{
 #[cfg(feature = "load")]
 pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
-pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};
+pub use isolate::{LoadIsolate, QueuedInteract, Ready, ScriptStopReceipt, TeardownProof};
 #[cfg(feature = "load")]
 pub(crate) use recovery_hints_v8::{
     post as post_recovery_hints, startup_complete as recovery_startup_complete,

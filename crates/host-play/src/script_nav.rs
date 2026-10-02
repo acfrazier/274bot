@@ -58,6 +58,8 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
+    pub(crate) cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) user_move_intent_seq: u64,
 }
 
 /// One navigator-named gate short of a failed walk: the `MissingReq::Carry`
@@ -148,6 +150,11 @@ pub(crate) struct NavBot {
     /// The published route end is frozen `'blocked'`
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
+    pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// Every qualifying human gesture, including when no route exists.
+    pub(crate) user_move_intent_seq: u64,
+    /// Requests based on an older outcome cannot reclaim movement ownership.
+    pub(crate) manual_takeover_watermark: u64,
     /// The navigator-named gate shorts of that same published outcome: set
     /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
     /// is, so a list can never outlive the failure it belongs to.
@@ -1787,6 +1794,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1831,6 +1839,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1843,6 +1852,11 @@ impl NavBot {
     }
 
     pub(crate) fn clear_walk_outcome(&mut self) {
+        // A release/AbortWalk from the cancelled operation must not erase its
+        // terminal, even after delivery. A genuinely new outcome replaces it.
+        if self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput {
+            return;
+        }
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = false;
@@ -1856,9 +1870,42 @@ impl NavBot {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
         self.walk_missing_carry.clear();
+    }
+
+    pub(crate) fn walking_decision_is_current(&self, observed_seq: u64) -> bool {
+        observed_seq >= self.manual_takeover_watermark
+    }
+
+    /// Cancel active follow/work without sending anything over the human move.
+    /// Route generation fences every late route and bank completion.
+    pub(crate) fn cancel_for_manual_input(&mut self) {
+        let request_id = self.walk_request_id;
+        let key = self.requested_route;
+        let generation = self.route_generation;
+        super::script_walk::abort_walk_on_bot_with_end(self, script::native::WalkEnd::UserInput);
+        // Route-less walking families still advance the dispatch fence, but
+        // cannot manufacture a correlated receipt for legacy request id zero.
+        self.bump_walk_outcome_seq();
+        self.manual_takeover_watermark = self.walk_outcome_seq;
+        if request_id != 0 {
+            if let Some((to, radius, teleports, _, _, _)) = key {
+                self.walk_outcome_generation = generation;
+                self.walk_outcome_request_id = request_id;
+                self.walk_outcome_failed = true;
+                self.walk_outcome_blocked = false;
+                self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+                self.walk_outcome_x = to.x;
+                self.walk_outcome_z = to.z;
+                self.walk_outcome_level = to.level;
+                self.walk_outcome_radius = radius;
+                self.walk_outcome_allow_teleports = teleports;
+                self.walk_live_refusal_id = request_id;
+            }
+        }
     }
 
     /// Whether a script walk is armed, in flight or following.

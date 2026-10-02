@@ -87,8 +87,8 @@ pub use map_cache::{
 };
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
-    arm_walk_on, cancel_walk_arm, step_walk_arm_bank_fetch, step_walk_arm_follow,
-    walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
+    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, step_walk_arm_bank_fetch,
+    step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
 };
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
@@ -98,6 +98,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 #[cfg(test)]
 use host::{wake_channel, DetectedRandom, Pump};
 use host::{FrameBuf, SlotInput, SlotWake};
+pub use host::{ManualMoveIntent, MouseOwner};
 pub use instance_lock::{
     instance_conflict_message, instance_lock_path, resolve_instance_permit,
     try_acquire_instance_lock, InstanceHolder, InstanceKind, InstanceLock, InstanceLockResult,

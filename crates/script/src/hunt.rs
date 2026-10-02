@@ -256,6 +256,10 @@ pub(crate) trait Kind: 'static {
     /// Replace the token's state with a fresh one.
     fn renew(token: u64);
     fn next(token: u64, proj: &Self::Proj, reply: Option<&Value>) -> Value;
+
+    /// Propagate the machine's outer walk baseline into an independently
+    /// stored stepper runtime, if that kind owns one.
+    fn set_user_move_intent_baseline(_token: u64, _baseline: u64) {}
     fn end(_token: u64) {}
     fn validate(_token: u64, _proj: &Self::Proj) -> bool {
         false
@@ -405,6 +409,7 @@ impl<K: Kind> Family for Hunt<K> {
     const CALLBACKS: &'static [&'static str] = HOOKS;
     /// The first effects join the caller's tick, as the awaited JS loop's did.
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = K::WORLD_WALK;
     type Args = HuntArgs;
     type Output = Value;
 
@@ -499,6 +504,13 @@ impl<K: Kind> Hunt<K> {
     }
 
     fn drive(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
+        if K::WORLD_WALK && cx.user_move_intent_interrupted() {
+            if K::SESSION {
+                K::renew(self.token);
+            }
+            self.abort(AbortReason::Terminated);
+            return Ok(self.done(Some(false)));
+        }
         if let Some(step) = self.step_child(cx)? {
             return Ok(step);
         }
@@ -526,6 +538,9 @@ impl<K: Kind> Hunt<K> {
             }
             let proj = self.proj.as_mut().expect("a live hunt row holds its site");
             prepare::<K>(proj, &mut CxHost(cx))?;
+            if K::WORLD_WALK {
+                K::set_user_move_intent_baseline(self.token, cx.user_move_intent_baseline());
+            }
             let effect = K::next(self.token, proj, self.reply.take().as_ref());
             if let Some(step) = self.apply(&effect, cx)? {
                 return Ok(step);
@@ -706,6 +721,7 @@ impl<K: Kind> Hunt<K> {
             "level": level,
             "radius": radius,
             "allow_teleports": false,
+            "intent_baseline": cx.user_move_intent_baseline(),
         }))
         .as_u64()
         .unwrap_or(0);

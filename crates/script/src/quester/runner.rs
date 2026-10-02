@@ -144,7 +144,13 @@ impl Quester {
 
     fn blocked_failure(&self) -> ScriptFailure {
         ScriptFailure {
-            code: Arc::from("parked"),
+            code: Arc::from(
+                if self.last_error.as_deref() == Some(super::families::MANUAL_MOVEMENT_MESSAGE) {
+                    "manual-movement"
+                } else {
+                    "parked"
+                },
+            ),
             message: self
                 .last_error
                 .clone()
@@ -1253,6 +1259,84 @@ mod tests {
         assert_eq!(script.attempts, 0);
         super::super::families::tests::with_tick(&s, &mut None, 1, |t| script.on_step_boundary(t));
         assert!(!script.parked);
+    }
+
+    #[test]
+    fn user_input_walk_parks_without_attempts_or_repeated_work() {
+        use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args =
+            serde_json::json!({"tile": [3200, 3200, 0], "source": "test fixture", "radius": 1});
+        step.advances = true;
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(run, path, quests);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut walk_started = None;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
+            });
+            if ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .any(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+            }) {
+                walk_started = Some(tick);
+                break;
+            }
+        }
+        let poll_tick = walk_started.expect("Quester must start the authored walk") + 1;
+        script.attempts = 4;
+        script.fail_streak = 4;
+        let cursor = (script.seq_index, script.step_index);
+        post_user_input_walk_receipt(&mut ledger, poll_tick);
+
+        for tick in poll_tick..=poll_tick + 2 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, tick, |native| {
+                    script.tick(native).unwrap()
+                }),
+                ScriptFlow::Blocked(failure)
+                    if failure.code.as_ref() == "manual-movement"
+                        && failure.message.as_ref() == "cancelled by user input"
+                        && failure.retryable
+            ));
+            assert_eq!((script.seq_index, script.step_index), cursor);
+            assert_eq!(script.attempts, 4);
+            assert_eq!(script.fail_streak, 4);
+            if tick == poll_tick {
+                ledger.as_mut().unwrap().outbox.clear();
+            }
+        }
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        script.retry().unwrap();
+        assert!(!script.parked, "only explicit Retry resumes the step");
     }
 }
 

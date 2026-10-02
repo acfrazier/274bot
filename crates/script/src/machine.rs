@@ -169,6 +169,8 @@ pub(crate) trait Family: Sized + 'static {
     /// first step (teleport clicks in begin). Clue's first next is a
     /// callback, so it opts in.
     const KICK_ON_START: bool = false;
+    /// This family owns a walking operation while its row is live.
+    const WALKING_OPERATION: bool = false;
     /// [`Family::CALLBACKS`] indexes called synchronously (frozen calls
     /// these hooks without `await`). A family whose callbacks are all
     /// synchronous lists every callback index here.
@@ -331,6 +333,8 @@ pub(crate) struct Cx<'a> {
     hooks: &'a [Hook],
     /// The script side while a row steps; `None` in begin.
     js: Option<&'a mut (dyn Js + 'a)>,
+    /// The outer operation's user-movement intent baseline.
+    intent_baseline: u64,
     /// Asks this step made, and how the first failing one ended the row.
     asks: usize,
     ending: Option<Ending>,
@@ -350,6 +354,7 @@ impl<'a> Cx<'a> {
             reply,
             hooks: &[],
             js: None,
+            intent_baseline: user_move_intent_seq(),
             asks: 0,
             ending: None,
         }
@@ -371,6 +376,15 @@ impl Cx<'_> {
     /// on any other step.
     pub(crate) fn reply(&mut self) -> Option<Reply> {
         self.reply.take()
+    }
+    /// The outer operation's user-movement baseline, inherited by nested rows.
+    pub(crate) fn user_move_intent_baseline(&self) -> u64 {
+        self.intent_baseline
+    }
+
+    /// Whether a user movement intent has taken over this operation.
+    pub(crate) fn user_move_intent_interrupted(&self) -> bool {
+        user_move_intent_seq() > self.intent_baseline
     }
 
     /// Whether `hooks[CALLBACKS[hook]]` was present (not `undefined` or
@@ -610,8 +624,76 @@ pub(crate) fn live(family: &str) -> bool {
     HOST.with(|host| {
         let host = host.borrow();
         host.rows.iter().any(|row| row.family == family)
-            || host.stepping.iter().any(|(name, _)| *name == family)
+            || host.stepping.iter().any(|(name, _, _, _)| *name == family)
     })
+}
+
+/// Live walking ownership copied from the existing machine rows. The takeover
+/// watermark is shared with the host so an in-flight callback cannot republish
+/// an already interrupted operation before its queued notice is processed.
+#[derive(Default)]
+pub(crate) struct WalkingOwnership {
+    live: std::sync::atomic::AtomicBool,
+    baseline: std::sync::atomic::AtomicU64,
+    takeover: std::sync::atomic::AtomicU64,
+}
+
+impl WalkingOwnership {
+    pub(crate) fn live(&self) -> bool {
+        self.live.load(std::sync::atomic::Ordering::Acquire)
+            && self.baseline.load(std::sync::atomic::Ordering::Acquire)
+                >= self.takeover.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn note_takeover(&self, seq: u64) {
+        self.takeover
+            .fetch_max(seq, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+pub(crate) fn set_walking_publication(publication: std::sync::Arc<WalkingOwnership>) {
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        host.walking_publication = Some(publication);
+        host.publish_walking();
+    });
+}
+
+/// Guardian hold freezes stepping, not walking ownership. Reconnect-held rows
+/// are carried work instead; operator Pause is gated by the host's run state.
+#[cfg(test)]
+pub(crate) fn walking_live() -> bool {
+    HOST.with(|host| host.borrow().walking_baseline().is_some())
+}
+/// The type-erased row the host steps.
+trait Machine {
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
+    fn abort(&mut self, why: AbortReason);
+    fn release(&self) -> Option<InteractReq>;
+    fn walking_operation(&self) -> bool;
+}
+
+impl<F: Family> Machine for F {
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        match Family::step(self, cx) {
+            Step::Wait => Step::Wait,
+            Step::Call(call) => Step::Call(call),
+            Step::Done(out) => Step::Done(out.into()),
+            Step::Fail(reason) => Step::Fail(reason),
+        }
+    }
+
+    fn abort(&mut self, why: AbortReason) {
+        Family::abort(self, why);
+    }
+
+    fn release(&self) -> Option<InteractReq> {
+        Family::release(self)
+    }
+
+    fn walking_operation(&self) -> bool {
+        F::WALKING_OPERATION
+    }
 }
 
 /// Test seam: pull a live row's deadline `millis` closer to now, so a
@@ -639,32 +721,6 @@ pub(crate) fn kick_on_start(family: &str) -> bool {
         .is_some_and(|entry| entry.kick_on_start)
 }
 
-/// The type-erased row the host steps.
-trait Machine {
-    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value>;
-    fn abort(&mut self, why: AbortReason);
-    fn release(&self) -> Option<InteractReq>;
-}
-
-impl<F: Family> Machine for F {
-    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
-        match Family::step(self, cx) {
-            Step::Wait => Step::Wait,
-            Step::Call(call) => Step::Call(call),
-            Step::Done(out) => Step::Done(out.into()),
-            Step::Fail(reason) => Step::Fail(reason),
-        }
-    }
-
-    fn abort(&mut self, why: AbortReason) {
-        Family::abort(self, why);
-    }
-
-    fn release(&self) -> Option<InteractReq> {
-        Family::release(self)
-    }
-}
-
 struct Row {
     handle: Handle,
     family: &'static str,
@@ -681,6 +737,14 @@ struct Row {
     /// The callback promise the row waits on.
     pending: Option<Pending>,
     machine: Box<dyn Machine>,
+    /// The outer walking intent baseline carried through nested rows.
+    intent_baseline: u64,
+    /// This row belongs to an outer walking operation or owns one.
+    carries_walk_baseline: bool,
+    /// This family's live row represents a walking operation.
+    walking_operation: bool,
+    /// Rebaseline only an uncancelled operator-paused walk on resume.
+    rebaseline_on_resume: bool,
 }
 
 /// Emitted ops keyed by the JS queue length at emit time, so they merge
@@ -692,13 +756,14 @@ struct Host {
     rows: Vec<Row>,
     /// The rows a [`pass`] is stepping right now. They are out of `rows`
     /// while a callback runs, and [`live`] must still see them.
-    stepping: Vec<(&'static str, Handle)>,
+    stepping: Vec<(&'static str, Handle, bool, u64)>,
     /// The newest running row of each exclusive group.
     newest: Vec<(&'static str, Handle)>,
     settled: Vec<(Handle, Outcome)>,
     ops: Vec<PlacedOp>,
     paused: bool,
     held: bool,
+    walking_publication: Option<std::sync::Arc<WalkingOwnership>>,
 }
 
 thread_local! {
@@ -710,6 +775,40 @@ thread_local! {
     static SESSION_HELD: Cell<bool> = const { Cell::new(false) };
     /// A callback was terminated in this pass or kick: drive no further.
     static TERMINATED: Cell<bool> = const { Cell::new(false) };
+    /// The active walking-operation lineage for synchronous nested starts.
+    static WALK_BASELINE: Cell<Option<u64>> = const { Cell::new(None) };
+    /// Latest takeover sequence delivered through the ordered host queue.
+    static TAKEOVER_SEQ: Cell<u64> = const { Cell::new(0) };
+}
+
+struct WalkBaselineGuard(Option<u64>);
+
+impl Drop for WalkBaselineGuard {
+    fn drop(&mut self) {
+        WALK_BASELINE.with(|baseline| baseline.set(self.0));
+    }
+}
+
+fn with_walk_baseline<T>(baseline: Option<u64>, f: impl FnOnce() -> T) -> T {
+    let previous = WALK_BASELINE.with(|active| active.replace(baseline));
+    let _restore = WalkBaselineGuard(previous);
+    f()
+}
+
+pub(crate) fn user_move_intent_seq() -> u64 {
+    let observed =
+        crate::observed::with(|scene| scene.since_login().user_move_intent_seq().unwrap_or(0));
+    let notified = HOST.with(|host| {
+        host.borrow()
+            .walking_publication
+            .as_ref()
+            .map_or(0, |publication| {
+                publication
+                    .takeover
+                    .load(std::sync::atomic::Ordering::Acquire)
+            })
+    });
+    TAKEOVER_SEQ.with(Cell::get).max(observed).max(notified)
 }
 
 impl Host {
@@ -723,6 +822,51 @@ impl Host {
             ops: Vec::new(),
             paused: false,
             held: false,
+            walking_publication: None,
+        }
+    }
+
+    fn walking_baseline(&self) -> Option<u64> {
+        if SESSION_HELD.with(Cell::get) {
+            return None;
+        }
+        let takeover = self
+            .walking_publication
+            .as_ref()
+            .map_or(0, |publication| {
+                publication
+                    .takeover
+                    .load(std::sync::atomic::Ordering::Acquire)
+            })
+            .max(TAKEOVER_SEQ.with(Cell::get));
+        self.rows
+            .iter()
+            .filter(|row| row.walking_operation)
+            .map(|row| row.intent_baseline)
+            .chain(
+                self.stepping
+                    .iter()
+                    .filter_map(|(_, _, walking, baseline)| walking.then_some(*baseline)),
+            )
+            .filter(|baseline| *baseline >= takeover)
+            .max()
+    }
+
+    fn publish_walking(&self) {
+        let Some(publication) = &self.walking_publication else {
+            return;
+        };
+        if let Some(baseline) = self.walking_baseline() {
+            publication
+                .baseline
+                .store(baseline, std::sync::atomic::Ordering::Release);
+            publication
+                .live
+                .store(true, std::sync::atomic::Ordering::Release);
+        } else {
+            publication
+                .live
+                .store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -740,7 +884,8 @@ impl Host {
     /// it is no longer live.
     fn unstep(&mut self, family: &'static str, handle: Handle) {
         self.stepping
-            .retain(|(name, held)| !(*name == family && *held == handle));
+            .retain(|(name, held, _, _)| !(*name == family && *held == handle));
+        self.publish_walking();
     }
 
     fn superseded(&self, row: &Row) -> bool {
@@ -786,6 +931,7 @@ impl Host {
         for row in &mut self.rows {
             row.clock.set_freeze(paused, held);
         }
+        self.publish_walking();
     }
 
     fn reset(&mut self) {
@@ -797,6 +943,7 @@ impl Host {
         self.newest.clear();
         self.stepping.clear();
         self.ops.clear();
+        self.publish_walking();
     }
 
     fn stop(&mut self) {
@@ -805,6 +952,8 @@ impl Host {
         self.stepping.clear();
         self.settled.clear();
         self.ops.clear();
+        self.publish_walking();
+        self.walking_publication = None;
     }
 }
 
@@ -813,23 +962,29 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
         Ok(args) => args,
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
     };
+    let inherited_baseline = WALK_BASELINE.with(Cell::get);
+    let intent_baseline = inherited_baseline.unwrap_or_else(user_move_intent_seq);
+    let carries_walk_baseline = inherited_baseline.is_some() || F::WALKING_OPERATION;
     let mut clock = HOST.with(|host| host.borrow().fresh_clock());
     let mut ops = Vec::new();
     // The host is not borrowed while the family begins.
     IN_BEGIN.with(|flag| flag.set(true));
     let _begun = BeginGuard;
-    let begun = F::begin(
-        args,
-        &mut Cx {
-            ops: &mut ops,
-            clock: &mut clock,
-            reply: None,
-            hooks: &hooks,
-            js: None,
-            asks: 0,
-            ending: None,
-        },
-    );
+    let begun = with_walk_baseline(carries_walk_baseline.then_some(intent_baseline), || {
+        F::begin(
+            args,
+            &mut Cx {
+                ops: &mut ops,
+                clock: &mut clock,
+                reply: None,
+                hooks: &hooks,
+                js: None,
+                intent_baseline,
+                asks: 0,
+                ending: None,
+            },
+        )
+    });
     drop(_begun);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
@@ -849,6 +1004,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     host.abort_superseded(at);
                 }
                 host.place(at, ops);
+                let walking_operation = machine.walking_operation();
                 host.rows.push(Row {
                     handle,
                     family: F::NAME,
@@ -860,7 +1016,12 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     reply: None,
                     pending: None,
                     machine: Box::new(machine),
+                    intent_baseline,
+                    carries_walk_baseline,
+                    walking_operation,
+                    rebaseline_on_resume: false,
                 });
+                host.publish_walking();
                 Started::Running(handle)
             }
         }
@@ -901,6 +1062,13 @@ pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
     }) else {
         return;
     };
+    let stepping = (
+        row.family,
+        row.handle,
+        row.walking_operation,
+        row.intent_baseline,
+    );
+    HOST.with(|host| host.borrow_mut().stepping.push(stepping));
     let outcome = drive(&mut row, js, &mut at);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
@@ -911,6 +1079,7 @@ pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
             Some(outcome) => host.settled.push((handle, outcome)),
             None => host.rows.push(row),
         }
+        host.unstep(stepping.0, stepping.1);
     });
 }
 
@@ -949,7 +1118,17 @@ fn pass(js: &mut impl Js, pass: Pass) {
             return None;
         }
         let rows = std::mem::take(&mut host.rows);
-        host.stepping = rows.iter().map(|row| (row.family, row.handle)).collect();
+        host.stepping = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.family,
+                    row.handle,
+                    row.walking_operation,
+                    row.intent_baseline,
+                )
+            })
+            .collect();
         Some(rows)
     }) else {
         return;
@@ -988,6 +1167,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
         let started = std::mem::replace(&mut host.rows, rows);
         host.rows.extend(started);
         host.abort_superseded(at);
+        host.publish_walking();
     });
 }
 
@@ -998,6 +1178,11 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// One row's steps for this pass; `Some` when it ended. Stops, leaving
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    let baseline = row.carries_walk_baseline.then_some(row.intent_baseline);
+    with_walk_baseline(baseline, || drive_inner(row, js, at))
+}
+
+fn drive_inner(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
     loop {
         if js.claimed() || TERMINATED.with(Cell::get) {
             return None;
@@ -1017,6 +1202,7 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
             hooks: &row.hooks,
             js: Some(&mut *js),
             asks: 0,
+            intent_baseline: row.intent_baseline,
             ending: None,
         };
         let step = row.machine.step(&mut cx);
@@ -1122,18 +1308,46 @@ pub(crate) fn drop_ops() {
 }
 
 pub(crate) fn on_pause() {
+    let intent = user_move_intent_seq();
+    let reconnect = SESSION_HELD.with(Cell::get);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
+        for row in &mut host.rows {
+            row.rebaseline_on_resume =
+                row.carries_walk_baseline && !reconnect && intent <= row.intent_baseline;
+        }
         let held = host.held;
         host.set_freeze(true, held);
     });
 }
 
 pub(crate) fn on_resume() {
+    let intent = user_move_intent_seq();
+    let reconnect = SESSION_HELD.with(Cell::get);
     HOST.with(|host| {
         let mut host = host.borrow_mut();
+        for row in &mut host.rows {
+            if row.rebaseline_on_resume && !reconnect {
+                row.intent_baseline = intent;
+            }
+            row.rebaseline_on_resume = false;
+        }
         let held = host.held;
         host.set_freeze(false, held);
+    });
+}
+
+/// Record the queued intent before the host applies the corresponding pause.
+pub(crate) fn on_manual_walk_takeover(seq: u64) {
+    TAKEOVER_SEQ.with(|watermark| watermark.set(watermark.get().max(seq)));
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        for row in &mut host.rows {
+            if row.carries_walk_baseline && row.intent_baseline < seq {
+                row.rebaseline_on_resume = false;
+            }
+        }
+        host.publish_walking();
     });
 }
 
@@ -1147,6 +1361,7 @@ pub(crate) fn on_hold(held: bool) {
 
 pub(crate) fn on_reset() {
     SESSION_HELD.with(|flag| flag.set(false));
+    TAKEOVER_SEQ.with(|seq| seq.set(0));
     HOST.with(|host| host.borrow_mut().reset());
 }
 
@@ -1155,6 +1370,7 @@ pub(crate) fn on_reset() {
 /// carry owns the held walk: [`Family::release`] ops are not sent.
 pub(crate) fn on_session_hold(held: bool) {
     SESSION_HELD.with(|flag| flag.set(held));
+    HOST.with(|host| host.borrow().publish_walking());
 }
 
 /// The row's [`Family::release`] op, unless a reconnect holds the session.
@@ -1167,6 +1383,7 @@ fn release_op(machine: &dyn Machine) -> Option<InteractReq> {
 
 pub(crate) fn on_stop() {
     SESSION_HELD.with(|flag| flag.set(false));
+    TAKEOVER_SEQ.with(|seq| seq.set(0));
     HOST.with(|host| host.borrow_mut().stop());
 }
 

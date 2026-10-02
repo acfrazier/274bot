@@ -101,6 +101,17 @@ struct SnapshotMessage {
     #[cfg(feature = "memory-profile")]
     _lease: crate::memory_profile::SnapshotLease,
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueuedInteract {
+    pub req: crate::shim::InteractReq,
+    pub observed_walk_outcome_seq: u64,
+}
+
+impl std::borrow::Borrow<crate::shim::InteractReq> for QueuedInteract {
+    fn borrow(&self) -> &crate::shim::InteractReq {
+        &self.req
+    }
+}
 
 enum IsolateCmd {
     Tick {
@@ -117,6 +128,8 @@ enum IsolateCmd {
         /// current generation restates the parked waits.
         generation: u64,
     },
+    /// Latch manual movement before a queued Pause, even if the snapshot is pending.
+    ManualWalkTakeover(u64),
     /// The host's FlatBuffer snapshot blob (schema: `crates/script/
     /// schema/isolate.fbs`), decoded on the isolate thread into the
     /// JS object the Game/Inventory/Skills/EventSignal shims read
@@ -209,6 +222,7 @@ enum ThreadMsg {
     Interact {
         bytes: Vec<u8>,
         generation: u64,
+        observed_walk_outcome_seq: u64,
     },
     /// The bot instance's `ignoredRandoms()` list, read on the isolate
     /// thread each tick and sent only when it changed; the host caches it
@@ -265,6 +279,7 @@ pub struct LoadIsolate {
     #[cfg(feature = "memory-profile")]
     dispatched: std::sync::atomic::AtomicU64,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
     /// Rust-only Load journal lease shared with the isolate thread. Native
     /// v2 tick cards and compatibility cards use the same journal adapter.
     compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
@@ -298,13 +313,13 @@ pub struct LoadIsolate {
     script_cut: AtomicBool,
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
-    interacts: Mutex<Vec<crate::shim::InteractReq>>,
+    interacts: Mutex<Vec<QueuedInteract>>,
     /// Watchdog lifecycle facts from the same FlatBuffer batch.
     lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
     /// Script walk requests (walk, walk-near, abort-walk) a reconnect kept
     /// from the dropped connection before any host dispatch, oldest first,
     /// for the relogged session ([`LoadIsolate::take_held_walks`]).
-    held_walks: Mutex<Vec<crate::shim::InteractReq>>,
+    held_walks: Mutex<Vec<QueuedInteract>>,
     /// A reconnect is holding the script's work: walk requests of batches
     /// from the dropped connection are kept, not discarded.
     holding_walks: AtomicBool,
@@ -469,6 +484,8 @@ impl LoadIsolate {
         let thread_paint_generation = paint_generation.clone();
         let queued = std::sync::Arc::new(AtomicUsize::new(0));
         let thread_queued = queued.clone();
+        let walking_ownership = std::sync::Arc::new(crate::machine::WalkingOwnership::default());
+        let thread_walking_ownership = std::sync::Arc::clone(&walking_ownership);
         let handle = std::thread::Builder::new()
             .name("js-isolate".into())
             .spawn(move || {
@@ -485,6 +502,7 @@ impl LoadIsolate {
                     msg_tx,
                     setup_tx,
                     thread_generation,
+                    thread_walking_ownership,
                     thread_compat_journal,
                     thread_paint_generation,
                     thread_teardown,
@@ -502,6 +520,7 @@ impl LoadIsolate {
             #[cfg(feature = "memory-profile")]
             dispatched: std::sync::atomic::AtomicU64::new(0),
             work_generation,
+            walking_ownership,
             compat_journal,
             paint_generation,
             stopped: std::sync::atomic::AtomicBool::new(false),
@@ -845,6 +864,19 @@ impl LoadIsolate {
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
+    /// Active walking family/composer ownership, excluding reconnect carry.
+    pub fn live_walking_operation(&self) -> bool {
+        !self
+            .holding_walks
+            .load(std::sync::atomic::Ordering::Acquire)
+            && self.walking_ownership.live()
+    }
+
+    /// Latch manual movement before a queued Pause can resume parked machine rows.
+    pub(crate) fn note_manual_walk_takeover(&self, user_move_intent_seq: u64) {
+        self.walking_ownership.note_takeover(user_move_intent_seq);
+        self.send(IsolateCmd::ManualWalkTakeover(user_move_intent_seq));
+    }
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
@@ -1005,13 +1037,20 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
     }
 
-    /// Drain the interact requests the tick's shim queued
-    /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
-    /// tick order. The host dispatches them through the slot Driver;
-    /// a malformed entry is logged and dropped, never fatal.
-    pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+    /// Drain rows with the `walk_outcome_seq` visible when the isolate enqueued them.
+    /// Production dispatch must use this API; the raw drain is for tests and diagnostics.
+    pub fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.pump_logs();
         std::mem::take(&mut *self.interacts.lock().unwrap())
+    }
+
+    /// Diagnostics/tests only: this drops each row's enqueue stamp and MUST NOT
+    /// be used for production walking dispatch.
+    pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+        self.drain_interacts_stamped()
+            .into_iter()
+            .map(|queued| queued.req)
+            .collect()
     }
 
     /// The script walk requests a reconnect kept from the dropped
@@ -1024,7 +1063,7 @@ impl LoadIsolate {
     /// Empty (and still holding) until the isolate thread has processed the
     /// reconnect's reset: a tick of the dropped connection that was running
     /// then finishes first, and its walk requests join the held ones.
-    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+    pub fn take_held_walks_stamped(&self) -> Vec<QueuedInteract> {
         self.pump_logs();
         if self.held_fence.lock().unwrap().is_some() {
             return Vec::new();
@@ -1034,13 +1073,36 @@ impl LoadIsolate {
         std::mem::take(&mut *self.held_walks.lock().unwrap())
     }
 
+    /// Diagnostics/tests only: this drops each held row's enqueue stamp. Production
+    /// reconnect dispatch MUST use `take_held_walks_stamped`.
+    pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
+        self.take_held_walks_stamped()
+            .into_iter()
+            .map(|queued| queued.req)
+            .collect()
+    }
+
     /// Put a host-drained batch back in front of requests that arrived
     /// afterward. Used when an operator Pause wins the host's final
     /// dispatch fence: no verb is lost, and Resume observes original order.
-    pub(crate) fn restore_interacts(&self, mut drained: Vec<crate::shim::InteractReq>) {
+    pub(crate) fn restore_interacts_stamped(&self, mut drained: Vec<QueuedInteract>) {
         let mut queued = self.interacts.lock().unwrap();
         drained.append(&mut queued);
         *queued = drained;
+    }
+
+    /// Diagnostics/tests only: reconstructs zero stamps. Production restore
+    /// MUST use `restore_interacts_stamped`.
+    pub(crate) fn restore_interacts(&self, drained: Vec<crate::shim::InteractReq>) {
+        self.restore_interacts_stamped(
+            drained
+                .into_iter()
+                .map(|req| QueuedInteract {
+                    req,
+                    observed_walk_outcome_seq: 0,
+                })
+                .collect(),
+        );
     }
 
     /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
@@ -1049,7 +1111,7 @@ impl LoadIsolate {
         self.interacts
             .lock()
             .unwrap()
-            .retain(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. }));
+            .retain(|queued| !matches!(&queued.req, crate::shim::InteractReq::Mouse { .. }));
     }
 
     /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
@@ -1423,7 +1485,11 @@ impl LoadIsolate {
                     self.interacts.lock().unwrap().clear();
                     self.lifecycle.lock().unwrap().clear();
                 }
-                ThreadMsg::Interact { bytes, generation } => {
+                ThreadMsg::Interact {
+                    bytes,
+                    generation,
+                    observed_walk_outcome_seq,
+                } => {
                     let mut interacts = self.interacts.lock().unwrap();
                     if generation
                         != self
@@ -1437,7 +1503,13 @@ impl LoadIsolate {
                             .load(std::sync::atomic::Ordering::Acquire)
                         {
                             if let Ok(reqs) = crate::isolate_fb::decode_interact_batch(&bytes) {
-                                hold_walk_requests(&mut self.held_walks.lock().unwrap(), reqs);
+                                hold_walk_requests(
+                                    &mut self.held_walks.lock().unwrap(),
+                                    reqs.into_iter().map(|req| QueuedInteract {
+                                        req,
+                                        observed_walk_outcome_seq,
+                                    }),
+                                );
                             }
                         }
                         continue;
@@ -1449,7 +1521,10 @@ impl LoadIsolate {
                                 if req.is_watchdog_lifecycle() {
                                     lifecycle.push(req);
                                 } else {
-                                    interacts.push(req);
+                                    interacts.push(QueuedInteract {
+                                        req,
+                                        observed_walk_outcome_seq,
+                                    });
                                 }
                             }
                         }
@@ -1594,12 +1669,12 @@ const HELD_WALKS: usize = 8;
 /// in order, only the newest [`HELD_WALKS`]: the oldest row goes before a
 /// row is pushed at the cap.
 fn hold_walk_requests(
-    held: &mut Vec<crate::shim::InteractReq>,
-    reqs: impl IntoIterator<Item = crate::shim::InteractReq>,
+    held: &mut Vec<QueuedInteract>,
+    reqs: impl IntoIterator<Item = QueuedInteract>,
 ) {
-    for req in reqs {
+    for queued in reqs {
         if !matches!(
-            req,
+            &queued.req,
             crate::shim::InteractReq::Walk { .. }
                 | crate::shim::InteractReq::WalkNear { .. }
                 | crate::shim::InteractReq::AbortWalk { .. }
@@ -1609,7 +1684,7 @@ fn hold_walk_requests(
         if held.len() == HELD_WALKS {
             held.remove(0);
         }
-        held.push(req);
+        held.push(queued);
     }
 }
 

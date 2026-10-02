@@ -26,7 +26,7 @@ use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 pub struct WalkArm {
     pub traveller: Traveller,
     pub route: Option<Route>,
-    /// Changes only when an actual route is installed, not on hover or follow.
+    /// Changes when a route is installed or cancelled, fencing the prior owner.
     pub route_generation: u64,
     pub bank_fetch: Option<PendingBankFetch>,
 }
@@ -199,7 +199,8 @@ fn replace_walk_arm(
         .clone();
     let replaced = {
         let mut arm = arm.lock().unwrap();
-        let replaced = walk_destination(&arm);
+        let replaced =
+            walk_destination(&arm).map(|destination| (destination, arm.route_generation));
         // A fresh arm replaces any in-flight follow run and its prior
         // BankBudget session. Traveller::clear preserves the essence latch.
         arm.traveller.clear();
@@ -208,8 +209,14 @@ fn replace_walk_arm(
         arm.route_generation = crate::walk_map::next_map_route_generation();
         replaced
     };
-    if let Some(destination) = replaced {
-        crate::walk_map::emit_walk_cancelled(Some(name), destination, Some(from), "Replaced");
+    if let Some((destination, generation)) = replaced {
+        crate::walk_map::emit_walk_cancelled(
+            Some(name),
+            destination,
+            Some(from),
+            generation,
+            "Replaced",
+        );
     }
 }
 
@@ -309,9 +316,28 @@ pub fn cancel_walk_arm(
     let Some(destination) = walk_destination(arm) else {
         return false;
     };
-    crate::walk_map::emit_walk_cancelled(slot, destination, at, reason);
+    crate::walk_map::emit_walk_cancelled(slot, destination, at, arm.route_generation, reason);
     arm.traveller.clear();
+    arm.route_generation = arm.route_generation.wrapping_add(1);
     arm.route = None;
     arm.bank_fetch = None;
     true
+}
+
+/// Both frontends call this before any scenario, local-player or hold return.
+/// Cancelling one member never changes another slot or pauses an unrelated script.
+pub fn cancel_walk_arm_on_manual_input(
+    slot: &str,
+    arms: &WalkArms,
+    at: Option<WorldTile>,
+    frame: crate::SlotFrameInput,
+) -> bool {
+    if frame.manual_move_count() == 0 {
+        return false;
+    }
+    let Some(arm) = arms.lock().unwrap().get(slot).cloned() else {
+        return false;
+    };
+    let mut owned = arm.lock().unwrap();
+    cancel_walk_arm(Some(slot), &mut owned, at, "UserInput")
 }

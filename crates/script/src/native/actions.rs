@@ -62,6 +62,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -95,6 +96,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -115,6 +117,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Walk(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -417,6 +420,7 @@ mod tests {
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
+            observed_walk_outcome_seq: 0,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -512,6 +516,7 @@ mod tests {
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,
+            observed_walk_outcome_seq: 0,
             active_now,
             wall_now: Instant::now(),
             ledger,

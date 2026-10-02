@@ -3577,6 +3577,8 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
         radius: bot.walk_outcome_radius,
         allow_teleports: bot.walk_outcome_allow_teleports,
         blocked: false,
+        cancel_reason: bot.walk_outcome_cancel_reason,
+        user_move_intent_seq: bot.user_move_intent_seq,
     }
 }
 
@@ -3960,6 +3962,7 @@ fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
             radius: 1,
             allow_teleports: false,
             blocked: false,
+            ..PostedWalkOutcome::default()
         },
     ));
     iso.on_game_tick(2);
@@ -4491,6 +4494,7 @@ fn new_isolate_does_not_consume_prior_host_outcome() {
         radius: 1,
         allow_teleports: false,
         blocked: false,
+        ..PostedWalkOutcome::default()
     };
     let iso2 = script::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
@@ -4540,6 +4544,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         radius: 0,
         allow_teleports: false,
         blocked: false,
+        ..PostedWalkOutcome::default()
     };
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),

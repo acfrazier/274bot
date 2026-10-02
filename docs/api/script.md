@@ -366,6 +366,25 @@ not yet implement protected walking: a nonempty `cross` is rejected during
 Path compilation with code `invalid-args` and detail
 `walk: cross needs protected walk (combat slice)`.
 
+Manual game movement or a TUI Manual step takes ownership before either follow
+pump. A matching native walk returns a normal `WalkReceipt` with
+`WalkEnd::UserInput` (“cancelled by user input”) and no blocked reason. The host
+invalidates the cancelled operation's route, pending plans, bank work and carry;
+late results and automatic walking requests queued before takeover cannot re-arm
+it. Live walking families inherit one intent baseline through route-less scene,
+door, recovery and follow-up phases, so those phases stop too. The interrupted
+walking composer's next sustain/log callback or stored completion cannot run
+ahead of the takeover check.
+
+When the script remains running, Gatherer parks retryably with code
+`manual-movement`; Quester parks its current step without advancing it or
+charging an attempt or failure streak. Compat walking calls settle false without
+internal retries, hunt callers do not re-walk, and ReturnToAnchor settles its void
+call without starting an approach leg. Already operator-paused or reconnect-carried
+script work is not cancelled by carry alone; an independent active WalkArm still
+yields. Other slots are unaffected. A fresh top-level script decision based on
+the takeover snapshot is distinct from replaying the cancelled operation.
+
 ## Catalog walking and recovery (compat v1)
 
 The rs2b0t walk and reach helpers are Rust step machines; the shim passes
@@ -402,8 +421,8 @@ arguments and awaits one completion.
   whichever script code asked for it (walks, reach, the hunt steppers, a
   bank open's booth walk, raw v2 requests, `walkNearestBank` while it is
   still choosing). Nothing is re-sent when the script run changed, the
-  walk was cancelled (an `AbortWalk`, a failed walk machine, Stop, or the
-  script stopping itself), the player already stands within the walk's
+  walk was cancelled (manual movement, an `AbortWalk`, a failed walk machine,
+  Stop, or the script stopping itself), the player already stands within the walk's
   arrival radius, or a newer walk request replaces it; a bank trip planned
   for the walk is planned again from the current pack. A late copy of the
   request the host already follows is not sent twice. A request queued
