@@ -75,8 +75,9 @@ pub(crate) fn posted_here() -> Option<WorldTile> {
 }
 
 /// Frozen `isArrived` ([`api::query::is_arrived`]) from the last posted
-/// player tile over the cached reach view: the arrival rule every shim and
-/// machine walk pre-check uses. No posted tile is not arrived.
+/// player tile over the cached reach view. Legacy/compat walks carry no loc
+/// identity, so this stays anchor-based; native Walk selects tile or explicit
+/// loc arrival from its request. No posted tile is not arrived.
 pub(crate) fn arrived(dest: WorldTile, radius: i32) -> bool {
     let Some(here) = posted_here() else {
         return false;

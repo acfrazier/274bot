@@ -15,6 +15,7 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 pub struct Walk {
     key: WalkKey,
+    loc_id: Option<i32>,
     request_id: u64,
     required_after: EvidenceStamp,
     deadline: Duration,
@@ -24,6 +25,7 @@ pub struct Walk {
 struct Frame<'a> {
     snapshot: SnapshotView<'a>,
     outcome: HostOutcome,
+    loc_id: Option<i32>,
 }
 
 impl Observation for Frame<'_> {
@@ -39,11 +41,12 @@ impl Observation for Frame<'_> {
         let Some(here) = self.snapshot.here() else {
             return false;
         };
-        let unavailable = api::query::ReachQueryView::unavailable();
-        let reach = self.snapshot.reach();
-        api::query::is_arrived(here.value, key.tile, key.radius, || {
-            reach.map_or(&unavailable, |observed| observed.value)
-        })
+        match self.loc_id {
+            Some(id) => self
+                .snapshot
+                .walk_loc_arrived(here.value, key.tile, key.radius, id),
+            None => self.snapshot.walk_arrived(here.value, key.tile, key.radius),
+        }
     }
 }
 
@@ -57,6 +60,7 @@ impl NativeMachine for Walk {
             radius: i32::from(request.radius),
             allow_teleports: request.options.allow_teleports,
         };
+        let loc_id = request.loc_id;
         let required_after = request.required_after;
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
@@ -67,6 +71,7 @@ impl NativeMachine for Walk {
         );
         Ok(Self {
             key,
+            loc_id,
             request_id,
             required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -105,6 +110,7 @@ impl NativeMachine for Walk {
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
+            loc_id: self.loc_id,
         };
         if !self.wait.poll(self.request_id, &frame) {
             return Poll::Pending;
@@ -119,6 +125,18 @@ impl NativeMachine for Walk {
             }));
         }
         match receipt {
+            Some(receipt)
+                if receipt.end == WalkEnd::RouteEnded
+                    && frame
+                        .snapshot
+                        .local_player()
+                        .is_some_and(|player| player.value.player.actor.moving) =>
+            {
+                // A host route terminal can precede the observed final step.
+                // Keep the owner until arrival, a stationary end, or the
+                // existing active deadline; do not widen the goal radius.
+                Poll::Pending
+            }
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
             None => Poll::Pending,
         }

@@ -376,6 +376,29 @@ than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
 distant tile, or the old plane. Other transport arrival rules are unchanged.
 
+Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
+centered on the requested tile, even when a loc or decoration occupies it.
+A goal is loc-backed only when the caller explicitly supplies loc identity
+(native `WalkRequest.loc_id`, as used by Gatherer and loc interaction recovery).
+Compat `walkTo(x,z,r)`, Quester stand tiles and bank stands are plain tile goals.
+For an identified loc in scene with a known footprint, distance is measured
+to its full rotated footprint rectangle, not its south-west anchor. A legal
+stand must fit that margin and pass the shared live wall/force-approach rule.
+Off-scene or unknown loc footprints use the plain anchor-radius estimate;
+they never flood connected solids. The same owned walk is re-planned when
+its target enters the scene, its footprint becomes known, or a known
+footprint vanishes before arrival—not on every tick at an unchanged
+estimate. Live operability proves loc arrival while
+the identified loc remains present. If it is absent or replaced in a ready,
+loc-observed scene, the walk instead settles through the plain tile predicate
+so its caller can reselect a target. Off-scene targets still defer.
+Exact tile walks are unchanged.
+
+Native walks retain their action when a correlated host `RouteEnded` arrives
+before the observed player finishes moving. They settle on observed arrival
+or a stationary route end, bounded by the existing active walk deadline.
+This does not relax the requested radius.
+
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:

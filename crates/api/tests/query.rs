@@ -2079,7 +2079,7 @@ fn booth_approach_collision_change_keeps_loc_id_and_moves_dest() {
 }
 
 #[test]
-fn arrival_stands_are_orthogonal_walkable_and_open_on_the_target_side() {
+fn arrival_stands_require_open_target_and_stand_edges() {
     let mut scene = SceneView {
         available: true,
         base_x: 0,
@@ -2093,15 +2093,69 @@ fn arrival_stands_are_orthogonal_walkable_and_open_on_the_target_side() {
     scene.collision_flags[(target.x * scene.height + target.z) as usize] =
         CollisionFlag::SQ_BLOCKED | CollisionFlag::W_W;
     scene.collision_flags[(3 * scene.height + 2) as usize] = CollisionFlag::SQ_BLOCKED;
+    scene.collision_flags[(2 * scene.height + 1) as usize] = CollisionFlag::W_N;
 
     let stands: Vec<_> = SceneQuery::new(&scene, None)
         .arrival_stands(target)
         .collect();
     assert_eq!(
         stands,
-        vec![tile(2, 1), tile(2, 3)],
-        "west is closed by the target wall, east is occupied, and diagonals are never stands"
+        vec![tile(2, 3)],
+        "west is closed by the target wall, east is occupied, south is blocked on the stand, and diagonals are never stands"
     );
+}
+#[test]
+fn straight_wall_reach_matches_engine_sides_and_step_gates() {
+    let destination = tile(6, 5);
+    for (angle, from) in [
+        (0, tile(5, 5)),
+        (1, tile(6, 6)),
+        (2, tile(7, 5)),
+        (3, tile(6, 4)),
+    ] {
+        assert!(
+            straight_wall_reachable(from, destination, 0, angle, |_, _| false),
+            "the angle-facing side must reach a straight wall for angle {angle}"
+        );
+    }
+
+    let along_wall = tile(6, 6);
+    assert!(straight_wall_reachable(
+        along_wall,
+        destination,
+        0,
+        0,
+        |from, to| from == along_wall && to == destination
+    ));
+    assert!(!straight_wall_reachable(
+        along_wall,
+        destination,
+        0,
+        0,
+        |_, _| false
+    ));
+    assert!(
+        !straight_wall_reachable(tile(7, 5), destination, 0, 0, |_, _| true),
+        "a tile on the other side is not admitted solely by proximity"
+    );
+    assert!(!straight_wall_reachable(
+        tile(5, 5),
+        destination,
+        9,
+        0,
+        |_, _| true
+    ));
+    assert!(!straight_wall_reachable(
+        WorldTile {
+            x: 5,
+            z: 5,
+            level: 1,
+        },
+        destination,
+        0,
+        0,
+        |_, _| true
+    ));
 }
 
 fn cfg() -> ClientConfig {

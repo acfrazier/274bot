@@ -1452,7 +1452,7 @@ fn spawn_slot_thread(
                                         &nav_snapshot,
                                         &slot_navs,
                                         &slot_statuses,
-                                        slot_world.as_deref(),
+                                        slot_world.as_ref(),
                                         hold,
                                         map_members,
                                         || {

@@ -2,7 +2,7 @@
 //! `LocApproach.ts`): a 4-bit force-approach mask rotated by the
 //! loc's angle, checked against the scene's directional wall flags.
 
-use crate::snapshot::{LocView, SceneView, WorldTile};
+use crate::snapshot::{GameSnapshot, LocView, SceneView, WorldTile};
 use client::dash3d::CollisionFlag;
 
 /// The loc shapes with a real footprint (the m8aq
@@ -160,6 +160,77 @@ pub fn can_operate_from(loc: &LocView, scene: &SceneView, from: WorldTile) -> Op
         force_approach,
         scene,
     ))
+}
+
+/// Chebyshev distance from a tile to the loc's full rotated rectangle.
+/// A loc-backed radius is measured from this footprint, not its south-west
+/// anchor. Plain tile destinations retain their anchor-based radius.
+pub fn distance_from(loc: &LocView, from: WorldTile) -> Option<u32> {
+    if !FOOTPRINT_SHAPES.contains(&loc.shape)
+        || from.level != loc.tile.level
+        || loc.footprint_width <= 0
+        || loc.footprint_length <= 0
+    {
+        return None;
+    }
+    let nearest_x = from
+        .x
+        .clamp(loc.tile.x, loc.tile.x + loc.footprint_width - 1);
+    let nearest_z = from
+        .z
+        .clamp(loc.tile.z, loc.tile.z + loc.footprint_length - 1);
+    Some(from.x.abs_diff(nearest_x).max(from.z.abs_diff(nearest_z)))
+}
+
+/// Whether an identified loc is absent from an observed, ready scene.
+/// Off-scene and rebuilding targets are unknown, not gone.
+pub fn target_gone(snapshot: &GameSnapshot, to: WorldTile, loc_id: i32) -> bool {
+    snapshot.ingame()
+        && snapshot.scene_state() == 2
+        && super::SceneQuery::new(snapshot.scene(), None).contains(to)
+        && !snapshot
+            .locs()
+            .iter()
+            .any(|loc| loc.tile == to && loc.id == loc_id)
+}
+
+/// Live footprint arrival for an explicitly identified loc radius walk.
+/// Off-scene or unknown footprints return `None`, not interaction proof.
+/// The full rotated rectangle, force-approach sides and live wall flags
+/// determine arrival; unrelated locs on the destination tile are ignored.
+pub fn arrived_at(
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    loc_id: i32,
+) -> Option<bool> {
+    let scene = snapshot.scene();
+    let query = super::SceneQuery::new(scene, None);
+    if !query.contains(to) {
+        return None;
+    }
+    let mut modeled = false;
+    for loc in snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.tile == to && loc.id == loc_id)
+    {
+        if distance_from(loc, to).is_none() {
+            continue;
+        }
+        let Some(can_operate) = can_operate_from(loc, scene, from) else {
+            continue;
+        };
+        modeled = true;
+        let in_radius = u32::try_from(radius).is_ok_and(|radius| {
+            distance_from(loc, from).is_some_and(|distance| distance <= radius)
+        });
+        if in_radius && query.walkable(from) && can_operate {
+            return Some(true);
+        }
+    }
+    modeled.then_some(false)
 }
 
 /// Every walkable tile from which `loc` can be operated; `None` when

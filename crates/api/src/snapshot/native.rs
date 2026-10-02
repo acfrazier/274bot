@@ -77,6 +77,44 @@ impl<'a> SnapshotView<'a> {
             stamp: self.stamp,
         })
     }
+    /// Anchor-radius arrival for a plain tile walk, regardless of scene locs.
+    pub fn walk_arrived(&self, from: super::WorldTile, to: super::WorldTile, radius: i32) -> bool {
+        let Some(snapshot) = self.scene_ready() else {
+            return false;
+        };
+        if from == to {
+            return radius >= 0;
+        }
+        let reach = self.reach();
+        let query = crate::query::SceneQuery::new(snapshot.scene(), None);
+        if !query.contains(to) && !reach.is_some_and(|observed| observed.value.probeable(to)) {
+            return false;
+        }
+        let unavailable = crate::query::ReachQueryView::unavailable();
+        crate::query::is_arrived(from, to, radius, || {
+            reach.map_or(&unavailable, |observed| observed.value)
+        })
+    }
+
+    /// Arrival for a walk whose caller explicitly supplied loc identity.
+    /// An observed gone/replaced loc settles under the plain tile predicate.
+    pub fn walk_loc_arrived(
+        &self,
+        from: super::WorldTile,
+        to: super::WorldTile,
+        radius: i32,
+        loc_id: i32,
+    ) -> bool {
+        self.scene_ready().is_some_and(|snapshot| {
+            match crate::query::loc_approach::arrived_at(snapshot, from, to, radius, loc_id) {
+                Some(arrived) => arrived,
+                None => {
+                    crate::query::loc_approach::target_gone(snapshot, to, loc_id)
+                        && self.walk_arrived(from, to, radius)
+                }
+            }
+        })
+    }
 
     /// The local player once the player family has posted its first row.
     /// Disconnect or a pre-player frame is not an observed empty player.

@@ -98,6 +98,19 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
         level: 0,
     };
     let mut snapshot = GameSnapshot::new();
+    let mut client = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 1,
+        cache_dir: String::new(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = here.x - 52;
+    client.map_build_base_z = here.z - 52;
+    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+    snapshot.rebuild(&client);
     snapshot.seed_ingame(2);
     snapshot.seed_npcs(Vec::new());
     snapshot.seed_world(WorldStateView {
@@ -242,6 +255,22 @@ fn mining_snapshot(
         .unwrap();
     let mut frame = snapshot(&[]);
     let mut player = frame.local_player().unwrap().clone();
+    // The arrival contract needs an observed scene, not only seeded loc rows.
+    let mut client = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 1,
+        cache_dir: String::new(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = spot.origin.x - 52;
+    client.map_build_base_z = spot.origin.z - 52;
+    client.minusedlevel = spot.origin.level;
+    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+    frame.rebuild(&client);
+    frame.seed_inventory(Vec::new(), 28);
     player.player.actor.tile = WorldTile {
         x: spot.origin.x + 1,
         ..spot.origin

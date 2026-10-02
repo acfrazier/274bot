@@ -305,8 +305,10 @@ pub(crate) fn interrupted() -> bool {
         || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
 }
 
-/// Frozen `isArrived` over the cached reach view — the same helper
-/// `walk_wait` uses (`posted_here` + flood origin + `canReachAdjacent`).
+/// Frozen `isArrived` over the cached reach view — the compatibility ladder
+/// has no loc identity, so its arrival gate intentionally remains tile-anchored.
+/// This is the same helper `walk_wait` uses (`posted_here` + flood origin +
+/// `canReachAdjacent`).
 fn arrived(dest: WorldTile, radius: i32) -> bool {
     crate::load::reach_query::arrived(dest, radius)
 }
