@@ -37,6 +37,14 @@
           "recovery_entry": null,
           "steps": [
             {
+              "id": "approach-natural-unattackable-attacker",
+              "kind": "walk",
+              "version": 1,
+              "args": { "tile": [3109, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; approach after HP8 Start", "radius": 0 },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3109, 3346, 0], "radius": 0 } } }
+            },
+            {
               "id": "observe-unattackable-attacker",
               "kind": "combat",
               "version": 1,
