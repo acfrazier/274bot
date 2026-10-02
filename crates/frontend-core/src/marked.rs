@@ -200,6 +200,9 @@ pub fn assign_and_restart_marked<Io>(
     card: &script::ScriptSel,
     catalog_root: Option<&Path>,
 ) {
+    if scripts.block_start_if_copy_pending("Assign & restart") {
+        return;
+    }
     scripts.open_tally("Assign & restart");
     let Resolved { names, gone } = resolve(selection, core);
     for profile in &gone {
@@ -331,12 +334,13 @@ pub fn logout_marked<Io>(
 }
 
 /// Freeze *Apply focused bot's settings to marked* for `card`: the parameters
-/// `source` (the focused bot) holds for the card, and the marked same-card
-/// bots that would take them. Unmarked bots are never targets and are only
-/// counted; every marked row that cannot take the copy is named with its
-/// reason. Read-only (`core` is borrowed shared): nothing is written or
-/// migrated until [`Scripts::apply_settings_sync`]; a scope with no marked
-/// target to copy to is refused instead of prepared.
+/// `source` (the focused bot) holds for the card, and the marked bots that
+/// would take them (already on the card, or unassigned — Apply assigns the
+/// card). Unmarked bots are never targets and are only counted; every marked
+/// row that cannot take the copy is named with its reason. Read-only (`core`
+/// is borrowed shared): nothing is written or migrated until
+/// [`Scripts::apply_settings_sync`]; a scope with no marked target to copy
+/// to is refused instead of prepared.
 pub fn prepare_apply_settings_marked<'a, Io>(
     selection: &MarkedSelection,
     core: &OperatorSession<Io>,

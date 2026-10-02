@@ -1,11 +1,12 @@
 //! Bulk parameter sync ("Apply to all"): copy one profile's overrides bag
-//! for a card to every other wall member assigned the same card. Prepare
-//! freezes the scope (members, the bag snapshot) for confirmation; Apply
-//! writes each same-card member's profile through the profile writer and,
-//! once each write is durable, posts the merged bag to that member's run
-//! of the card captured at Apply (identity and generation fenced).
-//! Members on another card are skipped and counted. Persistence and live
-//! delivery are reported separately.
+//! for a card to every other wall member assigned the same card, and to
+//! unassigned members (who are assigned the card on Apply). Prepare freezes
+//! the scope (members, the bag snapshot) for confirmation; Apply writes each
+//! target's profile through the profile writer and, once each write is
+//! durable, posts the merged bag to that member's run of the card captured
+//! at Apply (identity and generation fenced). Members on another card are
+//! skipped and counted. Persistence and live delivery are reported
+//! separately.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -68,8 +69,9 @@ impl SyncScope {
     /// Narrow the scope to the marked rows (`marked`: every marked profile
     /// name; `gone`: marks whose profile no longer exists). Unmarked members
     /// drop out and are only counted; a marked row that cannot take the copy
-    /// (another card, no assignment, not loaded, gone) stays in `skipped`
-    /// with its reason, so every marked row is named exactly once.
+    /// (another card, not loaded, gone) stays in `skipped` with its reason,
+    /// so every marked row is named exactly once. Unassigned marked members
+    /// are targets: Apply assigns them this card.
     fn restrict_to_marked(&mut self, marked: &[String], gone: Vec<String>) {
         let others = self.targets.len() + self.skipped.len();
         self.targets.retain(|target| marked.contains(target));
@@ -350,11 +352,12 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
 }
 
 impl Scripts {
-    /// Freeze an Apply-to-all of `source`'s parameters for one card: the
-    /// wall members assigned the same card and the overrides bag to copy.
-    /// Read-only: a source that has not used the card yet contributes the
-    /// legacy overrides its first read would migrate, without claiming
-    /// them. Nothing is written until [`Self::apply_settings_sync`].
+    /// Freeze an Apply-to-all of `source`'s parameters for one card: wall
+    /// members already on the card, and unassigned members who will be
+    /// assigned it on Apply. Read-only: a source that has not used the card
+    /// yet contributes the legacy overrides its first read would migrate,
+    /// without claiming them. Nothing is written until
+    /// [`Self::apply_settings_sync`].
     pub fn prepare_settings_sync<Io>(
         &mut self,
         core: &OperatorSession<Io>,
@@ -368,10 +371,9 @@ impl Scripts {
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
         for member in core.members().iter().filter(|m| *m != source) {
-            match Self::assignment(core, member) {
-                Some(asg) if asg.key() == card => targets.push(member.clone()),
-                Some(_) => skipped.push((member.clone(), OTHER_CARD.to_string())),
-                None => skipped.push((member.clone(), UNASSIGNED.to_string())),
+            match sync_skip_reason(Self::assignment(core, member).as_ref(), &card) {
+                None => targets.push(member.clone()),
+                Some(reason) => skipped.push((member.clone(), reason.to_string())),
             }
         }
         let prompt = format!(
@@ -435,10 +437,9 @@ impl Scripts {
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
         for member in core.members().iter().filter(|member| *member != source) {
-            match Self::assignment(core, member) {
-                Some(assignment) if assignment.key() == card => targets.push(member.clone()),
-                Some(_) => skipped.push((member.clone(), OTHER_CARD.into())),
-                None => skipped.push((member.clone(), UNASSIGNED.into())),
+            match sync_skip_reason(Self::assignment(core, member).as_ref(), &card) {
+                None => targets.push(member.clone()),
+                Some(reason) => skipped.push((member.clone(), reason.into())),
             }
         }
         let excluded: Vec<_> = targets
@@ -484,10 +485,11 @@ impl Scripts {
         self.sync.last.as_ref()
     }
 
-    /// Apply the prepared sync. Each target still assigned the card gets
-    /// the snapshot bag in its profile; a target whose run of the card is
-    /// live at this moment receives the merged bag once its write is
-    /// durable, fenced to that run. Returns the sync operation.
+    /// Apply the prepared sync. Each target on the card, or still
+    /// unassigned, gets the snapshot bag; unassigned targets are assigned
+    /// the card in the same write. A target whose run of the card is live
+    /// at this moment receives the merged bag once its write is durable,
+    /// fenced to that run. Returns the sync operation.
     pub fn apply_settings_sync<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -513,20 +515,40 @@ impl Scripts {
         let op = core.open_operation(ActionKind::SyncSettings);
         let mut failed = Vec::new();
         let mut pending = Vec::new();
+        let resolved_assignment = self.assignment_for(&selection, None);
         for target in targets {
             let row = core.vault().and_then(|v| v.get(&target)).cloned();
             let Some(mut row) = row else {
                 failed.push((target, "no profile".to_string()));
                 continue;
             };
+            let unassigned = row.settings.script_assignment.is_none();
             let same_card = row
                 .settings
                 .script_assignment
                 .as_ref()
                 .is_some_and(|asg| asg.key() == card);
-            if !same_card {
+            if !same_card && !unassigned {
                 skipped.push((target, OTHER_CARD.to_string()));
                 continue;
+            }
+            if unassigned {
+                match &resolved_assignment {
+                    Ok(assignment) => {
+                        if matches!(selection, script::ScriptSel::Compiled(_)) {
+                            if !self.persist_assignment(core, &target, assignment.clone()) {
+                                failed.push((target, "could not save".to_string()));
+                                continue;
+                            }
+                        } else {
+                            row.settings.script_assignment = Some(assignment.clone());
+                        }
+                    }
+                    Err(reason) => {
+                        failed.push((target, reason.clone()));
+                        continue;
+                    }
+                }
             }
             let result = match &selection {
                 script::ScriptSel::Compiled(id) => {
@@ -613,6 +635,19 @@ impl Scripts {
         self.show(report.text.clone());
         self.sync.push(report);
         Ok(op)
+    }
+}
+
+/// Same-card members and unassigned members take the copy; another card is
+/// skipped. Unassigned members are assigned this card when Apply runs.
+fn sync_skip_reason(
+    assignment: Option<&vault::ScriptAssignment>,
+    card: &str,
+) -> Option<&'static str> {
+    match assignment {
+        Some(asg) if asg.key() == card => None,
+        Some(_) => Some(OTHER_CARD),
+        None => None,
     }
 }
 

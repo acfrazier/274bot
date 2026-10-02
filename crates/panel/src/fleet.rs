@@ -7,7 +7,6 @@
 //! and a hidden column reads nothing from the host.
 
 use std::cell::RefCell;
-use std::fmt::Write as _;
 
 use dear_imgui_rs::{Condition, TableColumnFlags, TableFlags, Ui, WindowFlags};
 use frontend_core::progress::{self, NONE};
@@ -299,7 +298,20 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
         ui.table_setup_column("Mark", TableColumnFlags::NONE, None, None);
         ui.table_setup_column("Profile", TableColumnFlags::NONE, None, None);
         for column in &columns {
-            ui.table_setup_column(column.title(), TableColumnFlags::NONE, None, None);
+            match column.init_width() {
+                Some(width) => ui.table_setup_column_fixed_width(
+                    column.title(),
+                    TableColumnFlags::NONE,
+                    scale_px(ui, width),
+                    None,
+                ),
+                None => ui.table_setup_column_stretch_weight(
+                    column.title(),
+                    TableColumnFlags::NONE,
+                    1.0,
+                    None,
+                ),
+            }
         }
         ui.table_headers_row();
         for row in visible {
@@ -323,14 +335,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow]) {
             for column in &columns {
                 ui.table_next_column();
                 match column {
-                    FleetColumn::State => cell(ui, |out| {
-                        match row.world {
-                            Some(world) => {
-                                let _ = write!(out, "w{world} {}", row.brief);
-                            }
-                            None => out.push_str(&row.brief),
-                        };
-                    }),
+                    FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
                     FleetColumn::Card => cell(ui, |out| {
                         match Scripts::assignment(&session.core, &row.name) {
                             Some(assignment) => out.push_str(&assignment.display_name),

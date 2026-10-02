@@ -13,7 +13,7 @@ use super::{
     prepare_apply_settings_marked, restart_scope,
 };
 use crate::scripts::Scripts;
-use crate::selection::{MarkedSelection, ProfileIdentity};
+use crate::selection::{start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
@@ -581,4 +581,63 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
     f.start_running("alice");
     assert!(progress(&f).is_some(), "a new Start begins a new run");
     f.core.play().unwrap().script_stop("alice");
+}
+
+/// Fleet-window sequence from the 2026-10-02 operator session: settings on
+/// the focused bot, Apply while a marked bot has no assignment, Assign the
+/// card, a pending copy confirm, then Start. Apply covers the unassigned
+/// bot; Start does not run until the confirm is applied.
+#[test]
+fn operator_apply_assign_start_does_not_start_on_defaults() {
+    let mut f = fixture("operator-apply", &["alice", "bob"], 2);
+    let (card, sel) = f.card("thiever.ts");
+    f.assign("alice", &card);
+    f.scripts
+        .set_profile_setting(
+            &mut f.core,
+            "alice",
+            card.source,
+            &card.name,
+            &card.path,
+            "target",
+            serde_json::json!("Knight of Ardougne"),
+        )
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let marked = marks(&[1, 2]);
+    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
+        .unwrap()
+        .clone();
+    assert_eq!(scope.targets, ["bob"]);
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        Scripts::assignment(&f.core, "bob").unwrap().key(),
+        card.identity_key()
+    );
+
+    let report = assign_marked(&marked, &mut f.core, &mut f.scripts, &sel, None);
+    assert!(
+        report.summary().contains("assigned"),
+        "{}",
+        report.summary()
+    );
+
+    prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
+    start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let blocked = f.scripts.last_bulk_report().unwrap();
+    assert!(blocked.starts_with("Start selected: blocked"), "{blocked}");
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
+    f.until("starts to settle", |f| !f.scripts.starts_pending());
+    f.until("bob running", |f| {
+        f.state("bob") == script::RunState::Running
+    });
 }
