@@ -1525,6 +1525,114 @@ fn batched_arrival_preserves_directed_steps_and_rank_cutoffs() {
 }
 
 #[test]
+fn batched_arrival_continues_past_window_edges_without_changing_dequeue_budget() {
+    for sign in [-1, 1] {
+        for far in [8, 13] {
+            for solid in [false, true] {
+                let target = WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                };
+                let origin = WorldTile {
+                    x: sign * 2,
+                    z: 0,
+                    level: 0,
+                };
+                // A one-tile-wide detour leaves the radius-2 cache (extent 7).
+                // The longer version reaches the goal only after its budget.
+                let collision = |tile: WorldTile| {
+                    let x = sign * tile.x;
+                    let z = sign * tile.z;
+                    let on_path = (z == 0 && (2..=far).contains(&x))
+                        || (x == far && (0..=2).contains(&z))
+                        || (z == 2 && (0..=far).contains(&x))
+                        || (x == 0 && (0..=2).contains(&z));
+                    (tile.level == 0 && on_path).then_some(if solid && tile == target {
+                        CollisionFlag::SQ_BLOCKED
+                    } else {
+                        0
+                    })
+                };
+                let probe = CollisionArrivalProbe::new(collision);
+                assert_eq!(is_arrived(origin, target, 2, || &probe), far == 8);
+                let mut candidates: Vec<_> = (-2..=2)
+                    .flat_map(|x| (-2..=2).map(move |z| WorldTile { x, z, level: 0 }))
+                    .collect();
+                candidates.extend([origin, target, WorldTile { level: 1, ..origin }]);
+                let expected: Vec<_> = candidates
+                    .iter()
+                    .copied()
+                    .filter(|&tile| is_arrived(tile, target, 2, || &probe))
+                    .collect();
+                retain_arrival_candidates(&mut candidates, target, 2, collision);
+                assert_eq!(
+                    candidates, expected,
+                    "sign={sign}, far={far}, solid={solid}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn batched_arrival_keeps_boundary_hugging_route_that_exits_elsewhere() {
+    let target = WorldTile {
+        x: 13,
+        z: 13,
+        level: 0,
+    };
+    // Radius 4 gives window [0,26] and dequeue budget 81. The route hugs
+    // x=0 before exiting at (26,19) and returning through (26,10).
+    let open = |x: i32, z: i32| -> bool {
+        (z == 17 && (0..=10).contains(&x))
+            || (x == 0 && (17..=19).contains(&z))
+            || (z == 19 && (0..=26).contains(&x))
+            || (x == 27 && (10..=19).contains(&z))
+            || (z == 10 && (13..=27).contains(&x))
+            || (x == 13 && (10..=14).contains(&z))
+            || ((15..=16).contains(&z) && (12..=19).contains(&x))
+    };
+    let collision = move |tile: WorldTile| -> Option<i32> {
+        if tile.level != 0 || !(0..35).contains(&tile.x) || !(0..35).contains(&tile.z) {
+            return None;
+        }
+        Some(if open(tile.x, tile.z) {
+            0
+        } else {
+            CollisionFlag::SQ_BLOCKED
+        })
+    };
+    let start = WorldTile {
+        x: 9,
+        z: 17,
+        level: 0,
+    };
+    // This root's closure exceeds the budget because of the tail past the
+    // target, but start still reaches it at dequeue rank 67.
+    let root = WorldTile {
+        x: 10,
+        z: 17,
+        level: 0,
+    };
+    let probe = CollisionArrivalProbe::new(collision);
+    assert!(is_arrived(start, target, 4, || &probe));
+    assert!(is_arrived(root, target, 4, || &probe));
+
+    let mut alone = vec![start];
+    retain_arrival_candidates(&mut alone, target, 4, collision);
+    assert_eq!(alone, vec![start]);
+
+    let mut both = vec![start, root];
+    retain_arrival_candidates(&mut both, target, 4, collision);
+    assert_eq!(
+        both,
+        vec![start, root],
+        "start must not depend on other candidates"
+    );
+}
+
+#[test]
 fn pack_reach_query_word_boundaries_survive_u32_pack() {
     let mut scene = SceneView {
         available: true,
