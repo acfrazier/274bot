@@ -104,6 +104,7 @@ const FAILED_ATTACK: u16 = 2048;
 const TERMINAL_FOOD: u16 = 4096;
 const PREP_RETALIATE: u16 = 8192;
 const SKIP_RETALIATE: u16 = 16384;
+const LEASH_WALKED: u16 = 32768;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
 const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
@@ -357,6 +358,19 @@ impl NativeMachine for Combat {
                             return Poll::Ready(Err(ActionError::Failed(
                                 "prayer cleanup did not settle".into(),
                             )));
+                        }
+                        if self.end == Some(CombatEnd::TargetGone)
+                            && self.flags & LOST != 0
+                            && self.engaged.is_some()
+                            && self.flags & LEASH_WALKED == 0
+                        {
+                            if let Some(destination) = self.leash_cancel_tile(&frame) {
+                                if let Err(error) = self.walk(destination, tick, cx) {
+                                    return Poll::Ready(Err(error));
+                                }
+                                self.flags |= LEASH_WALKED;
+                                return Poll::Pending;
+                            }
                         }
                         return Poll::Ready(Ok(self.report(evidence)));
                     }
@@ -621,7 +635,7 @@ impl Combat {
             return;
         }
         if present {
-            self.flags &= !LOST;
+            self.flags &= !(LOST | LEASH_WALKED);
         }
         if self.engaged.is_none() {
             if self.flags & LOST == 0 {
@@ -1368,6 +1382,19 @@ impl Combat {
         if plan.closed(&self.tables) {
             return Ok(plan);
         }
+        // A sticky target beyond lost_radius is dropped after a grace; interrupt
+        // the server's queued chase before the terminal report (design-combat.md
+        // §1.1, §2.6; combat-s3a-ReviewCombatFable.md F5).
+        if self.flags & LOST != 0 && self.engaged.is_some() && self.phase != Phase::WindDown {
+            if plan.len == 0 && self.flags & LEASH_WALKED == 0 {
+                if let Some(destination) = self.leash_cancel_tile(frame) {
+                    self.walk(destination, tick, cx)?;
+                    self.flags |= LEASH_WALKED;
+                    return Ok(plan);
+                }
+            }
+            return Ok(plan);
+        }
         if self.phase == Phase::Prep {
             let weapon = self.desired(3);
             let conflict = self.flags & SHIELD_OVERRIDE != 0
@@ -1745,6 +1772,59 @@ impl Combat {
                         || row.actor.health.saturating_mul(4) > row.actor.total_health
                 }),
         })
+    }
+    fn leash_cancel_tile(&self, frame: &Frame<'_>) -> Option<api::WorldTile> {
+        let stand = self.request.stand?;
+        if distance(frame.here, stand) > 1 {
+            return Some(stand);
+        }
+        let actor = self.engaged?;
+        let target = match actor.kind {
+            ActorKind::Npc => frame
+                .npcs
+                .iter()
+                .find(|row| {
+                    row.index == usize::from(actor.index)
+                        && row.r#type.map_or(-1, |id| id as i32) == self.engaged_type
+                })
+                .map(|row| row.tile),
+            ActorKind::Player => frame
+                .players
+                .iter()
+                .find(|row| {
+                    row.index == usize::from(actor.index)
+                        && self.player_ident.is_some()
+                        && row.actor.name.as_deref().map(select::ident::fnv1a) == self.player_ident
+                })
+                .map(|row| row.actor.tile),
+        }?;
+        // A walk back to an already-reached stand produces no driver movement;
+        // move just beyond its radius to cancel the live server chase instead.
+        let away_x = (frame.here.x - target.x).signum();
+        let away_z = (frame.here.z - target.z).signum();
+        [
+            (away_x * 2, away_z * 2),
+            (away_x * 2, 0),
+            (0, away_z * 2),
+            (2, 0),
+            (-2, 0),
+            (0, 2),
+            (0, -2),
+        ]
+        .into_iter()
+        .find_map(|(dx, dz)| {
+            if dx == 0 && dz == 0 {
+                return None;
+            }
+            let x = frame.here.x + dx;
+            let z = frame.here.z + dz;
+            ((0..=16383).contains(&x) && (0..=16383).contains(&z)).then_some(api::WorldTile {
+                x,
+                z,
+                level: frame.here.level,
+            })
+        })
+        .or(Some(stand))
     }
     fn walk(
         &mut self,

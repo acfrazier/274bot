@@ -1599,7 +1599,17 @@ pub(crate) fn script_observe_cached_with_channels(
         };
         if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
             #[cfg(test)]
-            crate::combat_proof::record_other_request(name, tick, "cheat", &cmd);
+            if let Some(snapshot) = snapshot {
+                crate::combat_proof::record_other_request(
+                    name,
+                    Some(tick),
+                    snapshot,
+                    "cheat",
+                    &cmd,
+                );
+            } else {
+                crate::combat_proof::mark_invalid(name, "cheat emitted without a capture snapshot");
+            }
             wrote = true;
             if observe_replies {
                 if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {

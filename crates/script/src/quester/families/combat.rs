@@ -10,13 +10,19 @@ use crate::combat::{
     CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, Style, Tactic, Target,
 };
 use crate::loadouts_store::WORN_SLOTS;
-use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::native::walk::Walk;
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
 use api::gather_methods::SceneRegionInput;
 use api::selected::Truth;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+
+static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
+static RETURN_TO_STAND_FAILED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat target-loss walk did not reach the stand"));
 
 #[derive(Debug, Clone, Copy)]
 pub struct CombatReceipt {
@@ -472,6 +478,7 @@ impl StepPlan for CombatPlan {
 
 enum Phase {
     Combat,
+    ReturningToStand,
     Loot,
 }
 
@@ -481,6 +488,7 @@ enum Phase {
 )]
 enum Action {
     Combat(ActionHandle<Combat>),
+    Walk(ActionHandle<Walk>),
     Loot(ActionHandle<Reach>),
 }
 
@@ -488,6 +496,7 @@ enum ActionPoll {
     Pending,
     Failed(ActionError),
     Combat(CombatReport),
+    Walk(WalkReceipt),
     Loot(bool),
 }
 
@@ -520,6 +529,88 @@ impl CombatRun {
         self.phase = Phase::Combat;
         self.action = Some(Action::Combat(handle));
         Ok(())
+    }
+    fn begin_return_to_stand(
+        &mut self,
+        stand: api::WorldTile,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<(), ActionError> {
+        let handle = cx.tick.actions.begin::<Walk>(
+            reach::walk_request(stand, 1, cx.required_after),
+            &mut cx.tick.cx,
+        )?;
+        self.phase = Phase::ReturningToStand;
+        self.action = Some(Action::Walk(handle));
+        Ok(())
+    }
+
+    fn on_return_walk(
+        &mut self,
+        receipt: WalkReceipt,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        self.action = None;
+        if !matches!(receipt.end, WalkEnd::Arrived) {
+            return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
+                &RETURN_TO_STAND_FAILED,
+            ))));
+        }
+        self.rebegin_combat(cx, true)
+    }
+
+    fn on_combat_report(
+        &mut self,
+        report: CombatReport,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        self.action = None;
+        self.last_report = Some(report);
+        self.refresh_outcome();
+        match report.end {
+            // Loot begins only after the combat machine reports `Killed`
+            // (design-combat.md §2.3, §5; combat-s3a-ReviewCombatFable.md F5).
+            CombatEnd::Killed => {
+                self.phase = Phase::Loot;
+                self.loot_index = 0;
+                Poll::Pending
+            }
+            CombatEnd::TargetGone => {
+                // Imp's next attempt is anchored at stand, so wait for its
+                // observed arrival before re-beginning (design-combat.md §1.1,
+                // §2.6; design-combat-s3.md §5.1).
+                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                    return self.finish(cx);
+                }
+                if let Some(stand) = self.request.stand {
+                    match self.begin_return_to_stand(stand, cx) {
+                        Ok(()) => Poll::Pending,
+                        Err(error) => Poll::Ready(Err(error)),
+                    }
+                } else {
+                    self.rebegin_combat(cx, true)
+                }
+            }
+            CombatEnd::NoTarget | CombatEnd::Budget => {
+                if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
+                    self.finish(cx)
+                } else {
+                    self.rebegin_combat(cx, false)
+                }
+            }
+            CombatEnd::Died => self.finish(cx),
+            CombatEnd::Aborted(AbortReason::Unattackable)
+                if matches!(&self.request.target, Target::Attacker { .. }) =>
+            {
+                // M4's caller owns the walk-out after this observed report
+                // (design-combat-s3.md §5.1).
+                self.finish(cx)
+            }
+            CombatEnd::Aborted(_) => {
+                // Abort ends the boss step; the caller decides what follows
+                // (design-combat.md §2.2, §2.6).
+                Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP))))
+            }
+        }
     }
 
     fn outcome_for(report: CombatReport, target_gone_restarts: u8) -> StepOutcome {
@@ -657,6 +748,11 @@ impl StepRun for CombatRun {
                 Poll::Ready(Ok(report)) => ActionPoll::Combat(report),
                 Poll::Ready(Err(error)) => ActionPoll::Failed(error),
             },
+            Some(Action::Walk(handle)) => match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => ActionPoll::Pending,
+                Poll::Ready(Ok(receipt)) => ActionPoll::Walk(receipt),
+                Poll::Ready(Err(error)) => ActionPoll::Failed(error),
+            },
             Some(Action::Loot(handle)) => match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => ActionPoll::Pending,
                 Poll::Ready(Ok(taken)) => ActionPoll::Loot(taken),
@@ -667,25 +763,8 @@ impl StepRun for CombatRun {
         match polled {
             ActionPoll::Pending => Poll::Pending,
             ActionPoll::Failed(error) => Poll::Ready(Err(error)),
-            ActionPoll::Combat(report) => {
-                self.action = None;
-                self.last_report = Some(report);
-                self.refresh_outcome();
-                match report.end {
-                    CombatEnd::Killed => {
-                        self.phase = Phase::Loot;
-                        self.loot_index = 0;
-                        Poll::Pending
-                    }
-                    CombatEnd::TargetGone | CombatEnd::NoTarget | CombatEnd::Budget => {
-                        if (self.until.is_none() && self.win.is_none()) || self.should_stop(cx) {
-                            return self.finish(cx);
-                        }
-                        self.rebegin_combat(cx, matches!(report.end, CombatEnd::TargetGone))
-                    }
-                    CombatEnd::Died | CombatEnd::Aborted(_) => self.finish(cx),
-                }
-            }
+            ActionPoll::Combat(report) => self.on_combat_report(report, cx),
+            ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {
                 self.action = None;
                 if !taken {

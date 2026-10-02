@@ -1294,6 +1294,7 @@ fn spawn_slot_thread(
                                                     );
                                                 crate::combat_proof::record_maze_injection(
                                                     name,
+                                                    Some(*script_tick),
                                                     &nav_snapshot,
                                                     claim,
                                                     owner_live_before,
@@ -1460,7 +1461,12 @@ fn spawn_slot_thread(
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
-                                crate::combat_proof::record_observation(name, *script_tick, exclusive);
+                                crate::combat_proof::record_observation(
+                                    name,
+                                    *script_tick,
+                                    &nav_snapshot,
+                                    exclusive,
+                                );
                                 if let Some(status) = script_slot(&slot_scripts, name)
                                     .and_then(|slot| slot.lock().ok()?.native_status())
                                 {
@@ -1489,7 +1495,8 @@ fn spawn_slot_thread(
                                     if !hold || !matches!(wire, WireCmd::Walk { .. }) {
                                         crate::combat_proof::record_other_request(
                                             name,
-                                            *script_tick,
+                                            Some(*script_tick),
+                                            &nav_snapshot,
                                             "play-slot-wire",
                                             &format!("{wire:?}"),
                                         );
