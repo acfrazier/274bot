@@ -71,47 +71,55 @@ const command = (
 const arg = (name: string, kind: string, optional = false): DebugArgument => ({ name, kind, optional });
 
 /**
- * The engine owns this small command vocabulary rather than content. Keep its
- * argument metadata beside the table, then compare the names with the pinned
- * handler on every generation. Debugproc names never appear here.
+ * Destructive engine commands (operator 2026-10-02): red hover and the send
+ * confirmation are reserved for commands that irreversibly remove or downgrade
+ * account state the player cannot trivially restore — clearing inventory or
+ * bank, resetting a quest or stats, lowering a stat, or deleting items.
+ * Teleports, gives, setting a stat up, spawning or adding, and info commands
+ * are not destructive. Of the engine vocabulary only `minme` always removes:
+ * it lowers every skill. The parametric setters (`setstat`, `advancestat`,
+ * `setvar`, `setvarother`) take an operator-typed value that is visible in the
+ * editor, so they are not flagged; `give*` adds, `tele*` teleports,
+ * `locadd`/`npcadd` spawn, and the rest read state, drive the world, or are
+ * production-only moderation hidden from local profiles.
  */
 export const ENGINE_DEBUG_COMMANDS: readonly DebugCommand[] = [
-    command('reload', 'Reload world scripts.', [], false, true),
-    command('rebuild', 'Rebuild world scripts.', [], false, true),
-    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')], false, true),
-    command('fly', 'Toggle fly movement.', [], false, false),
-    command('naive', 'Toggle naive movement.', [], false, false),
-    command('random', 'Trigger a random event.', [], false, false),
-    command('setvar', 'Set a player variable.', [arg('var', 'varp'), arg('value', 'int')], false, true),
-    command('setvarother', 'Set another player variable.', [arg('username', 'string'), arg('var', 'varp'), arg('value', 'int')], true, true),
+    command('reload', 'Reload world scripts.'),
+    command('rebuild', 'Rebuild world scripts.'),
+    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')]),
+    command('fly', 'Toggle fly movement.'),
+    command('naive', 'Toggle naive movement.'),
+    command('random', 'Trigger a random event.'),
+    command('setvar', 'Set a player variable.', [arg('var', 'varp'), arg('value', 'int')]),
+    command('setvarother', 'Set another player variable.', [arg('username', 'string'), arg('var', 'varp'), arg('value', 'int')], true),
     command('getvar', 'Read a player variable.', [arg('var', 'varp')]),
     command('getvarother', 'Read another player variable.', [arg('username', 'string'), arg('var', 'varp')], true),
-    command('give', 'Give an item to the player.', [arg('obj', 'obj'), arg('count', 'int', true)], false, true),
-    command('givebank', 'Put an item in the player bank.', [arg('obj', 'obj'), arg('count', 'int', true)], false, true),
-    command('giveother', 'Give an item to another player.', [arg('username', 'string'), arg('obj', 'obj'), arg('count', 'int', true)], true, true),
-    command('givecrap', 'Fill the inventory with random items.', [], false, true),
-    command('givemany', 'Give 1000 of an item to the player.', [arg('obj', 'obj')], false, true),
-    command('broadcast', 'Broadcast a message to the world.', [arg('message', 'string')], true, true),
-    command('reboot', 'Reboot the world immediately.', [], true, true),
-    command('slowreboot', 'Schedule a world reboot.', [arg('seconds', 'int')], true, true),
-    command('serverdrop', 'Disconnect the player.', [], false, true),
-    command('teleother', 'Teleport another player to you.', [arg('username', 'string')], true, true),
-    command('setstat', 'Set a player skill level.', [arg('stat', 'stat'), arg('level', 'int')], false, true),
-    command('advancestat', 'Advance a player skill level.', [arg('stat', 'stat'), arg('level', 'int')], false, true),
+    command('give', 'Give an item to the player.', [arg('obj', 'obj'), arg('count', 'int', true)]),
+    command('givebank', 'Put an item in the player bank.', [arg('obj', 'obj'), arg('count', 'int', true)]),
+    command('giveother', 'Give an item to another player.', [arg('username', 'string'), arg('obj', 'obj'), arg('count', 'int', true)], true),
+    command('givecrap', 'Fill the inventory with random items.'),
+    command('givemany', 'Give 1000 of an item to the player.', [arg('obj', 'obj')]),
+    command('broadcast', 'Broadcast a message to the world.', [arg('message', 'string')], true),
+    command('reboot', 'Reboot the world immediately.', [], true),
+    command('slowreboot', 'Schedule a world reboot.', [arg('seconds', 'int')], true),
+    command('serverdrop', 'Disconnect the player.'),
+    command('teleother', 'Teleport another player to you.', [arg('username', 'string')], true),
+    command('setstat', 'Set a player skill level.', [arg('stat', 'stat'), arg('level', 'int')]),
+    command('advancestat', 'Advance a player skill level.', [arg('stat', 'stat'), arg('level', 'int')]),
     command('minme', 'Set all player skills to their minimum.', [], false, true),
-    command('locadd', 'Spawn a location at the player.', [arg('loc', 'loc')], false, true),
-    command('npcadd', 'Spawn an NPC at the player.', [arg('npc', 'npc')], false, true),
-    command('openmain', 'Open a root interface.', [arg('interface', 'interface')], false, true),
-    command('openoverlay', 'Open a root overlay interface.', [arg('interface', 'interface')], false, true),
-    command('closeoverlay', 'Close the open overlay.', [], false, true),
-    command('snapshot', 'Write a V8 heap snapshot.', [], false, true),
-    command('getcoord', "Show the player's coordinate.", []),
-    command('tele', 'Teleport to a coordinate.', [arg('coord', 'coord')], false, true),
-    command('teleto', 'Teleport to another player.', [arg('username', 'string')], true, true),
-    command('setvis', 'Set player visibility.', [arg('level', 'int')], true, true),
-    command('ban', 'Ban another player.', [arg('username', 'string'), arg('minutes', 'int')], true, true),
-    command('mute', 'Mute another player.', [arg('username', 'string'), arg('minutes', 'int')], true, true),
-    command('kick', 'Kick another player.', [arg('username', 'string')], true, true),
+    command('locadd', 'Spawn a location at the player.', [arg('loc', 'loc')]),
+    command('npcadd', 'Spawn an NPC at the player.', [arg('npc', 'npc')]),
+    command('openmain', 'Open a root interface.', [arg('interface', 'interface')]),
+    command('openoverlay', 'Open a root overlay interface.', [arg('interface', 'interface')]),
+    command('closeoverlay', 'Close the open overlay.'),
+    command('snapshot', 'Write a V8 heap snapshot.'),
+    command('getcoord', "Show the player's coordinate."),
+    command('tele', 'Teleport to a coordinate.', [arg('coord', 'coord')]),
+    command('teleto', 'Teleport to another player.', [arg('username', 'string')], true),
+    command('setvis', 'Set player visibility.', [arg('level', 'int')], true),
+    command('ban', 'Ban another player.', [arg('username', 'string'), arg('minutes', 'int')], true),
+    command('mute', 'Mute another player.', [arg('username', 'string'), arg('minutes', 'int')], true),
+    command('kick', 'Kick another player.', [arg('username', 'string')], true),
 ];
 
 const ENGINE_COMMAND_NAMES = ENGINE_DEBUG_COMMANDS.map((row) => row.name);
@@ -169,18 +177,39 @@ export function parseDebugHelp(text: string): Map<string, HelpEntry> {
 }
 
 type SourceHeader = { kind: string; name: string; index: number; close: number };
-type SourceBlock = { body: string };
+export type SourceBlock = { body: string; file: string };
 
-const CONTENT_EFFECT_WORDS: Record<string, true> = {
-    give: true,
-    drop: true,
-    reset: true,
-    complete: true,
-    kill: true,
-    damage: true,
-    poison: true,
-    maxme: true,
-};
+/**
+ * Destructive content commands (operator 2026-10-02): red hover and the send
+ * confirmation are reserved for commands that irreversibly remove or downgrade
+ * account state the player cannot trivially restore — clearing inventory or
+ * bank, resetting a quest or stats, lowering a stat, or deleting items.
+ * Teleports, gives, setting a stat up, spawning or adding, and info commands
+ * are not destructive. One rule, no per-command list: the patterns match the
+ * script ops that remove or regress, never the ones that grant or advance
+ * (`inv_add`, `stat_advance`, `stat_boost`, `stat_heal`, quest-complete queues
+ * and progress increments stay quiet). A command is destructive if any
+ * reachable menu branch removes: the operator picks the branch when the
+ * menu opens, so the flag cannot depend on which arm runs. Parametric setters
+ * (`%var = $value`) stay quiet too: the typed value is visible in the
+ * editor, so the flag is reserved for commands that remove no matter the
+ * arguments on at least one branch.
+ */
+const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
+    /\binv_clear\s*\(\s*(?:bank|inv|worn|\$[A-Za-z_][A-Za-z0-9_]*)\b/i,
+    /\binv_del\s*\(/i,
+    /\bstat_(?:sub|drain)\s*\(/i,
+    /\b(?:damage_player|poison_player|damage_self)\b/i,
+    /\breset_all_quests\b/i,
+    /%\w+\s*=\s*0\b/,
+    /=\s*\^[A-Za-z0-9_]*not_started\b/i,
+    /calc\s*\(\s*%[A-Za-z0-9_]+\s*-/,
+];
+
+function hasDestructiveEffect(body: string) {
+    const code = withoutSourceCommentsAndStrings(body);
+    return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(code));
+}
 
 function withoutSourceCommentsAndStrings(text: string) {
     let quote: '"' | "'" | null = null;
@@ -241,34 +270,43 @@ function sourceBlockBody(lines: string[], header: SourceHeader, nextHeader: numb
     const body = lines.slice(header.index + 1, nextHeader).join('\n');
     return [trailing, body].filter(Boolean).join('\n');
 }
-const MENU_CALL = /\bp_choice\d+(?:_header)?\s*\(/i;
-
-function followedSourceBody(body: string, blocks: ReadonlyMap<string, SourceBlock>) {
+/**
+ * A command is destructive if ANY reachable branch is: menu (`p_choice`)
+ * arms are all followed, never cut at the prompt. `@`/`~` label and proc
+ * calls resolve in the debugproc's own file first, then anywhere under the
+ * `_test` cheat tree (that is how `~help` reaches `@debug_quests`, and how
+ * cross-file `@please_finish` resolves). Production helpers stay out of
+ * scope: the teleport post-checks consume an item (`inv_del`) and the
+ * `p_choice`/`mesbox` UI procs live outside `_test`, so teleports and help
+ * text never inherit their effects. `gosub` targets are followed the same
+ * way; `followed` is the cycle guard.
+ */
+function followedSourceBody(
+    body: string,
+    blocks: ReadonlyMap<string, SourceBlock>,
+    shared: ReadonlyMap<string, SourceBlock> = new Map(),
+    usedFiles?: Set<string>,
+) {
     const followed = new Set<string>();
-    const collect = (fragment: string, root: boolean): string => {
+    const resolve = (name: string) => blocks.get(name) ?? shared.get(name);
+    const collect = (fragment: string): string => {
         const clean = withoutSourceCommentsAndStrings(fragment);
-        const menu = root ? null : MENU_CALL.exec(clean);
-        const visible = menu ? clean.slice(0, menu.index + menu[0].length) : clean;
-        const parts = [visible];
-        for (const match of visible.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) {
-            const name = match[1].toLowerCase();
-            const target = blocks.get(name);
-            if (!target || followed.has(name)) continue;
+        const parts = [clean];
+        const follow = (name: string) => {
+            if (followed.has(name)) return;
+            const target = resolve(name);
+            if (!target) return;
             followed.add(name);
-            parts.push(collect(target.body, false));
-        }
+            if (usedFiles && target.file) usedFiles.add(target.file);
+            parts.push(collect(target.body));
+        };
+        for (const match of clean.matchAll(/[@~]([a-z][a-z0-9_]*)\b/gi)) follow(match[1].toLowerCase());
+        for (const match of clean.matchAll(/\bgosub\s*\(\s*([a-z][a-z0-9_]*)/gi)) follow(match[1].toLowerCase());
         return parts.join('\n');
     };
-    return collect(body, true);
+    return collect(body);
 }
 
-function hasContentEffect(alias: string, body: string) {
-    const aliasWords = alias.toLowerCase().split('_');
-    if (aliasWords.some((word) => CONTENT_EFFECT_WORDS[word])) return true;
-    if (/^(?:reset|complete)quests$/i.test(alias)) return true;
-    const effectBody = withoutSourceCommentsAndStrings(body);
-    return /\b(?:inv|stat)_(?:add|clear|del|set|advance|sub|boost|drain|heal)\b|\b(?:queue|send_quest_progress|clear_pk_skull|damage_self|healenergy)\s*(?:\(|\b)|%[a-z][a-z0-9_]*\s*=|\b(?:give|drop|reset|complete|kill|damage|poison|maxme)(?:_|\b)/i.test(effectBody);
-}
 
 const HEADER_PATTERN = /^\s*\[([a-z][a-z0-9_]*)\s*,\s*([^\],\s]+)\]/i;
 
@@ -288,8 +326,8 @@ function parseArgument(raw: string, source: string): DebugArgument {
 
 export type ParsedDebugproc = DebugCommand & { source: string; line: number };
 
-/** Parse all debugproc headers from one selected `.rs2` source. */
-export function parseDebugprocSource(text: string, relative: string, help = new Map<string, HelpEntry>): ParsedDebugproc[] {
+/** Every `[label,…]` and `[proc,…]` block in one `.rs2` source, keyed by lowercase name. */
+export function labelProcBlocks(text: string, file: string): Map<string, SourceBlock> {
     const lines = text.split(/\r?\n/);
     const headers: SourceHeader[] = [];
     for (let index = 0; index < lines.length; index += 1) {
@@ -297,16 +335,47 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
         if (!match) continue;
         headers.push({ kind: match[1].toLowerCase(), name: match[2], index, close: match[0].lastIndexOf(']') });
     }
-    const nextHeaderByIndex = new Map<number, number>();
-    const headerByIndex = new Map<number, SourceHeader>();
     const blocks = new Map<string, SourceBlock>();
+    for (let position = 0; position < headers.length; position += 1) {
+        const header = headers[position];
+        const nextHeader = headers[position + 1]?.index ?? lines.length;
+        if (header.kind === 'label' || header.kind === 'proc') {
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file });
+        }
+    }
+    return blocks;
+}
+
+/**
+ * Parse all debugproc headers from one selected `.rs2` source. `shared`
+ * supplies the rest of the `_test` cheat tree for cross-file `@`/`~`
+ * follows (the debugproc's own file always wins); every shared file a
+ * follow actually reaches is recorded in `usedFiles` for provenance.
+ */
+export function parseDebugprocSource(
+    text: string,
+    relative: string,
+    help = new Map<string, HelpEntry>(),
+    shared: ReadonlyMap<string, SourceBlock> = new Map(),
+    usedFiles?: Set<string>,
+): ParsedDebugproc[] {
+    const lines = text.split(/\r?\n/);
+    const headerByIndex = new Map<number, SourceHeader>();
+    const nextHeaderByIndex = new Map<number, number>();
+    const blocks = new Map<string, SourceBlock>();
+    const headers: SourceHeader[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        const match = HEADER_PATTERN.exec(lines[index]);
+        if (!match) continue;
+        headers.push({ kind: match[1].toLowerCase(), name: match[2], index, close: match[0].lastIndexOf(']') });
+    }
     for (let position = 0; position < headers.length; position += 1) {
         const header = headers[position];
         const nextHeader = headers[position + 1]?.index ?? lines.length;
         nextHeaderByIndex.set(header.index, nextHeader);
         headerByIndex.set(header.index, header);
         if (header.kind === 'label' || header.kind === 'proc') {
-            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader) });
+            blocks.set(header.name.toLowerCase(), { body: sourceBlockBody(lines, header, nextHeader), file: relative });
         }
     }
     const rows: ParsedDebugproc[] = [];
@@ -320,17 +389,19 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
         const header = headerByIndex.get(index);
         if (!header) throw new Error(`${relative}:${index + 1}: malformed debugproc header`);
         const body = sourceBlockBody(lines, header, nextHeaderByIndex.get(index) ?? lines.length);
-        const effectBody = followedSourceBody(body, blocks);
+        const reached = new Set<string>();
+        const effectBody = followedSourceBody(body, blocks, shared, reached);
+        for (const file of reached) if (file !== relative) usedFiles?.add(file);
         const trailing = match[3].trim();
         const hint = help.get(alias.toLowerCase());
         const inline = /\/\/\s*(.*)$/.exec(trailing)?.[1]?.trim();
         const description = hint?.description ?? inline ?? '';
         rows.push({
             name: wire,
-            category: hint?.category ?? sourceFallbackCategory(relative, alias, effectBody),
+            category: hint?.category ?? sourceFallbackCategory(relative, alias, body),
             description,
             args,
-            destructive: hasContentEffect(alias, effectBody),
+            destructive: hasDestructiveEffect(effectBody),
             production_only: false,
             source: relative,
             line: index + 1,
@@ -455,6 +526,26 @@ function uniqueByAlias(rows: DebugName[]) {
     return [...new Map(rows.map((row) => [row.alias, row])).values()];
 }
 
+/**
+ * Every `[label,…]`/`[proc,…]` block under the `_test` cheat tree, for
+ * cross-file follows (`~help` → `@debug_quests`, `@please_finish`). The
+ * debugproc's own file always wins; first file in walk order wins between
+ * shared files (walk order is sorted, so this is deterministic). Scoped to
+ * `_test` on purpose: production helpers such as the teleport post-checks
+ * are not cheat effects.
+ */
+export function sharedTestBlocks(content: string): Map<string, SourceBlock> {
+    const shared = new Map<string, SourceBlock>();
+    for (const file of walkFiles(path.join(content, 'scripts/_test'), '.rs2')) {
+        const text = fs.readFileSync(file, 'utf8');
+        const relative = path.relative(content, file).split(path.sep).join('/');
+        for (const [name, block] of labelProcBlocks(text, relative)) {
+            if (!shared.has(name)) shared.set(name, block);
+        }
+    }
+    return shared;
+}
+
 export function extractDebugCatalog(
     content: string,
     engineHandlerText: string,
@@ -463,17 +554,26 @@ export function extractDebugCatalog(
 ): DebugCatalog {
     const helpFile = path.join(content, 'scripts/_test/scripts/cheats/cheat_help.rs2');
     const help = fs.existsSync(helpFile) ? parseDebugHelp(fs.readFileSync(helpFile, 'utf8')) : new Map<string, HelpEntry>();
+    const shared = sharedTestBlocks(content);
     const debugprocFiles = walkFiles(path.join(content, 'scripts'), '.rs2');
     const commands: ParsedDebugproc[] = [];
     const inputs: InputHash[] = [];
+    const seenInputs = new Set<string>();
+    const reachedShared = new Set<string>();
     for (const file of debugprocFiles) {
         const text = fs.readFileSync(file, 'utf8');
         if (!text.includes('[debugproc,')) continue;
         const relative = path.relative(content, file).split(path.sep).join('/');
-        const rows = parseDebugprocSource(text, relative, help);
+        const rows = parseDebugprocSource(text, relative, help, shared, reachedShared);
         if (!rows.length) continue;
         commands.push(...rows);
         inputs.push(sourceFile(content, relative));
+        seenInputs.add(relative);
+    }
+    for (const relative of [...reachedShared].sort()) {
+        if (seenInputs.has(relative)) continue;
+        inputs.push(sourceFile(content, relative));
+        seenInputs.add(relative);
     }
     const seen = new Set<string>();
     for (const row of commands) {
