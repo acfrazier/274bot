@@ -515,7 +515,7 @@ impl EvidenceWriter {
             "m6_combo": m6_combo,
             "warlord_first_open_hitbar": capture.frames.iter().find_map(|frame| {
                 frame["nearby_npcs"].as_array()?.iter().find(|npc| {
-                    npc["type"] == 477 && integer(npc, "total_health").is_some_and(|hp| hp > 0)
+                    npc["type"] == 477 && npc["total_health"].as_i64().is_some_and(|hp| hp > 0)
                 }).map(|npc| json!({
                     "tick": frame["tick"], "health": npc["health"],
                     "total_health": npc["total_health"], "index": npc["index"],
@@ -3084,7 +3084,7 @@ fn run_case(case: Case) {
             let tick = capture_snapshot
                 .frames
                 .last()
-                .and_then(|frame| integer(frame, "tick"));
+                .and_then(|frame| frame["tick"].as_i64());
             let end = abort_observation_end.get_or_insert_with(|| tick.unwrap_or(0) + 30);
             let observed = tick.is_some_and(|tick| tick >= *end);
             drop(capture_snapshot);
