@@ -11,6 +11,7 @@ use api::debug_commands::{DebugCatalog, DebugCommand, DebugName};
 use dear_imgui_rs::{StyleColor, TreeNodeFlags, Ui};
 use serde::{Deserialize, Serialize};
 
+use crate::name_picker;
 use crate::session::Session;
 use crate::theme::{scale_px, ACCENT, ERROR, GREEN};
 
@@ -155,6 +156,7 @@ pub struct DebugPanelState {
     values: Vec<String>,
     picker_arg: Option<usize>,
     picker_query: String,
+    picker_anchor: Option<[[f32; 2]; 2]>,
     pending_send: Option<PendingSend>,
     status: Option<PanelStatus>,
     target_mode: DebugTargetMode,
@@ -165,6 +167,7 @@ pub struct DebugPanelState {
     picker_cached_kind: String,
     picker_cached_query: String,
     picker_hits: Vec<DebugName>,
+    picker_rows: name_picker::PickerRows,
     /// Decoded only while the Debug window is open. The selected game facts
     /// never retain this catalog.
     catalog: Option<Arc<DebugCatalog>>,
@@ -652,9 +655,11 @@ fn select_command(session: &mut Session, name: &str) {
     session.debug_panel.values = values;
     session.debug_panel.picker_arg = None;
     session.debug_panel.picker_query.clear();
+    session.debug_panel.picker_anchor = None;
     session.debug_panel.picker_cached_kind.clear();
     session.debug_panel.picker_cached_query.clear();
     session.debug_panel.picker_hits.clear();
+    session.debug_panel.picker_rows.invalidate();
     session.debug_panel.pending_send = None;
     session.debug_panel.status = None;
 }
@@ -664,9 +669,11 @@ fn reset_selection_state(state: &mut DebugPanelState) {
     state.values.clear();
     state.picker_arg = None;
     state.picker_query.clear();
+    state.picker_anchor = None;
     state.picker_cached_kind.clear();
     state.picker_cached_query.clear();
     state.picker_hits.clear();
+    state.picker_rows.invalidate();
     state.pending_send = None;
     state.status = None;
 }
@@ -676,6 +683,7 @@ fn clear_selection(session: &mut Session) {
 }
 
 fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
+    // The popup uses the current window work rect and its Pick button anchor.
     ui.separator();
     ui.text_colored(ACCENT, format!("{}  [{}]", command.name, command.category));
     if command.destructive {
@@ -724,7 +732,8 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
         }
         if picker {
             ui.same_line();
-            if ui.small_button(format!("Pick##debug-pick-{index}")) {
+            let clicked = ui.small_button(format!("Pick##debug-pick-{index}"));
+            if clicked {
                 session.debug_panel.picker_arg = Some(index);
                 session.debug_panel.picker_query = session
                     .debug_panel
@@ -733,6 +742,9 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
                     .cloned()
                     .unwrap_or_default();
                 ui.open_popup(PICKER_POPUP);
+            }
+            if session.debug_panel.picker_arg == Some(index) {
+                session.debug_panel.picker_anchor = Some([ui.item_rect_min(), ui.item_rect_max()]);
             }
         }
         if argument.optional {
@@ -819,60 +831,99 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         return;
     };
 
-    ui.popup(PICKER_POPUP, || {
-        ui.text(format!("Pick {kind}"));
-        let picker_width =
-            ui.content_region_avail()[0].clamp(scale_px(ui, 180.0), scale_px(ui, 460.0));
-        ui.set_next_item_width(picker_width);
-        ui.input_text(
-            "##debug-picker-search",
-            &mut session.debug_panel.picker_query,
-        )
-        .hint("Search name or alias")
-        .build();
+    let work_area = name_picker::PopupWorkArea::current(ui);
+    let anchor = session
+        .debug_panel
+        .picker_anchor
+        .unwrap_or([work_area.min, work_area.min]);
+    name_picker::popup(
+        ui,
+        PICKER_POPUP,
+        session,
+        |session| {
+            refresh_picker_hits(session, catalog, &kind);
+            name_picker::prepare_popup(
+                ui,
+                work_area,
+                anchor,
+                &session.debug_panel.picker_hits,
+                &mut session.debug_panel.picker_rows,
+            )
+        },
+        |session, layout| {
+            ui.text(format!("Pick {kind}"));
+            ui.set_next_item_width(layout.content_width);
+            ui.input_text(
+                "##debug-picker-search",
+                &mut session.debug_panel.picker_query,
+            )
+            .hint("Search name or alias")
+            .build();
 
-        if session.debug_panel.picker_cached_kind != kind
-            || session.debug_panel.picker_cached_query != session.debug_panel.picker_query
-        {
-            let query = session.debug_panel.picker_query.clone();
-            session.debug_panel.picker_cached_kind.clone_from(&kind);
-            session.debug_panel.picker_cached_query = query.clone();
-            session.debug_panel.picker_hits = catalog
-                .map(|catalog| catalog.search_names(&kind, &query, NAME_PICKER_LIMIT))
+            refresh_picker_hits(session, catalog, &kind);
+            session
+                .debug_panel
+                .picker_rows
+                .ensure(ui, &session.debug_panel.picker_hits);
+            if session.debug_panel.picker_hits.is_empty() {
+                ui.text_disabled("No matches.");
+            }
+
+            let current = session
+                .debug_panel
+                .values
+                .get(index)
+                .cloned()
                 .unwrap_or_default();
-        }
-        if session.debug_panel.picker_hits.is_empty() {
-            ui.text_disabled("No matches.");
-        }
+            let state = &mut session.debug_panel;
+            let selected = name_picker::selected_row(&state.picker_hits, &current);
+            let picked = ui
+                .child_window("##debug-picker-hits")
+                .size([layout.content_width, layout.list_height])
+                .build(ui, || {
+                    name_picker::draw_hit_rows(
+                        ui,
+                        &state.picker_hits,
+                        &mut state.picker_rows,
+                        selected,
+                    )
+                })
+                .flatten();
 
-        let mut picked = None;
-        ui.child_window("##debug-picker-hits")
-            .size([picker_width, scale_px(ui, 180.0)])
-            .build(ui, || {
-                for hit in &session.debug_panel.picker_hits {
-                    let label = if hit.alias.is_empty() {
-                        format!("#{}  {}", hit.id, hit.name)
-                    } else {
-                        format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
-                    };
-                    if ui.selectable_config(&label).build() {
-                        picked = Some(hit.alias.clone());
-                    }
-                    if ui.is_item_hovered() {
-                        ui.tooltip_text(&label);
-                    }
-                }
-            });
+            if let Some(row) = picked {
+                let name = session
+                    .debug_panel
+                    .picker_hits
+                    .get(row)
+                    .map(|hit| hit.alias.clone())
+                    .unwrap_or_default();
+                set_picked_value(session, index, &name);
+                ui.close_current_popup();
+            }
+            if ui.button("Close##debug-picker-close") {
+                session.debug_panel.picker_arg = None;
+                session.debug_panel.picker_anchor = None;
+                ui.close_current_popup();
+            }
+        },
+    );
+}
 
-        if let Some(name) = picked {
-            set_picked_value(session, index, &name);
-            ui.close_current_popup();
-        }
-        if ui.button("Close##debug-picker-close") {
-            session.debug_panel.picker_arg = None;
-            ui.close_current_popup();
-        }
-    });
+/// Re-run the name search when the kind or query changed since the last
+/// frame; only returned rows are kept.
+fn refresh_picker_hits(session: &mut Session, catalog: Option<&DebugCatalog>, kind: &str) {
+    if session.debug_panel.picker_cached_kind == kind
+        && session.debug_panel.picker_cached_query == session.debug_panel.picker_query
+    {
+        return;
+    }
+    let query = session.debug_panel.picker_query.clone();
+    session.debug_panel.picker_cached_kind = kind.to_string();
+    session.debug_panel.picker_cached_query = query.clone();
+    session.debug_panel.picker_hits = catalog
+        .map(|catalog| catalog.search_names(kind, &query, NAME_PICKER_LIMIT))
+        .unwrap_or_default();
+    session.debug_panel.picker_rows.invalidate();
 }
 
 fn set_picked_value(session: &mut Session, index: usize, value: &str) {
@@ -881,6 +932,7 @@ fn set_picked_value(session: &mut Session, index: usize, value: &str) {
     }
     session.debug_panel.picker_arg = None;
     session.debug_panel.picker_query.clear();
+    session.debug_panel.picker_anchor = None;
 }
 
 fn same_targets(left: &[TargetRow], right: &[TargetRow]) -> bool {

@@ -12,6 +12,7 @@ pub mod grid;
 mod input_capture;
 pub mod loadouts;
 pub mod log_pane;
+pub mod name_picker;
 mod nav_paint_cache;
 pub mod nav_settings;
 pub mod overlay;

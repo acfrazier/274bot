@@ -444,15 +444,43 @@ fn search_popup(ui: &Ui, session: &mut Session) {
         ui.input_text("##loadout-search", &mut session.loadouts_search)
             .build();
         let data = session.selected_game_data();
-        let hits = if let Some(data) = data.as_ref() {
-            if let Some(slot) = session.loadouts_search_slot.as_deref() {
-                data.search_slot_items(slot, &session.loadouts_search, SEARCH_LIMIT)
-            } else {
-                data.search_named_items(&session.loadouts_search, SEARCH_LIMIT)
-            }
-        } else {
-            Vec::new()
-        };
+        let data_key = data.as_ref().map(std::sync::Arc::downgrade);
+        let cache_matches = session
+            .loadouts_search_cache_key
+            .as_ref()
+            .is_some_and(|(cached_data, cached_query, cached_slot)| {
+                let same_data = match (cached_data, &data_key) {
+                    (Some(cached), Some(current)) => std::sync::Weak::ptr_eq(cached, current),
+                    (None, None) => true,
+                    _ => false,
+                };
+                same_data
+                    && cached_query == &session.loadouts_search
+                    && cached_slot.as_deref() == session.loadouts_search_slot.as_deref()
+            });
+        if !cache_matches {
+            let hits = data
+                .as_ref()
+                .map(|data| {
+                    if let Some(slot) = session.loadouts_search_slot.as_deref() {
+                        data.search_slot_items(slot, &session.loadouts_search, SEARCH_LIMIT)
+                    } else {
+                        data.search_named_items(&session.loadouts_search, SEARCH_LIMIT)
+                    }
+                })
+                .unwrap_or_default();
+            session.loadouts_search_cache_key = Some((
+                data_key,
+                session.loadouts_search.clone(),
+                session.loadouts_search_slot.clone(),
+            ));
+            session.loadouts_search_hits = hits;
+            session.loadouts_picker_rows.invalidate();
+        }
+        session
+            .loadouts_picker_rows
+            .ensure(ui, &session.loadouts_search_hits);
+        let hits_empty = session.loadouts_search_hits.is_empty();
         if data.is_none() {
             ui.text_wrapped(
                 "Item catalog is unavailable for this profile's cache identity. Enter an exact item display name above, then use it below. Bind a profile whose cache matches the generated facts to enable search.",
@@ -466,27 +494,30 @@ fn search_popup(ui: &Ui, session: &mut Session) {
                     ui.close_current_popup();
                 }
             }
-        } else if hits.is_empty() {
+        } else if hits_empty {
             ui.text_disabled("No matches.");
         }
-        let mut picked: Option<(String, i32)> = None;
-        ui.child_window("##loadout-search-hits")
+        let hits = &session.loadouts_search_hits;
+        // Shared name-hit rows with the Debug picker: the fixed Loadouts width
+        // is unchanged, while strings and text measurements are cached.
+        let picked_row: Option<usize> = ui
+            .child_window("##loadout-search-hits")
             .size([scale_px(ui, 460.0), scale_px(ui, 180.0)])
             .build(ui, || {
-                for hit in &hits {
-                    let label = if hit.alias.is_empty() {
-                        format!("#{}  {}", hit.id, hit.name)
-                    } else {
-                        format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
-                    };
-                    if ui.selectable_config(&label).build() {
-                        picked = Some((hit.name.clone(), hit.id));
-                    }
-                    if ui.is_item_hovered() {
-                        ui.tooltip_text(&label);
-                    }
-                }
-            });
+                crate::name_picker::draw_hit_rows(
+                    ui,
+                    hits,
+                    &mut session.loadouts_picker_rows,
+                    None,
+                )
+            })
+            .flatten();
+        let mut picked: Option<(String, i32)> = None;
+        if let Some(row) = picked_row {
+            if let Some(hit) = hits.get(row) {
+                picked = Some((hit.name.clone(), hit.id));
+            }
+        }
         if let Some((name, _)) = picked {
             if let Some(slot) = session.loadouts_search_slot.clone() {
                 assign_slot(session, &slot, Some(name));
