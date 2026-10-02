@@ -14,6 +14,31 @@ fn names(app: &TuiApp) -> Vec<&str> {
     app.names.iter().map(String::as_str).collect()
 }
 
+#[test]
+fn overview_offers_memory_relog_after_leaving_settings_until_login_or_queue() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.show_screen(Screen::Overview);
+    app.memory = Some(frontend_core::MemoryNotice {
+        login_lowmem: true,
+        desired_lowmem: false,
+        relog_pending: false,
+    });
+    assert_eq!(app.on_key(ch('r')), AppAction::MemoryRelog("alice".into()));
+    app.memory.as_mut().unwrap().relog_pending = true;
+    assert_eq!(
+        app.on_key(ch('r')),
+        AppAction::None,
+        "queued relogs cannot be repeated"
+    );
+    app.memory.as_mut().unwrap().relog_pending = false;
+    app.memory.as_mut().unwrap().login_lowmem = false;
+    assert_eq!(
+        app.on_key(ch('r')),
+        AppAction::None,
+        "the applied mode needs no relog"
+    );
+}
+
 /// Moving the fleet cursor never changes the selected bot; Enter does.
 #[test]
 fn the_fleet_cursor_never_changes_the_selected_bot_until_enter() {

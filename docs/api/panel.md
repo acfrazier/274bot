@@ -159,12 +159,14 @@ checkboxes on a focused profile:
   Every drawing slot at 50 fps, focused included. Ephemeral.
 - **lowmem / highmem** — default **lowmem**. Click the current mem
   button (under none/GPU/CPU) for a sticky picker like Teles. Highmem is
-  `Profile.settings.lowmem = false`. The live client follows the switch
-  immediately without an automatic logout; server-side tabs, music and
-  sound follow at the next login. While those modes differ the panel shows
-  both and offers **Relog now**, which logs out and back in through the
-  ordinary login queue. A running or queued script Start is disclosed
-  before relogging, and the queued label clears when login succeeds, fails
+  `Profile.settings.lowmem = false`. The switch queues the entire mode for
+  the **next login**: live textures, tabs, music and sound stay unchanged.
+  While a logged-in slot has a different mode queued, the picker and the
+  persistent status notice offer **Relog now**, which logs out and back in
+  through the ordinary login queue. Closing the picker or folding Status
+  does not hide that offer. Logged out, the next **Log in** applies the
+  queued mode. A running or queued script Start is disclosed before
+  relogging, and the queued label clears when login succeeds, fails
   terminally, or the operator takes over with Log in / Log out.
 - **capture input** — click-through: while on and the Image is hovered,
   local coords stream `InputEv::Move`, mouse buttons send `Down`/`Up`

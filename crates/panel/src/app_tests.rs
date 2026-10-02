@@ -3672,12 +3672,12 @@ fn memory_notice_gets_its_own_readable_popup_row() {
             ..host_play::SlotStatus::default()
         });
     session.core.poll();
-    assert!(session.set_focused_lowmem(false));
 
     let mut ctx = dear_imgui_rs::Context::create();
     let drawn = DrawnText::default();
     ctx.set_clipboard_backend(drawn.clone());
-    for frame in 0..2 {
+    let mut offer_rect = None;
+    for frame in 0..8 {
         ctx.prepare_frame(
             dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0)
                 .renderer_has_textures(),
@@ -3691,7 +3691,63 @@ fn memory_notice_gets_its_own_readable_popup_row() {
                     if frame == 0 {
                         ui.open_popup(super::MEM_POPUP);
                     }
+                    if frame == 2 {
+                        ui.with_bound_context(|| {
+                            use dear_imgui_rs::sys;
+                            // SAFETY: the bound context owns the popup drawn
+                            // by the previous frame; activate its real mode button.
+                            unsafe {
+                                let parent = sys::igFindWindowByName(c"memory-layout".as_ptr());
+                                let popup_id = sys::igGetIDWithSeed_Str(
+                                    c"mem-pick".as_ptr(),
+                                    std::ptr::null(),
+                                    (*parent).ID,
+                                );
+                                let popup =
+                                    std::ffi::CString::new(format!("##Popup_{popup_id:08x}"))
+                                        .unwrap();
+                                let window = sys::igFindWindowByName(popup.as_ptr());
+                                let id = sys::igGetIDWithSeed_Str(
+                                    c"highmem".as_ptr(),
+                                    std::ptr::null(),
+                                    (*window).ID,
+                                );
+                                sys::igActivateItemByID(id);
+                            }
+                        });
+                    }
                     super::mem_popup(ui, &mut session);
+                    if frame >= 5 {
+                        offer_rect = Some(ui.with_bound_context(|| {
+                            use dear_imgui_rs::sys;
+                            // SAFETY: this frame owns the bound context and the
+                            // parent window is currently drawing.
+                            let popup_id = unsafe {
+                                let parent = sys::igFindWindowByName(c"memory-layout".as_ptr());
+                                assert!(!parent.is_null());
+                                sys::igGetIDWithSeed_Str(
+                                    c"mem-pick".as_ptr(),
+                                    std::ptr::null(),
+                                    (*parent).ID,
+                                )
+                            };
+                            let popup =
+                                std::ffi::CString::new(format!("##Popup_{popup_id:08x}")).unwrap();
+                            // SAFETY: this frame owns the bound context, and the popup
+                            // has just drawn; ImGui keeps its window alive.
+                            unsafe {
+                                let window = sys::igFindWindowByName(popup.as_ptr());
+                                assert!(!window.is_null());
+                                let id = sys::igGetIDWithSeed_Str(
+                                    c"Relog now".as_ptr(),
+                                    std::ptr::null(),
+                                    (*window).ID,
+                                );
+                                sys::igSetFocusID(id, window);
+                                focused_item_rect(window)
+                            }
+                        }));
+                    }
                 });
             ui.log_finish();
         }
@@ -3699,8 +3755,32 @@ fn memory_notice_gets_its_own_readable_popup_row() {
     }
     let text = drawn.0.take();
     assert!(
-        text.contains("server tabs + sound follow"),
-        "notice must wrap by words on its own row, not one letter per line: {text:?}"
+        text.contains("Relog now"),
+        "the real in-popup toggle must offer Relog now: {text:?}"
+    );
+    let (offer, clip) = offer_rect.unwrap();
+    assert!(
+        offer[0][0] >= clip[0][0] && offer[0][1] >= clip[0][1]
+            && offer[1][0] <= clip[1][0] && offer[1][1] <= clip[1][1],
+        "Relog now must be visible without scrolling after a logged-in toggle: offer={offer:?}, clip={clip:?}"
+    );
+
+    // Closing the picker must not hide the offer in the ordinary bot status.
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("memory-status")
+            .build(|| super::status_section(ui, &mut session));
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Relog now"),
+        "the pending-mode offer must survive leaving the picker: {text:?}"
     );
 }
 

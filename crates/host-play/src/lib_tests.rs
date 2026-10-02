@@ -806,6 +806,108 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
 }
 
 #[test]
+fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (login_tx, login_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut preface = [0; 2];
+            socket.read_exact(&mut preface).unwrap();
+            assert_eq!(preface[0], 14);
+            socket.write_all(&[0; 17]).unwrap();
+            let mut header = [0; 2];
+            socket.read_exact(&mut header).unwrap();
+            let mut body = vec![0; usize::from(header[1])];
+            socket.read_exact(&mut body).unwrap();
+            login_tx.send(body[3] != 0).unwrap();
+            socket.write_all(&[2, 0, 0]).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+    });
+    let request = Arc::new(AtomicUsize::new(1));
+    let requested = Arc::clone(&request);
+    let (frame_tx, frame_rx) = mpsc::channel();
+    let last_request = AtomicUsize::new(0);
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        move |client, _, _| {
+            if client.ingame {
+                client.scene_state = 2;
+                let now = requested.load(Ordering::Acquire);
+                if now != last_request.swap(now, Ordering::AcqRel) {
+                    frame_tx
+                        .send((
+                            client.config.lowmem,
+                            client.tex_average,
+                            client
+                                .jagfx
+                                .synth
+                                .iter()
+                                .filter(|sound| sound.is_some())
+                                .count(),
+                            client.midi_song,
+                            client.next_music_delay,
+                            client.wave_count,
+                        ))
+                        .unwrap();
+                }
+            }
+        },
+    );
+    let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    let first_login = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let first_frame = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    arm.set_lowmem_handshake(false);
+    request.store(2, Ordering::Release);
+    play.wake("alice");
+    let after_toggle = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    arm.request_logout();
+    release_tx.send(()).unwrap();
+    assert!(wait_until(2_000, || !play.slot_connected("alice")));
+    arm.arm_explicit_login();
+    request.store(3, Ordering::Release);
+    play.wake("alice");
+    let next_login = login_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let next_frame = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    server.join().unwrap();
+
+    assert!(first_login && first_frame.0, "initial login uses lowmem");
+    assert_eq!(
+        after_toggle, first_frame,
+        "queuing highmem must leave the active client's mode, textures and audio unchanged"
+    );
+    assert!(
+        !next_login && !next_frame.0,
+        "the next login applies highmem to both wire and client"
+    );
+}
+
+#[test]
 fn running_slot_profile_world_change_reseats_next_login_handshake() {
     let w1_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let w1_port = w1_listener.local_addr().unwrap().port();

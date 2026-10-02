@@ -1412,7 +1412,7 @@ fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
 }
 
 #[test]
-fn lowmem_flip_rebuilds_renderer_not_client() {
+fn next_login_memory_mode_rebuilds_the_renderer() {
     force_cpu_backend();
     let mut c = prepare_client(
         cfg(),
@@ -1428,14 +1428,14 @@ fn lowmem_flip_rebuilds_renderer_not_client() {
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert_eq!(slot.renderer_lowmem, Some(true));
     let uid = c.login_uid;
-    c.set_lowmem(false);
+    c.configure_login_memory(false);
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert_eq!(c.login_uid, uid);
     assert!(slot.renderer.is_some());
     assert_eq!(
         slot.renderer_lowmem,
         Some(false),
-        "a mem flip must drop the head so the next paint reads the new config.lowmem"
+        "the next login's mode must rebuild the head before its first paint"
     );
 }
 
