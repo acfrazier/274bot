@@ -97,7 +97,7 @@ impl<'a> SnapshotView<'a> {
     }
 
     /// Arrival for a walk whose caller explicitly supplied loc identity.
-    /// An absent live footprint is only an approach estimate, never arrival.
+    /// An observed gone/replaced loc settles under the plain tile predicate.
     pub fn walk_loc_arrived(
         &self,
         from: super::WorldTile,
@@ -106,7 +106,13 @@ impl<'a> SnapshotView<'a> {
         loc_id: i32,
     ) -> bool {
         self.scene_ready().is_some_and(|snapshot| {
-            crate::query::loc_approach::arrived_at(snapshot, from, to, radius, loc_id) == Some(true)
+            match crate::query::loc_approach::arrived_at(snapshot, from, to, radius, loc_id) {
+                Some(arrived) => arrived,
+                None => {
+                    crate::query::loc_approach::target_gone(snapshot, to, loc_id)
+                        && self.walk_arrived(from, to, radius)
+                }
+            }
         })
     }
 

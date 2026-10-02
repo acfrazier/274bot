@@ -385,9 +385,13 @@ For an identified loc in scene with a known footprint, distance is measured
 to its full rotated footprint rectangle, not its south-west anchor. A legal
 stand must fit that margin and pass the shared live wall/force-approach rule.
 Off-scene or unknown loc footprints use the plain anchor-radius estimate;
-they never flood connected solids. The same owned walk is re-planned only
-when its target enters the scene or its footprint becomes known, not on
-every tick at an unchanged estimate. Only live operability proves loc arrival.
+they never flood connected solids. The same owned walk is re-planned when
+its target enters the scene, its footprint becomes known, or a vanished
+footprint leaves an obsolete stand outside tile arrival—not on every tick
+at an unchanged estimate. Live operability proves loc arrival while
+the identified loc remains present. If it is absent or replaced in a ready,
+loc-observed scene, the walk instead settles through the plain tile predicate
+so its caller can reselect a target. Off-scene targets still defer.
 Exact tile walks are unchanged.
 
 Native walks retain their action when a correlated host `RouteEnded` arrives

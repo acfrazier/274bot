@@ -327,27 +327,8 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
         "an unchanged estimate is not refreshed"
     );
 
-    // Scene entry and footprint discovery are separate estimate inputs.
-    rig.client.map_build_base_x = LIVE_BASE.x;
-    rig.client.map_build_base_z = LIVE_BASE.z;
-    rig.set_position(estimated_endpoint);
-    rig.pump(estimated_endpoint);
-    let _ = wait_for_route(&rig.navs, |_| true);
-    let entered_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
-    assert_eq!(
-        entered_generation,
-        initial_generation + 1,
-        "scene entry refreshes once"
-    );
-    for _ in 0..10 {
-        rig.pump(estimated_endpoint);
-    }
-    let unchanged_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
-    assert_eq!(
-        unchanged_generation, entered_generation,
-        "unknown footprint does not refresh every tick"
-    );
     rig.expose_live_footprint(estimated_endpoint);
+    // Enter the scene with the footprint already observed.
     assert_eq!(
         api::query::loc_approach::arrived_at(&rig.snapshot, estimated_endpoint, TARGET, 1, 0),
         Some(false),
@@ -369,8 +350,8 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
     let refreshed_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
     assert_eq!(
         refreshed_generation,
-        entered_generation + 1,
-        "known footprint refreshes once more"
+        initial_generation + 1,
+        "scene entry with a known footprint refreshes once"
     );
     assert!(
         (refreshed.dest
@@ -413,6 +394,174 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
             .is_none_or(|owner| !owner.live()),
         "explicit cancellation revokes the original owner"
     );
+}
+
+#[test]
+fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
+    for replaced in [true, false] {
+        for gone_before_arm in [false, true] {
+            let start = WorldTile {
+                x: TARGET.x - 4,
+                ..TARGET
+            };
+            let mut rig = SettlementRig::new(packed_world());
+            rig.client.map_build_base_x = LIVE_BASE.x;
+            rig.client.map_build_base_z = LIVE_BASE.z;
+            crate::tests::plant_nav_footprint_loc(&mut rig.client, 52, 52, 1, 1);
+            let cache = Arc::get_mut(&mut rig.client.cache).expect("rig owns cache");
+            cache.locs.last_mut().unwrap().name = "Yew".into();
+            rig.client.collision[0].flags[52][52] |= CollisionFlag::SQ_BLOCKED;
+            rig.set_position(start);
+
+            let deplete = |rig: &mut SettlementRig, here| {
+                if replaced {
+                    if rig
+                        .snapshot
+                        .locs()
+                        .iter()
+                        .any(|loc| loc.tile == TARGET && loc.id == 0)
+                    {
+                        crate::tests::plant_nav_footprint_loc(&mut rig.client, 52, 52, 1, 1);
+                        let cache = Arc::get_mut(&mut rig.client.cache).expect("rig owns cache");
+                        cache.locs.last_mut().unwrap().name = "Tree stump".into();
+                    }
+                    rig.set_position(here);
+                    assert!(rig
+                        .snapshot
+                        .locs()
+                        .iter()
+                        .any(|loc| loc.tile == TARGET && loc.id == 1));
+                } else {
+                    rig.snapshot.seed_locs(Vec::new());
+                }
+                assert!(!rig
+                    .snapshot
+                    .locs()
+                    .iter()
+                    .any(|loc| loc.tile == TARGET && loc.id == 0));
+            };
+            if gone_before_arm {
+                deplete(&mut rig, start);
+            }
+            rig.observe(1, start);
+            let endpoint = wait_for_route(&rig.navs, |_| true).dest;
+            let initial_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+            rig.set_position(endpoint);
+            deplete(&mut rig, endpoint);
+            for tick in 2..42 {
+                rig.observe(tick, endpoint);
+                rig.pump(endpoint);
+            }
+            rig.observe(42, endpoint);
+            assert!(
+                matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
+                "replaced={replaced}, gone_before_arm={gone_before_arm}: a gone target must settle through tile arrival"
+            );
+            let all = rig.navs.lock().unwrap();
+            assert!(
+                all[ALICE].route.is_none(),
+                "the host follow must settle too"
+            );
+            assert!(all[ALICE]
+                .native_walk
+                .as_ref()
+                .is_none_or(|owner| !owner.live()));
+            assert_eq!(
+                all[ALICE].route_generation,
+                initial_generation + 1,
+                "terminal cleanup must not restart the route"
+            );
+        }
+    }
+}
+
+#[test]
+fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
+    let mut rig = SettlementRig::new(packed_world());
+    rig.observe(1, START);
+    let endpoint = wait_for_route(&rig.navs, |_| true).dest;
+    rig.set_position(endpoint);
+    rig.pump(endpoint);
+    assert!(rig.navs.lock().unwrap()[ALICE].route.is_some());
+    rig.client.map_build_base_x = LIVE_BASE.x;
+    rig.client.map_build_base_z = LIVE_BASE.z;
+    rig.set_position(endpoint);
+    rig.pump(endpoint);
+    rig.observe(2, endpoint);
+    assert!(
+        matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
+        "an observed empty scene is target-gone evidence, not an off-scene estimate"
+    );
+    assert!(rig.navs.lock().unwrap()[ALICE].route.is_none());
+}
+
+#[test]
+fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
+    let start = WorldTile {
+        x: TARGET.x + 4,
+        ..TARGET
+    };
+    let origin = WorldTile {
+        x: TARGET.x - 80,
+        z: TARGET.z - 80,
+        ..TARGET
+    };
+    let mut flags = vec![0u32; 160 * 160];
+    flags[80 * 160 + 80] = CollisionFlag::SQ_BLOCKED as u32;
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin,
+            width: 160,
+            height: 160,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let mut rig = SettlementRig::new(world);
+    rig.client.map_build_base_x = LIVE_BASE.x;
+    rig.client.map_build_base_z = LIVE_BASE.z;
+    crate::tests::plant_nav_footprint_loc(&mut rig.client, 52, 52, 3, 3);
+    let cache = Arc::get_mut(&mut rig.client.cache).expect("rig owns cache");
+    cache.locs.last_mut().unwrap().forceapproach = 13; // East side only.
+    rig.client.collision[0].flags[52][52] |= CollisionFlag::SQ_BLOCKED;
+    rig.set_position(start);
+    rig.observe(1, start);
+    let old_endpoint = wait_for_route(&rig.navs, |_| true).dest;
+    assert!(old_endpoint.x.abs_diff(TARGET.x) > 1);
+    let request_id = live_owner_id(&rig.navs);
+    let initial_generation = rig.navs.lock().unwrap()[ALICE].route_generation;
+
+    crate::tests::plant_nav_footprint_loc(&mut rig.client, 52, 52, 1, 1);
+    rig.set_position(old_endpoint);
+    rig.observe(2, old_endpoint);
+    rig.pump(old_endpoint);
+    let endpoint = wait_for_route(&rig.navs, |dest| dest != old_endpoint).dest;
+    assert_eq!(live_owner_id(&rig.navs), request_id);
+    assert!(
+        endpoint
+            .x
+            .abs_diff(TARGET.x)
+            .max(endpoint.z.abs_diff(TARGET.z))
+            <= 1
+    );
+    assert!(rig.control.lock().result.is_none());
+    assert_eq!(
+        rig.navs.lock().unwrap()[ALICE].route_generation,
+        initial_generation + 1,
+        "the vanished footprint refreshes once under the same owner"
+    );
+    rig.set_position(endpoint);
+    rig.pump(endpoint);
+    rig.observe(3, endpoint);
+    assert!(
+        matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
+        "a depleted large target must not end at its obsolete far perimeter"
+    );
+    assert!(rig.navs.lock().unwrap()[ALICE].route.is_none());
 }
 
 #[test]
