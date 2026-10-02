@@ -1376,8 +1376,8 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
     assert!(!app.params_state.open);
     assert_eq!(
         commits,
-        [("alchs".to_string(), serde_json::json!(5.0))],
-        "only the saved edit is committed; the cancelled one is not"
+        [("alchs".to_string(), serde_json::json!(5))],
+        "the saved integral edit commits as an integer; the cancelled edit is not"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
