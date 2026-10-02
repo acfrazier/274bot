@@ -966,6 +966,7 @@ fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
 fn door_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -996,6 +997,7 @@ fn door_edge() -> TransportEdge {
 fn ladder_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -1025,6 +1027,7 @@ fn ladder_edge() -> TransportEdge {
 fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::AgilityShortcut,
+        player_delta: None,
         at,
         to: WorldTile {
             x: at.x - 5,
@@ -1100,6 +1103,7 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
     );
     let closed = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -1136,6 +1140,7 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
 fn trapdoor_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -1167,6 +1172,7 @@ fn trapdoor_edge() -> TransportEdge {
 fn cart_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -2233,6 +2239,7 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -2289,6 +2296,7 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
     };
     let tree = |to| TransportEdge {
         kind: TransportKind::SpiritTree,
+        player_delta: None,
         at: WorldTile {
             x: 2461,
             z: 3444,
@@ -2512,6 +2520,7 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
     };
     let tree = |to| TransportEdge {
         kind: TransportKind::SpiritTree,
+        player_delta: None,
         at,
         to,
         loc_id: 1293,
@@ -3293,6 +3302,7 @@ fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
 fn rangingguild_enter_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: RANGING_OUTSIDE,
         to: RANGING_INSIDE,
         loc_id: 2514,
@@ -3323,6 +3333,7 @@ fn rangingguild_exit_edge() -> TransportEdge {
 fn shantay_north_short_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: SHANTAY_NORTH_AT,
         to: SHANTAY_NORTH_TO,
         loc_id: SHANTAY_HENGE_LOC_ID,
@@ -3361,6 +3372,7 @@ fn follow_still_pending<D: Driver>(
 fn shantay_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -3487,6 +3499,7 @@ const TEST_TOLL_COIN_OBJ: i32 = 4242;
 fn alkharid_toll_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3201,
@@ -3997,6 +4010,7 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4240,6 +4254,7 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4319,6 +4334,7 @@ fn follow_essence_entry_accepts_any_mine_landing() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4382,6 +4398,7 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::EssenceExit,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4440,6 +4457,7 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
 fn ring_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4474,6 +4492,7 @@ fn ring_edge() -> TransportEdge {
 fn glory_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4506,6 +4525,7 @@ fn glory_edge() -> TransportEdge {
 fn varrock_spell_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4538,6 +4558,7 @@ fn varrock_spell_edge() -> TransportEdge {
 fn lumbridge_spell_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -7321,6 +7342,7 @@ fn level_change_transport_requires_proximity_to_to() {
     let snap = snap_at(&mut c, 100, 100);
     let edge = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -7421,6 +7443,11 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: Some(WorldTile {
+            x: 10,
+            z: 30,
+            level: 0,
+        }),
         at: anchor,
         to: baked_to,
         loc_id: 1,
@@ -7472,6 +7499,12 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
     let mut rec = FollowRec::default();
     let mut no_session = None;
     // A tile beside either predicted landing is not an arrival at radius 0.
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::Watching
+    ));
+    // The route's nominal/planned `to` is not proof of this relative jump.
+    let snap = snap_at(&mut c, 12, 34);
     assert!(matches!(
         run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
         Poll::Watching

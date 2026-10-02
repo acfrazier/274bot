@@ -88,6 +88,7 @@ pub(super) fn lever_edges(
             for to in &tos {
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at,
                     to: *to,
                     loc_id,

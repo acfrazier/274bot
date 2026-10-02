@@ -165,6 +165,10 @@ pub struct TransportEdge {
     pub kind: TransportKind,
     pub at: WorldTile,
     pub to: WorldTile,
+    /// Content `movecoord(coord, ...)` displacement from the actual operable
+    /// takeoff stand. `None` is an absolute landing. Packed in the kind byte's
+    /// high bit; the canonical graph's `to - at` supplies the displacement.
+    pub player_delta: Option<WorldTile>,
     pub loc_id: i32,
     pub option: i32,
     pub ticks: i32,
@@ -194,6 +198,22 @@ pub struct TransportEdge {
     /// snapshot varps and the quest list never do. Packed on the v11 wire
     /// after `wildy_cap`.
     pub quest_gates: Option<QuestGates>,
+}
+
+impl TransportEdge {
+    /// Resolve a landing from the actual takeoff, not the loc's anchor.
+    /// Reconstructed route edges keep their exact planned `to` while retaining
+    /// this content delta for live settlement from the stand used at send time.
+    pub fn landing_from(&self, from: WorldTile) -> WorldTile {
+        match self.player_delta {
+            Some(delta) => WorldTile {
+                x: from.x + delta.x,
+                z: from.z + delta.z,
+                level: from.level + delta.level,
+            },
+            None => self.to,
+        }
+    }
 }
 
 /// Transport edges indexed by operable footprint stands or radius-one

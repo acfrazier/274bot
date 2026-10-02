@@ -2193,7 +2193,9 @@ impl<'a> ReverseClosure<'a> {
         }
         let admitted = self.seen.len();
         for (index, edge) in graph.edges.iter().enumerate() {
-            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax) {
+            if (edge.player_delta.is_some() || self.seen.contains(&edge.to))
+                && edge_allowed(state, edge, self.relax)
+            {
                 if let Some(proof) = self.admit_edge_takeoffs(index) {
                     return Some(proof);
                 }
@@ -2215,7 +2217,6 @@ impl<'a> ReverseClosure<'a> {
     /// sides and source wall faces. Radius-only predecessors are not a proof.
     fn admit_edge_takeoffs(&mut self, index: usize) -> Option<ReverseProof> {
         let (min, max) = self.graph.takeoff_bounds(index);
-        let to = self.graph.edges[index].to;
         for x in min.x..=max.x {
             for z in min.z..=max.z {
                 let takeoff = WorldTile {
@@ -2223,12 +2224,18 @@ impl<'a> ReverseClosure<'a> {
                     z,
                     level: min.level,
                 };
-                if self.graph.admissible_from(self.collision, index, takeoff)
-                    && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                if !self.graph.admissible_from(self.collision, index, takeoff) {
+                    continue;
+                }
+                let edge = &self.graph.edges[index];
+                let to = edge.landing_from(takeoff);
+                if (edge.player_delta.is_some() && !self.seen.contains(&to))
+                    || !wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
                 {
-                    if let Some(proof) = self.admit(takeoff) {
-                        return Some(proof);
-                    }
+                    continue;
+                }
+                if let Some(proof) = self.admit(takeoff) {
+                    return Some(proof);
                 }
             }
         }
@@ -2484,23 +2491,21 @@ fn search_kernel(
                         if !edge_allowed(state, edge, relax) {
                             continue;
                         }
-                        if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
+                        let to = edge.landing_from(cur);
+                        if !avoid.is_empty() && !escaping && tile_in_any_avoid(to, avoid) {
                             continue;
                         }
-                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, edge.to)) {
+                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, to)) {
                             continue;
                         }
-                        if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
+                        if !wildy_step_ok(graph, cur, to, allow_wilderness) {
                             continue;
                         }
                         let nd = n.cost + edge.ticks as f64;
-                        if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
-                            dist.insert(edge.to, nd);
-                            came_from.insert(edge.to, Back::Transport { from: cur, ei });
-                            heap.push(HeapNode {
-                                cost: nd,
-                                tile: edge.to,
-                            });
+                        if !done.contains(&to) && dist.get(&to).is_none_or(|&g| g > nd) {
+                            dist.insert(to, nd);
+                            came_from.insert(to, Back::Transport { from: cur, ei });
+                            heap.push(HeapNode { cost: nd, tile: to });
                         }
                     }
                 }
@@ -2770,7 +2775,10 @@ fn reconstruct(
                 ticks += walk_ticks(&walk_rev, model);
                 walk_rev.reverse();
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
-                let edge = graph.edges[ei].clone();
+                let mut edge = graph.edges[ei].clone();
+                if edge.player_delta.is_some() {
+                    edge.to = t;
+                }
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 // The walk leg before the transport resumes from the tile

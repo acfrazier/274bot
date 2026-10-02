@@ -523,6 +523,7 @@ mod rasterize_rules {
             TransportGraph {
                 edges: vec![TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: WorldTile {
                         x: 0,
                         z: 0,
