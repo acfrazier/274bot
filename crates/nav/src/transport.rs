@@ -98,6 +98,7 @@ use static_routes::*;
 use teleports::*;
 use toll::*;
 use vertical::*;
+pub(crate) use webs::select_web_action;
 use webs::*;
 pub(crate) use wilderness::require_wilderness_teleport_legality;
 use wilderness::*;

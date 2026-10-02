@@ -992,6 +992,40 @@ fn door_edge() -> TransportEdge {
     }
 }
 
+fn web_cut_edges() -> [TransportEdge; 2] {
+    let mut knife = door_edge();
+    knife.at = WorldTile {
+        x: 3202,
+        z: 3200,
+        level: 0,
+    };
+    knife.to = WorldTile {
+        x: 3204,
+        z: 3200,
+        level: 0,
+    };
+    knife.loc_id = 733;
+    knife.option = 0;
+    knife.ticks = 2;
+    knife.dir = Some(DoorDir::E);
+    knife.open_loc_id = Some(734);
+    knife.item_req = vec![(946, 1)];
+
+    let mut slash = knife.clone();
+    slash.option = 1;
+    slash.item_req.clear();
+    slash.worn_req = vec![1321];
+    [knife, slash]
+}
+
+fn web_route(edge: TransportEdge) -> Route {
+    Route {
+        dest: edge.to,
+        ticks: 2.0,
+        legs: vec![Leg::Transport { edge }],
+    }
+}
+
 /// A ladder edge standing at (3202, 3204) → (3202, 3205).
 fn ladder_edge() -> TransportEdge {
     TransportEdge {
@@ -2128,6 +2162,175 @@ fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
 }
 
 #[test]
+fn follow_web_reselects_knife_after_planned_slash_blade_is_unequipped() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    plant_equipment_item(&mut c, 1321);
+    let mut snap = snap_at(&mut c, 0, 0);
+    assert_eq!(snap.equipment()[0].def.id, 1321);
+    assert!(snap.inv().iter().any(|&(id, count)| id == 946 && count > 0));
+
+    let edges = web_cut_edges();
+    let route = web_route(edges[1].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1, "one approach walk before the cut");
+    let stand = rec.walked[0];
+
+    clear_equipment_item(&mut c);
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(snap.equipment().is_empty());
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1, "the current knife replaces planned Slash");
+    assert_eq!(rec.loc_ops, 0, "do not send the stale Slash op");
+}
+
+#[test]
+fn follow_web_reselects_slash_after_planned_knife_is_removed() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[0].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1, "one approach walk before the cut");
+    let stand = rec.walked[0];
+
+    clear_inventory_item(&mut c);
+    plant_equipment_item(&mut c, 1321);
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(snap.inv().iter().all(|&(id, _)| id != 946));
+    assert!(snap.equipment().iter().any(|item| item.def.id == 1321));
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1, "the current slash blade replaces oplocu");
+    assert_eq!(rec.loc_uses, 0, "do not use the stale knife edge");
+}
+
+#[test]
+fn follow_web_without_a_qualifying_action_fails_without_sending() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    plant_equipment_item(&mut c, 1321);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[1].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    clear_inventory_item(&mut c);
+    clear_equipment_item(&mut c);
+    let stand = rec.walked[0];
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+
+    match traveller.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Blocked { detail, .. }) => {
+            assert!(
+                detail.contains("neither a worn slash blade nor a carried knife qualifies"),
+                "explicit failure detail: {detail}"
+            );
+        }
+        other => panic!("expected an explicit blocked outcome, got {other:?}"),
+    }
+    assert_eq!(rec.loc_ops, 0, "no doomed Slash is sent");
+    assert_eq!(rec.loc_uses, 0, "no missing knife is used");
+}
+
+#[test]
+fn follow_web_slash_during_approach_walks_through_without_an_op() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[0].clone());
+    let dest = route.dest;
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    let stand = rec.walked[0];
+    plant_loc(&mut c, 734, "Web", "Slash", 2, 0);
+    c.add_chat(0, "You fail to cut through it.", "");
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.loc_uses, 0, "the approach completion sends no op");
+
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert!(rec.walked.contains(&(4, 0)), "walk through the open web");
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.loc_uses, 0);
+    plant_player(&mut c, 4, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at: dest })
+    );
+}
+
+#[test]
 fn follow_web_retries_each_observed_cut_failure_and_accepts_the_slashed_loc() {
     let mut c = scene_client();
     plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
@@ -2144,13 +2347,17 @@ fn follow_web_retries_each_observed_cut_failure_and_accepts_the_slashed_loc() {
     edge.item_req = vec![(946, 1)];
     edge.open_loc_id = Some(734);
     edge.dir = Some(DoorDir::E);
+    let edges = [edge.clone()];
     let dest = edge.to;
     let route = Route {
         legs: vec![Leg::Transport { edge }],
         dest,
         ticks: 2.0,
     };
-    let mut options = TravelOptions::default();
+    let mut options = TravelOptions {
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
 
     assert!(traveller
         .follow(&mut rec, &snap, route.clone(), &mut options)
@@ -2222,6 +2429,7 @@ fn follow_web_does_not_retry_from_elapsed_time_without_a_failure_message() {
     edge.item_req = vec![(946, 1)];
     edge.open_loc_id = Some(734);
     edge.dir = Some(DoorDir::E);
+    let edges = [edge.clone()];
     let route = Route {
         legs: vec![Leg::Transport { edge: edge.clone() }],
         dest: edge.to,
@@ -2229,6 +2437,7 @@ fn follow_web_does_not_retry_from_elapsed_time_without_a_failure_message() {
     };
     let mut options = TravelOptions {
         budget_ticks_per_hop: 1,
+        edges: Some(&edges),
         ..TravelOptions::default()
     };
 
@@ -4736,6 +4945,68 @@ fn plant_inv_stack(c: &mut Client, obj_id: i32, count: i32) {
         IfTypeMut {
             link_obj_type: Some(vec![obj_id + 1]),
             link_obj_number: Some(vec![count]),
+            ..Default::default()
+        },
+    );
+}
+
+fn clear_inventory_item(c: &mut Client) {
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+}
+
+fn plant_equipment_item(c: &mut Client, obj_id: i32) {
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.objs.len() <= obj_id as usize {
+            cache.objs.push(ObjType::default());
+        }
+        cache.objs[obj_id as usize] = ObjType {
+            id: obj_id,
+            ..Default::default()
+        };
+    }
+    c.side_icon[4] = 400;
+    c.set_iface(
+        400,
+        IfType {
+            id: 400,
+            layer_id: 400,
+            children: Some(vec![401]),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        401,
+        IfType {
+            id: 401,
+            layer_id: 400,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        401,
+        IfTypeMut {
+            link_obj_type: Some(vec![obj_id + 1]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+}
+
+fn clear_equipment_item(c: &mut Client) {
+    c.set_iface_mut(
+        401,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
             ..Default::default()
         },
     );

@@ -37,7 +37,7 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::quest_gates::QuestFamilyMismatch;
-use crate::transport::{TransportEdge, TransportGraph};
+use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
 use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
@@ -2000,19 +2000,12 @@ fn prefer_worn_slash_for_web(
         return false;
     }
     graph.at.get(&edge.at).is_some_and(|indices| {
-        indices.iter().any(|&index| {
-            let alternative = &graph.edges[index];
-            alternative.is_slashable_web()
-                && alternative.option == 1
-                && alternative.at == edge.at
-                && alternative.to == edge.to
-                && alternative.dir == edge.dir
-                && alternative.ticks == edge.ticks
-                && alternative.open_loc_id == edge.open_loc_id
-                && alternative.item_req.is_empty()
-                && !alternative.worn_req.is_empty()
-                && edge_allowed(state, alternative, relax)
-        })
+        select_web_action(
+            indices.iter().map(|&index| &graph.edges[index]),
+            edge,
+            |candidate| edge_allowed(state, candidate, relax),
+        )
+        .is_some_and(|selected| selected.option == 1)
     })
 }
 
