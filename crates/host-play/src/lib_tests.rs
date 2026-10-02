@@ -852,6 +852,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
             content_id: "world-edit-login-fixture".into(),
             file_store_dir: None,
             ondemand_persist_dir: None,
+            map_archive: None,
         })
         .unwrap(),
     );
