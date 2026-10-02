@@ -148,6 +148,20 @@ impl Scripts {
         id: script::CompiledId,
         values: Map<String, Value>,
     ) -> Result<OperationId, String> {
+        self.set_compiled_overrides_assigning(core, profile, id, values, None)
+    }
+
+    /// Like [`Self::set_compiled_overrides`], optionally assigning the card in
+    /// the same profile write. The copy is validated before that write, so a
+    /// rejected envelope keeps the old assignment.
+    pub(crate) fn set_compiled_overrides_assigning<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        id: script::CompiledId,
+        values: Map<String, Value>,
+        assignment: Option<vault::ScriptAssignment>,
+    ) -> Result<OperationId, String> {
         let card = script::compiled_card(id).ok_or("compiled card unavailable")?;
         // Do not overwrite an unknown saved schema with current defaults.
         self.compiled_overrides(core, profile, id)?;
@@ -175,6 +189,9 @@ impl Scripts {
             profile,
             ArmMirror::NativeSettings { id, bag, live },
             |settings| {
+                if let Some(assignment) = assignment {
+                    settings.script_assignment = Some(assignment);
+                }
                 settings.script_settings.insert(
                     key.clone(),
                     vault::CompiledSettingsRecord {

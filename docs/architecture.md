@@ -433,8 +433,19 @@ tiles already verified).
 | `log_file.rs` | per-session log file | shared off-by-default preference, background writer, size rotation, session pruning |
 | `scripts/mod.rs` | script coordination | card library and catalog fill, per-profile assignment and pending Browse, parameter bags (legacy claim, typed edits pushed live once durable), Start / Start all / Stop all, Start settlement (assignment on Ready), notices |
 | `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
-| `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts |
+| `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging) |
 | `session_tests.rs`, `scripts/tests.rs`, `views_tests.rs`, `resources_tests.rs` | test bodies | real `Play` seam, no server |
+
+Accepted native copies keep their Start hold on the existing preparation and
+profile-write operations, not on a separate completion tracker. Preparation
+failure, Cancel, vault lock or slot removal releases the affected hold without
+publishing the draft. A 30-second preparation/persistence wait limit lets a
+stalled copy fail rather than strand queued Starts. A preparation that times out
+cannot publish a late result; an already-submitted disk write cannot be recalled
+and may still become durable after its wait fails. Such a late commit updates
+the saved profile but is never pushed into a run admitted on the pre-copy bag.
+Overlapping confirmations/copies share the host's hold token until every owner
+has released it.
 
 ### panel
 

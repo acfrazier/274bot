@@ -111,6 +111,12 @@ impl StartAdmit {
         Some(entry)
     }
 
+    /// A temporary dispatch hold preserves the FIFO entry and its place.
+    pub fn return_head(&mut self, entry: QueuedStart) {
+        self.queue.push_front(entry);
+        self.publish = true;
+    }
+
     pub fn leave(&mut self, profile: &str) -> Option<QueuedStart> {
         if let Some(index) = self
             .awaiting_stop

@@ -331,12 +331,13 @@ pub fn logout_marked<Io>(
 }
 
 /// Freeze *Apply focused bot's settings to marked* for `card`: the parameters
-/// `source` (the focused bot) holds for the card, and the marked same-card
-/// bots that would take them. Unmarked bots are never targets and are only
-/// counted; every marked row that cannot take the copy is named with its
-/// reason. Read-only (`core` is borrowed shared): nothing is written or
-/// migrated until [`Scripts::apply_settings_sync`]; a scope with no marked
-/// target to copy to is refused instead of prepared.
+/// `source` (the focused bot) holds for the card, and the marked bots that
+/// would take them (already on the card, or unassigned — Apply assigns the
+/// card, and the confirmation names that assignment). Unmarked bots are never
+/// targets and are only counted; every marked row that cannot take the copy
+/// is named with its reason. Read-only (`core` is borrowed shared): nothing
+/// is written or migrated until [`Scripts::apply_settings_sync`]; a scope
+/// with no marked target to copy to is refused instead of prepared.
 pub fn prepare_apply_settings_marked<'a, Io>(
     selection: &MarkedSelection,
     core: &OperatorSession<Io>,
@@ -345,7 +346,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     card: &script::ScriptSel,
 ) -> Result<&'a SyncScope, String> {
     const LABEL: &str = "Apply to marked";
-    scripts.cancel_settings_sync();
+    scripts.clear_prepared_settings_sync();
     if selection.is_empty() {
         return Err(format!("{LABEL}: mark fleet rows first"));
     }
@@ -383,7 +384,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
         })
     });
     if let Some(refusal) = refusal {
-        scripts.cancel_settings_sync();
+        scripts.clear_prepared_settings_sync();
         return Err(refusal);
     }
     scripts

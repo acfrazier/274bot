@@ -51,10 +51,25 @@ impl ScriptNavPaint {
 #[derive(Clone)]
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
+    hold: Arc<Mutex<std::sync::Weak<String>>>,
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
+}
+
+pub(crate) enum StartRequest<'a> {
+    Load {
+        source: String,
+        shape: script::LoadShape,
+        bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+        loadouts: Option<&'a [script::Loadout]>,
+    },
+    Compiled {
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    },
 }
 
 impl ScriptStartHandle {
@@ -72,31 +87,18 @@ impl ScriptStartHandle {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        host_log!(
-            Category::ScriptLifecycle,
-            Level::Info,
-            slot = name,
-            "start load"
-        );
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot
-            .lock()
-            .map_err(|_| format!("script slot retiring: {name}"))?;
-        let result = slot.start_load_with_settings_and_game_data(
-            source,
-            shape,
-            settings_bag.as_ref(),
-            siblings,
-            self.game_data.clone(),
-            Arc::clone(&self.named_banks),
-        );
-        if result.is_ok() {
-            invalidate_bank_pick(&self.navs, name);
-        }
-        if let Err(e) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
-        }
-        result
+        self.dispatch_start(
+            name,
+            || StartRequest::Load {
+                source,
+                shape,
+                bag: settings_bag,
+                siblings,
+                loadouts: None,
+            },
+            || Ok(()),
+        )
+        .map_err(|error| error.to_string())
     }
 
     /// Harness catalog Start with caller-owned loadouts. Uses the existing
@@ -112,34 +114,18 @@ impl ScriptStartHandle {
         siblings: Vec<(String, String)>,
         loadouts: &[script::Loadout],
     ) -> Result<(), String> {
-        host_log!(
-            Category::ScriptLifecycle,
-            Level::Info,
-            slot = name,
-            "start load"
-        );
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot
-            .lock()
-            .map_err(|_| format!("script slot retiring: {name}"))?;
-        let result = slot.start_load_with_loadouts_and_game_data(
-            source,
-            shape,
-            siblings,
-            loadouts,
-            self.game_data.clone(),
-            Arc::clone(&self.named_banks),
-        );
-        if result.is_ok() {
-            invalidate_bank_pick(&self.navs, name);
-            if let Some(bag) = settings_bag.as_ref() {
-                slot.post_settings_bag(bag);
-            }
-        }
-        if let Err(e) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
-        }
-        result
+        self.dispatch_start(
+            name,
+            || StartRequest::Load {
+                source,
+                shape,
+                bag: settings_bag,
+                siblings,
+                loadouts: Some(loadouts),
+            },
+            || Ok(()),
+        )
+        .map_err(|error| error.to_string())
     }
 
     /// Prepare a compiled card off-pump. Ready/failure settles through
@@ -150,38 +136,102 @@ impl ScriptStartHandle {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), String> {
+        self.dispatch_start(name, || StartRequest::Compiled { id, bag }, || Ok(()))
+            .map_err(|error| error.to_string())
+    }
+
+    /// The single admission point for operator, coordinator and scenario Starts.
+    /// Keep the hold lock through admission so publishing a confirmation cannot
+    /// race a slot-thread Start between its decision and the actual slot call.
+    pub(crate) fn dispatch_start<'a>(
+        &self,
+        name: &str,
+        request: impl FnOnce() -> StartRequest<'a>,
+        before_start: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), script::StartLoadError> {
+        use script::StartLoadError::{Refused, Waiting};
+        let hold = self
+            .hold
+            .lock()
+            .map_err(|_| Refused("script start hold unavailable".into()))?;
+        if let Some(reason) = hold.upgrade() {
+            return Err(Waiting(format!("{name}: blocked, {reason}")));
+        }
+        before_start().map_err(Refused)?;
+        let request = request();
         host_log!(
             Category::ScriptLifecycle,
             Level::Info,
             slot = name,
-            "start compiled"
+            "start script"
         );
-        let result = (|| {
-            let slot =
-                script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
-            if script::compiled_card(id).is_none() {
-                return Err(format!("not ported: {}", id.0));
+        let slot = match &request {
+            StartRequest::Load { .. } => script_slot_or_insert(&self.scripts, name),
+            StartRequest::Compiled { .. } => script_slot(&self.scripts, name)
+                .ok_or_else(|| Refused(format!("no slot: {name}")))?,
+        };
+        let mut slot = slot
+            .lock()
+            .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
+        let result = match request {
+            StartRequest::Compiled { id, bag } => {
+                if script::compiled_card(id).is_none() {
+                    return Err(Refused(format!("not ported: {}", id.0)));
+                }
+                let selected = self
+                    .game_data
+                    .clone()
+                    .ok_or_else(|| Refused("selected game data unavailable".into()))?;
+                slot.start_compiled(
+                    name,
+                    id,
+                    Arc::new(bag),
+                    selected,
+                    Arc::clone(&self.named_banks),
+                )
+                .map_err(|error| Refused(error.to_string()))
             }
-            let selected = self
-                .game_data
-                .clone()
-                .ok_or("selected game data unavailable")?;
-            let mut slot = slot
-                .lock()
-                .map_err(|_| format!("script slot retiring: {name}"))?;
-            slot.start_compiled(
-                name,
-                id,
-                Arc::new(bag),
-                selected,
-                Arc::clone(&self.named_banks),
-            )
-            .map_err(|error| error.to_string())?;
+            StartRequest::Load {
+                source,
+                shape,
+                bag,
+                siblings,
+                loadouts,
+            } => {
+                if let Some(loadouts) = loadouts {
+                    let result = slot
+                        .start_load_with_loadouts_and_game_data(
+                            source,
+                            shape,
+                            siblings,
+                            loadouts,
+                            self.game_data.clone(),
+                            Arc::clone(&self.named_banks),
+                        )
+                        .map_err(Refused);
+                    if result.is_ok() {
+                        if let Some(bag) = bag.as_ref() {
+                            slot.post_settings_bag(bag);
+                        }
+                    }
+                    result
+                } else {
+                    slot.start_load_with_settings_and_game_data_typed(
+                        source,
+                        shape,
+                        bag.as_ref(),
+                        siblings,
+                        self.game_data.clone(),
+                        Arc::clone(&self.named_banks),
+                    )
+                }
+            }
+        };
+        if result.is_ok() {
             invalidate_bank_pick(&self.navs, name);
-            Ok(())
-        })();
-        if let Err(e) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
+        }
+        if let Err(error) = &result {
+            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {error}");
         }
         result
     }
@@ -318,13 +368,40 @@ impl Play {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), String> {
+        self.script_start_typed(name, id, bag)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn script_start_typed(
+        &self,
+        name: &str,
+        id: script::CompiledId,
+        bag: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), script::StartLoadError> {
         if !self.slot_active(name) {
-            return Err(format!("no slot: {name}"));
+            return Err(script::StartLoadError::Refused(format!("no slot: {name}")));
         }
         script_slot_or_insert(&self.scripts, name);
-        self.script_start_handle().start_compiled(name, id, bag)?;
+        self.script_start_handle().dispatch_start(
+            name,
+            || StartRequest::Compiled { id, bag },
+            || Ok(()),
+        )?;
         self.wake(name);
         Ok(())
+    }
+
+    /// Hold all new Starts for the lifetime of the returned token. Overlapping
+    /// confirmations and accepted native copies share it, so replacing a
+    /// prompt cannot bypass a copy whose durable write is still in flight.
+    pub fn hold_script_starts(&self, reason: String) -> Arc<String> {
+        let mut hold = self.script_start_hold.lock().unwrap();
+        if let Some(token) = hold.upgrade() {
+            return token;
+        }
+        let token = Arc::new(reason);
+        *hold = Arc::downgrade(&token);
+        token
     }
 
     /// A settings preparer has only shared pinned resources, no slot or game
@@ -488,30 +565,17 @@ impl Play {
         if !self.slot_active(name) {
             return Err(script::StartLoadError::Refused(format!("no slot: {name}")));
         }
-        host_log!(
-            Category::ScriptLifecycle,
-            Level::Info,
-            slot = name,
-            "start load"
-        );
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().map_err(|_| {
-            script::StartLoadError::Refused(format!("script slot retiring: {name}"))
-        })?;
-        let result = slot.start_load_with_settings_and_game_data_typed(
-            source,
-            shape,
-            settings_bag.as_ref(),
-            siblings,
-            self.game_data.clone(),
-            Arc::clone(&self.named_banks),
-        );
-        if let Err(e) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {e}");
-        }
-        result?;
-        invalidate_bank_pick(&self.navs, name);
-        drop(slot);
+        self.script_start_handle().dispatch_start(
+            name,
+            || StartRequest::Load {
+                source,
+                shape,
+                bag: settings_bag,
+                siblings,
+                loadouts: None,
+            },
+            || Ok(()),
+        )?;
         self.wake(name);
         Ok(())
     }
@@ -521,6 +585,7 @@ impl Play {
     pub fn script_start_handle(&self) -> ScriptStartHandle {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
+            hold: Arc::clone(&self.script_start_hold),
             navs: Arc::clone(&self.navs),
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),

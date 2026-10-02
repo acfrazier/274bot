@@ -277,9 +277,7 @@ fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not()
         .expect_err("injected spawn failure must err");
     let diagnostic = match &producer_err {
         crate::StartLoadError::RuntimeLoad(diagnostic) => diagnostic.clone(),
-        crate::StartLoadError::Refused(diagnostic) => {
-            panic!("producer must map spawn failure to RuntimeLoad, got Refused({diagnostic})")
-        }
+        other => panic!("producer must map spawn failure to RuntimeLoad, got {other:?}"),
     };
     assert!(
         diagnostic.contains("isolate thread"),
@@ -328,8 +326,6 @@ fn start_load_reports_runtime_spawn_failure_not_refusal() {
         crate::StartLoadError::RuntimeLoad(diagnostic) => {
             assert!(diagnostic.contains("isolate thread"), "{diagnostic}")
         }
-        crate::StartLoadError::Refused(diagnostic) => {
-            panic!("spawn failure must be RuntimeLoad, not Refused({diagnostic})")
-        }
+        other => panic!("spawn failure must be RuntimeLoad, got {other:?}"),
     }
 }
