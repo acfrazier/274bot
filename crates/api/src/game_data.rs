@@ -121,27 +121,62 @@ pub struct GameItem {
     pub stack_variant: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct NamedFact {
-    name: String,
+/// One selected object referenced by a combat fact.
+#[derive(Debug, Deserialize, Clone)]
+pub struct NamedFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct StatHeal {
-    stat: String,
-    base: i32,
-    percent: i32,
+#[derive(Debug, Deserialize, Clone)]
+pub struct StatChange {
+    pub stat: String,
+    pub base: i32,
+    pub percent: i32,
 }
 
-#[derive(Debug, Deserialize)]
-struct ConsumptionFact {
-    item: NamedFact,
-    stat_heal: Vec<StatHeal>,
-    qualification: String,
+#[derive(Debug, Deserialize, Clone)]
+pub struct StatHeal {
+    pub stat: String,
+    pub base: i32,
+    pub percent: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ConsumptionFact {
+    pub item: NamedFact,
+    pub source_row: String,
+    pub source_file: String,
+    #[serde(default)]
+    pub effect: String,
+    /// Nullable eat-delay argument passed by the selected consume.rs2 handler.
+    #[serde(default)]
+    pub eat_delay_arg: Option<i32>,
+    /// Nullable skill/action-delay argument passed by the selected consume.rs2 handler.
+    #[serde(default)]
+    pub skill_delay_arg: Option<i32>,
+    /// Optional consume-message `p_delay` argument; absent source data means no delay call.
+    #[serde(default)]
+    pub message_delay: Option<i32>,
+    #[serde(default)]
+    pub stat_change: Vec<StatChange>,
+    #[serde(default)]
+    pub stat_heal: Vec<StatHeal>,
+    #[serde(default)]
+    pub heal_energy: Vec<i32>,
+    pub qualification: String,
+    #[serde(default)]
+    pub next_stage: Option<String>,
+    #[serde(default)]
+    pub dose_family: Option<String>,
+    #[serde(default)]
+    pub dose_count: Option<u8>,
 }
 
 impl ConsumptionFact {
-    fn fixed_hp_heal(&self) -> Option<i32> {
+    /// Returns this row's fixed hitpoint heal when its canonical qualification is valid.
+    pub fn fixed_hp_heal(&self) -> Option<i32> {
         let heal = self.stat_heal.as_slice();
         (self.qualification == "fixed_hp_heal"
             && heal.len() == 1
@@ -332,6 +367,14 @@ pub struct SpellFact {
     pub ssb: i32,
     pub level: i32,
     pub continue_by_autocast: bool,
+    #[serde(default)]
+    pub spellcom: String,
+    #[serde(default)]
+    pub maxhit: i32,
+    #[serde(default)]
+    pub members: bool,
+    #[serde(default)]
+    pub wornrequired: Option<String>,
     pub runes: Vec<SpellRune>,
 }
 
@@ -705,6 +748,119 @@ pub struct QuestStartFacts {
     pub rows: Vec<QuestStartRow>,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NpcAttackKind {
+    Ranged,
+    Magic,
+    Mixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragonfireKind {
+    Elvarg,
+    Chromatic,
+    Metal,
+    Other,
+}
+
+impl DragonfireKind {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "elvarg" => Some(Self::Elvarg),
+            "chromatic" => Some(Self::Chromatic),
+            "metal" => Some(Self::Metal),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
+fn deserialize_dragonfire<'de, D>(deserializer: D) -> Result<Option<DragonfireKind>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct DragonfireVisitor;
+    impl<'de> serde::de::Visitor<'de> for DragonfireVisitor {
+        type Value = Option<DragonfireKind>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a dragonfire kind, null, or a legacy boolean")
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+            Ok(value.then_some(DragonfireKind::Other))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            DragonfireKind::parse(value)
+                .map(Some)
+                .ok_or_else(|| E::custom(format!("unknown dragonfire kind {value}")))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+    deserializer.deserialize_any(DragonfireVisitor)
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct StyleSequenceFact {
+    pub seq_id: i32,
+    pub style: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StyleSpotanimFact {
+    pub spotanim_id: i32,
+    pub style: u8,
+    #[serde(rename = "where")]
+    pub location: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct CombatTabFact {
+    pub tab: u8,
+    pub root_id: i32,
+}
+
+/// One source-joined melee attack-style button.
+///
+/// `slot` is the attackstyle index passed by `player_attackstyles.rs2`;
+/// `mode` is the semantic `combat_damagestyles.constant` code for that slot.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct MeleeModeFact {
+    pub tab: u8,
+    pub slot: u8,
+    pub mode: u8,
+    pub button: i32,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct WeaponStyleFact {
+    pub obj_id: i32,
+    pub style: u8,
+    pub attackrate: u8,
+    pub category: u8,
+    #[serde(default)]
+    pub tab: Option<u8>,
+}
+
 /// Pack-joined NPC identity for Path compile (`npc:cook`).
 #[derive(Debug, Deserialize, Clone)]
 pub struct NpcNameRow {
@@ -720,7 +876,28 @@ pub struct NpcNameRow {
     pub vislevel: i32,
     pub hitpoints: i32,
     pub damagetype: Option<String>,
-    pub dragonfire: bool,
+    #[serde(default)]
+    pub strength: Option<i32>,
+    #[serde(default)]
+    pub ranged: Option<i32>,
+    #[serde(default)]
+    pub strengthbonus: Option<i32>,
+    #[serde(default)]
+    pub rangebonus: Option<i32>,
+    #[serde(default)]
+    pub undead: Option<i32>,
+    #[serde(default)]
+    pub ap_attack: bool,
+    #[serde(default)]
+    pub attack_kind: Option<NpcAttackKind>,
+    #[serde(default)]
+    pub forced_max_hit: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_dragonfire")]
+    pub dragonfire: Option<DragonfireKind>,
+    #[serde(default)]
+    pub attackrate: Option<i32>,
+    #[serde(default)]
+    pub bespoke: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1030,6 +1207,18 @@ pub struct SelectedGameData {
     #[serde(default)]
     npc_names: Option<NpcNameFacts>,
     #[serde(default)]
+    style_seqs: Vec<StyleSequenceFact>,
+    #[serde(default)]
+    style_spotanims: Vec<StyleSpotanimFact>,
+    #[serde(default)]
+    combat_tabs: Vec<CombatTabFact>,
+    #[serde(default)]
+    weapon_styles: Vec<WeaponStyleFact>,
+    #[serde(default)]
+    melee_modes: Vec<MeleeModeFact>,
+    #[serde(default)]
+    melee_mode_varp: Option<i32>,
+    #[serde(default)]
     loc_names: Option<LocNameFacts>,
     #[serde(default)]
     npc_placements: Option<NpcPlacementFacts>,
@@ -1050,7 +1239,7 @@ pub struct SelectedGameData {
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
-    fixed_food_heals_index: Vec<(String, i32)>,
+    fixed_food_heals_index: Vec<(i32, String, i32)>,
     #[serde(skip)]
     fixed_food_heal_index: HashMap<u64, Vec<usize>>,
     #[serde(skip)]
@@ -1417,11 +1606,12 @@ impl SelectedGameData {
                 continue;
             };
             if matching.all(|other| other.fixed_hp_heal() == Some(heal)) {
-                self.fixed_food_heals_index.push((name.to_string(), heal));
+                self.fixed_food_heals_index
+                    .push((fact.item.id, name.to_string(), heal));
             }
         }
         self.fixed_food_heal_index.clear();
-        for (index, (name, _)) in self.fixed_food_heals_index.iter().enumerate() {
+        for (index, (_, name, _)) in self.fixed_food_heals_index.iter().enumerate() {
             self.fixed_food_heal_index
                 .entry(ascii_fold_hash(name))
                 .or_default()
@@ -1466,11 +1656,33 @@ impl SelectedGameData {
             .find(|item| item.alias.as_deref() == Some(alias))
     }
 
+    /// Generated consumption rows, including source effect and next item stage.
+    pub fn consumption_facts(&self) -> &[ConsumptionFact] {
+        &self.consumption
+    }
+
+    pub fn consumable(&self, alias: &str) -> Option<&ConsumptionFact> {
+        self.consumption
+            .iter()
+            .find(|fact| fact.item.alias == alias)
+    }
+
+    pub fn consume_next_stage(&self, alias: &str) -> Option<&str> {
+        self.consumable(alias)?.next_stage.as_deref()
+    }
+
     /// Generated consumption rows that are qualified as a fixed hitpoint heal.
     pub fn fixed_food_heals(&self) -> impl Iterator<Item = (&str, i32)> {
         self.fixed_food_heals_index
             .iter()
-            .map(|(name, heal)| (name.as_str(), *heal))
+            .map(|(_, name, heal)| (name.as_str(), *heal))
+    }
+
+    /// Fixed hitpoint heals joined to the selected object id for native combat.
+    pub fn fixed_food_heal_items(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.fixed_food_heals_index
+            .iter()
+            .map(|(id, _, heal)| (*id, *heal))
     }
 
     /// Fixed-heal food names for a settings choice list, best heal first
@@ -1486,7 +1698,7 @@ impl SelectedGameData {
             .get(&ascii_fold_hash(name))?
             .iter()
             .find_map(|index| {
-                let (known, heal) = &self.fixed_food_heals_index[*index];
+                let (_, known, heal) = &self.fixed_food_heals_index[*index];
                 known.eq_ignore_ascii_case(name).then_some(*heal)
             })
     }
@@ -1588,6 +1800,35 @@ impl SelectedGameData {
 
     pub fn npc_names(&self) -> Option<&NpcNameFacts> {
         self.npc_names.as_ref()
+    }
+    pub fn npc_name(&self, id: i32) -> Option<&NpcNameRow> {
+        let rows = &self.npc_names.as_ref()?.rows;
+        rows.binary_search_by_key(&id, |row| row.id)
+            .ok()
+            .map(|index| &rows[index])
+    }
+
+    pub fn style_seqs(&self) -> &[StyleSequenceFact] {
+        &self.style_seqs
+    }
+
+    pub fn style_spotanims(&self) -> &[StyleSpotanimFact] {
+        &self.style_spotanims
+    }
+
+    pub fn combat_tabs(&self) -> &[CombatTabFact] {
+        &self.combat_tabs
+    }
+
+    pub fn weapon_styles(&self) -> &[WeaponStyleFact] {
+        &self.weapon_styles
+    }
+    pub fn melee_modes(&self) -> &[MeleeModeFact] {
+        &self.melee_modes
+    }
+
+    pub fn melee_mode_varp(&self) -> Option<i32> {
+        self.melee_mode_varp
     }
 
     pub fn loc_names(&self) -> Option<&LocNameFacts> {

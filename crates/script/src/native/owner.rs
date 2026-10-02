@@ -12,7 +12,7 @@ pub(crate) struct Owner {
     quiet: AtomicU64,
     walk: AtomicU64,
     interaction: AtomicU64,
-    disposal: [AtomicU64; 5],
+    batch: [AtomicU64; 5],
 }
 
 impl Owner {
@@ -24,7 +24,7 @@ impl Owner {
             quiet: AtomicU64::new(0),
             walk: AtomicU64::new(0),
             interaction: AtomicU64::new(0),
-            disposal: std::array::from_fn(|_| AtomicU64::new(0)),
+            batch: std::array::from_fn(|_| AtomicU64::new(0)),
         })
     }
 
@@ -37,7 +37,7 @@ impl Owner {
         self.quiet.store(0, Ordering::Release);
         self.walk.store(0, Ordering::Release);
         self.interaction.store(0, Ordering::Release);
-        for slot in &self.disposal {
+        for slot in &self.batch {
             slot.store(0, Ordering::Release);
         }
     }
@@ -91,33 +91,74 @@ impl Owner {
             Ordering::AcqRel,
             Ordering::Acquire,
         );
-        for slot in &self.disposal {
+        for slot in &self.batch {
             let _ = slot.compare_exchange(request.get(), 0, Ordering::AcqRel, Ordering::Acquire);
         }
     }
 
-    pub fn acquire_disposal(&self, request: NonZeroU64) -> bool {
-        self.live()
-            && self.disposal.iter().any(|slot| {
-                slot.compare_exchange(0, request.get(), Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-            })
-    }
-    /// Check whether a disposal authority can be reserved without consuming a
-    /// request id. The caller must still acquire the slot after charging its
-    /// event budget because only the request id identifies the reservation.
-    pub fn disposal_available(&self) -> bool {
-        self.live()
-            && self
-                .disposal
-                .iter()
-                .any(|slot| slot.load(Ordering::Acquire) == 0)
+    /// Reserve a consecutive set of ids in the shared five-slot authority.
+    /// Any partial reservation is released if capacity or owner liveness races.
+    pub fn acquire_batch(&self, first: NonZeroU64, count: usize) -> bool {
+        if count == 0 || count > self.batch.len() || !self.live() {
+            return false;
+        }
+        let mut acquired = 0;
+        while acquired < count {
+            let Some(request) = first
+                .get()
+                .checked_add(acquired as u64)
+                .and_then(NonZeroU64::new)
+            else {
+                self.release_batch(first, acquired);
+                return false;
+            };
+            let reserved = self.live()
+                && !self.batch_live(request)
+                && self.batch.iter().any(|slot| {
+                    slot.compare_exchange(0, request.get(), Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                });
+            if !reserved {
+                self.release_batch(first, acquired);
+                return false;
+            }
+            acquired += 1;
+        }
+        if !self.live() {
+            self.release_batch(first, acquired);
+            return false;
+        }
+        true
     }
 
-    pub fn disposal_live(&self, request: NonZeroU64) -> bool {
+    fn release_batch(&self, first: NonZeroU64, count: usize) {
+        for offset in 0..count {
+            let Some(request) = first
+                .get()
+                .checked_add(offset as u64)
+                .and_then(NonZeroU64::new)
+            else {
+                break;
+            };
+            self.cancel_interaction(request);
+        }
+    }
+
+    /// Number of free reservations shared by batches and slot-exact drops.
+    pub fn batch_free(&self) -> usize {
+        if !self.live() {
+            return 0;
+        }
+        self.batch
+            .iter()
+            .filter(|slot| slot.load(Ordering::Acquire) == 0)
+            .count()
+    }
+
+    pub fn batch_live(&self, request: NonZeroU64) -> bool {
         self.live()
             && self
-                .disposal
+                .batch
                 .iter()
                 .any(|slot| slot.load(Ordering::Acquire) == request.get())
     }
@@ -125,7 +166,7 @@ impl Owner {
     pub fn interaction_live(&self, request: NonZeroU64) -> bool {
         self.live()
             && (self.interaction.load(Ordering::Acquire) == request.get()
-                || self.disposal_live(request))
+                || self.batch_live(request))
     }
 }
 

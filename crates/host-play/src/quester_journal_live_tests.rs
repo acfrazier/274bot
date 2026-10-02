@@ -1694,7 +1694,9 @@ fn start_synthetic(
                     session: 0,
                 },
                 path,
+                Arc::clone(selected),
                 Arc::clone(quests),
+                play.named_banks(),
             )),
             Some(Arc::clone(selected)),
         )
@@ -1735,7 +1737,9 @@ fn live_quester_journal_synthetic_runemysteries() {
                     session: 0,
                 },
                 path,
+                Arc::clone(&selected),
                 Arc::clone(&quests),
+                play.named_banks(),
             )),
             Some(Arc::clone(&selected)),
         )
@@ -1838,7 +1842,9 @@ fn live_quester_journal_synthetic_runemysteries() {
                         session: 0,
                     },
                     restart_path,
+                    Arc::clone(&selected),
                     Arc::clone(&quests),
+                    play.named_banks(),
                 )),
                 Some(Arc::clone(&selected)),
             )
@@ -1922,7 +1928,9 @@ fn live_quester_journal_synthetic_runemysteries() {
                     session: 0,
                 },
                 no_match_path,
+                Arc::clone(&selected),
                 Arc::clone(&quests),
+                play.named_banks(),
             )),
             Some(selected),
         )

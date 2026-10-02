@@ -455,6 +455,13 @@ mod memory_slots;
 mod memory_startup;
 
 #[cfg(test)]
+mod combat_proof;
+
+#[cfg(test)]
+#[path = "combat_live_proof_tests.rs"]
+mod combat_live_proof_tests;
+
+#[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
 

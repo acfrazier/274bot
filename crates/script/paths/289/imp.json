@@ -1,0 +1,179 @@
+{
+  "schema": 2,
+  "id": "imp",
+  "display_name": "Imp Catcher",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "red_bead", "qty": 1, "kind": "acquirable", "acquire": "acquire:beads" },
+      { "obj": "yellow_bead", "qty": 1, "kind": "acquirable", "acquire": "acquire:beads" },
+      { "obj": "black_bead", "qty": 1, "kind": "acquirable", "acquire": "acquire:beads" },
+      { "obj": "white_bead", "qty": 1, "kind": "acquirable", "acquire": "acquire:beads" }
+    ],
+    "acquire": {
+      "acquire:beads": [
+        {
+          "id": "withdraw-beads",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              { "obj": "red_bead", "qty": 1 },
+              { "obj": "yellow_bead", "qty": 1 },
+              { "obj": "black_bead", "qty": 1 },
+              { "obj": "white_bead", "qty": 1 }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              { "All": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Not": { "Any": [
+                  { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "red_bead" } } },
+                  { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "yellow_bead" } } },
+                  { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "black_bead" } } },
+                  { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "white_bead" } } }
+                ] } }
+              ] },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "karamja" } } }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "take-red-bead-drop",
+          "kind": "interact",
+          "version": 1,
+          "args": { "target": { "ground": "red_bead" }, "op": "Take", "radius": 12 },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } },
+            { "Not": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "red_bead", "radius": 12 } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } }
+        },
+        {
+          "id": "take-yellow-bead-drop",
+          "kind": "interact",
+          "version": 1,
+          "args": { "target": { "ground": "yellow_bead" }, "op": "Take", "radius": 12 },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } },
+            { "Not": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "yellow_bead", "radius": 12 } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } }
+        },
+        {
+          "id": "take-black-bead-drop",
+          "kind": "interact",
+          "version": 1,
+          "args": { "target": { "ground": "black_bead" }, "op": "Take", "radius": 12 },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } },
+            { "Not": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "black_bead", "radius": 12 } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } }
+        },
+        {
+          "id": "take-white-bead-drop",
+          "kind": "interact",
+          "version": 1,
+          "args": { "target": { "ground": "white_bead" }, "op": "Take", "radius": 12 },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } },
+            { "Not": { "Fact": { "kind": "ground_item_near", "version": 1, "args": { "obj": "white_bead", "radius": 12 } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }
+        },
+        {
+          "id": "farm-imps",
+          "kind": "combat",
+          "version": 1,
+          "args": {
+            "target": { "npc": "imp", "not_targeting_others": true, "pick": "random" },
+            "lost_radius": 12,
+            "area": { "box": [2600, 3180, 2665, 3265, 0], "source": "A defs/impcatcher.ts:36-70" },
+            "stand": { "tile": [2632, 3222, 0], "source": "A defs/impcatcher.ts:36" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 6, "auto_retaliate": true },
+            "loadout": null,
+            "kill_budget_ticks": 50,
+            "loot": ["red_bead", "yellow_bead", "black_bead", "white_bead"],
+            "until": {
+              "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }
+              ]
+            }
+          },
+          "skip_if": {
+            "All": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }
+            ]
+          },
+          "settle": { "All": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }
+          ] }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 200,
+    "loadouts": {},
+    "areas": {
+      "karamja": { "boxes": [[2740, 3020, 2970, 3230, 0]], "source": "A defs/impcatcher.ts:59" }
+    },
+    "tools": ["obj:red_bead", "obj:yellow_bead", "obj:black_bead", "obj:white_bead"],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:imp",
+      "progress": {
+        "colour": { "not_started": "imp:0", "in_progress": "imp:1", "complete": "imp:2" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "imp:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            { "id": "beads-first", "kind": "acquire", "version": 1, "args": { "recipe": "acquire:beads" }, "skip_if": { "All": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }] }, "settle": { "All": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }] } },
+            { "id": "hand-in-first", "kind": "talk", "version": 1, "advances": true, "args": { "npc": "wizard_mizgog", "anchor": { "tile": [3103, 3163, 2], "source": "A defs/impcatcher.ts:29-34" }, "leash": 6, "prefer": ["Give me a quest please.", "Give me a quest!"] }, "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "imp", "is": "complete" } } } }
+          ]
+        },
+        {
+          "stage": "imp:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            { "id": "beads", "kind": "acquire", "version": 1, "args": { "recipe": "acquire:beads" }, "skip_if": { "All": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }] }, "settle": { "All": [{ "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "red_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "yellow_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "black_bead" } } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_bead" } } }] } },
+            { "id": "hand-in", "kind": "talk", "version": 1, "advances": true, "args": { "npc": "wizard_mizgog", "anchor": { "tile": [3103, 3163, 2], "source": "A defs/impcatcher.ts:29-34" }, "leash": 6, "prefer": ["Give me a quest please.", "Give me a quest!"] }, "skip_if": { "Any": [] }, "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "imp", "is": "complete" } } } }
+          ]
+        },
+        { "stage": "imp:2", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}

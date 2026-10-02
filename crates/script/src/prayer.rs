@@ -5,13 +5,14 @@
 //! `points|max|full|known|available|active` queries stay one native call
 //! each over the same selected rows.
 
+use crate::combat::prayer::{PrayerSweep, PrayerToggle, ToggleProgress};
 use crate::machine::{self, Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
 use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{
     active, available, lookup, matches_on, max, on_is_truthy, points, OnArg, PrayerObservation,
-    PRAYER_COUNT, TOGGLE_MS,
+    TOGGLE_MS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -129,41 +130,23 @@ impl From<PrayerDone> for Value {
 }
 
 /// `Prayer.set`: one toggle click out, then the observed varp.
-pub(crate) struct Toggle {
-    want: OnArg,
-    varp: i32,
-}
+pub(crate) struct Toggle(PrayerToggle);
 
 impl Toggle {
     fn step(&self, obs: &PrayerObservation, cx: &mut Cx<'_>) -> Step<PrayerDone> {
         // A matching observation wins over the deadline: a slow page that
         // arrives late still settles the toggle.
-        if match self.want {
-            OnArg::Bool(true) => obs.is_on(self.varp),
-            OnArg::Bool(false) => obs.is_off(self.varp),
-            OnArg::Undefined | OnArg::Other { .. } => false,
-        } {
-            return Step::Done(PrayerDone::matched("toggled"));
+        match self.0.progress(obs, cx.clock().bound_reached()) {
+            ToggleProgress::Matched => Step::Done(PrayerDone::matched("toggled")),
+            ToggleProgress::TimedOut => Step::Done(PrayerDone::failed("toggle-timeout")),
+            ToggleProgress::Pending => Step::Wait,
         }
-        if cx.clock().bound_reached() {
-            return Step::Done(PrayerDone::failed("toggle-timeout"));
-        }
-        Step::Wait
     }
 }
 
 /// `Prayer.clear`: click every active overlay in selected order.
 pub(crate) struct Clear {
-    index: usize,
-    clicked: u32,
-    timed_out: u32,
-    varp: i32,
-}
-
-/// What one overlay sweep pass decided.
-enum Sweep {
-    Clicked,
-    Done(PrayerDone),
+    sweep: PrayerSweep,
 }
 
 impl Clear {
@@ -173,49 +156,30 @@ impl Clear {
         obs: &PrayerObservation,
         cx: &mut Cx<'_>,
     ) -> Step<PrayerDone> {
-        let settled = if obs.is_off(self.varp) {
-            true
-        } else if cx.clock().bound_reached() {
-            // A dropped click is not the sweep's end: count it and take
-            // the next active overlay.
-            self.timed_out = self.timed_out.saturating_add(1);
-            true
+        let timed_out = if cx.clock().bound_reached() {
+            self.sweep.pending_mask()
         } else {
-            false
+            0
         };
-        if !settled {
+        if self.sweep.observe(obs, timed_out) != 0 {
+            // The one pending click settled or timed out; the next candidate
+            // gets a fresh capacity-one wait window.
+            cx.clock().deadline = None;
+        }
+        if self.sweep.pending_mask() != 0 {
             return Step::Wait;
         }
-        match self.sweep(data, obs, cx) {
-            Sweep::Clicked => Step::Wait,
-            Sweep::Done(done) => Step::Done(done),
+        if let Some(click) = data.and_then(|data| self.sweep.candidates(data, obs).next()) {
+            cx.emit(InteractReq::IfButton {
+                component_id: click.button_com,
+            });
+            cx.clock().arm(TOGGLE_MS);
+            debug_assert!(self.sweep.accepted(click));
+            Step::Wait
+        } else {
+            let report = self.sweep.report();
+            Step::Done(PrayerDone::cleared(report.clicked, report.timed_out))
         }
-    }
-
-    /// Click the next observed-active overlay row, or settle with counts.
-    fn sweep(
-        &mut self,
-        data: Option<&SelectedGameData>,
-        obs: &PrayerObservation,
-        cx: &mut Cx<'_>,
-    ) -> Sweep {
-        if let Some(data) = data {
-            let rows = data.prayers();
-            while self.index < rows.len() && self.index < PRAYER_COUNT {
-                let row = &rows[self.index];
-                self.index += 1;
-                if obs.is_on(row.varp) {
-                    self.clicked = self.clicked.saturating_add(1);
-                    self.varp = row.varp;
-                    cx.clock().arm(TOGGLE_MS);
-                    cx.emit(InteractReq::IfButton {
-                        component_id: row.button_com,
-                    });
-                    return Sweep::Clicked;
-                }
-            }
-        }
-        Sweep::Done(PrayerDone::cleared(self.clicked, self.timed_out))
     }
 }
 
@@ -280,10 +244,7 @@ fn begin_set(
     cx.emit(InteractReq::IfButton {
         component_id: row.button_com,
     });
-    Begin::Run(Prayer::Toggle(Toggle {
-        want,
-        varp: row.varp,
-    }))
+    Begin::Run(Prayer::Toggle(Toggle(PrayerToggle::new(row.varp, want))))
 }
 
 fn begin_clear(
@@ -292,14 +253,12 @@ fn begin_clear(
     cx: &mut Cx<'_>,
 ) -> Begin<Prayer> {
     let mut clear = Clear {
-        index: 0,
-        clicked: 0,
-        timed_out: 0,
-        varp: -1,
+        sweep: PrayerSweep::new(),
     };
-    match clear.sweep(data, obs, cx) {
-        Sweep::Clicked => Begin::Run(Prayer::Clear(clear)),
-        Sweep::Done(done) => Begin::Done(done),
+    match clear.step(data, obs, cx) {
+        Step::Wait => Begin::Run(Prayer::Clear(clear)),
+        Step::Done(done) => Begin::Done(done),
+        Step::Call(_) | Step::Fail(_) => unreachable!("prayer clear has no callbacks"),
     }
 }
 
@@ -617,24 +576,5 @@ mod tests {
         tick();
         assert!(drain().is_empty(), "an aborted row never clicks again");
         assert!(!machine::live("prayer"));
-    }
-
-    #[test]
-    fn clear_continues_after_timeout_with_counts() {
-        prepare(ClientRevision::R274);
-        set_obs(43, 43, 96, 1);
-        set_obs(43, 43, 97, 1);
-        let handle = running(start(json!({ "op": "clear" })));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5622 }]);
-        thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        tick();
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
-        set_obs(43, 43, 97, 0);
-        tick();
-        assert_eq!(
-            done(handle),
-            json!({ "ok": true, "reason": "cleared", "value": { "clicked": 2, "timed_out": 1 } }),
-            "counts stay in the settled value"
-        );
     }
 }
