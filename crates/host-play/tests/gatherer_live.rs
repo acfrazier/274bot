@@ -4111,6 +4111,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             && !power_to_bank_edit_requested
             && witness.awaiting_drop
             && witness.cycle_product_slots > 0
+            && witness.confirmed_drops > witness.cycle_confirmed_start
+            && witness
+                .confirmed_drops
+                .saturating_sub(witness.cycle_confirmed_start)
+                < witness.cycle_product_slots
         {
             let Some(run) = current_run else {
                 break Err(format!(
@@ -4149,10 +4154,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             let mut slot = state.lock().map_err(|_| "live state poisoned")?;
             slot.witness.power_to_bank_edit_requested = true;
             slot.witness.power_to_bank_edit_pending = true;
-            slot.witness.power_to_bank_edit_drop_baseline = witness.confirmed_drops;
+            slot.witness.power_to_bank_edit_drop_baseline = witness.cycle_confirmed_start;
             slot.witness.power_to_bank_edit_slots = witness.cycle_product_slots;
             power_to_bank_edit_revision = Some(next_revision);
             power_to_bank_edit_requested = true;
+            let settings_status = play
+                .script_native_status(&account)
+                .map(|status| (status.active_settings, status.pending_settings));
             println!(
                 "{}",
                 json!({
@@ -4161,11 +4169,15 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     "live_case": case.name(),
                     "settings_revision": next_revision,
                     "batch_slots": witness.cycle_product_slots,
+                    "settings_status": settings_status,
                 })
             );
         }
         if let Some(revision) = power_to_bank_edit_revision {
-            if play.script_native_settings_revision(&account) == Some(revision) {
+            if play
+                .script_native_status(&account)
+                .is_some_and(|status| status.active_settings == revision)
+            {
                 let mut slot = state.lock().map_err(|_| "live state poisoned")?;
                 let complete = slot
                     .witness
@@ -4176,7 +4188,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 slot.witness.power_to_bank_edit_pending = false;
                 if !complete {
                     slot.error = Some(
-                        "Power to Bank settings revision advanced before the active drop batch completed"
+                        "Power to Bank settings activated before the active drop batch completed"
                             .into(),
                     );
                 }
