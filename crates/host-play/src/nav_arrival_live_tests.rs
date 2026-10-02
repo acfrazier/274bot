@@ -268,6 +268,15 @@ fn frame_hook(
             .map(|(x, z, level)| WorldTile { x, z, level });
         let seed = scenario.seed();
         let mut state = state.lock();
+        if scenario == Scenario::Yew
+            && state.target.is_none()
+            && state.teleport_sent
+            && tile == Some(seed)
+            && client.ingame
+            && client.scene_state == 2
+        {
+            state.target = yew_walk(&snapshot, seed);
+        }
         state.scene = SceneProof {
             ingame: client.ingame,
             scene_state: client.scene_state,
@@ -302,9 +311,6 @@ fn frame_hook(
         if tile != Some(seed) {
             state.ready = false;
             return;
-        }
-        if scenario == Scenario::Yew && state.target.is_none() {
-            state.target = yew_walk(&snapshot, seed);
         }
         state.ready = state.target.is_some();
     }
