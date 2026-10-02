@@ -151,6 +151,8 @@ pub(crate) struct NavBot {
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
     pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
+    pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
     pub(crate) user_move_intent_seq: u64,
     /// Requests based on an older outcome cannot reclaim movement ownership.
@@ -165,18 +167,17 @@ pub(crate) struct NavBot {
     /// The game requests this slot's script sent, as dispatched here. Host
     /// data the catalog hunt watch reads; not an isolate wire.
     pub(crate) acts: crate::catalog_core::ScriptActLedger,
-    /// The script walk a reconnect or an operator Pause interrupted, re-sent
-    /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
-    /// [`take_carried_walk`]).
-    /// Boxed only while held; idle slots do not retain the full wire payload.
+    /// A held script walk, or receipt-only identity while the watchdog replaces
+    /// its route. Only a held walk is eligible for automatic carry dispatch.
+    /// Boxed only while held or recovering; idle slots retain no wire payload.
     pub(crate) carried_walk: Option<Box<CarriedWalk>>,
 }
 
-/// A script walk held across a reconnect or an operator Pause.
+/// A held script walk or its identity across a watchdog-owned replacement.
 pub(crate) struct CarriedWalk {
-    /// The script run it belongs to (`SlotScript::runtime_generation`): a
-    /// Stop, Start or watchdog restart since the reconnect drops it.
-    runtime_generation: u64,
+    /// `Some(run)` may be re-sent across Pause/reconnect. `None` is receipt-only
+    /// recovery identity: it must never dispatch as carry after recovery.
+    runtime_generation: Option<u64>,
     /// Route generation before `hold_script_nav` ends the session's follow.
     route_generation: u64,
     request: script::shim::InteractReq,
@@ -914,6 +915,7 @@ impl ScriptWalkArm {
                 opts.essence = Some(ess);
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
+            bot.manual_walk_cancelled_detail = false;
             bot.walk_request_id = request_id;
             // A geometry refresh keeps the same live action and correlation;
             // only a genuinely replacing request cancels the previous owner.
@@ -1682,6 +1684,7 @@ impl ScriptRouteRequest {
 }
 impl NavBot {
     fn bump_walk_outcome_seq(&mut self) {
+        self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
         if self.walk_outcome_seq == 0 {
             self.walk_outcome_seq = 1;
@@ -1966,6 +1969,7 @@ impl NavBot {
             // isolate-only guard has no compiled-slot release path.
             self.walk_live_refusal_id = if native_owner { 0 } else { request_id };
         }
+        self.manual_walk_cancelled_detail = true;
     }
 
     /// Whether a script walk is armed, in flight or following.
@@ -2086,6 +2090,51 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
     }
 }
 
+/// Keep the pending script receipt identity when watchdog nav replaces its route.
+/// This reuses the rare carry allocation but never grants recovery a resend.
+///
+/// The reconstructed request payload is only a receipt placeholder: it does
+/// not retain the original walk mode or exclusions and must never be replayed.
+pub(super) fn preserve_recovery_walk_identity(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
+    let mut bots = navs.lock().unwrap();
+    let Some(bot) = bots.get_mut(name) else {
+        return;
+    };
+    if bot.native_walk.is_some() {
+        return;
+    }
+    if bot.carried_walk.is_some()
+        || bot.walk_request_id == 0
+        || bot.walk_outcome_request_id == bot.walk_request_id
+    {
+        return;
+    }
+    let Some((to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _)) =
+        bot.requested_route
+    else {
+        return;
+    };
+    bot.carried_walk = Some(Box::new(CarriedWalk {
+        runtime_generation: None,
+        route_generation: bot.route_generation,
+        request: script::shim::InteractReq::WalkNear {
+            x: to.x,
+            z: to.z,
+            level: to.level,
+            radius,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            request_id: bot.walk_request_id,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        },
+    }));
+}
+
 /// A reconnect the slot relogs through with its Load script's work held
 /// (`SlotScript::reconnect_session_work`). The connection's route follow
 /// ends as in [`reset_script_nav`]; what the held script still waits on
@@ -2118,7 +2167,7 @@ pub(crate) fn hold_script_nav(
         if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
             // A nearest-bank walk still choosing its bank: re-ask for it.
             nav.carried_walk = Some(Box::new(CarriedWalk {
-                runtime_generation,
+                runtime_generation: Some(runtime_generation),
                 route_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
             }));
@@ -2167,7 +2216,7 @@ pub(crate) fn hold_script_nav(
                 }
             };
             nav.carried_walk = Some(Box::new(CarriedWalk {
-                runtime_generation,
+                runtime_generation: Some(runtime_generation),
                 route_generation,
                 request,
             }));
@@ -2184,7 +2233,7 @@ pub(crate) fn take_carried_walk(
     runtime_generation: u64,
 ) -> Option<script::shim::InteractReq> {
     let carried = navs.lock().unwrap().get_mut(name)?.carried_walk.take()?;
-    (carried.runtime_generation == runtime_generation).then_some(carried.request)
+    (carried.runtime_generation == Some(runtime_generation)).then_some(carried.request)
 }
 
 fn end_route_follow(nav: &mut NavBot) {

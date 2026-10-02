@@ -459,6 +459,7 @@ impl Play {
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
             Arc::clone(&self.navs),
+            Arc::clone(&self.pause_script_on_manual_walk_abort),
             self.world.clone(),
             Arc::clone(&self.obj_names),
             self.catalog_core.clone(),
@@ -718,6 +719,7 @@ fn spawn_slot_thread(
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    slot_manual_abort_pause: Arc<std::sync::atomic::AtomicBool>,
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
     slot_catalog_core: catalog_core::CoreWatch,
@@ -1137,6 +1139,7 @@ fn spawn_slot_thread(
                         let slot_obj_names = Arc::clone(&slot_obj_names);
                         let slot_cache = Arc::clone(&slot_cache);
                         let slot_navs = Arc::clone(&slot_navs);
+                        let slot_manual_abort_pause = Arc::clone(&slot_manual_abort_pause);
                         let slot_world = slot_world.clone();
                         let observe_channels = slot_channels.clone();
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
@@ -1380,6 +1383,7 @@ fn spawn_slot_thread(
                                 frame_input,
                                 c.ingame && !session_boundary,
                                 *script_tick,
+                                slot_manual_abort_pause.load(Ordering::Relaxed),
                             );
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
