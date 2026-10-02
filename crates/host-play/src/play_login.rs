@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
+use client::client::client::SessionExitReason;
 use client::client::{Client, LoginError};
 use client::config::IfType;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
@@ -883,8 +884,10 @@ pub(super) fn tick_flags(
     client: &mut Client,
     ifaces: &[Option<Box<IfType>>],
     arm: &SlotArm,
+    last_exit_clean: &mut bool,
 ) -> bool {
     if let Some(reason) = client.take_session_exit_reason() {
+        *last_exit_clean = matches!(reason, SessionExitReason::ServerLogout { .. });
         match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.

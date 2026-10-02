@@ -182,7 +182,7 @@ struct PendingWrite {
 }
 
 /// The memory mode applied at the last login against the queued setting.
-/// Textures, tabs and sound all retain the login mode until the next login.
+/// Automatic socket reconnects keep that mode; a clean logout permits a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryNotice {
     /// The slot's detail mode as the login handshake sent it.
@@ -191,6 +191,8 @@ pub struct MemoryNotice {
     pub desired_lowmem: bool,
     /// A Relog-now is in flight: logout issued or its login half queued.
     pub relog_pending: bool,
+    /// Whether the slot currently has a connected session to relog.
+    pub connected: bool,
 }
 
 impl MemoryNotice {
@@ -202,7 +204,7 @@ impl MemoryNotice {
     }
 
     pub fn can_relog(self) -> bool {
-        self.differs() && !self.relog_pending
+        self.connected && self.differs() && !self.relog_pending
     }
 
     pub fn mode_name(lowmem: bool) -> &'static str {
@@ -217,6 +219,8 @@ impl MemoryNotice {
     pub fn notice_text(self) -> &'static str {
         if self.relog_pending {
             "Relog queued — login follows once logged out."
+        } else if !self.connected {
+            "Applies at the next Log in."
         } else {
             "Applies at the next login. Relog now to apply it."
         }
@@ -927,15 +931,15 @@ impl<Io> OperatorSession<Io> {
     /// Applied vs queued memory mode, plus any Relog-now in flight.
     /// `None` until the worker's first successful login.
     pub fn memory_status(&self, name: &str) -> Option<MemoryNotice> {
-        let login_lowmem = self
+        let status = self
             .statuses
             .iter()
-            .find(|status| status.username == name)?
-            .login_lowmem?;
+            .find(|status| status.username == name)?;
         Some(MemoryNotice {
-            login_lowmem,
+            login_lowmem: status.login_lowmem?,
             desired_lowmem: self.memory_mode(name)?,
             relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
+            connected: status.connected,
         })
     }
 
@@ -950,7 +954,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Queue and persist the memory mode for the next login. Both front ends
     /// use this command; it never mutates the running client or logs out.
-    /// [`Self::memory_status`] retains the applied mode until a new handshake.
+    /// [`Self::memory_status`] retains the applied mode through socket reconnects.
     pub fn set_memory_mode(&mut self, name: &str, lowmem: bool) -> Result<OperationId, String> {
         let mut profile = self
             .vault
@@ -2032,7 +2036,17 @@ impl<Io> OperatorSession<Io> {
                         return;
                     }
                 }
-                SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
+                // Operation IDs order profile saves across commits, not just
+                // within a writer batch. A late memory completion must never
+                // re-arm a mode the operator has since cancelled.
+                let delivery = if matches!(pending.mirror, ArmMirror::Memory(_))
+                    && !newest.iter().any(|(name, _)| *name == member)
+                {
+                    LiveDelivery::NotRunning
+                } else {
+                    self.apply_mirror(&member, pending.mirror, committed)
+                };
+                SettingsResult::Saved(delivery)
             }
             Err(error) if !written.superseded => {
                 // A failed memory toggle put the arm ahead of the restored

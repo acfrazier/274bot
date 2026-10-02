@@ -183,7 +183,14 @@ impl TuiApp {
             return "Up/Down/Tab row · Enter/Space act · type into fields · Esc close";
         }
         if self.settings_state.open {
-            return "Up/Down row · Enter/Space toggle · r Relog now · Esc close";
+            return if self
+                .settings_memory
+                .is_some_and(frontend_core::MemoryNotice::can_relog)
+            {
+                "Up/Down row · Enter/Space toggle · r Relog now · Esc close"
+            } else {
+                "Up/Down row · Enter/Space toggle · Esc close"
+            };
         }
         if let Some(modal) = &self.modal {
             return modal.hints();
@@ -197,7 +204,9 @@ impl TuiApp {
             "Script: load file" => "Up/Down · Enter open · Esc close",
             "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
             "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
-            "Overview" => "i login · u logout · r Relog now · x remove · o settings · l loadouts · w manual walk",
+            "Overview" if self.memory.is_some_and(frontend_core::MemoryNotice::can_relog) =>
+                "i login · u logout · r Relog now · x remove · o settings · l loadouts · w manual walk",
+            "Overview" => "i login · u logout · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",

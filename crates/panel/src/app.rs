@@ -3513,7 +3513,10 @@ fn status_section(ui: &Ui, session: &mut Session) {
         return;
     }
     let walk = session.walk_status_text();
-    let mem = Session::mem_notice_text(session.focused_lowmem(), session.focused_memory_notice());
+    let mem = frontend_core::MemoryNotice::status_text(
+        session.focused_lowmem(),
+        session.focused_memory_notice(),
+    );
     let Some(d) = session.core.fleet_view().detail() else {
         kv_row(ui, "state", "no bot selected");
         status_kv_row(ui, "walk", &walk);

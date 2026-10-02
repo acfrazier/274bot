@@ -160,12 +160,15 @@ checkboxes on a focused profile:
 - **lowmem / highmem** — default **lowmem**. Click the current mem
   button (under none/GPU/CPU) for a sticky picker like Teles. Highmem is
   `Profile.settings.lowmem = false`. The switch queues the entire mode for
-  the **next login**: live textures, tabs, music and sound stay unchanged.
+  the **next operator login** (Log in / Relog now / auto-relog after a
+  logout): live textures, tabs, music and sound stay unchanged. An automatic
+  socket reconnect keeps the applied mode and leaves the change queued.
   While a logged-in slot has a different mode queued, the picker and the
   persistent status notice offer **Relog now**, which logs out and back in
   through the ordinary login queue. Closing the picker or folding Status
-  does not hide that offer. Logged out, the next **Log in** applies the
-  queued mode. A running or queued script Start is disclosed before
+  does not hide that offer. Logged out, the notice says the next **Log in**
+  applies the queued mode, without offering Relog now. A running or queued
+  script Start is disclosed before
   relogging, and the queued label clears when login succeeds, fails
   terminally, or the operator takes over with Log in / Log out.
 - **capture input** — click-through: while on and the Image is hovered,

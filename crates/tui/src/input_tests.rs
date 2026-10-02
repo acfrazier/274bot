@@ -22,14 +22,17 @@ fn overview_offers_memory_relog_after_leaving_settings_until_login_or_queue() {
         login_lowmem: true,
         desired_lowmem: false,
         relog_pending: false,
+        connected: true,
     });
     assert_eq!(app.on_key(ch('r')), AppAction::MemoryRelog("alice".into()));
+    assert!(app.key_hints().contains("r Relog now"));
     app.memory.as_mut().unwrap().relog_pending = true;
     assert_eq!(
         app.on_key(ch('r')),
         AppAction::None,
         "queued relogs cannot be repeated"
     );
+    assert!(!app.key_hints().contains("r Relog now"));
     app.memory.as_mut().unwrap().relog_pending = false;
     app.memory.as_mut().unwrap().login_lowmem = false;
     assert_eq!(
@@ -37,6 +40,15 @@ fn overview_offers_memory_relog_after_leaving_settings_until_login_or_queue() {
         AppAction::None,
         "the applied mode needs no relog"
     );
+    assert!(!app.key_hints().contains("r Relog now"));
+    app.memory.as_mut().unwrap().login_lowmem = true;
+    app.memory.as_mut().unwrap().connected = false;
+    assert_eq!(
+        app.on_key(ch('r')),
+        AppAction::None,
+        "logged-out slots apply their queued mode with Log in, not Relog now"
+    );
+    assert!(!app.key_hints().contains("r Relog now"));
 }
 
 /// Moving the fleet cursor never changes the selected bot; Enter does.
