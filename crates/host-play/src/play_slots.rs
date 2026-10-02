@@ -832,6 +832,7 @@ fn spawn_slot_thread(
             }
 
             let mut backoff = LoginBackoff::new();
+            let mut last_exit_clean = true;
             let mut world_dirty = world_round.is_some();
             let mut refresh_key = false;
             let mut key_refreshed = false;
@@ -1006,10 +1007,19 @@ fn spawn_slot_thread(
                     // Read at each handshake, not captured at spawn: a
                     // password saved since then applies to this login.
                     let password = arm.login_password();
-                    // Apply the queued mode only at the next login boundary:
-                    // textures, sound and the handshake must change together.
-                    if let Some(lowmem) = arm.lowmem_handshake() {
-                        client.configure_login_memory(lowmem);
+                    // An in-world reconnect is only a server-side socket swap:
+                    // it retains the old mode and tabs. Only a clean logout
+                    // permits the queued mode to apply at this handshake.
+                    if !reconnect || last_exit_clean {
+                        if let Some(lowmem) = arm.lowmem_handshake() {
+                            if !client.configure_login_memory(lowmem) {
+                                host_log!(
+                                    Category::Login,
+                                    Level::Warn,
+                                    "login memory configuration refused"
+                                );
+                            }
+                        }
                     }
                     let handshake_lowmem = client.config.lowmem;
                     let login = login_and_acknowledge_permit(&mut permit, || {
@@ -1601,7 +1611,8 @@ fn spawn_slot_thread(
                     },
                     {
                         let ifaces_template = ifaces_template.clone();
-                        move |c| slot_client_pump_should_exit(c, &ifaces_template, &arm_obs)
+                        let last_exit_clean = &mut last_exit_clean;
+                        move |c| slot_client_pump_should_exit(c, &ifaces_template, &arm_obs, last_exit_clean)
                     },
                     knock,
                 );
@@ -1662,8 +1673,10 @@ pub(super) fn slot_client_pump_should_exit(
     client: &mut Client,
     ifaces: &[Option<Box<IfType>>],
     arm: &SlotArm,
+    last_exit_clean: &mut bool,
 ) -> bool {
-    tick_flags(client, ifaces, arm) || (!client.ingame && should_handshake(arm, client.ingame))
+    tick_flags(client, ifaces, arm, last_exit_clean)
+        || (!client.ingame && should_handshake(arm, client.ingame))
 }
 
 /// One login wait's title frames: the pump's frame on this slot's client,

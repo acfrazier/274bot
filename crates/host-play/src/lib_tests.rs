@@ -837,6 +837,8 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
     let requested = Arc::clone(&request);
     let (frame_tx, frame_rx) = mpsc::channel();
     let last_request = AtomicUsize::new(0);
+    let clean_logout = Arc::new(AtomicBool::new(false));
+    let requested_logout = Arc::clone(&clean_logout);
     let mut play = run_with_io(
         &PlayOptions {
             host: endpoint.ip().to_string(),
@@ -869,6 +871,11 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
                         ))
                         .unwrap();
                 }
+                if requested_logout.swap(false, Ordering::AcqRel) {
+                    let mut packet = client::io::Packet::new(vec![]);
+                    client.psize = 0;
+                    client.handle_packet(client::io::ServerProt::LOGOUT, &mut packet);
+                }
             }
         },
     );
@@ -884,8 +891,10 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
     play.wake("alice");
     let after_toggle = frame_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     arm.request_logout();
-    release_tx.send(()).unwrap();
+    clean_logout.store(true, Ordering::Release);
+    play.wake("alice");
     assert!(wait_until(2_000, || !play.slot_connected("alice")));
+    release_tx.send(()).unwrap();
     arm.arm_explicit_login();
     request.store(3, Ordering::Release);
     play.wake("alice");
@@ -905,6 +914,116 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
         !next_login && !next_frame.0,
         "the next login applies highmem to both wire and client"
     );
+}
+
+#[test]
+fn memory_queue_survives_socket_reconnect_until_clean_logout() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (login_tx, login_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        for attempt in 0..3 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut preface = [0; 2];
+            socket.read_exact(&mut preface).unwrap();
+            assert_eq!(preface[0], 14);
+            socket.write_all(&[0; 17]).unwrap();
+            let mut header = [0; 2];
+            socket.read_exact(&mut header).unwrap();
+            let mut body = vec![0; usize::from(header[1])];
+            socket.read_exact(&mut body).unwrap();
+            login_tx.send((header[0], body[3])).unwrap();
+            // An in-world reconnect swaps the socket without resetting the
+            // server's memory mode. A clean logout permits a normal login.
+            socket
+                .write_all(if attempt == 1 { &[15] } else { &[2, 0, 0] })
+                .unwrap();
+            release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+    });
+    let clean_logout = Arc::new(AtomicBool::new(false));
+    let requested_logout = Arc::clone(&clean_logout);
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            transport: client::Transport::Tcp,
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        move |client, _, _| {
+            if client.ingame {
+                client.scene_state = 2;
+                if requested_logout.swap(false, Ordering::AcqRel) {
+                    let mut packet = client::io::Packet::new(vec![]);
+                    client.psize = 0;
+                    client.handle_packet(client::io::ServerProt::LOGOUT, &mut packet);
+                }
+            }
+        },
+    );
+    let arm = SlotArm::new(42, true);
+    arm.set_lowmem_handshake(true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    let first = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(wait_until(5_000, || play
+        .statuses()
+        .iter()
+        .any(
+            |row| row.username == "alice" && row.login_lowmem == Some(true)
+        )));
+
+    arm.set_lowmem_handshake(false);
+    // Drop the server socket without a logout packet or operator action.
+    release_tx.send(()).unwrap();
+    let reconnect = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(wait_until(5_000, || play.slot_connected("alice")));
+    let reconnect_mode = play
+        .statuses()
+        .into_iter()
+        .find(|row| row.username == "alice")
+        .unwrap()
+        .login_lowmem;
+    let queued_mode = arm.lowmem_handshake();
+
+    arm.request_logout();
+    clean_logout.store(true, Ordering::Release);
+    play.wake("alice");
+    assert!(wait_until(5_000, || !play.slot_connected("alice")));
+    release_tx.send(()).unwrap();
+    arm.arm_explicit_login();
+    play.wake("alice");
+    let relog = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(wait_until(5_000, || play
+        .statuses()
+        .iter()
+        .any(
+            |row| row.username == "alice" && row.login_lowmem == Some(false)
+        )));
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    server.join().unwrap();
+
+    assert_eq!(first, (16, 1));
+    assert_eq!(
+        reconnect,
+        (18, 1),
+        "a socket reconnect must retain the applied mode"
+    );
+    assert_eq!(reconnect_mode, Some(true));
+    assert_eq!(queued_mode, Some(false), "the queued mode must survive");
+    assert_eq!(relog, (18, 0), "a clean logout applies the queued mode");
 }
 
 #[test]
@@ -2098,7 +2217,7 @@ fn operator_logout_wins_over_a_correlated_client_idle_logout() {
     arm.reconnect.store(true, Ordering::Relaxed);
     arm.request_logout();
 
-    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
@@ -2114,7 +2233,7 @@ fn idle_correlated_server_logout_relogs_an_active_script_without_auto_login() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
 
-    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
     assert_eq!(arm.login_latch_reason(), None);
     assert!(
         should_handshake(&arm, false),
@@ -2128,7 +2247,7 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
 
-    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
     assert!(!arm.login_latched());
     assert!(!arm.wants_login());
     assert!(!arm.auto_login.load(Ordering::Relaxed));
@@ -2142,7 +2261,7 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     arm.set_script_active(true);
     for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
         let mut client = client_after_server_logout();
-        assert!(!tick_flags(&mut client, &[], &arm));
+        assert!(!tick_flags(&mut client, &[], &arm, &mut false));
         assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
     }
     assert_eq!(
@@ -2156,13 +2275,13 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     let operator = SlotArm::new(8, true);
     operator.request_logout();
     let mut client = client_after_server_logout();
-    assert!(!tick_flags(&mut client, &[], &operator));
+    assert!(!tick_flags(&mut client, &[], &operator, &mut false));
     assert_eq!(operator.unexpected_logout_count_at(Instant::now()), 0);
 
     let stopped = SlotArm::new(9, true);
     stopped.stop.store(true, Ordering::Relaxed);
     let mut client = client_after_server_logout();
-    assert!(tick_flags(&mut client, &[], &stopped));
+    assert!(tick_flags(&mut client, &[], &stopped, &mut false));
     assert_eq!(stopped.unexpected_logout_count_at(Instant::now()), 0);
 }
 
@@ -2260,7 +2379,7 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     // the body keeps running until !ingame (no dirty disconnect).
     arm.stop.store(true, Ordering::Relaxed);
 
-    assert!(!tick_flags(&mut client, &ifaces, &arm));
+    assert!(!tick_flags(&mut client, &ifaces, &arm, &mut false));
     assert!(!arm.wants_logout());
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
@@ -2270,12 +2389,12 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
 
     // After the logout press, a later probe honors stop.
-    assert!(tick_flags(&mut client, &ifaces, &arm));
+    assert!(tick_flags(&mut client, &ifaces, &arm, &mut false));
 
     // A title slot never presses; `stop` still reports.
     client.ingame = false;
     arm.request_logout();
-    assert!(tick_flags(&mut client, &ifaces, &arm));
+    assert!(tick_flags(&mut client, &ifaces, &arm, &mut false));
     assert!(
         arm.wants_logout(),
         "no CC_LOGOUT press on the title; the flag stays for the panel"
@@ -2295,7 +2414,7 @@ fn refused_logout_stays_pending_with_command_latch() {
     let arm = SlotArm::new(0, false);
     arm.request_logout();
 
-    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
     assert!(
         arm.wants_logout(),
         "missing logout interface must leave the request pending"

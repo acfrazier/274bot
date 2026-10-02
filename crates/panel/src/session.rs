@@ -12,7 +12,6 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -3964,14 +3963,6 @@ impl Session {
     pub fn mem_relog_armed(&self) -> bool {
         let focused = self.focused_name();
         focused.is_some_and(|name| self.mem_relog_armed.as_deref() == Some(name.as_str()))
-    }
-
-    /// Shared applied/queued memory status for both front ends.
-    pub fn mem_notice_text(
-        lowmem: bool,
-        notice: Option<frontend_core::MemoryNotice>,
-    ) -> Cow<'static, str> {
-        frontend_core::MemoryNotice::status_text(lowmem, notice)
     }
 
     /// GPU↔CPU (not Off) reattaches the renderer on the same client,
