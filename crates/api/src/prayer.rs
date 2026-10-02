@@ -3,10 +3,9 @@
 //! invent a second prayer table.
 
 use crate::game_data::{PrayerFact, SelectedGameData};
+use smallvec::SmallVec;
 
 pub const TOGGLE_MS: u64 = 2_000;
-pub const PRAYER_VARP0: i32 = 83;
-pub const PRAYER_COUNT: usize = 15;
 
 /// Frozen `on` argument after JS marshalling classified the raw value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,46 +15,45 @@ pub enum OnArg {
     Other { truthy: bool },
 }
 
-/// Compact observed prayer points/max and the 15 overlay varps (83–97).
-/// `present` is a bit per selected overlay: missing/truncated rows stay
+/// Compact observed prayer points/max and selected overlay varps. Each key
+/// comes from the selected prayer rows; missing/truncated rows stay
 /// unobserved (not a proven 0, not a retained prior 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrayerObservation {
     pub points: i32,
     pub max: i32,
-    pub varps: [i32; PRAYER_COUNT],
-    present: u16,
+    varps: SmallVec<[(i32, Option<i32>); 15]>,
 }
 
 impl PrayerObservation {
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             points: 0,
             max: 0,
-            varps: [0; PRAYER_COUNT],
-            present: 0,
+            varps: SmallVec::new(),
         }
     }
 
-    fn slot(varp: i32) -> Option<usize> {
-        let Ok(index) = usize::try_from(varp - PRAYER_VARP0) else {
-            return None;
-        };
-        (index < PRAYER_COUNT).then_some(index)
+    pub fn for_prayers(prayers: &[PrayerFact]) -> Self {
+        Self {
+            points: 0,
+            max: 0,
+            varps: prayers.iter().map(|prayer| (prayer.varp, None)).collect(),
+        }
     }
 
     pub fn varp(&self, varp: i32) -> i32 {
-        let Some(index) = Self::slot(varp) else {
-            return 0;
-        };
-        if self.present & (1 << index) == 0 {
-            return 0;
-        }
-        self.varps[index]
+        self.varps
+            .iter()
+            .find(|(known, _)| *known == varp)
+            .and_then(|(_, value)| *value)
+            .unwrap_or(0)
     }
 
     pub fn varp_observed(&self, varp: i32) -> bool {
-        Self::slot(varp).is_some_and(|index| self.present & (1 << index) != 0)
+        self.varps
+            .iter()
+            .any(|(known, value)| *known == varp && value.is_some())
     }
 
     pub fn is_on(&self, varp: i32) -> bool {
@@ -67,19 +65,15 @@ impl PrayerObservation {
     }
 
     pub fn set_varp(&mut self, varp: i32, value: i32) {
-        let Some(index) = Self::slot(varp) else {
-            return;
-        };
-        self.varps[index] = value;
-        self.present |= 1 << index;
+        if let Some((_, observed)) = self.varps.iter_mut().find(|(known, _)| *known == varp) {
+            *observed = Some(value);
+        }
     }
 
     pub fn unobserve_varp(&mut self, varp: i32) {
-        let Some(index) = Self::slot(varp) else {
-            return;
-        };
-        self.varps[index] = 0;
-        self.present &= !(1 << index);
+        if let Some((_, observed)) = self.varps.iter_mut().find(|(known, _)| *known == varp) {
+            *observed = None;
+        }
     }
 }
 
@@ -137,11 +131,23 @@ mod tests {
         crate::game_data::for_revision(rev).expect("selected data")
     }
 
+    fn fact(varp: i32) -> PrayerFact {
+        PrayerFact {
+            name: format!("Prayer {varp}"),
+            level: 1,
+            source_row: String::new(),
+            prayer_constant: String::new(),
+            button_com: 0,
+            com_alias: String::new(),
+            varp,
+            varp_alias: String::new(),
+        }
+    }
+
     #[test]
     fn both_selected_caches_lookup_trim_and_case() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
-            assert_eq!(data.prayers().len(), 15);
             assert!(known(&data, "Protect from Melee"));
             assert!(known(&data, "  protect from melee  "));
             assert!(known(&data, "THICK SKIN"));
@@ -156,14 +162,15 @@ mod tests {
     #[test]
     fn available_requires_level_and_remaining_points() {
         let data = data(ClientRevision::R289);
-        let mut obs = PrayerObservation::empty();
-        obs.max = 43;
+        let required = lookup(&data, "Protect from Melee").unwrap().level;
+        let mut obs = PrayerObservation::for_prayers(data.prayers());
+        obs.max = required;
         obs.points = 1;
         assert!(available(&data, "Protect from Melee", &obs));
         obs.points = 0;
         assert!(!available(&data, "Protect from Melee", &obs));
         obs.points = 10;
-        obs.max = 42;
+        obs.max = required - 1;
         assert!(!available(&data, "Protect from Melee", &obs));
         assert!(!available(&data, "Nope", &obs));
     }
@@ -171,15 +178,16 @@ mod tests {
     #[test]
     fn active_is_varp_one_and_missing_stats_are_zero() {
         let data = data(ClientRevision::R274);
-        let obs = PrayerObservation::empty();
+        let melee = lookup(&data, "Protect from Melee").unwrap();
+        let obs = PrayerObservation::for_prayers(data.prayers());
         assert_eq!(points(&obs), 0);
         assert_eq!(max(&obs), 0);
         assert!(!full(&obs));
         assert!(!active(&data, "Protect from Melee", &obs));
-        let mut on = obs;
-        on.set_varp(97, 1);
-        on.max = 43;
-        on.points = 43;
+        let mut on = obs.clone();
+        on.set_varp(melee.varp, 1);
+        on.max = melee.level;
+        on.points = melee.level;
         assert!(active(&data, "Protect from Melee", &on));
         assert!(full(&on));
         assert!(!matches_on(true, OnArg::Undefined));
@@ -190,18 +198,35 @@ mod tests {
 
     #[test]
     fn unobserved_overlay_is_neither_on_nor_off() {
-        let mut obs = PrayerObservation::empty();
-        assert!(!obs.varp_observed(97));
-        assert!(!obs.is_on(97));
-        assert!(!obs.is_off(97));
-        obs.set_varp(97, 1);
-        assert!(obs.is_on(97));
-        obs.unobserve_varp(97);
-        assert!(!obs.varp_observed(97));
-        assert!(!obs.is_on(97));
-        assert!(!obs.is_off(97));
+        let data = data(ClientRevision::R289);
+        let varp = lookup(&data, "Protect from Melee").unwrap().varp;
+        let mut obs = PrayerObservation::for_prayers(data.prayers());
+        assert!(!obs.varp_observed(varp));
+        assert!(!obs.is_on(varp));
+        assert!(!obs.is_off(varp));
+        obs.set_varp(varp, 1);
+        assert!(obs.is_on(varp));
+        obs.unobserve_varp(varp);
+        assert!(!obs.varp_observed(varp));
+        assert!(!obs.is_on(varp));
+        assert!(!obs.is_off(varp));
+        obs.set_varp(varp, 0);
+        assert!(obs.is_off(varp));
+        assert!(!obs.is_on(varp));
+    }
+
+    #[test]
+    fn observation_tracks_noncontiguous_selected_varps_only() {
+        let prayers = [fact(12), fact(97), fact(301)];
+        let mut obs = PrayerObservation::for_prayers(&prayers);
+        obs.set_varp(12, 1);
         obs.set_varp(97, 0);
+        obs.set_varp(83, 1);
+        assert!(obs.is_on(12));
         assert!(obs.is_off(97));
-        assert!(!obs.is_on(97));
+        assert!(!obs.varp_observed(83));
+        assert!(!obs.is_on(83));
+        obs.unobserve_varp(12);
+        assert!(!obs.varp_observed(12));
     }
 }

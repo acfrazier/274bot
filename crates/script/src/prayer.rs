@@ -11,23 +11,23 @@ use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{
     active, available, lookup, matches_on, max, on_is_truthy, points, OnArg, PrayerObservation,
-    PRAYER_COUNT, TOGGLE_MS,
+    TOGGLE_MS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// Prayer points/max and the overlay varps, read from the isolate scene. A
-/// logout forgets the session: only pages posted since login count. A varp
-/// row the last varps page did not carry stays unobserved.
-fn prayer_observation(scene: &Scene) -> PrayerObservation {
+/// Prayer points/max and overlay varps from selected prayer rows and the
+/// isolate scene. A logout forgets the session: only pages posted since login
+/// count, and a missing overlay row stays unobserved.
+fn prayer_observation(scene: &Scene, data: Option<&SelectedGameData>) -> PrayerObservation {
     let session = scene.since_login();
-    let mut obs = PrayerObservation::empty();
+    let prayers = data.map_or(&[][..], |data| data.prayers());
+    let mut obs = PrayerObservation::for_prayers(prayers);
     if let Some(row) = session.stats().and_then(|skills| skills.prayer) {
         obs.points = row.effective;
         obs.max = row.base;
     }
     for row in session.varps().into_iter().flatten() {
-        // Rows outside the 15 overlay varps are ignored by `set_varp`.
         obs.set_varp(row.index, row.value);
     }
     obs
@@ -201,7 +201,7 @@ impl Clear {
     ) -> Sweep {
         if let Some(data) = data {
             let rows = data.prayers();
-            while self.index < rows.len() && self.index < PRAYER_COUNT {
+            while self.index < rows.len() {
                 let row = &rows[self.index];
                 self.index += 1;
                 if obs.is_on(row.varp) {
@@ -240,7 +240,7 @@ impl Family for Prayer {
             return Begin::Refuse("busy".into());
         }
         let data = crate::supply_v2::selected_data();
-        let obs = observed::with(prayer_observation);
+        let obs = observed::with(|scene| prayer_observation(scene, data.as_deref()));
         match args.op {
             Op::Set => begin_set(data.as_deref(), &args, &obs, cx),
             Op::Clear => begin_clear(data.as_deref(), &obs, cx),
@@ -249,7 +249,7 @@ impl Family for Prayer {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<PrayerDone> {
         let data = crate::supply_v2::selected_data();
-        let obs = observed::with(prayer_observation);
+        let obs = observed::with(|scene| prayer_observation(scene, data.as_deref()));
         match self {
             Self::Toggle(toggle) => toggle.step(&obs, cx),
             Self::Clear(clear) => clear.step(data.as_deref(), &obs, cx),
@@ -331,7 +331,7 @@ fn query(data: Option<&SelectedGameData>, obs: &PrayerObservation, input: &Value
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    let obs = observed::with(prayer_observation);
+    let obs = observed::with(|scene| prayer_observation(scene, data));
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "points" | "max" | "full" | "known" | "available" | "active" => query(data, &obs, input),
         _ => json!({ "ok": false, "error": "unknown-op" }),
@@ -373,6 +373,37 @@ mod tests {
 
     fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
         api::game_data::for_revision(rev).expect("selected data")
+    }
+
+    fn protect_identity() -> (i32, i32, i32) {
+        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let prayer = data
+            .prayer_by_name("Protect from Melee")
+            .expect("Protect from Melee row");
+        (prayer.varp, prayer.level, prayer.button_com)
+    }
+
+    fn set_protect(value: i32) {
+        let (varp, level, _) = protect_identity();
+        set_obs(level, level, varp, value);
+    }
+
+    fn preceding_prayer_identity() -> (i32, i32) {
+        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let (protect_varp, _, _) = protect_identity();
+        let rows = data.prayers();
+        let protect_index = rows
+            .iter()
+            .position(|prayer| prayer.varp == protect_varp)
+            .expect("Protect from Melee row index");
+        let previous = rows
+            .get(
+                protect_index
+                    .checked_sub(1)
+                    .expect("Protect from Melee has a preceding prayer row"),
+            )
+            .expect("preceding selected prayer row");
+        (previous.varp, previous.button_com)
     }
 
     /// Stand in for a post carrying the prayer stat and one more overlay
@@ -438,7 +469,7 @@ mod tests {
     #[test]
     fn matching_set_does_not_click_and_unknown_is_error() {
         prepare(ClientRevision::R274);
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         assert_eq!(
             start(set(on(true))),
             Started::Settled(Outcome::Done(
@@ -473,7 +504,7 @@ mod tests {
     #[test]
     fn unavailable_on_does_not_click_off_ignores_available() {
         prepare(ClientRevision::R289);
-        set_obs(0, 1, 97, 0);
+        set_obs(0, 1, protect_identity().0, 0);
         assert_eq!(
             start(set(on(true))),
             Started::Settled(Outcome::Done(
@@ -482,10 +513,15 @@ mod tests {
         );
         assert!(drain().is_empty());
 
-        set_obs(0, 1, 97, 1);
+        set_obs(0, 1, protect_identity().0, 1);
         let handle = running(start(set(on(false))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
-        set_obs(0, 1, 97, 0);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
+        set_obs(0, 1, protect_identity().0, 0);
         tick();
         assert_eq!(
             done(handle),
@@ -496,9 +532,14 @@ mod tests {
     #[test]
     fn omitted_on_clicks_then_times_out_after_the_frozen_window() {
         prepare(ClientRevision::R274);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let handle = running(start(set(json!({ "kind": "undefined" }))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         tick();
         assert_eq!(
             machine::take(handle),
@@ -517,9 +558,14 @@ mod tests {
     #[test]
     fn a_second_start_supersedes_the_first() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let first = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         let second = running(start(set(on(true))));
         assert_eq!(
             machine::take(first),
@@ -528,10 +574,12 @@ mod tests {
         );
         assert_eq!(
             drain(),
-            vec![InteractReq::IfButton { component_id: 5623 }],
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }],
             "each admitted set clicks for itself"
         );
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         tick();
         assert_eq!(
             done(second),
@@ -543,9 +591,14 @@ mod tests {
     #[test]
     fn a_v2_admit_refuses_busy_before_anything_is_emitted() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let admitted = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         let mut refusing = set(on(false));
         refusing["admit"] = json!("refuse-busy");
         assert_eq!(
@@ -554,7 +607,7 @@ mod tests {
             "the admitted row keeps the click"
         );
         assert!(drain().is_empty(), "a refused start emits nothing");
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         tick();
         assert_eq!(
             done(admitted),
@@ -569,7 +622,7 @@ mod tests {
     #[test]
     fn pause_and_hold_freeze_the_deadline_and_reset_settles_the_row() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let handle = running(start(set(on(true))));
         machine::on_pause();
         // The frozen clock reads the pause instant, so a row that stepped
@@ -608,7 +661,12 @@ mod tests {
 
         let _ = drain();
         let handle = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         machine::on_reset();
         assert_eq!(
             machine::take(handle),
@@ -622,14 +680,26 @@ mod tests {
     #[test]
     fn clear_continues_after_timeout_with_counts() {
         prepare(ClientRevision::R274);
-        set_obs(43, 43, 96, 1);
-        set_obs(43, 43, 97, 1);
+        let (protect_varp, protect_level, protect_button) = protect_identity();
+        let (previous_varp, previous_button) = preceding_prayer_identity();
+        set_obs(protect_level, protect_level, previous_varp, 1);
+        set_obs(protect_level, protect_level, protect_varp, 1);
         let handle = running(start(json!({ "op": "clear" })));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5622 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: previous_button
+            }]
+        );
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
         tick();
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
-        set_obs(43, 43, 97, 0);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_button
+            }]
+        );
+        set_obs(protect_level, protect_level, protect_varp, 0);
         tick();
         assert_eq!(
             done(handle),
