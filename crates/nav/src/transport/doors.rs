@@ -166,6 +166,7 @@ pub(super) fn door_edges(
                     graph,
                     TransportEdge {
                         kind: TransportKind::Door,
+                        player_delta: None,
                         at,
                         to,
                         loc_id: *id,

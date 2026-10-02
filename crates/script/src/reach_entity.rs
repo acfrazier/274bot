@@ -6,9 +6,9 @@
 //! JavaScript passes the caller's `expect`, the frozen attempt's
 //! `find` → `interact(op)` as one `interact` hook, `find()?.tile()` as
 //! `target`, and `log`. Rust owns the eight-round loop, the scene probe,
-//! the "I can't reach that" check, door and gate clearing (close a swung
-//! leaf, else walk to and open the blocking door), ladder hops and every
-//! wait. Game actions are the native loc and walk ops.
+//! the "I can't reach that" check, opening closed barriers and walking
+//! through open passages, ladder hops and every wait. Game actions are
+//! the native loc and walk ops.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
@@ -27,11 +27,9 @@ const DOOR_ATTEMPTS: u32 = 8;
 const PROBE_RADIUS: i32 = 10;
 /// Frozen `REACH_BFS_STEPS`.
 const BFS_STEPS: u32 = 400;
-/// Frozen `LEAF_CLOSE_RADIUS`.
-const LEAF_CLOSE_RADIUS: i32 = 3;
 /// Frozen `towardDest` slack.
 const TOWARD_SLACK: i32 = 4;
-/// Frozen door open / leaf close settle wait.
+/// Door-open settle wait.
 const DOOR_WAIT_MS: u64 = 5_000;
 /// Frozen `openBlockingDoor` walk: `walkResilient(t, { radius: 1,
 /// attempts: 3, timeoutMs: 30_000 })` (`Reach.ts:112–114`).
@@ -123,12 +121,12 @@ fn door_named(loc: &SceneRow) -> bool {
 
 /// Frozen `isOpenableBarrier`.
 fn openable_barrier(loc: &SceneRow) -> bool {
-    door_named(loc) && op_starting(loc, "open").is_some()
+    door_named(loc) && !api::query::door_is_open(ops(loc)) && op_starting(loc, "open").is_some()
 }
 
 /// Frozen `isOpenBarrierLeaf`.
 fn open_leaf(loc: &SceneRow) -> bool {
-    door_named(loc) && op_starting(loc, "close").is_some()
+    door_named(loc) && api::query::door_is_open(ops(loc))
 }
 
 /// The nearest posted loc passing `keep` (frozen `.nearest()`).
@@ -163,10 +161,6 @@ fn can_reach(tile: Tile, adjacent_ok: bool) -> bool {
     crate::load::reach_query::with_view(|view| view.can_reach(tile.world(), &options))
 }
 
-fn can_step(from: Tile, to: Tile) -> bool {
-    crate::load::reach_query::with_view(|view| view.can_step(from.world(), to.world()))
-}
-
 /// Frozen `doorApproachable`: some tile on or beside the door is reachable.
 fn door_approachable(door: Tile) -> bool {
     (-1..=1).any(|dx| {
@@ -183,13 +177,27 @@ fn door_approachable(door: Tile) -> bool {
     })
 }
 
+fn door_wall_reachable(door: &SceneRow) -> bool {
+    let Some(here) = here() else {
+        return false;
+    };
+    crate::load::reach_query::with_view(|view| {
+        api::query::straight_wall_reachable(
+            here.world(),
+            loc_tile(door).world(),
+            door.shape,
+            door.angle,
+            |from, to| view.can_step(from, to),
+        )
+    })
+}
+
 /// Frozen `towardDest`.
 fn toward_dest(door: Tile, here: Tile, dest: Tile) -> bool {
     door.cheb(dest) <= here.cheb(dest) + TOWARD_SLACK
 }
 
-/// Frozen `clearBlockingDoor(toward)`: close a swung leaf that blocks the
-/// last step, else walk to and open the nearest blocking door.
+/// Clear a closed barrier, or walk through an already-open passage.
 struct Clear {
     toward: Tile,
     phase: ClearPhase,
@@ -197,7 +205,7 @@ struct Clear {
 
 enum ClearPhase {
     Start,
-    LeafWait,
+    PassageWalk { walk: Box<Resilient> },
     DoorWalk { door: Tile, walk: Box<Resilient> },
     DoorOpen { door: Tile },
     DoorWait { door: Tile },
@@ -213,31 +221,23 @@ impl Clear {
 
     /// `Some(cleared)` once done; log lines go to `says`.
     fn step(&mut self, cx: &mut Cx<'_>, says: &mut VecDeque<String>) -> Option<bool> {
-        let toward = self.toward;
         loop {
             match std::mem::replace(&mut self.phase, ClearPhase::Start) {
                 ClearPhase::Start => {
-                    if self.close_leaf(cx, says) {
-                        cx.clock().arm(DOOR_WAIT_MS);
-                        self.phase = ClearPhase::LeafWait;
-                        return None;
-                    }
                     if let Some(done) = self.find_door(cx) {
                         return done;
                     }
                 }
-                ClearPhase::LeafWait => {
-                    if can_reach(toward, true) {
-                        return Some(true);
+                ClearPhase::PassageWalk { mut walk } => {
+                    let result = walk.step(cx);
+                    while let Some(line) = walk.pop_log() {
+                        says.push_back(line);
                     }
-                    if !cx.clock().bound_reached() {
-                        self.phase = ClearPhase::LeafWait;
-                        return None;
+                    if let Some(ok) = result {
+                        return Some(ok);
                     }
-                    // `closeSwungLeaf(…) || openBlockingDoor(…)`
-                    if let Some(done) = self.find_door(cx) {
-                        return done;
-                    }
+                    self.phase = ClearPhase::PassageWalk { walk };
+                    return None;
                 }
                 ClearPhase::DoorWalk { door, mut walk } => {
                     let out = walk.step(cx);
@@ -249,15 +249,19 @@ impl Clear {
                             self.phase = ClearPhase::DoorWalk { door, walk };
                             return None;
                         }
-                        // Frozen ignores the walk's result and reads the
-                        // door where the player stopped (`Reach.ts:112–118`).
-                        Some(_) => self.phase = ClearPhase::DoorOpen { door },
+                        Some(true) => self.phase = ClearPhase::DoorOpen { door },
+                        Some(false) => return Some(false),
                     }
                 }
                 ClearPhase::DoorOpen { door } => {
                     let Some(shut) = shut_at(door) else {
                         return Some(true);
                     };
+                    if !crate::load::reach_query::arrived(door.world(), 1)
+                        && !door_wall_reachable(&shut)
+                    {
+                        return Some(false);
+                    }
                     let Some(op) = op_starting(&shut, "open") else {
                         return Some(false);
                     };
@@ -291,40 +295,9 @@ impl Clear {
     /// The door-approach walk this clear has armed ([`Resilient::release`]).
     fn release(&self) -> Option<InteractReq> {
         match &self.phase {
-            ClearPhase::DoorWalk { walk, .. } => walk.release(),
+            ClearPhase::DoorWalk { walk, .. } | ClearPhase::PassageWalk { walk } => walk.release(),
             _ => None,
         }
-    }
-
-    /// Frozen `closeSwungLeaf`, up to its close click.
-    fn close_leaf(&self, cx: &mut Cx<'_>, says: &mut VecDeque<String>) -> bool {
-        let toward = self.toward;
-        let Some(here) = here() else {
-            return false;
-        };
-        if here.level != toward.level || can_reach(toward, true) {
-            return false;
-        }
-        let Some(leaf) = nearest(|loc| {
-            open_leaf(loc)
-                && loc.distance <= LEAF_CLOSE_RADIUS
-                && loc_tile(loc).cheb(toward) <= 1
-                && !can_step(loc_tile(loc), toward)
-        }) else {
-            return false;
-        };
-        let Some(op) = op_starting(&leaf, "close") else {
-            return false;
-        };
-        says.push_back(format!(
-            "reach: closing '{}' at ({},{}) to reach ({},{})",
-            leaf.name_or_empty(),
-            leaf.x,
-            leaf.z,
-            toward.x,
-            toward.z
-        ));
-        interact(&leaf, &op, cx)
     }
 
     /// Frozen `openBlockingDoor` up to its walk. `Some` is the step's
@@ -341,25 +314,55 @@ impl Clear {
                 && toward_dest(loc_tile(loc), here, toward)
                 && door_approachable(loc_tile(loc))
         }) else {
-            return Some(Some(false));
-        };
-        let door = loc_tile(&door);
-        if here.cheb(door) > 1 {
-            // Frozen ignores the walk's result.
+            if nearest(|loc| {
+                open_leaf(loc) && loc.distance <= 6 && toward_dest(loc_tile(loc), here, toward)
+            })
+            .is_none()
+            {
+                return Some(Some(false));
+            }
             let walk = Resilient::new(
-                door.world(),
+                toward.world(),
                 1,
                 DOOR_WALK_MS,
                 Some(DOOR_WALK_ATTEMPTS),
                 false,
             );
-            if let Ok(walk) = walk.start(cx) {
+            return match walk.start(cx) {
+                Ok(walk) => {
+                    self.phase = ClearPhase::PassageWalk {
+                        walk: Box::new(walk),
+                    };
+                    Some(None)
+                }
+                Err(_) => Some(Some(false)),
+            };
+        };
+        if door_wall_reachable(&door) {
+            self.phase = ClearPhase::DoorOpen {
+                door: loc_tile(&door),
+            };
+            return None;
+        }
+        let door = loc_tile(&door);
+        match Resilient::new(
+            door.world(),
+            1,
+            DOOR_WALK_MS,
+            Some(DOOR_WALK_ATTEMPTS),
+            false,
+        )
+        .start(cx)
+        {
+            Ok(walk) => {
                 self.phase = ClearPhase::DoorWalk {
                     door,
                     walk: Box::new(walk),
                 };
                 return Some(None);
             }
+            Err(false) => return Some(Some(false)),
+            Err(true) => {}
         }
 
         self.phase = ClearPhase::DoorOpen { door };
@@ -671,7 +674,7 @@ fn unreachable_line(what: &str, toward: Option<Tile>) -> String {
         (t.x.to_string(), t.z.to_string())
     });
     format!(
-        "reach: '{what}' at ({x},{z}): server can't reach it and no door in front to open or close (unreachable)"
+        "reach: '{what}' at ({x},{z}): server can't reach it and no door in front to open or walk through (unreachable)"
     )
 }
 
@@ -1105,9 +1108,9 @@ impl WalkHops {
                 let arrive = self.hops[hop].arrive;
                 let arrived =
                     here().filter(|t| t.level == arrive.level && arrive.distance_to(*t) <= 5);
-                if let Some(here) = arrived {
+                if arrived.is_some() {
                     // `return Game.tile()`, then the final leg.
-                    return self.finish(here, cx);
+                    return self.finish(cx);
                 }
                 if cx.clock().bound_reached() {
                     return Some(false);
@@ -1134,7 +1137,7 @@ impl WalkHops {
     /// Frozen `crossHops`.
     fn cross(&mut self, here: Tile, cx: &mut Cx<'_>) -> Option<bool> {
         if here.underground() == self.dest.underground() {
-            return self.finish(here, cx);
+            return self.finish(cx);
         }
         let hop = self
             .hops
@@ -1148,7 +1151,7 @@ impl WalkHops {
                 "no hop from ({},{}) toward z {} — trying the baked graph",
                 here.x, here.z, self.dest.z
             ));
-            return self.finish(here, cx);
+            return self.finish(cx);
         };
         let stand = self.hops[hop].stand;
         if stand.distance_to(here) > 2 {
@@ -1216,11 +1219,8 @@ impl WalkHops {
         None
     }
 
-    /// Frozen `walkWithHops` after the hop: walk unless within `radius`.
-    fn finish(&mut self, here: Tile, cx: &mut Cx<'_>) -> Option<bool> {
-        if here.level == self.dest.level && self.dest.distance_to(here) <= self.radius {
-            return Some(true);
-        }
+    /// The final leg uses the shared wall-aware resilient arrival rule.
+    fn finish(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         match Resilient::new(
             self.dest.world(),
             self.radius,
@@ -1315,24 +1315,6 @@ mod tests {
              script's walk, whose token differs)"
         );
         assert_eq!(machine::take(h), Take::Pending);
-    }
-
-    fn loc(name: &str, actions: &[&str]) -> SceneRow {
-        SceneRow {
-            name: Some(name.into()),
-            actions: actions.iter().map(|op| (*op).into()).collect(),
-            ..SceneRow::default()
-        }
-    }
-
-    #[test]
-    fn barrier_predicates_are_the_frozen_door_crossing_rules() {
-        assert!(openable_barrier(&loc("Gate", &["Open", "Examine"])));
-        assert!(openable_barrier(&loc("Large door", &["open"])));
-        assert!(!openable_barrier(&loc("Gate", &["Close"])));
-        assert!(!openable_barrier(&loc("Ladder", &["Open"])));
-        assert!(open_leaf(&loc("Door", &["Close"])));
-        assert!(!open_leaf(&loc("Door", &["hidden", "Open"])));
     }
 
     #[test]
@@ -1520,19 +1502,13 @@ mod tests {
     }
 
     #[test]
-    fn cant_reach_with_no_door_to_clear_is_unreachable_with_the_frozen_line() {
+    fn cant_reach_with_no_door_to_clear_is_unreachable() {
         fresh();
         post_talk(1, -1, false, &[(3, "Welcome")]);
         let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, true, false));
         assert_eq!(d.step(), (None, vec![talk_click()]));
         post_talk(2, -1, false, &[(3, "Welcome"), (4, "I can't reach that!")]);
         assert_eq!(d.step(), (Some("unreachable"), vec![]));
-        assert_eq!(
-            d.reach.pop_log().as_deref(),
-            Some(
-                "reach: 'Luthas' at (1,0): server can't reach it and no door in front to open or close (unreachable)"
-            )
-        );
     }
 
     #[test]

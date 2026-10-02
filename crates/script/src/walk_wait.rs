@@ -20,8 +20,10 @@
 //! id as failed. The end of the armed walk's route publishes it as not
 //! failed: frozen `WalkExecutor` returns true at the path terminal even when
 //! `isArrived` is false there (`WalkExecutor.ts:316-325`, `'closest'`).
-//! Arrival is [`api::query::is_arrived`], the frozen `isArrived` over the
-//! last posted reach view — the rule the host follow ends on too. Genuinely
+//! Arrival is [`api::query::is_arrived`] over the posted reach view. This
+//! isolate wait serves legacy/compat walks, which carry no loc identity and
+//! intentionally keep tile-anchor semantics; native Walk requests select
+//! their tile or explicit-loc predicate in the native Walk adapter. Genuinely
 //! pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::Snapshot;
@@ -29,7 +31,7 @@ use crate::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use crate::observed::{self, Scene};
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// JS `Number` cannot uniquely represent integers above this.
@@ -59,6 +61,7 @@ pub(crate) fn alloc_token(avoid: u64) -> u64 {
 
 thread_local! {
     static SLOT: RefCell<WalkSlot> = const { RefCell::new(WalkSlot::new()) };
+    static INTENT_BASELINE: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
 }
 
 impl HostOutcome {
@@ -88,6 +91,8 @@ impl HostOutcome {
 
 struct IsolateObservation {
     here: Option<WorldTile>,
+    intent_baseline: u64,
+    token: u64,
 }
 
 impl Observation for IsolateObservation {
@@ -97,6 +102,15 @@ impl Observation for IsolateObservation {
 
     fn cancelled(&self) -> bool {
         crate::event_signal::pending()
+            || crate::machine::user_move_intent_seq() > self.intent_baseline
+            || observed::with(|scene| {
+                let latest = scene.latest();
+                latest
+                    .walk_outcome()
+                    .is_some_and(|outcome| outcome.request_id == self.token)
+                    && latest.walk_outcome_cancel_reason()
+                        == Some(crate::isolate_fb::WalkCancelReason::UserInput)
+            })
     }
 
     fn arrived(&self, key: WalkKey) -> bool {
@@ -119,6 +133,7 @@ pub(crate) fn on_snapshot(snap: &Snapshot<'_>) {
 
 pub(crate) fn on_reset() {
     SLOT.with(|slot| slot.borrow_mut().reset());
+    INTENT_BASELINE.with(|baseline| baseline.set((0, 0)));
 }
 
 pub(crate) fn on_pause() {}
@@ -134,6 +149,16 @@ pub(crate) fn on_hold(_held: bool) {}
 /// has replaced its wait.
 pub(crate) fn owns(token: u64) -> bool {
     SLOT.with(|slot| slot.borrow().owns(token))
+}
+
+/// Refresh the outer baseline after an uncancelled operator pause resumes.
+pub(crate) fn update_baseline(token: u64, intent_baseline: u64) {
+    INTENT_BASELINE.with(|baseline| {
+        let (owner, _) = baseline.get();
+        if owner == token {
+            baseline.set((owner, intent_baseline));
+        }
+    });
 }
 
 pub(crate) fn dispatch(input: &Value) -> Value {
@@ -155,7 +180,12 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                         .unwrap_or(false),
                 };
                 let outcome = observed::with(HostOutcome::posted);
+                let intent_baseline = input
+                    .get("intent_baseline")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_else(crate::machine::user_move_intent_seq);
                 let token = alloc_token(outcome.request_id);
+                INTENT_BASELINE.with(|baseline| baseline.set((token, intent_baseline)));
                 slot.begin(
                     std::num::NonZeroU64::new(token).expect("nonzero walk token"),
                     key,
@@ -164,10 +194,19 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                 json!(token)
             }
             "settled" => {
+                let token = json_u64(input.get("token"));
+                let intent_baseline = INTENT_BASELINE
+                    .with(|baseline| {
+                        let (owner, intent_baseline) = baseline.get();
+                        (owner == token).then_some(intent_baseline)
+                    })
+                    .unwrap_or_else(crate::machine::user_move_intent_seq);
                 json!(slot.poll(
-                    json_u64(input.get("token")),
+                    token,
                     &IsolateObservation {
                         here: crate::load::reach_query::posted_here(),
+                        token,
+                        intent_baseline,
                     }
                 ))
             }
@@ -291,6 +330,8 @@ mod tests {
             self_target_kind: 0,
             self_target_index: -1,
             widgets: &[],
+            user_move_intent_seq: 0,
+            walk_outcome_cancel_reason: Default::default(),
         }
     }
 
@@ -770,21 +811,6 @@ mod tests {
         );
     }
 
-    /// Open 64x64 scene at (2790,3530): no walls, so reach is pure BFS rank.
-    fn open_view(here: WorldTile) -> api::query::ReachQueryView {
-        let scene = api::snapshot::SceneView {
-            available: true,
-            base_x: 2790,
-            base_z: 3530,
-            level: 0,
-            width: 64,
-            height: 64,
-            collision_flags: vec![0; 64 * 64],
-        };
-        let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
-        api::query::pack_reach_query(&scene, flood.as_ref())
-    }
-
     fn route_end_native(seq: u64, request_id: u64, radius: i32) -> NativeFactsInput<'static> {
         NativeFactsInput {
             walk_outcome_seq: seq,
@@ -800,25 +826,21 @@ mod tests {
         }
     }
 
-    /// AR-1 / frozen `'closest'`: an r=12 walk in open terrain ends on its
-    /// approach tile, 12 tiles out, where every tile has BFS rank >= 529 >
-    /// 512, so `isArrived` is false. The host's route-end outcome settles it.
+    /// Compat 'closest' may settle a correlated route end even when a wall
+    /// separates that endpoint from the requested tile.
     #[test]
-    fn route_end_settles_true_where_is_arrived_is_false() {
+    fn route_end_can_settle_closest_without_crossing_a_closed_wall() {
         on_reset();
-        let token = begin(2820, 3557, 0, 12, false);
+        let token = begin(2820, 3557, 0, 3, false);
         let approach = WorldTile {
-            x: 2808,
-            z: 3557,
+            x: 2820,
+            z: 3554,
             level: 0,
         };
-        let view = open_view(approach);
+        let view = walled_view(approach);
         observe_at(2, approach, &view);
-        assert!(
-            !settled(token),
-            "ring 12 in open terrain is past the 512 reach budget"
-        );
-        observe_at_with(3, approach, &view, route_end_native(1, token, 12));
+        assert!(!settled(token), "proximity cannot cross the closed wall");
+        observe_at_with(3, approach, &view, route_end_native(1, token, 3));
         assert!(settled(token), "the route end settles the wait");
         assert!(value(token), "frozen 'closest' returns true");
     }
@@ -828,11 +850,11 @@ mod tests {
         on_reset();
         let token = begin(2820, 3557, 0, 12, false);
         let approach = WorldTile {
-            x: 2808,
-            z: 3557,
+            x: 2820,
+            z: 3554,
             level: 0,
         };
-        let view = open_view(approach);
+        let view = walled_view(approach);
         observe_at_with(2, approach, &view, route_end_native(1, token + 1, 12));
         assert!(!settled(token), "another request's route end");
         observe_at_with(3, approach, &view, route_end_native(2, token, 11));
@@ -844,5 +866,47 @@ mod tests {
         observe_at_with(5, approach, &view, route_end_native(4, token, 12));
         assert!(settled(token));
         assert!(!value(token), "a matched failure stays failed");
+    }
+
+    #[test]
+    fn resumed_wait_baseline_ignores_the_pause_period_but_cancels_later_input() {
+        crate::machine::on_reset();
+        on_reset();
+        let token = begin(2820, 3556, 0, 1, false);
+        update_baseline(token, 1);
+
+        let mut resumed = empty_input(2);
+        resumed.user_move_intent_seq = 1;
+        observe(resumed, NativeFactsInput::default());
+        assert!(!settled(token), "the paused-period intent was rebaselined");
+
+        let mut moved_again = empty_input(3);
+        moved_again.user_move_intent_seq = 2;
+        observe(moved_again, NativeFactsInput::default());
+        assert!(settled(token));
+        assert!(!value(token));
+    }
+
+    #[test]
+    fn matching_user_input_cancel_reason_settles_false_without_sequence_change() {
+        crate::machine::on_reset();
+        on_reset();
+        let token = begin(2820, 3556, 0, 1, false);
+        let mut input = empty_input(2);
+        input.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        let outcome = NativeFactsInput {
+            walk_outcome_seq: 1,
+            walk_outcome_generation: 1,
+            walk_outcome_request_id: token,
+            walk_outcome_failed: false,
+            walk_outcome_x: 2820,
+            walk_outcome_z: 3556,
+            walk_outcome_level: 0,
+            walk_outcome_radius: 1,
+            ..NativeFactsInput::default()
+        };
+        observe(input, outcome);
+        assert!(settled(token));
+        assert!(!value(token));
     }
 }

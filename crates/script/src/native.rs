@@ -344,6 +344,7 @@ pub struct ActionContext<'a> {
     pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
+    pub(crate) observed_walk_outcome_seq: u64,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
@@ -353,6 +354,14 @@ pub struct QuietReadLease {
 
 pub struct WalkRequest {
     pub target: WorldTile,
+    /// Explicit identity for a walk whose destination is a loc origin.
+    /// `None` deliberately keeps the destination tile-based.
+    pub loc_id: Option<i32>,
+    /// Chebyshev arrival margin. With `loc_id: None`, it measures from
+    /// `target`; with `Some(loc_id)`, it measures from the full rotated footprint.
+    /// A loc stand must also pass the shared live wall/force-approach rule.
+    /// Perimeter stands are admitted only when their footprint distance is
+    /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     pub options: FindOptions,
     pub required_after: EvidenceStamp,
@@ -362,6 +371,7 @@ pub struct WalkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
+    UserInput,
     RouteEnded,
     Refused,
     Blocked,
@@ -430,6 +440,8 @@ pub enum ActionError {
     BudgetExhausted,
     Stale,
     Cancelled,
+    /// A step adapter was interrupted by manual movement, not owner revocation.
+    UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
     /// The step cannot continue safely without an explicit operator retry.

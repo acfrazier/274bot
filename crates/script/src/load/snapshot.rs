@@ -159,6 +159,14 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "bank_approaches", empty_rows)?;
     }
+    if snap.has_user_move_intent_seq() {
+        let seq = num(&mut scope, snap.user_move_intent_seq() as f64);
+        set(&mut scope, obj, "user_move_intent_seq", seq)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "user_move_intent_seq", zero)?;
+    }
+
     if snap.has_walk_outcome_seq() {
         let seq = num(&mut scope, snap.walk_outcome_seq() as f64);
         set(&mut scope, obj, "walk_outcome_seq", seq)?;
@@ -182,6 +190,13 @@ pub(super) fn materialize_snapshot(
             allow.into(),
         )?;
         let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
+        let cancel_reason = match snap.walk_outcome_cancel_reason() {
+            crate::isolate_fb::WalkCancelReason::None => "none",
+            crate::isolate_fb::WalkCancelReason::UserInput => "user-input",
+            _ => return Err("unknown walk outcome cancellation reason".to_string()),
+        };
+        let cancel_reason = js_string(&mut scope, cancel_reason)?;
+        set(&mut scope, obj, "walk_outcome_cancel_reason", cancel_reason)?;
         set(&mut scope, obj, "walk_outcome_request_id", rid)?;
         let carry = carry_array(&mut scope, snap.walk_missing_carry())?;
         set(&mut scope, obj, "walk_missing_carry", carry)?;
@@ -197,6 +212,8 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "walk_outcome_allow_teleports", falsy)?;
         set(&mut scope, obj, "walk_outcome_request_id", zero)?;
         set(&mut scope, obj, "walk_missing_carry", empty_rows)?;
+        let none = js_string(&mut scope, "none")?;
+        set(&mut scope, obj, "walk_outcome_cancel_reason", none)?;
     }
     if snap.has_route_inspect_seq() {
         let seq = num(&mut scope, snap.route_inspect_seq() as f64);

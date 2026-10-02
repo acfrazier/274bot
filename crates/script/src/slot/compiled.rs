@@ -184,6 +184,7 @@ pub(super) fn frame_context<'a>(
         ledger: &mut runtime.ledger,
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
+        observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
     }
 }
 
@@ -601,6 +602,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
+            self.compiled_interact_outcome_seqs.clear();
             self.active_tick_error_generation = None;
         }
         self.state = if self.want_run {
@@ -738,6 +740,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
+            self.compiled_interact_outcome_seqs.clear();
             self.clue_abort_owed = true;
         }
         self.pending_logs.push(failure.message.to_string());

@@ -33,7 +33,8 @@ pub(crate) fn with_tick_output<R>(
 ) -> R {
     with_tick_output_reach(snapshot, None, ledger, tick, output, f)
 }
-fn with_tick_reach<R>(
+
+pub(crate) fn with_tick_reach<R>(
     snapshot: &GameSnapshot,
     reach: &api::query::ReachQueryView,
     ledger: &mut Option<Box<ledger::Ledger>>,
@@ -42,6 +43,7 @@ fn with_tick_reach<R>(
 ) -> R {
     with_tick_output_reach(snapshot, Some(reach), ledger, tick, &mut Output, f)
 }
+
 fn with_tick_output_reach<R>(
     snapshot: &GameSnapshot,
     reach: Option<&api::query::ReachQueryView>,
@@ -69,6 +71,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
+            observed_walk_outcome_seq: 0,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(reach),
             retained: &mut retained,
@@ -150,6 +153,88 @@ fn loc(id: i32, name: &str, op: &str) -> LocView {
         map_function: -1,
         map_scene: -1,
         force_approach: 0,
+    }
+}
+pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
+    api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile,
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 0,
+        },
+        energy: 100,
+        weight: 0,
+    }
+}
+pub(crate) fn post_user_input_walk_receipt(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+) -> u64 {
+    let (request_id, run) = {
+        let ledger = ledger.as_ref().expect("walk request must be queued");
+        let action = ledger
+            .outbox
+            .iter()
+            .rev()
+            .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .expect("walk request must be queued");
+        (action.request_id.get(), action.run())
+    };
+    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run,
+            tick,
+            sequence: tick,
+        },
+        end: crate::native::WalkEnd::UserInput,
+        blocked: None,
+        detail: None,
+    });
+    request_id
+}
+
+fn assert_manual_movement(result: Poll<Result<StepOutcome, ActionError>>) {
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+}
+fn wall_door_reach_view() -> api::query::ReachQueryView {
+    let mut reachable = vec![0u32];
+    reachable[0] = 1 << 4;
+    let mut exact_rank = vec![u16::MAX; 9];
+    exact_rank[4] = 0;
+    api::query::ReachQueryView {
+        available: true,
+        base_x: 4,
+        base_z: 4,
+        level: 0,
+        width: 3,
+        height: 3,
+        walkable: vec![0b1_1111_1111],
+        reachable,
+        reachable_adj: vec![1 << 4],
+        adjacent_rank: exact_rank.clone(),
+        exact_rank,
+        step: vec![0; 9],
+        canlight: Vec::new(),
     }
 }
 fn reach_args(kind: reach::ReachKind, wait: bool) -> reach::ReachArgs {
@@ -256,6 +341,263 @@ fn reach_picks_the_observed_loc_not_the_anchor() {
             ..
         }
     ));
+}
+
+#[test]
+fn reach_walks_through_an_open_door_instead_of_closing_it() {
+    let mut s = ready();
+    s.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: None,
+                actions: vec![],
+                tile: tile(3077, 3426),
+                distance: 0,
+                animation: -1,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                health: 10,
+                total_health: 10,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            combat_level: 3,
+            skill_level: 0,
+        },
+        energy: 100,
+        weight: 0,
+    });
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(3081, 3430);
+    wheel.distance = 4;
+    let mut leaf = loc(1531, "Door", "Close");
+    leaf.tile = tile(3076, 3426);
+    leaf.distance = 1;
+    let mut other_door = loc(1530, "Door", "Open");
+    other_door.tile = tile(3077, 3431);
+    other_door.distance = 5;
+    s.seed_locs(vec![wheel.clone(), leaf, other_door]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let handle = with_tick(&s, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)).is_pending());
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Walk(request) => {
+            assert_eq!(request.target, wheel.tile);
+            assert_eq!(request.radius, 1);
+        }
+        HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
+    }
+    assert!(
+        !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Loc { action, .. })
+                if action.eq_ignore_ascii_case("close")
+        ))
+    );
+}
+#[test]
+fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
+    let mut s = ready();
+    s.seed_local_player(local_player(tile(5, 5)));
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(8, 5);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(6, 5);
+    door.distance = 1;
+    door.layer = LocLayer::Wall;
+    door.shape = 0;
+    door.angle = 0;
+    s.seed_locs(vec![wheel.clone(), door]);
+
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let reach = wall_door_reach_view();
+    let handle = with_tick_reach(&s, &reach, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 2, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Interaction(InteractReq::Loc {
+            x: 6,
+            z: 5,
+            action,
+            id: Some(1530),
+            ..
+        }) if action.eq_ignore_ascii_case("open")
+    ));
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    assert!(!outbox
+        .iter()
+        .any(|entry| matches!(&entry.effect, HostEffect::Walk(_))));
+    assert!(!outbox.iter().any(|entry| matches!(
+        &entry.effect,
+        HostEffect::Interaction(InteractReq::Loc { action, .. })
+            if action.eq_ignore_ascii_case("close")
+    )));
+}
+
+#[test]
+fn non_straight_wall_door_keeps_the_approach_walk_and_propagates_failure() {
+    let mut s = ready();
+    s.seed_local_player(local_player(tile(5, 5)));
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(8, 5);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(6, 5);
+    door.distance = 1;
+    door.layer = LocLayer::Wall;
+    door.shape = 9;
+    door.angle = 0;
+    s.seed_locs(vec![wheel.clone(), door.clone()]);
+
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let reach = wall_door_reach_view();
+    let handle = with_tick_reach(&s, &reach, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+
+    assert!(with_tick_reach(&s, &reach, &mut ledger, 2, |t| t
+        .actions
+        .poll(&handle, &mut t.cx))
+    .is_pending());
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(request) if request.target == door.tile && request.radius == 1
+    ));
+
+    let request_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .request_id
+        .get();
+    ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 3,
+            sequence: 3,
+        },
+        end: crate::native::WalkEnd::Failed,
+        blocked: None,
+        detail: None,
+    });
+    assert!(matches!(
+        with_tick_reach(&s, &reach, &mut ledger, 3, |t| t
+            .actions
+            .poll(&handle, &mut t.cx)),
+        Poll::Ready(Ok(false))
+    ));
+    assert!(
+        !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Loc { action, .. })
+                if action.eq_ignore_ascii_case("open") || action.eq_ignore_ascii_case("close")
+        ))
+    );
+}
+#[test]
+fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
+    let mut s = ready();
+    let mut wheel = loc(2644, "Spinning wheel", "Spin");
+    wheel.tile = tile(3081, 3430);
+    let mut door = loc(1530, "Door", "Open");
+    door.tile = tile(3076, 3427);
+    door.distance = 1;
+    s.seed_locs(vec![wheel.clone(), door.clone()]);
+    let mut args = reach_args(
+        reach::ReachKind::Loc {
+            id: Some(2644),
+            name: None,
+        },
+        false,
+    );
+    args.op = Arc::from("Spin");
+    args.anchor = Some(wheel.tile);
+    let mut ledger = None;
+    let handle = with_tick(&s, &mut ledger, 1, |t| {
+        t.actions.begin::<reach::Reach>(args, &mut t.cx).unwrap()
+    });
+    s.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        sequence: 1,
+        text: "I can't reach that!".into(),
+        type_: 0,
+        username: None,
+    }]);
+    assert!(with_tick(&s, &mut ledger, 2, |t| t.actions.poll(&handle, &mut t.cx)).is_pending());
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Walk(request) => {
+            assert_eq!(request.target, door.tile);
+            assert_eq!(request.radius, 1);
+        }
+        HostEffect::Interaction(request) => {
+            panic!("door must be approached before Open, got {request:?}")
+        }
+    }
 }
 
 #[test]
@@ -2954,4 +3296,75 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             "resume the same conversation once the observed barrier is traversable"
         );
     });
+}
+
+#[test]
+fn talk_walk_user_input_blocks_before_dialogue_interaction() {
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = TalkRun {
+        id: 42,
+        npc: Arc::from("test npc"),
+        tile: Some(tile(3200, 3200)),
+        leash: 1,
+        prefer: Arc::from([]),
+        choose: None,
+        walk: None,
+        dialogue: None,
+        started: false,
+    };
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    post_user_input_walk_receipt(&mut ledger, 2);
+    assert_manual_movement(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    }));
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
+}
+
+#[test]
+fn use_on_walk_user_input_blocks_before_interaction() {
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = UseOnRun {
+        item: Arc::from("test item"),
+        item_id: 1,
+        target_id: 2,
+        product: None,
+        until: None,
+        no_product: None,
+        kind: Arc::from("loc"),
+        target_name: Some(Arc::from("test target")),
+        tile: Some(tile(3200, 3200)),
+        radius: 1,
+        deadline: None,
+        settle_duration: Duration::from_secs(20),
+        walk: None,
+        interaction: None,
+        accepted: false,
+        round_before: None,
+        chat_since: 0,
+    };
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    run.deadline = Some(Duration::ZERO);
+    post_user_input_walk_receipt(&mut ledger, 2);
+    assert_manual_movement(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    }));
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
 }

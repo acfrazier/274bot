@@ -21,7 +21,7 @@ vault = { path = "../vault" }
 [dev-dependencies]
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
 host = { path = "../host" }
-host-play = { path = "../host-play", features = ["test-support"] }
+host-play = { path = "../host-play", features = ["test-support", "live-probe"] }
 
 [[bin]]
 name = "tui-play"

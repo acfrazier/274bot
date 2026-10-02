@@ -417,6 +417,13 @@ pub enum InteractReq {
 }
 
 impl InteractReq {
+    pub fn is_automatic_walk(&self) -> bool {
+        matches!(
+            self,
+            Self::Walk { .. } | Self::WalkNear { .. } | Self::WalkNearestBank | Self::WalkTo { .. }
+        )
+    }
+
     /// Foreground game work, as distinct from host-local, broker and lifecycle
     /// rows. Walks and canvas input still compete for foreground ownership.
     pub fn is_game(&self) -> bool {

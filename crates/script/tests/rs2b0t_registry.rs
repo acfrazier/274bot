@@ -657,7 +657,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
 }
 
 #[test]
-fn parse_settings_inlines_shim_food_banking_and_spell_keys() {
+fn parse_settings_resolves_spell_keys_and_defers_food_options() {
     let src = r#"
 const SHOW_MELEE = { key: 'combatStyle', anyOf: ['melee'] };
 export const SETTINGS = {
@@ -693,11 +693,10 @@ export const SETTINGS = {
     );
     let food = schema.iter().find(|s| s.id == "food").unwrap();
     assert!(
-        food.options.contains(&"Shark".to_string())
-            && food.options.contains(&"Lobster".to_string()),
-        "FOOD_OPTIONS must inline: {:?}",
-        food.options
+        food.options.is_empty(),
+        "revision options stay unresolved at parse time"
     );
+    assert_eq!(food.options_from.as_deref(), Some("FOOD_OPTIONS"));
     let banking = schema.iter().find(|s| s.id == "banking").unwrap();
     assert_eq!(banking.options, vec!["None", "Auto"]);
 }

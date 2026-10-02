@@ -1350,6 +1350,9 @@ pub(super) fn stage_door_edges(
                     let Some(extra) = extra_ticks("ladder_cellar") else {
                         continue;
                     };
+                    let Some(ticks) = edge_ticks(extra) else {
+                        continue;
+                    };
                     if !in_world_box(&to) {
                         continue;
                     }
@@ -1357,7 +1360,7 @@ pub(super) fn stage_door_edges(
                     else {
                         continue;
                     };
-                    edge.ticks = 1 + extra;
+                    edge.ticks = ticks;
                     proven = true;
                     observable.admit_edge(graph, edge, audit);
                 }
@@ -1424,6 +1427,7 @@ fn gated_edge(
     }
     Some(TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id: id,

@@ -1,7 +1,7 @@
 //! Native reach/door loop extracted from isolate `reach_entity` / `reach`.
-//! Policy constants match those modules; sequencing observes `SnapshotView`.
+//! Closed barriers open once; already-open passages use the shared native walk.
 
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkRequest};
+use crate::native::{walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
@@ -11,9 +11,21 @@ use std::time::Duration;
 
 pub const DOOR_ATTEMPTS: u32 = 8;
 pub const PROBE_RADIUS: i32 = 10;
-pub const LEAF_CLOSE_RADIUS: i32 = 3;
 pub const DOOR_WAIT_MS: u64 = 5_000;
 pub const CANT_REACH: &str = "i can't reach that";
+
+fn door_wall_reachable(
+    here: WorldTile,
+    door: &api::snapshot::LocView,
+    reach: Option<&api::query::ReachQueryView>,
+) -> bool {
+    let (Ok(shape), Ok(angle)) = (u8::try_from(door.shape), u8::try_from(door.angle)) else {
+        return false;
+    };
+    api::query::straight_wall_reachable(here, door.tile, shape, angle, |from, to| {
+        reach.is_some_and(|view| view.can_step(from, to))
+    })
+}
 
 #[derive(Clone)]
 pub struct ReachArgs {
@@ -48,6 +60,7 @@ enum Phase {
     Seek,
     Click,
     WaitDoor,
+    WaitWalk { door: Option<(i32, WorldTile)> },
 }
 
 pub struct Reach {
@@ -58,6 +71,7 @@ pub struct Reach {
     deadline_ms: u64,
     before_count: i32,
     clicked_loc: Option<(i32, WorldTile)>,
+    walk: Option<Walk>,
 }
 
 impl NativeMachine for Reach {
@@ -73,6 +87,7 @@ impl NativeMachine for Reach {
             deadline_ms: cx.active_now().as_millis() as u64 + DOOR_WAIT_MS,
             before_count: 0,
             clicked_loc: None,
+            walk: None,
         };
         reach.click(cx)?;
         Ok(reach)
@@ -97,8 +112,6 @@ impl NativeMachine for Reach {
             Phase::Click => {
                 if saw_cant_reach(cx, self.chat_mark) {
                     if self.clear_door(cx).is_ok() {
-                        self.phase = Phase::WaitDoor;
-                        self.deadline_ms = cx.active_now().as_millis() as u64 + DOOR_WAIT_MS;
                         return Poll::Pending;
                     }
                     return Poll::Ready(Ok(false));
@@ -125,19 +138,40 @@ impl NativeMachine for Reach {
                 Poll::Ready(Ok(true))
             }
             Phase::WaitDoor => {
-                if cx.active_now().as_millis() as u64 >= self.deadline_ms {
-                    self.chat_mark = last_chat_seq(cx);
-                    if self.click(cx).is_err() {
-                        return Poll::Ready(Ok(false));
-                    }
-                    // A scene rebuild may hide the target again; click retains Seek.
+                if cx.active_now().as_millis() as u64 >= self.deadline_ms
+                    && self.walk_to_target(cx).is_err()
+                {
+                    return Poll::Ready(Ok(false));
                 }
                 Poll::Pending
+            }
+            Phase::WaitWalk { door } => {
+                match self.walk.as_mut().expect("door recovery walk").poll(cx) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok(receipt))
+                        if matches!(receipt.end, WalkEnd::Arrived | WalkEnd::RouteEnded) =>
+                    {
+                        self.walk = None;
+                        if let Some((id, tile)) = door {
+                            if self.open_door(id, tile, cx).is_err() {
+                                return Poll::Ready(Ok(false));
+                            }
+                        } else {
+                            self.click(cx)?;
+                        }
+                        Poll::Pending
+                    }
+                    Poll::Ready(_) => Poll::Ready(Ok(false)),
+                }
             }
         }
     }
 
-    fn cancel(&mut self) {}
+    fn cancel(&mut self) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
+    }
 }
 
 impl Reach {
@@ -228,45 +262,130 @@ impl Reach {
         Ok(true)
     }
 
-    fn clear_door(&self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
-        let here = cx.snapshot().here().map(|obs| obs.value);
+    fn clear_door(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
         let Some(locs) = cx.snapshot().locs() else {
             return Err(ActionError::Failed(Arc::from("no locs")));
         };
-        let door =
-            locs.value
-                .iter()
-                .filter(|loc| {
-                    loc.actions.iter().flatten().any(|op| {
-                        op.eq_ignore_ascii_case("open") || op.eq_ignore_ascii_case("close")
-                    }) && loc.name.as_deref().is_some_and(|name| {
+        let door = locs
+            .value
+            .iter()
+            .filter(|loc| {
+                (loc.actions
+                    .iter()
+                    .flatten()
+                    .any(|op| op.eq_ignore_ascii_case("open"))
+                    || api::query::door_is_open(loc.actions.iter().flatten().map(String::as_str)))
+                    && loc.name.as_deref().is_some_and(|name| {
                         name.to_ascii_lowercase().contains("door")
                             || name.to_ascii_lowercase().contains("gate")
                     })
-                })
-                .min_by_key(|loc| loc.distance);
+            })
+            .min_by_key(|loc| loc.distance);
         let Some(door) = door else {
             return Err(ActionError::Failed(Arc::from("no door")));
         };
+        if api::query::door_is_open(door.actions.iter().flatten().map(String::as_str)) {
+            return self.walk_to_target(cx);
+        }
+        let snapshot = cx.snapshot();
+        if let Some(here) = snapshot.here() {
+            let reach = snapshot.reach().map(|observed| observed.value);
+            if door_wall_reachable(here.value, door, reach) {
+                return self.open_door(door.id, door.tile, cx);
+            }
+        }
+        self.walk_to(door.tile, None, Some((door.id, door.tile)), cx)
+    }
+
+    fn open_door(
+        &mut self,
+        id: i32,
+        tile: WorldTile,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        let snapshot = cx.snapshot();
+        let locs = snapshot
+            .locs()
+            .ok_or_else(|| ActionError::Failed(Arc::from("no locs")))?;
+        let Some(door) = locs
+            .value
+            .iter()
+            .find(|loc| loc.id == id && loc.tile == tile)
+        else {
+            return self.walk_to_target(cx);
+        };
+        if api::query::door_is_open(door.actions.iter().flatten().map(String::as_str)) {
+            return self.walk_to_target(cx);
+        }
+        let here = snapshot
+            .here()
+            .ok_or_else(|| ActionError::Failed(Arc::from("no player tile")))?;
+        let reach = snapshot.reach().map(|observed| observed.value);
+        let unavailable = api::query::ReachQueryView::unavailable();
+        if !api::query::is_arrived(here.value, tile, 1, || reach.unwrap_or(&unavailable))
+            && !door_wall_reachable(here.value, door, reach)
+        {
+            return Err(ActionError::Failed(Arc::from(
+                "door approach not reachable",
+            )));
+        }
         let op = door
             .actions
             .iter()
             .flatten()
-            .find(|op| {
-                let lower = op.to_ascii_lowercase();
-                lower.starts_with("open")
-                    || (here.is_some_and(|tile| chebyshev(tile, door.tile) <= LEAF_CLOSE_RADIUS)
-                        && lower.starts_with("close"))
-            })
-            .cloned()
-            .unwrap_or_else(|| "Open".into());
+            .find(|op| op.eq_ignore_ascii_case("open"))
+            .ok_or_else(|| ActionError::Failed(Arc::from("door has no Open operation")))?
+            .clone();
         cx.emit(InteractReq::Loc {
-            x: door.tile.x,
-            z: door.tile.z,
-            level: door.tile.level,
+            x: tile.x,
+            z: tile.z,
+            level: tile.level,
             action: op,
-            id: Some(door.id),
+            id: Some(id),
         })?;
+        self.phase = Phase::WaitDoor;
+        self.deadline_ms = cx.active_now().as_millis() as u64 + DOOR_WAIT_MS;
+        Ok(())
+    }
+
+    fn walk_to_target(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        let clicked = self.clicked_loc;
+        let target = clicked
+            .map(|(_, tile)| tile)
+            .or_else(|| match &self.args.kind {
+                ReachKind::Npc { id, .. } => {
+                    nearest_npc(cx, *id, &self.args.op, self.args.radius).map(|npc| npc.tile)
+                }
+                ReachKind::Ground { id, .. } => nearest_ground(cx, *id).map(|item| item.tile),
+                _ => self.args.anchor,
+            });
+        let target = target.ok_or_else(|| ActionError::Failed(Arc::from("no reach target")))?;
+        // A clicked loc only gets footprint intent when the shared approach
+        // model recognizes it. Doors and other non-footprint locs retain the
+        // tile-anchor fallback instead of waiting for a footprint that cannot exist.
+        let loc_id = clicked.and_then(|(id, tile)| {
+            let locs = cx.snapshot().locs()?;
+            let loc = locs
+                .value
+                .iter()
+                .find(|loc| loc.id == id && loc.tile == tile)?;
+            api::query::loc_approach::distance_from(loc, tile).map(|_| id)
+        });
+        self.walk_to(target, loc_id, None, cx)
+    }
+
+    fn walk_to(
+        &mut self,
+        target: WorldTile,
+        loc_id: Option<i32>,
+        door: Option<(i32, WorldTile)>,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        self.walk = Some(Walk::begin(
+            walk_request(target, 1, loc_id, cx.evidence()),
+            cx,
+        )?);
+        self.phase = Phase::WaitWalk { door };
         Ok(())
     }
 }
@@ -390,9 +509,17 @@ fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
-pub fn walk_request(tile: WorldTile, radius: u16, required_after: EvidenceStamp) -> WalkRequest {
+/// Build a walk request; `None` preserves tile-anchor arrival, while
+/// `Some(loc_id)` explicitly opts into that loc's footprint arrival rule.
+pub fn walk_request(
+    tile: WorldTile,
+    radius: u16,
+    loc_id: Option<i32>,
+    required_after: EvidenceStamp,
+) -> WalkRequest {
     WalkRequest {
         target: tile,
+        loc_id,
         radius,
         options: crate::FindOptions::default(),
         required_after,

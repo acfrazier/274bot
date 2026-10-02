@@ -63,6 +63,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -96,6 +97,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -115,6 +117,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::BankPick(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -150,6 +153,7 @@ impl ActionContext<'_> {
             owner,
             request_id,
             effect: HostEffect::Walk(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -456,6 +460,7 @@ mod tests {
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
+            observed_walk_outcome_seq: 0,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -551,6 +556,7 @@ mod tests {
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,
+            observed_walk_outcome_seq: 0,
             active_now,
             wall_now: Instant::now(),
             ledger,
@@ -814,6 +820,7 @@ mod tests {
                     z: 9,
                     level: 0,
                 },
+                loc_id: None,
                 radius: 0,
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
@@ -901,6 +908,7 @@ mod tests {
                     |cx| {
                         let request = WalkRequest {
                             target,
+                            loc_id: None,
                             radius,
                             options: FindOptions::default(),
                             required_after: cx.evidence(),

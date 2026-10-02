@@ -546,6 +546,7 @@ impl Script for Relog {
                         z: 1,
                         level: 0,
                     },
+                    loc_id: None,
                     radius: 0,
                     options: crate::FindOptions::default(),
                     required_after: first,
@@ -1401,7 +1402,9 @@ mod api_gather_seat {
             "Stop retains ownership for its whole admission batch"
         );
         assert_eq!(
-            rows,
+            rows.into_iter()
+                .map(|queued| queued.req)
+                .collect::<Vec<_>>(),
             vec![
                 InteractReq::InspectAck {
                     seq: 9,
@@ -1704,4 +1707,52 @@ mod api_gather_seat {
         drop(instance);
         drop(prepared);
     }
+}
+
+#[cfg(all(feature = "load", feature = "test-hooks"))]
+#[test]
+fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_restore() {
+    use crate::shim::InteractReq;
+
+    struct WalkingRows(i32);
+    impl Script for WalkingRows {
+        fn tick(&mut self, cx: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            self.0 += 1;
+            cx.queue_test_interaction(InteractReq::WalkTo {
+                x: self.0,
+                z: 0,
+                level: 0,
+            });
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    slot.start_test_script(Box::new(WalkingRows(0)), Some(selected()))
+        .unwrap();
+    slot.observe_walk_outcome_seq(10);
+    tick(&mut slot);
+    slot.observe_walk_outcome_seq(11);
+    tick(&mut slot);
+    let (_, older, _) = slot.drain_host_interacts();
+
+    slot.observe_walk_outcome_seq(12);
+    tick(&mut slot);
+    slot.restore_host_interacts(older);
+    let (_, rows, _) = slot.drain_host_interacts();
+    let decisions: Vec<_> = rows
+        .into_iter()
+        .map(|queued| {
+            let InteractReq::WalkTo { x, .. } = queued.req else {
+                panic!("expected walking decision")
+            };
+            (x, queued.observed_walk_outcome_seq)
+        })
+        .collect();
+    assert_eq!(
+        decisions,
+        vec![(1, 10), (2, 11), (3, 12)],
+        "later observations and Pause-fence restoration must not refresh older walking decisions"
+    );
 }

@@ -92,6 +92,7 @@ pub(super) fn zanaris_door_edges(
         }
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at: WorldTile {
                 x: loc.x,
                 z: loc.z,

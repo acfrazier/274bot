@@ -1303,6 +1303,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         tick,
         here,
         ingame,
+        walk_outcome_cancel_reason: walk_outcome.cancel_reason,
+        user_move_intent_seq: walk_outcome.user_move_intent_seq,
         inv: &inv,
         // The inv tab's slot count (28 when bound, 0 while the side icons
         // stay tutorial-locked): the `reader.inventorySize()` gate a

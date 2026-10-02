@@ -1473,6 +1473,14 @@ impl SelectedGameData {
             .map(|(name, heal)| (name.as_str(), *heal))
     }
 
+    /// Fixed-heal food names for a settings choice list, best heal first
+    /// (ties keep source order), matching the frozen list's best-first order.
+    pub fn fixed_food_options_best_first(&self) -> Vec<&str> {
+        let mut foods: Vec<(&str, i32)> = self.fixed_food_heals().collect();
+        foods.sort_by_key(|&(_, heal)| std::cmp::Reverse(heal));
+        foods.into_iter().map(|(name, _)| name).collect()
+    }
+
     pub fn fixed_food_heal(&self, name: &str) -> Option<i32> {
         self.fixed_food_heal_index
             .get(&ascii_fold_hash(name))?
