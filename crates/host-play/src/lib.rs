@@ -286,13 +286,13 @@ impl Play {
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// The latest script walk was cancelled by the user's movement intent.
+    /// Whether the UI should show the most recent manual-cancellation detail.
     pub fn script_walk_cancelled_by_user(&self, name: &str) -> bool {
-        self.navs.lock().unwrap().get(name).is_some_and(|bot| {
-            bot.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput
-                || (bot.manual_takeover_watermark != 0
-                    && bot.manual_takeover_watermark == bot.walk_outcome_seq)
-        })
+        self.navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|bot| bot.manual_walk_cancelled_detail)
     }
 
     /// The immutable process profile, absent only for the legacy 274 entry.

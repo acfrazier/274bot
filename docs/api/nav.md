@@ -425,9 +425,11 @@ This does not relax the requested radius.
 
 Manual movement takes ownership before frontend or script follow. A matching
 native walk completes once with the normal `WalkEnd::UserInput` receipt
-(`blocked=None`), ahead of arrival, deadline and evidence checks. It displays
-“cancelled by user input”; it is not an action error. Cancellation invalidates
-the old route generation and clears pending route/bank work and cancelled carry.
+(`blocked=None`), ahead of arrival, deadline and evidence checks. The slot
+detail says “cancelled by user input” (not an action error) and clears when a
+later walk is armed or another walk outcome is published. Cancellation
+invalidates the old route generation and clears pending route/bank work and
+cancelled carry.
 Requests queued from an older observed walk-outcome sequence cannot restart that
 owner, and live route-less walking composers stop through the shared intent
 sequence. Already operator-paused or reconnect-carried script work keeps its
@@ -441,10 +443,12 @@ still occurs and scripts remain able to observe their normal end state,
 including compat `false` and the v2 `user-input` reason. A native script may
 make a new decision after an explicit Resume, but the cancelled request, host
 carry, queued pre-takeover walking work, and watchdog recovery are not replayed.
-Watchdog-owned replacement walks retain the original request, key and
-generation for this terminal; the recovery request's internal zero id does
-not replace the caller's receipt. Takeover also restamps gameplay progress,
-so leaving pause OFF does not immediately trigger a stale WedgeWalk recovery.
+For compat walks, watchdog-owned replacement routes retain the original
+request, key and generation for this terminal; their internal zero id does not
+replace the caller's receipt. Native-owned recovery ends its typed walk to its
+owner instead of carrying a receipt-only compat identity. Takeover also
+restamps gameplay progress, so leaving pause OFF does not immediately trigger
+a stale WedgeWalk recovery.
 
 The detector classifies movement intent, not successful displacement. Accepted
 conservative positives include a world-menu Examine/Cancel selection and
@@ -624,8 +628,9 @@ path at 120×40 and 80×24, including the reachable persisted settings row.
 The panel tests inject through production `Session::capture_tx`, preserving
 the client's normal input path and CPU game-pane capture. The matrix covers
 pause OFF and ON, watchdog-owned recovery followed by manual takeover and
-Resume, a v2 cancellation consumer, group-member isolation, and a route-less
-resilient walk. Fresh NPC and loc trials use the client's projected actor
+Resume, a v2 cancellation consumer, group-member isolation, and route-less
+resilient walking with pause OFF and with pause ON followed by Resume. Fresh
+NPC and loc trials use the client's projected actor
 bounds and actual opened world-menu rows, not fabricated picks or stale hover
 rows. World-menu Cancel and Examine rows conservatively cancel too. Harmless
 tab and right-click controls must not cancel. The group trial records a
