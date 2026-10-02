@@ -3448,7 +3448,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn operator_paused_walk_rebaselines_intent_before_resume() {
+    fn operator_paused_walk_rebaselines_first_observation_after_resume() {
         reset();
         post_walled_scene(vec![door_loc(1530, 2, 0)]);
         let h = start_opening(&["door", "gate"]);
@@ -3456,16 +3456,89 @@ pub(crate) mod tests {
         let _token = opening_walk_token(10);
 
         machine::on_pause();
+        machine::on_resume();
+        // The host posts no snapshot while Paused. Resume is queued first.
         crate::observed::post(2, |post| {
             post.user_move_intent_seq(1);
         });
-        machine::on_resume();
         machine::step(&mut NoJs);
 
         assert!(machine::merge_ops(Vec::new()).is_empty());
         assert_eq!(machine::take(h), Take::Pending);
     }
 
+    #[test]
+    fn resumed_walk_click_before_resume_applies_cancels_once() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+
+        machine::on_pause();
+        // Host Resume is queued before the click, but the click's atomic
+        // notice is visible before the isolate dequeues that Resume.
+        publication.note_takeover(1);
+        machine::on_resume();
+        machine::on_manual_walk_takeover(1);
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
+        );
+        machine::step(&mut NoJs);
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn in_flight_tick_new_walk_before_takeover_snapshot_settles_without_timeout() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        // The tick still reads the pre-takeover snapshot. Its action stamp is
+        // therefore stale; seeing the atomic must cancel, not bless a new walk
+        // that the host will fence without ever delivering a route outcome.
+        publication.note_takeover(1);
+        let started = machine::start(
+            "walk-resilient",
+            json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": { "radius": 0 } }),
+            Vec::new(),
+            0,
+        );
+        let outcome = match started {
+            Started::Settled(outcome) => Take::Settled(outcome),
+            Started::Running(h) => {
+                machine::step(&mut NoJs);
+                machine::take(h)
+            }
+            Started::Refused(reason) => panic!("walk refused instead of settling: {reason}"),
+        };
+        assert_eq!(outcome, Take::Settled(Outcome::Done(json!(false))));
+        assert!(
+            machine::merge_ops(Vec::new())
+                .iter()
+                .all(|req| matches!(req, InteractReq::AbortWalk { .. })),
+            "no automatic walk may escape before its takeover snapshot"
+        );
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        let fresh = start(None);
+        machine::step(&mut NoJs);
+        let _fresh_request = walk_token();
+        assert_eq!(
+            machine::take(fresh),
+            Take::Pending,
+            "a new decision after observing the takeover can still walk"
+        );
+    }
     #[test]
     fn walking_owner_survives_guardian_hold_but_cannot_revive_after_takeover() {
         reset();

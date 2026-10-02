@@ -962,3 +962,88 @@ export default class T extends LoopingBot {{
         assert_eq!(release, vec![InteractReq::AbortWalk { request_id }]);
     }
 }
+
+#[test]
+fn a_new_outcome_delta_clears_user_input_reason_for_the_next_walk() {
+    let source = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__first = await Traversal.walkTo(
+            { x: 2820, z: 3556, level: 0 }, { radius: 1 });
+        globalThis.__second = await Traversal.walkTo(
+            { x: 2828, z: 3555, level: 0 }, { radius: 1 });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let (initial, fingerprint) = encode_snapshot_delta_with_native(
+        None,
+        &base_snapshot(1, far()),
+        NativeFactsInput::default(),
+        false,
+    );
+    iso.post_snapshot(initial);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let first_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("first walk expected: {other:?}"),
+    };
+    let mut manual = base_snapshot(2, far());
+    manual.user_move_intent_seq = 1;
+    manual.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+    let (cancelled, fingerprint) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &manual,
+        fail_native(1, 1, first_id, 2820, 3556, 1),
+        false,
+    );
+    iso.post_snapshot(cancelled);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    let second_id = iso
+        .drain_interacts()
+        .iter()
+        .find_map(|request| match request {
+            InteractReq::WalkNear { request_id, .. } if *request_id != first_id => {
+                Some(*request_id)
+            }
+            _ => None,
+        })
+        .expect("a fresh decision after observing takeover starts the next walk");
+    let arrived = TileInput {
+        x: 2828,
+        z: 3555,
+        level: 0,
+    };
+    let mut input = base_snapshot(3, arrived);
+    input.user_move_intent_seq = 1;
+    let (completed, _) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &input,
+        NativeFactsInput {
+            walk_outcome_seq: 2,
+            walk_outcome_generation: 2,
+            walk_outcome_request_id: second_id,
+            walk_outcome_x: arrived.x,
+            walk_outcome_z: arrived.z,
+            walk_outcome_level: arrived.level,
+            walk_outcome_radius: 1,
+            ..NativeFactsInput::default()
+        },
+        false,
+    );
+    iso.post_snapshot(completed);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert_eq!(
+        iso.probe("globalThis.__rs2b0t_host.snapshot.walk_outcome_cancel_reason")
+            .unwrap(),
+        "none",
+        "the new outcome replaces the cancellation reason through the delta wire"
+    );
+    iso.join();
+}

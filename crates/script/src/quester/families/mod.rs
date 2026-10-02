@@ -23,10 +23,14 @@ use std::task::Poll;
 use std::time::Duration;
 pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
 
-fn manual_movement_error() -> ActionError {
+pub(super) fn manual_movement_message() -> Arc<str> {
     static REASON: std::sync::LazyLock<Arc<str>> =
         std::sync::LazyLock::new(|| Arc::from(MANUAL_MOVEMENT_MESSAGE));
-    ActionError::Blocked(Arc::clone(&REASON))
+    Arc::clone(&REASON)
+}
+
+fn manual_movement_error() -> ActionError {
+    ActionError::UserInput
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {

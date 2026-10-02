@@ -3213,3 +3213,7 @@ fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
 #[cfg(test)]
 #[path = "bin_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "manual_click_live_tests.rs"]
+mod manual_click_live_tests;

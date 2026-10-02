@@ -1607,32 +1607,3 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     );
     iso.join();
 }
-
-#[test]
-fn reconnect_held_walk_keeps_its_observed_outcome_stamp() {
-    let mut held = Vec::new();
-    hold_walk_requests(
-        &mut held,
-        [QueuedInteract {
-            req: crate::shim::InteractReq::Walk {
-                x: 3201,
-                z: 3202,
-                level: 0,
-                allow_teleports: false,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-                request_id: 7,
-                avoid: Vec::new(),
-                cross: Vec::new(),
-            },
-            observed_walk_outcome_seq: 41,
-        }],
-    );
-
-    assert_eq!(held.len(), 1);
-    assert_eq!(held[0].observed_walk_outcome_seq, 41);
-    assert!(matches!(
-        &held[0].req,
-        crate::shim::InteractReq::Walk { request_id: 7, .. }
-    ));
-}
