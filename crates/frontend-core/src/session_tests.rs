@@ -1715,12 +1715,12 @@ fn memory_toggle_stages_arms_and_settles() {
     assert_eq!(
         arm(&s, "alice").lowmem_handshake(),
         Some(false),
-        "the toggle arms the next handshake at once (parked slots converge)"
+        "the toggle queues the next handshake without changing this login"
     );
     let notice = s.memory_status("alice").expect("recorded login");
     assert!(
         notice.differs(),
-        "server tabs/sound still follow the login mode"
+        "the entire client still follows the login mode"
     );
     assert_eq!((notice.login_lowmem, notice.desired_lowmem), (true, false));
 

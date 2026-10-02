@@ -86,7 +86,6 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
         "the override must not create a permanent false notice"
     );
 
-    assert!(s.audio.music_on("alice"), "spawn must use explicit highmem");
     assert!(
         s.core
             .vault()
@@ -2436,33 +2435,6 @@ fn seed_on_first_world_skips_after_reconnect() {
 }
 
 #[test]
-fn music_toggle_mirrors_onto_the_audio_gate_live() {
-    let path = tmp_vault("audio-toggle.vault");
-    let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    // The default lowmem slot starts with Music/SFX off: no cpal.
-    assert!(s.focused_lowmem());
-    s.select("alice");
-    assert!(
-        !s.audio.music_on("alice"),
-        "default lowmem must not arm music"
-    );
-    // Toggle on (highmem): the gate arms the focused slot's speaker.
-    assert!(s.set_focused_lowmem(false));
-    assert!(s.audio.music_on("alice"));
-    assert!(!s.focused_lowmem());
-    // Toggle off (lowmem): the gate tears the speaker down.
-    assert!(s.set_focused_lowmem(true));
-    assert!(!s.audio.music_on("alice"));
-}
-
-#[test]
 fn sidecar_cadence_sync_raises_members_not_focus() {
     let mut s = Session::new();
     let a_in = SlotInput::new();
@@ -4677,32 +4649,6 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
 }
 
 #[test]
-fn focused_lowmem_follows_the_spawned_slot_not_a_session_leftover() {
-    let path = tmp_vault("mem-gate.vault");
-    let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.select("alice");
-    assert!(s.focused_lowmem(), "throwaway profile defaults lowmem");
-    // The slot's Music/SFX gate drives `Client.config.lowmem`; the HUD
-    // must follow it even when `ui.lowmem` still reads the profile
-    // default (the "lowmem while audio plays" bug).
-    s.audio.set_music("alice", true);
-    assert!(
-        !s.focused_lowmem(),
-        "status follows the slot, not ui.lowmem"
-    );
-    assert!(s.ui.lowmem, "ui.lowmem is a separate session leftover");
-    s.audio.set_music("alice", false);
-    assert!(s.focused_lowmem());
-}
-
-#[test]
 fn live_prepare_script_does_not_write_last_focus() {
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
@@ -6187,8 +6133,6 @@ fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
     assert!(!Session::raster_switch_needs_confirm(Gpu, true, true));
     assert!(!Session::raster_switch_needs_confirm(Cpu, true, true));
     assert!(!Session::raster_switch_needs_confirm(Cpu, false, false));
-    assert_eq!(Session::mem_status_text(true), "lowmem");
-    assert_eq!(Session::mem_status_text(false), "highmem");
 }
 
 #[test]
@@ -6214,26 +6158,6 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     assert!(
         s.core.slots().contains_key("alice"),
         "Off must keep the slot"
-    );
-}
-
-#[test]
-fn request_focused_lowmem_applies_without_confirm_and_keeps_slot() {
-    let path = tmp_vault("mem-no-confirm.vault");
-    let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.select("alice");
-    s.request_focused_lowmem(false);
-    assert!(!s.focused_lowmem(), "mem flip applies at once");
-    assert!(
-        s.core.slots().contains_key("alice"),
-        "mem flip must keep the slot"
     );
 }
 
@@ -6265,38 +6189,6 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
         Arc::ptr_eq(&slot.input, &inp),
         "a GPU↔CPU flip must keep the same SlotInput (no restart)"
     );
-}
-
-#[test]
-fn lowmem_flip_keeps_slot_frame_buf_and_input() {
-    let path = tmp_vault("mem-no-restart.vault");
-    let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.select("alice");
-    let slot = s.core.slot_io("alice").expect("select spawns the slot");
-    let buf = Arc::clone(&slot.pixels);
-    let inp = Arc::clone(&slot.input);
-    assert!(s.set_focused_lowmem(false));
-    assert!(s.set_focused_lowmem(true));
-    let slot = s
-        .core
-        .slot_io("alice")
-        .expect("a mem flip must keep the slot");
-    assert!(
-        Arc::ptr_eq(&slot.pixels, &buf),
-        "a mem flip must keep the same FrameBuf (no restart)"
-    );
-    assert!(
-        Arc::ptr_eq(&slot.input, &inp),
-        "a mem flip must keep the same SlotInput (no restart)"
-    );
-    assert!(s.focused_lowmem());
 }
 
 #[test]
@@ -7613,10 +7505,16 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     assert!(!clean.differs());
 
     assert!(s.set_focused_lowmem(false));
-    assert!(s.audio.music_on("alice"), "the gate arms the speaker");
-    assert!(s.mem_toggled.contains("alice"));
+    assert_eq!(
+        s.audio.owner(),
+        None,
+        "queuing highmem cannot open the speaker"
+    );
     let notice = s.focused_memory_notice().expect("recorded login");
-    assert!(notice.differs(), "server tabs/sound still follow lowmem");
+    assert!(
+        notice.differs(),
+        "the entire client still follows the login mode"
+    );
     assert_eq!(
         s.core
             .play()

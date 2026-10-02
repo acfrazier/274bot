@@ -1006,12 +1006,10 @@ fn spawn_slot_thread(
                     // Read at each handshake, not captured at spawn: a
                     // password saved since then applies to this login.
                     let password = arm.login_password();
-                    // Read at each handshake, not captured at spawn: an
-                    // operator memory toggle since then applies to this
-                    // login (a parked slot's hooks never run, so the live
-                    // client may not have converged yet). Idempotent.
+                    // Apply the queued mode only at the next login boundary:
+                    // textures, sound and the handshake must change together.
                     if let Some(lowmem) = arm.lowmem_handshake() {
-                        client.set_lowmem(lowmem);
+                        client.configure_login_memory(lowmem);
                     }
                     let handshake_lowmem = client.config.lowmem;
                     let login = login_and_acknowledge_permit(&mut permit, || {
@@ -1387,13 +1385,6 @@ fn spawn_slot_thread(
                             );
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
-                            // The shared memory-mode command lands here for
-                            // every front end (the TUI has no audio gate):
-                            // a toggle flips the live client within a frame.
-                            // Idempotent; `None` until the first toggle.
-                            if let Some(lowmem) = arm_latch_obs.lowmem_handshake() {
-                                c.set_lowmem(lowmem);
-                            }
                             slot_frame(c, name, frame_input);
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);

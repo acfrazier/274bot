@@ -377,9 +377,9 @@ impl Host {
     /// click, run one `mainloop` pass, drain gens, refresh the guardian,
     /// then render the frame (the slot's optional `Renderer` —
     /// `client.draw` gates paint; a drawing slot stores `FrameOutput`
-    /// into the optional mailbox, mirroring `Client::run`). A GPU↔CPU or lowmem
-    /// flip drops the `Renderer` here and reattaches it on the next paint
-    /// — the `Client` and its socket never restart. The panel takes the
+    /// into the optional mailbox, mirroring `Client::run`). A GPU↔CPU switch
+    /// or a memory-mode change at the next login reattaches the renderer
+    /// on the next paint — the slot's `Client` is retained. The panel takes the
     /// mailbox: `FrameBuf::take` hands the whole `FrameOutput` off (the
     /// `Texture` binds / reads back at the panel, the `PixMap` packs via
     /// [`FrameBuf::snapshot`]). `run_sends` is
@@ -528,15 +528,11 @@ impl Host {
         // Draw off detaches: an unheaded slot must not keep headed data
         // (GPU textures, chrome) around. Cadence skips (1 fps watch, draw
         // still on) keep the renderer. A head that no longer matches the
-        // live slot also detaches: GPU↔CPU and lowmem flips drop the head
-        // and reattach the right backend on the **same** `Client` — never
-        // a restart. The head's build *request* is compared, not the
-        // fallback kind: `GpuBackend::try_new` failure lands a
-        // GPU-requested head on `BackendKind::Cpu`, and dropping a head
-        // whose request is unchanged would rebuild it every paint. A
-        // backend/mem flip repaints this tick (like the draw toggle's
-        // rising edge) so the new head attaches immediately, not on the
-        // next 1 fps watch bound.
+        // slot also detaches: GPU↔CPU switches and next-login memory changes
+        // reattach on the same Client. Compare the head's build request,
+        // not its fallback kind, so a failed GPU init never rebuilds every
+        // frame. A changed request repaints this tick rather than waiting
+        // for the next 1 fps watch bound.
         let backend_flip = slot.renderer.is_some()
             && client.draw
             && (slot.renderer_prefer_cpu != Some(want_cpu)
@@ -599,14 +595,13 @@ impl Host {
         if paint {
             let t_r = std::time::Instant::now();
             // The head's build request is latched beside it so the detach
-            // check above can see a GPU↔CPU or mem flip without deriving
-            // it again.
+            // check above sees a GPU↔CPU switch or next-login memory change.
             slot.renderer_prefer_cpu = Some(want_cpu);
             slot.renderer_lowmem = Some(client.config.lowmem);
             let renderer = slot.renderer.get_or_insert_with(|| {
                 // A new head owns a blank 512×512 minimap. Dirty the
-                // Client latch (GPU↔CPU / mem flip keeps `draw` on, so
-                // `set_draw` does not) or `check_minimap` will skip.
+                // Client latch (a backend/next-login mode change keeps draw
+                // on, so `set_draw` does not) or `check_minimap` will skip.
                 client.minimap_level = -1;
                 // GPU-first (the host default): the slot's renderer
                 // prefers the wgpu backend, with `CpuBackend` as the
@@ -1061,9 +1056,8 @@ struct SlotLoop {
     /// `None` while no head is attached (kept in sync with
     /// [`SlotLoop::renderer`]).
     renderer_prefer_cpu: Option<bool>,
-    /// The `config.lowmem` the attached head was built with, so a mem
-    /// flip on a live slot (the `Client` flips `set_lowmem`, never a
-    /// restart) drops the head until the next paint rebuilds it.
+    /// The memory mode this head was built with. A different next-login
+    /// mode rebuilds it before the first paint of that login.
     renderer_lowmem: Option<bool>,
     /// `Instant` of the last paint: the watch-only 1 fps decision repaints
     /// when it is ≥1 s old, and a fast title keeps its flame deadline here.
