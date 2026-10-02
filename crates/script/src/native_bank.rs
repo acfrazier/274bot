@@ -873,15 +873,19 @@ impl NativeMachine for BankMachine {
                             }
                             None => return Poll::Pending,
                         }
+                        let snapshot = cx.snapshot();
+                        let Some(inventory) = snapshot.inventory() else {
+                            return Poll::Pending;
+                        };
+                        let before = product_count(inventory.value, products, keep);
+                        if before <= 0 {
+                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                        }
                         if self.deposits >= MAX_DEPOSITS {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "product deposit exceeded 32 item rows",
                             ))));
                         }
-                        let snapshot = cx.snapshot();
-                        let Some(inventory) = snapshot.inventory() else {
-                            return Poll::Pending;
-                        };
                         let Some(side) = snapshot.bank_side() else {
                             return Poll::Pending;
                         };
@@ -891,17 +895,15 @@ impl NativeMachine for BankMachine {
                                 && !keep.contains(&row.def.id)
                         });
                         let Some(row) = row else {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "inventory products remain but matching bank side row is missing",
+                            ))));
                         };
                         let Some(name) = row.def.name.clone() else {
                             return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                 "product row has no resolved name",
                             ))));
                         };
-                        let before = product_count(inventory.value, products, keep);
-                        if before <= 0 {
-                            return Poll::Ready(Ok(self.receipt(cx, true)));
-                        }
                         cx.emit(InteractReq::Deposit { name })?;
                         self.deposits += 1;
                         self.deadline = cx.active_now().saturating_add(TRANSFER_BOUND);
@@ -1811,6 +1813,77 @@ mod tests {
             result,
             Poll::Ready(Err(ActionError::Unavailable(_)))
         ));
+    }
+
+    #[test]
+    fn deposit_products_fails_when_inventory_products_are_missing_from_loaded_side() {
+        let item_id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![item(item_id, "Ore", 1, ItemContainer::Inventory)], 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(
+                    BankRequest {
+                        bank: None,
+                        action: BankAction::DepositProducts {
+                            products: Arc::from([item_id]),
+                            keep: Arc::from([]),
+                        },
+                        memo_ids: Arc::from([]),
+                        partial_ok: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref()
+                    == "inventory products remain but matching bank side row is missing"
+        ));
+    }
+
+    #[test]
+    fn deposit_products_succeeds_when_inventory_products_are_already_zero() {
+        let item_id = 314;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+
+        let result = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(
+                    BankRequest {
+                        bank: None,
+                        action: BankAction::DepositProducts {
+                            products: Arc::from([item_id]),
+                            keep: Arc::from([]),
+                        },
+                        memo_ids: Arc::from([item_id]),
+                        partial_ok: false,
+                    },
+                    &mut tick.cx,
+                )
+                .unwrap();
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        assert!(matches!(
+            result,
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
     #[test]

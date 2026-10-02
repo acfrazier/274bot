@@ -228,7 +228,6 @@ pub enum RecoveryState {
 pub struct GatherRetained {
     pub anchor: Option<WorldTile>,
     pub start_tile: Option<WorldTile>,
-    pub bank_tile: Option<WorldTile>,
     pub deaths: u8,
     pub recoveries: u8,
     pub death_seq: Option<i32>,
@@ -244,7 +243,6 @@ impl Default for GatherRetained {
         Self {
             anchor: None,
             start_tile: None,
-            bank_tile: None,
             deaths: 0,
             recoveries: 0,
             death_seq: None,
@@ -261,7 +259,6 @@ impl GatherRetained {
     pub const fn is_fresh(&self) -> bool {
         self.anchor.is_none()
             && self.start_tile.is_none()
-            && self.bank_tile.is_none()
             && self.deaths == 0
             && self.recoveries == 0
             && self.death_seq.is_none()

@@ -1708,11 +1708,20 @@ fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
     frame.seed_world(world);
 }
 
-#[test]
-fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plane_interrupts() {
+#[derive(Clone, Copy)]
+enum RuneStock {
+    Full,
+    Partial,
+    Empty,
+}
+
+fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     use api::named_banks::{NamedBank, NamedBankFacts};
     use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
     use script::native::{WalkEnd, WalkReceipt};
+
+    const RUNE_COSTS: [(i32, i32); 3] = [(554, 1), (556, 3), (563, 1)];
+    const PARTIAL_BANK_RUNES: [(i32, i32); 3] = [(554, 3), (556, 9), (563, 3)];
 
     let selected = selected();
     let mut frame = snapshot(&[]);
@@ -1722,15 +1731,18 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         z: anchor.z,
         level: 1,
     };
-    let bank = NamedBank::new("fixture-bank", bank_tile);
-    let facts = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let spell = selected
         .teleports()
         .iter()
         .find(|spell| {
             spell.available()
-                && spell.runes.len() >= 2
-                && spell.runes.len() <= 3
+                && spell.runes.len() == RUNE_COSTS.len()
+                && RUNE_COSTS.iter().all(|(id, count)| {
+                    spell
+                        .runes
+                        .iter()
+                        .any(|rune| rune.id == *id && rune.count == *count)
+                })
                 && spell
                     .runes
                     .iter()
@@ -1738,11 +1750,13 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         })
         .unwrap()
         .clone();
+    let bank = NamedBank::new("fixture-bank", bank_tile);
+    let facts = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let mut settings = SettingsBag::new();
     settings.insert("disposition".into(), serde_json::json!("Bank"));
     settings.insert("reserveTeleport".into(), serde_json::json!(spell.name));
     settings.insert("reserveCasts".into(), serde_json::json!(5));
-    let mut slot = started_with_banks(4302, &selected, settings.clone(), Arc::clone(&facts));
+    let mut slot = started_with_banks(incarnation, &selected, settings.clone(), Arc::clone(&facts));
     frame = depleted_snapshot(&selected);
     let work_locs = frame.locs().to_vec();
     let mut held: Vec<_> = spell
@@ -1783,25 +1797,33 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         Some("Withdraw-X".into()),
     ];
     let mut bank_stock = vec![stock];
-    bank_stock.extend(
-        spell
-            .runes
-            .iter()
-            .enumerate()
-            .map(|(index, rune)| ItemView {
-                def: def(rune.id, &rune.name),
-                count: 10_000,
-                container: ItemContainer::Bank,
-                actions: vec![
-                    Some("Withdraw-1".into()),
-                    Some("Withdraw-5".into()),
-                    Some("Withdraw-10".into()),
-                    None,
-                    Some("Withdraw-X".into()),
-                ],
-                ..log(index as i32 + 1)
-            }),
-    );
+    for (index, rune) in spell.runes.iter().enumerate() {
+        let count = match rune_stock {
+            RuneStock::Full => 10_000,
+            RuneStock::Partial => PARTIAL_BANK_RUNES
+                .iter()
+                .find(|(id, _)| *id == rune.id)
+                .map(|(_, count)| *count)
+                .expect("the partial rune stock names every reserve rune"),
+            RuneStock::Empty => 0,
+        };
+        if count == 0 {
+            continue;
+        }
+        bank_stock.push(ItemView {
+            def: def(rune.id, &rune.name),
+            count,
+            container: ItemContainer::Bank,
+            actions: vec![
+                Some("Withdraw-1".into()),
+                Some("Withdraw-5".into()),
+                Some("Withdraw-10".into()),
+                None,
+                Some("Withdraw-X".into()),
+            ],
+            ..log(index as i32 + 1)
+        });
+    }
     let mut now = 0;
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     assert!(matches!(effect, HostEffect::BankPick(_)));
@@ -1896,17 +1918,54 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
     bank_stock.remove(0);
     frame.seed_inventory(held.clone(), 28);
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
-    let (old_authority, old_request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     let first = &spell.runes[0];
+    if matches!(rune_stock, RuneStock::Empty) {
+        for _ in 0..8 {
+            now += 1;
+            tick(&mut slot, &frame, now);
+            assert!(
+                slot.take_native_action().is_none(),
+                "zero-rune stock must block after the tool withdrawal"
+            );
+            if slot
+                .native_status()
+                .is_some_and(|status| status.phase == NativePhase::Blocked)
+            {
+                break;
+            }
+        }
+        let status = slot.native_status().unwrap();
+        assert_eq!(status.phase, NativePhase::Blocked);
+        let failure = status.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "supply-missing");
+        assert!(failure.message.contains(first.name.as_str()));
+        slot.stop();
+        return;
+    }
+    let first_withdrawal = match rune_stock {
+        RuneStock::Full => first.count * 5,
+        RuneStock::Partial => PARTIAL_BANK_RUNES
+            .iter()
+            .find(|(id, _)| *id == first.id)
+            .map(|(_, count)| *count)
+            .unwrap(),
+        RuneStock::Empty => unreachable!(),
+    };
+    let (old_authority, old_request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     assert!(
         matches!(effect, HostEffect::Interaction(InteractReq::WithdrawX {
         bank_item_id, lands_as_id, count, ..
-    }) if bank_item_id == first.id && lands_as_id == first.id && count == first.count * 5)
+    }) if bank_item_id == first.id && lands_as_id == first.id && count == first_withdrawal)
     );
     accept_trip_operation(&mut slot, &old_authority, old_request, now);
+    let first_bank_row = bank_stock
+        .iter_mut()
+        .find(|item| item.def.id == first.id)
+        .unwrap();
+    first_bank_row.count -= first_withdrawal;
     held.push(ItemView {
         def: def(first.id, &first.name),
-        count: first.count * 5,
+        count: first_withdrawal,
         ..log(1)
     });
     frame.seed_inventory(held.clone(), 28);
@@ -1939,14 +1998,19 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
     ));
     accept_trip_operation(&mut slot, &authority, request_id, now);
-    // One cast is already affordable. A revoked withdrawal must nevertheless
-    // finish its five-cast batch, without admitting the one-cast pending edit.
+    // The latched stock-limited plan must finish after this one-cast edit.
     for rune in spell.runes.iter().skip(1) {
+        let expected_withdrawal = rune.count
+            * match rune_stock {
+                RuneStock::Full => 4,
+                RuneStock::Partial => 3,
+                RuneStock::Empty => unreachable!(),
+            };
         let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
         assert!(
             matches!(effect, HostEffect::Interaction(InteractReq::WithdrawX {
             bank_item_id, lands_as_id, count, ..
-        }) if bank_item_id == rune.id && lands_as_id == rune.id && count == rune.count * 4)
+        }) if bank_item_id == rune.id && lands_as_id == rune.id && count == expected_withdrawal)
         );
         assert_eq!(slot.native_status().unwrap().active_settings, 1);
         assert_eq!(slot.native_status().unwrap().pending_settings, Some(2));
@@ -1954,9 +2018,29 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         held.iter_mut()
             .find(|item| item.def.id == rune.id)
             .unwrap()
-            .count = rune.count * 5;
+            .count += expected_withdrawal;
+        bank_stock
+            .iter_mut()
+            .find(|item| item.def.id == rune.id)
+            .unwrap()
+            .count -= expected_withdrawal;
         frame.seed_inventory(held.clone(), 28);
         frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    }
+    for rune in &spell.runes {
+        let expected = match rune_stock {
+            RuneStock::Full => rune.count * 5,
+            RuneStock::Partial if rune.id == first.id => rune.count * 3,
+            RuneStock::Partial => rune.count * 4,
+            RuneStock::Empty => unreachable!(),
+        };
+        assert_eq!(
+            held.iter()
+                .find(|item| item.def.id == rune.id)
+                .unwrap()
+                .count,
+            expected
+        );
     }
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
     assert!(matches!(
@@ -2073,4 +2157,15 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
         slot.native_status()
     );
     slot.stop();
+}
+
+#[test]
+fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plane_interrupts() {
+    for (incarnation, rune_stock) in [
+        (4302, RuneStock::Full),
+        (4303, RuneStock::Partial),
+        (4304, RuneStock::Empty),
+    ] {
+        run_supply_trip_scenario(incarnation, rune_stock);
+    }
 }

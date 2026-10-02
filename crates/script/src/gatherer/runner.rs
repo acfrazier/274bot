@@ -125,6 +125,7 @@ pub struct Gatherer {
     trip: TripStep,
     selected_bank: Option<SelectedBank>,
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
+    supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
     last_gameplay_tick: u64,
@@ -175,6 +176,7 @@ impl Gatherer {
             trip: TripStep::Idle,
             selected_bank: None,
             withdrawals: None,
+            supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
             last_gameplay_tick: 0,
@@ -230,6 +232,7 @@ impl Gatherer {
         self.wait_until = None;
         self.selected_bank = None;
         self.withdrawals = None;
+        self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
     }
@@ -356,6 +359,7 @@ impl Gatherer {
                             return;
                         }
                         SupplyPlanResult::Ready(plan) => {
+                            self.supply_missing = plan.missing().cloned();
                             self.withdrawals = Some(plan.to_withdrawals());
                         }
                     }
@@ -619,9 +623,10 @@ impl Gatherer {
 
         self.area = Some(area);
         let tool = self.derive_tool(stats.value, inventory.value, equipment.value);
-        if let Some(tool) = tool {
-            self.tool = tool;
-        }
+        self.tool = tool.unwrap_or(ToolState {
+            id: -1,
+            worn: false,
+        });
         self.dirty = true;
         // Resume revalidates the area and account facts, not the retained
         // trip's supply/equipment boundary. Never equip inside an open bank.
@@ -966,9 +971,7 @@ impl Gatherer {
         }
         match self.trip {
             TripStep::Access => {
-                if let Some(bank) = &self.selected_bank {
-                    self.retained.bank_tile = Some(bank.access_tile);
-                    self.sync_retained(tick);
+                if self.selected_bank.is_some() {
                     self.advance_trip(TripStep::Open);
                 }
                 return;
@@ -1127,7 +1130,7 @@ impl Gatherer {
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
                     self.fail(
-                        "inventory-blocked",
+                        "bank-deposit-failed",
                         format!("bank deposit failed: {error:?}"),
                         true,
                     );
@@ -1138,17 +1141,25 @@ impl Gatherer {
                 Poll::Ready(Ok(true)) => {
                     self.fence.seal();
                     self.withdrawals = None;
+                    if let Some(item) = self.supply_missing.take() {
+                        self.fail("supply-missing", format!("supply-missing:{item}"), true);
+                        return;
+                    }
                     self.advance_trip(TripStep::Close);
                     self.set_event("withdrawal confirmed");
                 }
                 Poll::Ready(Ok(false)) => {
                     self.fence.seal();
-                    self.fail("supply-missing", "supply withdrawal was incomplete", true);
+                    self.fail(
+                        "bank-withdraw-failed",
+                        "supply withdrawal was incomplete",
+                        true,
+                    );
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
                     self.fail(
-                        "supply-missing",
+                        "bank-withdraw-failed",
                         format!("supply withdrawal failed: {error:?}"),
                         true,
                     );
