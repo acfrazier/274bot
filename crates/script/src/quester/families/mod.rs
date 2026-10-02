@@ -1975,6 +1975,9 @@ impl StepRun for AcquireRun {
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.current.as_ref()?.waiting_for()
     }
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        self.current.as_ref()?.in_flight_outcome()
+    }
 }
 
 #[derive(Deserialize)]

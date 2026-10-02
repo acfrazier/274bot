@@ -358,6 +358,7 @@ impl EvidenceWriter {
             "m6_combo": m6_combo,
             "m4_conditional_eat": m4_eat,
             "m5_clear_prayers_before_next_operation": m5_clear,
+            "combat_outcomes": combat_outcomes(&capture),
         });
         drop(capture);
 
@@ -1142,6 +1143,21 @@ fn every_killed_report_has_corpse(capture: &CombatCapture) -> bool {
         .filter(|status| status["fields"]["combat_end"] == json!("Killed"))
         .collect::<Vec<_>>();
     !killed.is_empty() && killed.iter().all(|report| has_corpse(capture, report))
+}
+
+fn combat_outcomes(capture: &CombatCapture) -> Vec<&Value> {
+    let mut outcomes = capture
+        .statuses
+        .iter()
+        .map(|status| &status["fields"])
+        .filter(|fields| fields["combat_end"].is_string())
+        .collect::<Vec<_>>();
+    outcomes.dedup_by(|a, b| {
+        a["combat_evidence_tick"] == b["combat_evidence_tick"]
+            && a["combat_evidence_sequence"] == b["combat_evidence_sequence"]
+            && a["combat_end"] == b["combat_end"]
+    });
+    outcomes
 }
 
 fn has_real_attack_packet(capture: &CombatCapture) -> bool {

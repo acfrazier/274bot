@@ -710,6 +710,10 @@ impl StepRun for CombatRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {
         self.action = None;
     }
+
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        self.last_outcome.as_ref()
+    }
 }
 
 struct CombatEndPredicate {

@@ -82,6 +82,15 @@ timeouts. An operator logout, Stop, or slot removal ends the session instead:
 the in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
 scripts end their live step at either boundary.
 
+### Quester combat outcomes
+
+During a multi-kill combat or acquisition step, status exposes the latest
+completed combat sub-operation, including its end, exact target and evidence
+stamp, even while the enclosing step remains pending. A new receipt publishes
+on change; unchanged polls do not allocate or republish it. These intermediate
+status fields do not complete the step or replace the final outcome used by
+Path predicates.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
