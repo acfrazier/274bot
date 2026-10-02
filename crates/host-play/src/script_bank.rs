@@ -944,6 +944,82 @@ pub(super) fn dispatch_observed_bank_op(
     }
 }
 
+/// Counted withdrawals share the host's fenced amount-dialog continuation,
+/// regardless of whether a native or compatibility caller selected the op.
+pub(super) fn dispatch_observed_withdraw_x(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    inventory: Option<&[(i32, i32)]>,
+    req: &script::shim::InteractReq,
+) -> Option<script::slot::PendingWithdrawX> {
+    use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
+    let script::shim::InteractReq::WithdrawX {
+        name,
+        count,
+        bank_item_id,
+        lands_as_id,
+        action,
+        bank_generation,
+    } = req
+    else {
+        return None;
+    };
+    if *count <= 0
+        || snapshot.bank_component_id() < 0
+        || !snapshot.bank_loaded()
+        || snapshot.count_dialog_open()
+        || snapshot.bank_session_generation() != *bank_generation
+    {
+        return None;
+    }
+    let item = snapshot.bank().iter().find(|item| {
+        item.def.id == *bank_item_id
+            && obj_names
+                .and_then(|names| names.name(item.def.id))
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
+    })?;
+    let op = action_slot(&item.actions, action)?;
+    if !matches!(
+        Interactions::new(snapshot, driver).interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+        SendResult::Sent { .. }
+    ) {
+        return None;
+    }
+    let before = inventory.map_or_else(
+        || {
+            snapshot
+                .inventory()
+                .iter()
+                .filter(|held| held.def.id == *lands_as_id)
+                .map(|held| held.count)
+                .sum::<i32>()
+        },
+        |rows| {
+            rows.iter()
+                .filter(|(id, _)| *id == *lands_as_id)
+                .map(|(_, count)| *count)
+                .sum::<i32>()
+        },
+    );
+    let pending = script::slot::PendingWithdrawX::waiting_dialog(
+        *lands_as_id,
+        *count,
+        before,
+        before.saturating_add((*count).min(item.count)),
+        *bank_generation,
+    );
+    Some(
+        if matches!(*count, 1 | 5 | 10)
+            && action_slot(&item.actions, &format!("Withdraw {count}")) == Some(op)
+        {
+            pending.waiting_settlement()
+        } else {
+            pending
+        },
+    )
+}
+
 /// Action-label lookup matching rs2b0t's `norm` (lowercase, whitespace and
 /// `-`/`_` separators gone): `Withdraw All`, `Withdraw-All` and
 /// `Withdraw  All` all resolve to the same slot.
