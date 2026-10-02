@@ -1906,7 +1906,9 @@ mod tests {
                 session: 1,
             },
             path,
+            data,
             quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);

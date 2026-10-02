@@ -79,6 +79,45 @@ fn replay_all_retained_combat_receipts() {
             "death": died, "multiple_threats": has_multiple_local_threats(&c),
             "distinct_killed": combat_outcomes(&c).iter().filter(|fields| fields["combat_end"] == json!("Killed")).count(),
         });
+        for row in &c.actions {
+            if row["request"]["op"] == "open-stand"
+                && row["wire_opcodes"][0] == 195
+                && action_wire_valid(row)
+            {
+                let mut extra_event = row.clone();
+                extra_event["wire_opcodes"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!(86));
+                assert!(!action_wire_valid(&extra_event));
+                extra_event["wire_opcodes"] = json!([195, 195, 67, 45]);
+                assert!(!action_wire_valid(&extra_event));
+                leaves["bank_extra_event_and_double_anticheat_mutants_rejected"] = json!(true);
+            }
+            if row["request"]["action"] == "Talk-to" && action_wire_valid(row) {
+                let mut wrong_packet = row.clone();
+                wrong_packet["wire_opcodes"] = json!([67, 21]);
+                assert!(!action_wire_valid(&wrong_packet));
+                wrong_packet["wire_opcodes"] = row["wire_opcodes"].clone();
+                wrong_packet["request"]["index"] = json!(-1);
+                assert!(!action_wire_valid(&wrong_packet));
+                leaves["dialogue_wrong_packet_and_actor_mutants_rejected"] = json!(true);
+            }
+            if row["request"]["debug"] == "ContinueDialog" && action_wire_valid(row) {
+                let mut wrong_packet = row.clone();
+                wrong_packet["wire_opcodes"] = json!([86]);
+                assert!(!action_wire_valid(&wrong_packet));
+                leaves["dialogue_continue_wrong_packet_mutant_rejected"] = json!(true);
+            }
+            if row["request"]["debug"] == "Answer { option: 1 }" && action_wire_valid(row) {
+                let mut malformed = row.clone();
+                malformed["request"]["debug"] = json!("Answer { option: 0 }");
+                assert!(!action_wire_valid(&malformed));
+                malformed["request"]["debug"] = json!("arbitrary Answer { option: 1 }");
+                assert!(!action_wire_valid(&malformed));
+                leaves["dialogue_malformed_answer_mutants_rejected"] = json!(true);
+            }
+        }
         match case {
             Case::M1 => {
                 leaves["every_imp_corpse_has_outcome"] = json!(every_imp_corpse_has_outcome(&c));

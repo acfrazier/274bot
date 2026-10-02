@@ -1703,10 +1703,51 @@ fn action_wire_valid(action: &Value) -> bool {
         return false;
     };
     let opcode = |prot: ClientProt| i64::from(prot.id);
+    let targeted = |wire: &[i64], expected| {
+        wire == [expected] || wire == [opcode(ClientProt289::MOVE_OPCLICK), expected]
+    };
+    // S3:355 checks declared user events. The client OP_LOC2 arm
+    // (client.rs:3895-3902) can prepend this exact anti-cheat packet.
+    // Do not strip arbitrary packets or accept this prefix on other ops.
+    let bank_wire = || {
+        let expected = opcode(ClientProt289::OPLOC2);
+        targeted(&actual, expected)
+            || (actual.first() == Some(&opcode(ClientProt289::ANTICHEAT_OPLOGIC1))
+                && targeted(&actual[1..], expected))
+    };
     match action["request"]["op"].as_str() {
         Some("npc") if is_npc_attack(action) => {
             let attack = opcode(ClientProt289::OPNPC2);
             actual == [attack] || actual == [opcode(ClientProt289::MOVE_OPCLICK), attack]
+        }
+        Some("npc") if action["request"]["action"] == json!("Talk-to") => {
+            // wizard_mizgog.rs2:1-19,39-52 uses opnpc1 and dialogue.
+            // Resolve the literal action slot from the captured actor instead
+            // of treating every Talk-to (or arbitrary NPC op) as OPNPC1.
+            action["request"]["index"].as_i64().is_some_and(|index| {
+                action["snapshot"]["nearby_npcs"]
+                    .as_array()
+                    .and_then(|rows| {
+                        rows.iter().find(|row| {
+                            row["index"].as_i64() == Some(index)
+                                && row["name"] == action["request"]["name"]
+                        })
+                    })
+                    .and_then(|row| row["actions"].as_array())
+                    .and_then(|actions| actions.iter().position(|name| name == "Talk-to"))
+                    .and_then(|slot| {
+                        [
+                            ClientProt289::OPNPC1,
+                            ClientProt289::OPNPC2,
+                            ClientProt289::OPNPC3,
+                            ClientProt289::OPNPC4,
+                            ClientProt289::OPNPC5,
+                        ]
+                        .get(slot)
+                        .copied()
+                    })
+                    .is_some_and(|expected| targeted(&actual, opcode(expected)))
+            })
         }
         Some("held" | "wear") => held_opcode(action).is_some_and(|expected| actual == [expected]),
         Some("if-button" | "set-retaliate") => actual == [opcode(ClientProt289::IF_BUTTON)],
@@ -1718,12 +1759,31 @@ fn action_wire_valid(action: &Value) -> bool {
             if action["request"]["kind"] == json!("booth")
                 && action["request"]["stand_op"] == json!(2) =>
         {
-            let expected = opcode(ClientProt289::OPLOC2);
-            actual == [expected] || actual == [opcode(ClientProt289::MOVE_OPCLICK), expected]
+            bank_wire()
         }
-        None => legacy_caller_opcode(&action["request"]).is_some_and(|expected| {
-            actual == [expected] || actual == [opcode(ClientProt289::MOVE_OPCLICK), expected]
-        }),
+        None => {
+            let debug = action["request"]["debug"].as_str().unwrap_or_default();
+            // api/interact.rs:636-648,771-798: exact accepted dialogue
+            // operations; unknown Debug rows still fail closed.
+            if debug == "ContinueDialog" {
+                actual == [opcode(ClientProt289::RESUME_PAUSEBUTTON)]
+            } else if debug
+                .strip_prefix("Answer { option: ")
+                .and_then(|value| value.strip_suffix(" }"))
+                .and_then(|value| value.parse::<i32>().ok())
+                .is_some_and(|option| option > 0)
+            {
+                actual == [opcode(ClientProt289::IF_BUTTON)]
+            } else {
+                legacy_caller_opcode(&action["request"]).is_some_and(|expected| {
+                    if expected == opcode(ClientProt289::OPLOC2) {
+                        bank_wire()
+                    } else {
+                        targeted(&actual, expected)
+                    }
+                })
+            }
+        }
         _ => false,
     }
 }
