@@ -3,25 +3,25 @@ use super::*;
 pub fn flax_aio_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, FLAX_FIELD, 6)
         && baseline.level("crafting") >= 1
-        && baseline.item_id(FLAX_ID) == 0
-        && baseline.item_id(BOW_STRING_ID) == 0
-        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && baseline.item_id(catalog_item_id("flax")) == 0
+        && baseline.item_id(catalog_item_id("bow_string")) == 0
+        && baseline.item_id(catalog_item_id("ball_of_wool")) == 0
         && !flax_spinner_noted(baseline)
 }
 
 pub fn flax_aio_pick_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, FLAX_FIELD, 6)
-        && baseline.item_id(FLAX_ID) == 0
-        && baseline.item_id(BOW_STRING_ID) == 0
+        && baseline.item_id(catalog_item_id("flax")) == 0
+        && baseline.item_id(catalog_item_id("bow_string")) == 0
         && !flax_spinner_noted(baseline)
 }
 
 pub fn flax_aio_spin_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, FLAX_AIO_BANK, 8)
         && baseline.level("crafting") >= 1
-        && baseline.item_id(FLAX_ID) == 0
-        && baseline.item_id(BOW_STRING_ID) == 0
-        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && baseline.item_id(catalog_item_id("flax")) == 0
+        && baseline.item_id(catalog_item_id("bow_string")) == 0
+        && baseline.item_id(catalog_item_id("ball_of_wool")) == 0
         && !flax_spinner_noted(baseline)
 }
 /// Full pack of exact flax 1779, Seers deposit, return, further pick.
@@ -35,16 +35,16 @@ pub struct FlaxPickerCycle {
 
 impl FlaxPickerCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
-        self.first_pack |= now.item_id(FLAX_ID) >= 28
-            && baseline.item_id(FLAX_ID) == 0
-            && now.item_id(FLAX_ID) > baseline.item_id(FLAX_ID);
+        self.first_pack |= now.item_id(catalog_item_id("flax")) >= 28
+            && baseline.item_id(catalog_item_id("flax")) == 0
+            && now.item_id(catalog_item_id("flax")) > baseline.item_id(catalog_item_id("flax"));
         if self.first_pack
             && self.deposited.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(FLAX_ID) == 0
-            && now.bank_item_id(FLAX_ID) >= 28
+            && now.item_id(catalog_item_id("flax")) == 0
+            && now.bank_item_id(catalog_item_id("flax")) >= 28
         {
             self.deposited = Some(now.clone());
         }
@@ -56,7 +56,7 @@ impl FlaxPickerCycle {
                 && near(now.tile, FLAX_FIELD, 12);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(FLAX_ID) >= 1;
+            self.further |= !now.bank_open && now.item_id(catalog_item_id("flax")) >= 1;
         }
     }
 
@@ -80,13 +80,13 @@ pub struct FlaxAioCycle {
 
 impl FlaxAioCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
-        self.wrong_product |=
-            now.item_id(BALL_OF_WOOL_ID) > 0 || now.bank_item_id(BALL_OF_WOOL_ID) > 0;
+        self.wrong_product |= now.item_id(catalog_item_id("ball_of_wool")) > 0
+            || now.bank_item_id(catalog_item_id("ball_of_wool")) > 0;
         self.noted |= flax_spinner_noted(now);
         if self.picked.is_none()
-            && now.item_id(FLAX_ID) >= 1
-            && baseline.item_id(FLAX_ID) == 0
-            && now.item_id(BOW_STRING_ID) == 0
+            && now.item_id(catalog_item_id("flax")) >= 1
+            && baseline.item_id(catalog_item_id("flax")) == 0
+            && now.item_id(catalog_item_id("bow_string")) == 0
             && !self.noted
             && !self.wrong_product
         {
@@ -94,11 +94,11 @@ impl FlaxAioCycle {
         }
         if let Some(picked) = &self.picked {
             if self.produced.is_none()
-                && now.item_id(BOW_STRING_ID) >= 1
-                && now.item_id(FLAX_ID) < picked.item_id(FLAX_ID)
+                && now.item_id(catalog_item_id("bow_string")) >= 1
+                && now.item_id(catalog_item_id("flax")) < picked.item_id(catalog_item_id("flax"))
                 && now.skill_xp("crafting") > baseline.skill_xp("crafting")
                 && near(now.tile, FLAX_SPINNER_WHEEL, 8)
-                && now.item_id(BALL_OF_WOOL_ID) == 0
+                && now.item_id(catalog_item_id("ball_of_wool")) == 0
                 && !self.noted
             {
                 self.produced = Some(now.clone());
@@ -109,8 +109,8 @@ impl FlaxAioCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(BOW_STRING_ID) == 0
-            && now.bank_item_id(BOW_STRING_ID) >= 1
+            && now.item_id(catalog_item_id("bow_string")) == 0
+            && now.bank_item_id(catalog_item_id("bow_string")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -121,8 +121,9 @@ impl FlaxAioCycle {
                 && near(now.tile, FLAX_FIELD, 12);
         }
         if self.returned {
-            self.further |=
-                !now.bank_open && now.item_id(FLAX_ID) >= 1 && now.item_id(BALL_OF_WOOL_ID) == 0;
+            self.further |= !now.bank_open
+                && now.item_id(catalog_item_id("flax")) >= 1
+                && now.item_id(catalog_item_id("ball_of_wool")) == 0;
         }
     }
 
@@ -150,22 +151,22 @@ pub struct FlaxAioPickCycle {
 
 impl FlaxAioPickCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
-        self.wrong_product |= now.item_id(BOW_STRING_ID) > 0
-            || now.bank_item_id(BOW_STRING_ID) > 0
-            || now.item_id(BALL_OF_WOOL_ID) > 0
-            || now.bank_item_id(BALL_OF_WOOL_ID) > 0;
+        self.wrong_product |= now.item_id(catalog_item_id("bow_string")) > 0
+            || now.bank_item_id(catalog_item_id("bow_string")) > 0
+            || now.item_id(catalog_item_id("ball_of_wool")) > 0
+            || now.bank_item_id(catalog_item_id("ball_of_wool")) > 0;
         self.noted |= flax_spinner_noted(now);
-        self.first_pack |= now.item_id(FLAX_ID) >= 28
-            && baseline.item_id(FLAX_ID) == 0
-            && now.item_id(FLAX_ID) > baseline.item_id(FLAX_ID)
+        self.first_pack |= now.item_id(catalog_item_id("flax")) >= 28
+            && baseline.item_id(catalog_item_id("flax")) == 0
+            && now.item_id(catalog_item_id("flax")) > baseline.item_id(catalog_item_id("flax"))
             && !self.wrong_product;
         if self.first_pack
             && self.deposited.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(FLAX_ID) == 0
-            && now.bank_item_id(FLAX_ID) >= 28
+            && now.item_id(catalog_item_id("flax")) == 0
+            && now.bank_item_id(catalog_item_id("flax")) >= 28
         {
             self.deposited = Some(now.clone());
         }
@@ -176,7 +177,8 @@ impl FlaxAioPickCycle {
                 && near(now.tile, FLAX_FIELD, 12);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(FLAX_ID) >= 1 && !self.wrong_product;
+            self.further |=
+                !now.bank_open && now.item_id(catalog_item_id("flax")) >= 1 && !self.wrong_product;
         }
     }
 

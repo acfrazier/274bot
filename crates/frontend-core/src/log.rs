@@ -17,6 +17,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Once};
+#[cfg(not(windows))]
 use std::time::SystemTime;
 
 pub use api::hostlog::{Level, Record, Source};

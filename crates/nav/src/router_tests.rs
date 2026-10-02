@@ -344,6 +344,7 @@ fn blocked_door_fixture() -> WorldCollision {
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at,
         to,
         loc_id: 1530,
@@ -364,6 +365,19 @@ fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     graph.at.entry(at).or_default().push(0);
     graph.edges.push(edge);
     graph
+}
+
+#[test]
+fn find_skips_relative_transport_when_takeoff_landing_overflows() {
+    let collision = walled_5x5();
+    let mut graph = door(tile(2, 2, 0), tile(4, 2, 0), 1);
+    graph.edges[0].kind = TransportKind::Ladder;
+    graph.edges[0].player_delta = Some(tile(i32::MAX, 0, 0));
+
+    assert_eq!(
+        find(&collision, &graph, tile(1, 2, 0), tile(4, 2, 0)).err(),
+        Some(RouteError::NoPath)
+    );
 }
 
 #[test]
@@ -431,6 +445,7 @@ fn teleport(
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: tile(0, 0, 0),
         to,
         loc_id: 0,
@@ -519,6 +534,75 @@ fn router_uses_transport_across_a_wall() {
     assert_eq!(edge.to, tile(2, 2, 0));
     assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
     assert_eq!(w1.last(), Some(&tile(4, 4, 0)));
+}
+
+#[test]
+fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available() {
+    let collision = walled_5x5_gap(2);
+    let at = tile(1, 2, 0);
+    let to = tile(2, 2, 0);
+    let edge = |option, item_req, worn_req| TransportEdge {
+        kind: TransportKind::Door,
+        at,
+        to,
+        loc_id: 733,
+        option,
+        ticks: 2,
+        dir: Some(crate::transport::DoorDir::E),
+        open_loc_id: Some(734),
+        skill_req: vec![],
+        item_req,
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req,
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+        player_delta: None,
+    };
+    // Pack order deliberately matches the extractor: oplocu first, Slash
+    // second. Planning must follow slash_checker when a blade is worn rather
+    // than letting a graph-order tie send the less-preferred knife action.
+    let mut graph = TransportGraph::default();
+    graph.edges.push(edge(0, vec![(946, 1)], vec![]));
+    graph.edges.push(edge(1, vec![], vec![1277, 1321]));
+    graph.at.insert(at, vec![0, 1]);
+    let from = tile(0, 2, 0);
+    let dest = tile(4, 2, 0);
+    let find_web_option = |state: &WorldState| {
+        find_with(
+            &collision,
+            &graph,
+            from,
+            dest,
+            FindOptions::default(),
+            state,
+        )
+        .unwrap()
+        .legs
+        .into_iter()
+        .find_map(|leg| match leg {
+            Leg::Transport { edge } if edge.loc_id == 733 => Some(edge.option),
+            _ => None,
+        })
+        .expect("wall crossing uses the modeled web transport")
+    };
+
+    let mut knife_only = WorldState::empty();
+    knife_only.inv.insert(946, 1);
+    assert_eq!(
+        find_web_option(&knife_only),
+        0,
+        "use the carried knife if no slash blade is worn"
+    );
+
+    let mut knife_and_blade = knife_only;
+    knife_and_blade.worn.insert(1277);
+    assert_eq!(
+        find_web_option(&knife_and_blade),
+        1,
+        "worn slash weapon selects oploc1 even while a knife is carried"
+    );
 }
 
 #[test]
@@ -666,6 +750,7 @@ fn find_transport_changes_level_and_walks_upstairs() {
     let wc = bake(4, 4, &[]);
     let ladder = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: tile(0, 0, 0),
         to: tile(1, 1, 1),
         loc_id: 1747,
@@ -1174,6 +1259,7 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
         graph.at.entry(at).or_default().push(0);
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at,
             to: tile(200, 201, 0),
             loc_id: 1,
@@ -1631,6 +1717,7 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
     };
     let edge = |kind, at, to, ticks, item_req| TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id: 1,

@@ -62,15 +62,15 @@ pub struct BankFletcherOptionSpec {
 pub fn bank_fletcher_option_spec(case: CoreCase) -> Option<BankFletcherOptionSpec> {
     match case {
         CoreCase::BankFletcherShafts => Some(BankFletcherOptionSpec {
-            primary: LOGS_ID,
+            primary: catalog_item_id("logs"),
             secondary: None,
-            product: ARROW_SHAFT_ID,
+            product: catalog_item_id("arrow_shaft"),
             first_product_count: 405,
         }),
         CoreCase::BankFletcherHeadless => Some(BankFletcherOptionSpec {
-            primary: FEATHER_ID,
-            secondary: Some(ARROW_SHAFT_ID),
-            product: HEADLESS_ARROW_ID,
+            primary: catalog_item_id("feather"),
+            secondary: Some(catalog_item_id("arrow_shaft")),
+            product: catalog_item_id("headless_arrow"),
             first_product_count: 30,
         }),
         _ => None,

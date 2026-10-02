@@ -90,6 +90,7 @@ pub fn in_essence_mine(t: WorldTile) -> bool {
 pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::EssenceExit,
+        player_delta: None,
         at,
         to: session.return_tile,
         loc_id: ESSENCE_MINE_PORTAL_LOC_ID,

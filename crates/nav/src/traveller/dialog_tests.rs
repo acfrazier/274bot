@@ -7,6 +7,7 @@ fn tile(x: i32, z: i32) -> WorldTile {
 fn edge(kind: TransportKind) -> TransportEdge {
     TransportEdge {
         kind,
+        player_delta: None,
         at: tile(10, 10),
         to: tile(20, 20),
         loc_id: 1,

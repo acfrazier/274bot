@@ -81,7 +81,7 @@ impl CacheManifest {
     }
 }
 
-/// Sidecar manifest binding a v13 navigation pack to world/cache inputs.
+/// Sidecar manifest binding a v14 navigation pack to world/cache inputs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NavManifest {

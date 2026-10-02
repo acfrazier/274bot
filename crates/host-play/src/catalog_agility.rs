@@ -175,7 +175,10 @@ pub struct BrimhavenAgilityCycle {
 impl BrimhavenAgilityCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         let varp = now.varp(BRIMHAVEN_ARENA_VARP);
-        self.paid |= baseline.item_id(COINS_ID) - now.item_id(COINS_ID) >= 200 && varp & 0b10 != 0;
+        self.paid |= baseline.item_id(catalog_item_id("coins"))
+            - now.item_id(catalog_item_id("coins"))
+            >= 200
+            && varp & 0b10 != 0;
         if !self.paid {
             return;
         }
@@ -206,14 +209,16 @@ impl BrimhavenAgilityCycle {
             let fresh_next_pillar = now.chat.iter().any(|(sequence, text)| {
                 *sequence > baseline_sequence && text.to_ascii_lowercase().contains("tag the next")
             });
-            if varp & 0b1111 == 0b1111 && now.item_id(BRIMHAVEN_TICKET_ID) == 0 && fresh_next_pillar
+            if varp & 0b1111 == 0b1111
+                && now.item_id(catalog_item_id("agilityarena_ticket")) == 0
+                && fresh_next_pillar
             {
                 self.first_tag = true;
             }
             return;
         }
         if self.ticket.is_none() {
-            if now.item_id(BRIMHAVEN_TICKET_ID) >= 1 {
+            if now.item_id(catalog_item_id("agilityarena_ticket")) >= 1 {
                 if let Some(platform) = platform {
                     self.ticket = Some((platform, now.clone()));
                 }
