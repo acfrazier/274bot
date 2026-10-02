@@ -22,13 +22,13 @@ pub fn aio_teleport_spec(case: CoreCase) -> Option<AioTeleportSpec> {
         CoreCase::AioTeleport => Some(AioTeleportSpec {
             landing: VARROCK_TELE_LAND,
             restock: VARROCK_EAST_BANK,
-            staff: Some(STAFF_OF_AIR_ID),
+            staff: Some(catalog_item_id("staff_of_air")),
             air_from_pack: false,
         }),
         CoreCase::AioTeleportFalador => Some(AioTeleportSpec {
             landing: FALADOR_TELE_LAND,
             restock: FALADOR_WEST_BANK,
-            staff: Some(STAFF_OF_WATER_ID),
+            staff: Some(catalog_item_id("staff_of_water")),
             air_from_pack: true,
         }),
         CoreCase::AioTeleportNoStaff => Some(AioTeleportSpec {
@@ -51,10 +51,13 @@ impl AioTeleportCycle {
         } = spec;
         if self.teleported.is_none()
             && now.skill_xp("magic") > baseline.skill_xp("magic")
-            && now.item_id(LAW_RUNE_ID) < baseline.item_id(LAW_RUNE_ID)
+            && now.item_id(catalog_item_id("lawrune"))
+                < baseline.item_id(catalog_item_id("lawrune"))
             && near(now.tile, landing, 8)
             && staff.is_none_or(|id| now.equipment_id(id) >= 1)
-            && (!air_from_pack || now.item_id(AIR_RUNE_ID) < baseline.item_id(AIR_RUNE_ID))
+            && (!air_from_pack
+                || now.item_id(catalog_item_id("airrune"))
+                    < baseline.item_id(catalog_item_id("airrune")))
         {
             self.teleported = Some(now.clone());
         }
@@ -72,8 +75,10 @@ impl AioTeleportCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(LAW_RUNE_ID) > deposited.item_id(LAW_RUNE_ID)
-                && now.bank_item_id(LAW_RUNE_ID) < deposited.bank_item_id(LAW_RUNE_ID)
+                && now.item_id(catalog_item_id("lawrune"))
+                    > deposited.item_id(catalog_item_id("lawrune"))
+                && now.bank_item_id(catalog_item_id("lawrune"))
+                    < deposited.bank_item_id(catalog_item_id("lawrune"))
             {
                 self.restocked = Some(now.clone());
             }
@@ -89,7 +94,8 @@ impl AioTeleportCycle {
                 self.further |= self.closed
                     && !now.bank_open
                     && now.skill_xp("magic") > teleported.skill_xp("magic")
-                    && now.item_id(LAW_RUNE_ID) < restocked.item_id(LAW_RUNE_ID);
+                    && now.item_id(catalog_item_id("lawrune"))
+                        < restocked.item_id(catalog_item_id("lawrune"));
             }
         }
     }

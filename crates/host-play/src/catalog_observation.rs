@@ -834,33 +834,32 @@ fn dormant_rock_in_field(npc: &NpcView) -> bool {
 }
 
 pub fn unidentified_herb_id(id: i32) -> bool {
-    matches!(
-        id,
-        199 | 201 | 203 | 205 | 207 | 209 | 211 | 213 | 215 | 217 | 219 | LANTADYME_HERB_ID
-    )
+    id == catalog_item_id("unidentified_lantadyme")
+        || matches!(
+            id,
+            199 | 201 | 203 | 205 | 207 | 209 | 211 | 213 | 215 | 217 | 219
+        )
 }
 
 pub fn noted_herb_id(id: i32) -> bool {
-    matches!(
-        id,
-        200 | 202 | 204 | 206 | 208 | 210 | 212 | 214 | 216 | 218 | 220 | NOTED_LANTADYME_HERB_ID
-    )
+    id == catalog_item_id("cert_unidentified_lantadyme")
+        || matches!(
+            id,
+            200 | 202 | 204 | 206 | 208 | 210 | 212 | 214 | 216 | 218 | 220
+        )
 }
 
 pub fn combat_ground_id(id: i32) -> bool {
     unidentified_herb_id(id)
         || noted_herb_id(id)
-        || matches!(
-            id,
-            NATURE_RUNE_ID
-                | LAW_RUNE_ID
-                | BIG_BONES_ID
-                | NOTED_BIG_BONES_ID
-                | LIMPWURT_ROOT_ID
-                | NOTED_LIMPWURT_ROOT_ID
-                | BONES_ID
-                | NOTED_BONES_ID
-        )
+        || id == catalog_item_id("naturerune")
+        || id == catalog_item_id("lawrune")
+        || id == catalog_item_id("big_bones")
+        || id == catalog_item_id("cert_big_bones")
+        || id == catalog_item_id("limpwurt_root")
+        || id == catalog_item_id("cert_limpwurt_root")
+        || id == catalog_item_id("bones")
+        || id == catalog_item_id("cert_bones")
 }
 
 pub fn keep_bounded_loc(id: i32, name: Option<&str>) -> bool {

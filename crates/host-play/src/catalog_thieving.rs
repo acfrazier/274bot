@@ -1,30 +1,30 @@
 use super::*;
 pub fn stall_food(observation: &Observation) -> i32 {
-    observation.item_id(CAKE_ID)
-        + observation.item_id(BREAD_ID)
-        + observation.item_id(CHOCOLATE_SLICE_ID)
+    observation.item_id(catalog_item_id("cake"))
+        + observation.item_id(catalog_item_id("bread"))
+        + observation.item_id(catalog_item_id("chocolate_slice"))
 }
 
 pub fn bank_stall_food(observation: &Observation) -> i32 {
-    observation.bank_item_id(CAKE_ID)
-        + observation.bank_item_id(BREAD_ID)
-        + observation.bank_item_id(CHOCOLATE_SLICE_ID)
+    observation.bank_item_id(catalog_item_id("cake"))
+        + observation.bank_item_id(catalog_item_id("bread"))
+        + observation.bank_item_id(catalog_item_id("chocolate_slice"))
 }
 
 pub fn noted_stall_food(observation: &Observation) -> i32 {
-    observation.item_id(NOTED_CAKE_ID)
-        + observation.item_id(NOTED_BREAD_ID)
-        + observation.item_id(NOTED_CHOCOLATE_SLICE_ID)
-        + observation.bank_item_id(NOTED_CAKE_ID)
-        + observation.bank_item_id(NOTED_BREAD_ID)
-        + observation.bank_item_id(NOTED_CHOCOLATE_SLICE_ID)
+    observation.item_id(catalog_item_id("cert_cake"))
+        + observation.item_id(catalog_item_id("cert_bread"))
+        + observation.item_id(catalog_item_id("cert_chocolate_slice"))
+        + observation.bank_item_id(catalog_item_id("cert_cake"))
+        + observation.bank_item_id(catalog_item_id("cert_bread"))
+        + observation.bank_item_id(catalog_item_id("cert_chocolate_slice"))
 }
 
 pub fn ardy_thiever_baseline_ready(baseline: &Observation, thieving: i32) -> bool {
     near(baseline.tile, ARDY_THIEVER_STAND, 8)
         && baseline.level("thieving") >= thieving
-        && baseline.item_id(COINS_ID) == 0
-        && baseline.item_id(CAKE_ID) == 0
+        && baseline.item_id(catalog_item_id("coins")) == 0
+        && baseline.item_id(catalog_item_id("cake")) == 0
 }
 
 /// Baker's stall Flee cell prep plus combat stats and a weapon so FightBack can kill.
@@ -34,10 +34,10 @@ pub fn ardy_cakes_fight_baseline_ready(baseline: &Observation) -> bool {
         && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
         && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
-        && baseline.item_id(KNIFE_ID) == ARDY_CAKES_BALLAST_KNIVES
-        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+        && baseline.item_id(catalog_item_id("knife")) == ARDY_CAKES_BALLAST_KNIVES
+        && held_id(baseline, catalog_item_id("adamant_scimitar")) >= 1
         && stall_food(baseline) == 0
-        && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+        && baseline.item_id(catalog_item_id("chocolate_cake")) == 0
         && noted_stall_food(baseline) == 0
 }
 
@@ -47,7 +47,7 @@ pub fn ardy_thiever_fight_baseline_ready(baseline: &Observation) -> bool {
         && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
         && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
-        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+        && held_id(baseline, catalog_item_id("adamant_scimitar")) >= 1
 }
 /// Start with exact 22-Knife ballast, steal six cake/bread/chocolate slices,
 /// deposit both product and ballast in a fresh bank, return to STAND, steal
@@ -64,14 +64,14 @@ pub struct ArdyCakesCycle {
 
 impl ArdyCakesCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
-        self.wrong_product |=
-            now.item_id(CHOCOLATE_CAKE_ID) > 0 || now.bank_item_id(CHOCOLATE_CAKE_ID) > 0;
+        self.wrong_product |= now.item_id(catalog_item_id("chocolate_cake")) > 0
+            || now.bank_item_id(catalog_item_id("chocolate_cake")) > 0;
         self.noted |= noted_stall_food(now) > 0;
         if self.stolen.is_none()
             && stall_food(now) >= 1
             && stall_food(baseline) == 0
             && now.skill_xp("thieving") > baseline.skill_xp("thieving")
-            && now.item_id(CHOCOLATE_CAKE_ID) == 0
+            && now.item_id(catalog_item_id("chocolate_cake")) == 0
             && noted_stall_food(now) == 0
         {
             self.stolen = Some(now.clone());
@@ -83,9 +83,9 @@ impl ArdyCakesCycle {
             && now.bank_generation > baseline.bank_generation
             && stall_food(now) == 0
             && bank_stall_food(now) >= 1
-            && now.item_id(KNIFE_ID) == 0
-            && now.bank_item_id(KNIFE_ID)
-                >= baseline.bank_item_id(KNIFE_ID) + ARDY_CAKES_BALLAST_KNIVES
+            && now.item_id(catalog_item_id("knife")) == 0
+            && now.bank_item_id(catalog_item_id("knife"))
+                >= baseline.bank_item_id(catalog_item_id("knife")) + ARDY_CAKES_BALLAST_KNIVES
         {
             self.deposited = Some(now.clone());
         }
@@ -124,8 +124,8 @@ pub struct ArdyCakesFightCycle {
 
 impl ArdyCakesFightCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
-        self.wrong_product |=
-            now.item_id(CHOCOLATE_CAKE_ID) > 0 || now.bank_item_id(CHOCOLATE_CAKE_ID) > 0;
+        self.wrong_product |= now.item_id(catalog_item_id("chocolate_cake")) > 0
+            || now.bank_item_id(catalog_item_id("chocolate_cake")) > 0;
         self.noted |= noted_stall_food(now) > 0;
         self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
             || now.skill_xp("attack") > baseline.skill_xp("attack");
@@ -133,7 +133,7 @@ impl ArdyCakesFightCycle {
             && stall_food(now) >= 1
             && stall_food(baseline) == 0
             && now.skill_xp("thieving") > baseline.skill_xp("thieving")
-            && now.item_id(CHOCOLATE_CAKE_ID) == 0
+            && now.item_id(catalog_item_id("chocolate_cake")) == 0
             && noted_stall_food(now) == 0
         {
             self.stolen = Some(now.clone());
@@ -199,8 +199,8 @@ pub struct ArdyThieverCycle {
 impl ArdyThieverCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         if self.pickpocketed.is_none()
-            && now.item_id(COINS_ID) >= 1
-            && baseline.item_id(COINS_ID) == 0
+            && now.item_id(catalog_item_id("coins")) >= 1
+            && baseline.item_id(catalog_item_id("coins")) == 0
             && now.skill_xp("thieving") > baseline.skill_xp("thieving")
         {
             self.pickpocketed = Some(now.clone());
@@ -210,8 +210,8 @@ impl ArdyThieverCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(COINS_ID) == 0
-            && now.bank_item_id(COINS_ID) >= 1
+            && now.item_id(catalog_item_id("coins")) == 0
+            && now.bank_item_id(catalog_item_id("coins")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -222,7 +222,7 @@ impl ArdyThieverCycle {
                 && near(now.tile, ARDY_THIEVER_STAND, 6);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(COINS_ID) >= 1;
+            self.further |= !now.bank_open && now.item_id(catalog_item_id("coins")) >= 1;
         }
     }
 
@@ -264,16 +264,20 @@ impl ArdyThieverFightCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
             || now.skill_xp("attack") > baseline.skill_xp("attack");
-        let (coins, thieving) = (now.item_id(COINS_ID), now.skill_xp("thieving"));
+        let (coins, thieving) = (
+            now.item_id(catalog_item_id("coins")),
+            now.skill_xp("thieving"),
+        );
         let (last_coins, last_thieving, xp_rose_before) = self.last.unwrap_or((
-            baseline.item_id(COINS_ID),
+            baseline.item_id(catalog_item_id("coins")),
             baseline.skill_xp("thieving"),
             false,
         ));
         let xp_rose = thieving > last_thieving;
         let picked = coins > last_coins && (xp_rose || xp_rose_before);
         self.last = Some((coins, thieving, xp_rose));
-        if self.pickpocketed.is_none() && picked && baseline.item_id(COINS_ID) == 0 {
+        if self.pickpocketed.is_none() && picked && baseline.item_id(catalog_item_id("coins")) == 0
+        {
             self.pickpocketed = Some(now.clone());
         }
         if self.killed.is_none() {
@@ -314,8 +318,8 @@ impl ArdyThieverFightCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(COINS_ID) == 0
-            && now.bank_item_id(COINS_ID) >= 1
+            && now.item_id(catalog_item_id("coins")) == 0
+            && now.bank_item_id(catalog_item_id("coins")) >= 1
         {
             self.deposited = Some(now.clone());
         }

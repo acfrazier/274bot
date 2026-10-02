@@ -1,22 +1,23 @@
 use super::*;
 pub fn gnome_wrong_bows(observation: &Observation) -> bool {
-    observation.item_id(MAGIC_SHORTBOW_ID) > 0
-        || observation.bank_item_id(MAGIC_SHORTBOW_ID) > 0
-        || observation.item_id(MAGIC_LONGBOW_ID) > 0
-        || observation.bank_item_id(MAGIC_LONGBOW_ID) > 0
+    observation.item_id(catalog_item_id("magic_shortbow")) > 0
+        || observation.bank_item_id(catalog_item_id("magic_shortbow")) > 0
+        || observation.item_id(catalog_item_id("magic_longbow")) > 0
+        || observation.bank_item_id(catalog_item_id("magic_longbow")) > 0
 }
 
 pub fn gnome_noted(observation: &Observation) -> bool {
-    observation.item_id(NOTED_MAGIC_LOGS_ID) > 0
-        || observation.bank_item_id(NOTED_MAGIC_LOGS_ID) > 0
-        || observation.item_id(NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
-        || observation.bank_item_id(NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
-        || observation.item_id(NOTED_UNSTRUNG_MAGIC_LONGBOW_ID) > 0
-        || observation.bank_item_id(NOTED_UNSTRUNG_MAGIC_LONGBOW_ID) > 0
+    observation.item_id(catalog_item_id("cert_magic_logs")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_magic_logs")) > 0
+        || observation.item_id(catalog_item_id("cert_unstrung_magic_shortbow")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_unstrung_magic_shortbow")) > 0
+        || observation.item_id(catalog_item_id("cert_unstrung_magic_longbow")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_unstrung_magic_longbow")) > 0
 }
 
 pub fn gnome_resource_tools(observation: &Observation) -> bool {
-    held_id(observation, RUNE_AXE_ID) == 1 && observation.item_id(KNIFE_ID) == GNOME_BALLAST_KNIVES
+    held_id(observation, catalog_item_id("rune_axe")) == 1
+        && observation.item_id(catalog_item_id("knife")) == GNOME_BALLAST_KNIVES
 }
 
 pub fn gnome_chop_baseline_ready(baseline: &Observation) -> bool {
@@ -24,9 +25,9 @@ pub fn gnome_chop_baseline_ready(baseline: &Observation) -> bool {
         && baseline.magic_tree_ready
         && baseline.level("woodcutting") >= 75
         && gnome_resource_tools(baseline)
-        && baseline.item_id(MAGIC_LOGS_ID) == 0
-        && baseline.item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) == 0
-        && baseline.item_id(UNSTRUNG_MAGIC_LONGBOW_ID) == 0
+        && baseline.item_id(catalog_item_id("magic_logs")) == 0
+        && baseline.item_id(catalog_item_id("unstrung_magic_shortbow")) == 0
+        && baseline.item_id(catalog_item_id("unstrung_magic_longbow")) == 0
         && !gnome_wrong_bows(baseline)
         && !gnome_noted(baseline)
 }
@@ -57,14 +58,14 @@ pub struct GnomeChopCycle {
 impl GnomeChopCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.wrong_product |= gnome_wrong_bows(now)
-            || now.item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
-            || now.bank_item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
-            || now.item_id(UNSTRUNG_MAGIC_LONGBOW_ID) > 0
-            || now.bank_item_id(UNSTRUNG_MAGIC_LONGBOW_ID) > 0;
+            || now.item_id(catalog_item_id("unstrung_magic_shortbow")) > 0
+            || now.bank_item_id(catalog_item_id("unstrung_magic_shortbow")) > 0
+            || now.item_id(catalog_item_id("unstrung_magic_longbow")) > 0
+            || now.bank_item_id(catalog_item_id("unstrung_magic_longbow")) > 0;
         self.noted |= gnome_noted(now);
         if self.chopped.is_none()
-            && now.item_id(MAGIC_LOGS_ID) >= 1
-            && baseline.item_id(MAGIC_LOGS_ID) == 0
+            && now.item_id(catalog_item_id("magic_logs")) >= 1
+            && baseline.item_id(catalog_item_id("magic_logs")) == 0
             && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
             && gnome_resource_tools(now)
             && !gnome_wrong_bows(now)
@@ -77,8 +78,8 @@ impl GnomeChopCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(MAGIC_LOGS_ID) == 0
-            && now.bank_item_id(MAGIC_LOGS_ID) >= 1
+            && now.item_id(catalog_item_id("magic_logs")) == 0
+            && now.bank_item_id(catalog_item_id("magic_logs")) >= 1
             && near(now.tile, GNOME_BANK_STAND, 8)
             && gnome_resource_tools(now)
         {
@@ -92,8 +93,9 @@ impl GnomeChopCycle {
                 && gnome_resource_tools(now);
         }
         if self.returned {
-            self.further |=
-                !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1 && gnome_resource_tools(now);
+            self.further |= !now.bank_open
+                && now.item_id(catalog_item_id("magic_logs")) >= 1
+                && gnome_resource_tools(now);
         }
     }
 
@@ -126,8 +128,8 @@ impl GnomeFletchCycle {
             gnome_wrong_bows(now) || now.item_id(other) > 0 || now.bank_item_id(other) > 0;
         self.noted |= gnome_noted(now);
         if self.chopped.is_none()
-            && now.item_id(MAGIC_LOGS_ID) >= 1
-            && baseline.item_id(MAGIC_LOGS_ID) == 0
+            && now.item_id(catalog_item_id("magic_logs")) >= 1
+            && baseline.item_id(catalog_item_id("magic_logs")) == 0
             && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
             && now.item_id(product) == 0
             && gnome_resource_tools(now)
@@ -139,11 +141,11 @@ impl GnomeFletchCycle {
         if self.chopped.is_some()
             && self.fletched.is_none()
             && now.item_id(product) >= 1
-            && now.item_id(MAGIC_LOGS_ID)
+            && now.item_id(catalog_item_id("magic_logs"))
                 < self
                     .chopped
                     .as_ref()
-                    .map(|row| row.item_id(MAGIC_LOGS_ID))
+                    .map(|row| row.item_id(catalog_item_id("magic_logs")))
                     .unwrap_or(0)
             && now.skill_xp("fletching") > baseline.skill_xp("fletching")
             && now.item_id(other) == 0
@@ -173,8 +175,9 @@ impl GnomeFletchCycle {
                 && gnome_resource_tools(now);
         }
         if self.returned {
-            self.further |=
-                !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1 && gnome_resource_tools(now);
+            self.further |= !now.bank_open
+                && now.item_id(catalog_item_id("magic_logs")) >= 1
+                && gnome_resource_tools(now);
         }
     }
 
