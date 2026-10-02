@@ -7,8 +7,8 @@
     "inputs": [
       {
         "path": "src/network/game/client/handler/ClientCheatHandler.ts",
-        "bytes": 28649,
-        "sha256": "0eefa08b523bd1a5f8a6846a5ed7588d22ce4507b15c473d6a1c2ebe06b7144e"
+        "bytes": 27951,
+        "sha256": "d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552e1639b1bdcf00d69"
       },
       {
         "path": "src/engine/entity/PlayerStat.ts",
