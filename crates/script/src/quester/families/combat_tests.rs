@@ -207,6 +207,103 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
             bank: &crate::quester::bank_memo::BankMemo::default(),
             outcome: None,
         };
-        assert_eq!(predicate.evaluate(&context), Truth::Unknown);
+        assert_eq!(predicate.evaluate(&context), Truth::False);
+    });
+}
+
+#[test]
+fn unattackable_approach_is_not_reselected_after_observed_arrival() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let path = compile_path(
+        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+        &data,
+        &quests,
+    )
+    .unwrap();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_players(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut local = snapshot.local_player().unwrap().clone();
+    let mut ledger = None;
+    for (x, expected_kind) in [(3110, "walk"), (3109, "combat")] {
+        local.player.actor.tile = api::WorldTile {
+            x,
+            z: 3346,
+            level: 0,
+        };
+        snapshot.seed_local_player(local.clone());
+        super::super::tests::with_tick(&snapshot, &mut ledger, x as u64, |tick| {
+            let context = PredicateContext {
+                cx: &tick.cx,
+                quests: &quests,
+                progress: &[],
+                required_after: tick.cx.evidence(),
+                chat_since: 0,
+                bank: &crate::quester::bank_memo::BankMemo::default(),
+                outcome: None,
+            };
+            let crate::quester::select::SelectionDecision::Selected(selected) =
+                crate::quester::select::select(&path, 0, &context)
+            else {
+                panic!("the observed safe/arrived tile must select its next real family");
+            };
+            assert_eq!(selected.step.kind.as_ref(), expected_kind);
+        });
+    }
+}
+
+#[test]
+fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let path = compile_path(
+        include_bytes!("../../../paths/289/fixtures/combat_unattackable.json"),
+        &data,
+        &quests,
+    )
+    .unwrap();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_players(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut local = snapshot.local_player().unwrap().clone();
+    local.player.actor.tile = api::WorldTile {
+        x: 3109,
+        z: 3346,
+        level: 0,
+    };
+    snapshot.seed_local_player(local);
+    let aborted = report(CombatEnd::Aborted(AbortReason::Unattackable));
+    let outcome = StepOutcome {
+        progress: None,
+        evidence: aborted.evidence,
+        receipt: Some(Arc::new(CombatReceipt {
+            report: aborted,
+            target_gone_restarts: 0,
+        })),
+    };
+    let mut ledger = None;
+    super::super::tests::with_tick(&snapshot, &mut ledger, 40, |tick| {
+        let context = PredicateContext {
+            cx: &tick.cx,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            bank: &crate::quester::bank_memo::BankMemo::default(),
+            outcome: Some(&outcome),
+        };
+        let crate::quester::select::SelectionDecision::Selected(selected) =
+            crate::quester::select::select(&path, 0, &context)
+        else {
+            panic!("Aborted(Unattackable) must select the Path walk-out step");
+        };
+        assert_eq!(
+            selected.step.id.0.as_ref(),
+            "walk-out-after-unattackable",
+            "the caller-owned Quester walk step must run after Unattackable"
+        );
     });
 }

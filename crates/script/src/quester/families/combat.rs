@@ -728,7 +728,11 @@ impl PredicatePlan for CombatEndPredicate {
             .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
             .map(|receipt| receipt.report)
         else {
-            return Truth::Unknown;
+            // No Quester combat report is a known miss, not missing snapshot
+            // evidence. Path skip_if of the producing combat step can then
+            // start it, and the caller walk after Aborted(Unattackable) can
+            // stay skipped until that report exists (design-combat.md:664).
+            return Truth::False;
         };
         if self.expected.matches(report.end) {
             Truth::True

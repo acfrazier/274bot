@@ -40,9 +40,9 @@
               "id": "approach-natural-unattackable-attacker",
               "kind": "walk",
               "version": 1,
-              "args": { "tile": [3109, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; approach after HP8 Start", "radius": 0 },
-              "skip_if": { "Any": [] },
-              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3109, 3346, 0], "radius": 0 } } }
+              "args": { "tile": [3108, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; native radius1 approaches its one-tile hunt range after HP8 Start", "radius": 1 },
+              "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } }
             },
             {
               "id": "observe-unattackable-attacker",
@@ -56,7 +56,7 @@
                 "kill_budget_ticks": 120,
                 "loot": []
               },
-              "skip_if": { "Any": [] },
+              "skip_if": { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } },
               "settle": { "All": [] }
             },
             {
