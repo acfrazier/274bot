@@ -764,6 +764,11 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt) {
+        if result.end == WalkEnd::UserInput {
+            self.target = None;
+            self.fail("manual-movement", "cancelled by user input", true);
+            return;
+        }
         if result.end != WalkEnd::Arrived {
             self.target = None;
             self.fail(
@@ -1416,5 +1421,76 @@ mod tests {
             size_of::<OneOp>(),
             size_of::<GatherRetained>()
         );
+    }
+    #[test]
+    fn user_input_walk_parks_gatherer_until_retry() {
+        use crate::quester::families::tests::with_tick;
+        use api::snapshot::GameSnapshot;
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut bag = crate::native::SettingsBag::new();
+        bag.insert("location".into(), serde_json::json!("Auto"));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut gatherer = Gatherer::new(
+            run,
+            Arc::clone(&config),
+            Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+            GatherRetained::default(),
+        );
+        gatherer.handle_walk(WalkReceipt {
+            request_id: 7,
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::UserInput,
+            blocked: None,
+            detail: None,
+        });
+        let failure = gatherer.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "manual-movement");
+        assert_eq!(failure.message.as_ref(), "cancelled by user input");
+        assert!(failure.retryable);
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        let mut ledger = None;
+        for tick in 1..=3 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, tick, |native| {
+                    gatherer.tick(native).unwrap()
+                }),
+                ScriptFlow::Blocked(failure)
+                    if failure.code.as_ref() == "manual-movement"
+                        && failure.message.as_ref() == "cancelled by user input"
+                        && failure.retryable
+            ));
+        }
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+        gatherer.retry().unwrap();
+        assert!(gatherer.failure.is_none());
     }
 }

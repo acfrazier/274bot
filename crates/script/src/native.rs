@@ -344,6 +344,7 @@ pub struct ActionContext<'a> {
     pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
+    pub(crate) observed_walk_outcome_seq: u64,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
@@ -370,6 +371,7 @@ pub struct WalkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
+    UserInput,
     RouteEnded,
     Refused,
     Blocked,
@@ -438,6 +440,8 @@ pub enum ActionError {
     BudgetExhausted,
     Stale,
     Cancelled,
+    /// A step adapter was interrupted by manual movement, not owner revocation.
+    UserInput,
     Unavailable(Arc<str>),
     Failed(Arc<str>),
     /// The step cannot continue safely without an explicit operator retry.

@@ -481,6 +481,8 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         self_target_kind: scene.self_target_kind,
         self_target_index: scene.self_target_index,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     let native = script::isolate_fb::NativeFactsInput {
         puzzle_board: scene

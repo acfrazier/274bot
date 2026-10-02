@@ -9,7 +9,7 @@ use nav::router::Route;
 use crate::play_status::lock_statuses;
 use crate::script_runtime;
 use crate::script_runtime::{
-    abort_script_walk, pause_script, poll_start, script_slot, script_slot_or_insert, NavBot,
+    pause_script, poll_start, reset_script_nav, script_slot, script_slot_or_insert, NavBot,
     ScriptWall,
 };
 use crate::Play;
@@ -232,8 +232,7 @@ impl ScriptStartHandle {
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
         slot.stop();
-        abort_script_walk(&self.navs, name);
-        invalidate_bank_pick(&self.navs, name);
+        reset_script_nav(&self.navs, name);
         drop(slot);
         clear_script_paint_status(&self.statuses, name);
         Ok(())
@@ -431,8 +430,7 @@ impl Play {
             return false;
         }
         slot.stop();
-        abort_script_walk(&self.navs, name);
-        invalidate_bank_pick(&self.navs, name);
+        reset_script_nav(&self.navs, name);
         drop(slot);
         self.clear_script_paint_status(name);
         self.wake(name);
@@ -568,12 +566,8 @@ impl Play {
         if let Some(slot) = guard.as_mut() {
             slot.stop();
         }
-        // A stopped script's walk stops with it, as a returned frozen walk
-        // has stopped its walker: the pump must not keep following it.
-        abort_script_walk(&self.navs, name);
-        // Keep the script admission lock until its bank epoch is invalidated.
-        // A previously dequeued worker can no longer publish or arm a route.
-        invalidate_bank_pick(&self.navs, name);
+        // A stopped script's route and reconnect carry belong to that run.
+        reset_script_nav(&self.navs, name);
         drop(guard);
         self.clear_script_paint_status(name);
         self.wake(name);
@@ -599,8 +593,7 @@ impl Play {
                 return false;
             }
             slot.stop();
-            abort_script_walk(&self.navs, name);
-            invalidate_bank_pick(&self.navs, name);
+            reset_script_nav(&self.navs, name);
         }
         self.clear_script_paint_status(name);
         self.wake(name);

@@ -92,6 +92,8 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));

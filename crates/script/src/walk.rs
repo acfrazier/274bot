@@ -298,11 +298,12 @@ pub(crate) fn here() -> Option<WorldTile> {
     })
 }
 
-/// Frozen `EventSignal.pending()` for an owned random. Guardian `hold`
-/// freezes the row (`machine::on_hold`) instead of aborting the walk.
-pub(crate) fn interrupted() -> bool {
+/// Whether this walking operation has a runtime event or user-movement
+/// intent pending. Guardian `hold` freezes the row rather than interrupting.
+pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
     crate::event_signal::pending()
         || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
+        || cx.user_move_intent_interrupted()
 }
 
 /// Frozen `isArrived` over the cached reach view — the compatibility ladder
@@ -775,6 +776,7 @@ impl Walk {
             "level": dest.level,
             "radius": radius,
             "allow_teleports": allow_teleports,
+            "intent_baseline": cx.user_move_intent_baseline(),
         }))
         .as_u64()
         .unwrap_or(0);
@@ -794,6 +796,7 @@ impl Walk {
     /// stopped its walker). The bool is the wait's value, not `isArrived`:
     /// a closest terminal is true here and the ladder re-checks arrival.
     pub(crate) fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
+        walk_wait::update_baseline(self.token, cx.user_move_intent_baseline());
         let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
             .as_bool()
             .unwrap_or(false);
@@ -1012,7 +1015,7 @@ impl Resilient {
 
     /// Issue the first baked walk. `Err(done)` if no walk was needed.
     pub(crate) fn start(mut self, cx: &mut Cx<'_>) -> Result<Self, bool> {
-        if interrupted() {
+        if interrupted(cx) {
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Err(false);
@@ -1037,7 +1040,7 @@ impl Resilient {
     pub(crate) fn step(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
-        if interrupted() {
+        if interrupted(cx) {
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1241,7 +1244,7 @@ impl Resilient {
 
     fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
-        if interrupted() {
+        if interrupted(cx) {
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
@@ -1482,6 +1485,7 @@ impl Family for WalkResilient {
     const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first baked walk goes out in the caller's turn.
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = true;
     type Args = WalkResilientArgs;
     type Output = bool;
 
@@ -1493,7 +1497,7 @@ impl Family for WalkResilient {
         if opts.cross_zones.len() > 8 {
             return Begin::Refuse("crossZones: more than 8 zone ids".into());
         }
-        if interrupted() {
+        if interrupted(_cx) {
             return Begin::Done(false);
         }
         let dest = args.tile.world();
@@ -1528,6 +1532,12 @@ impl Family for WalkResilient {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            if let Some(stop) = self.drive.release() {
+                cx.emit(stop);
+            }
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1619,7 +1629,7 @@ impl WalkOpening {
         }
     }
 
-    fn abort_walk(&self, cx: &mut Cx<'_>) {
+    pub(crate) fn abort_walk(&self, cx: &mut Cx<'_>) {
         match &self.phase {
             OpeningPhase::Walking(walk) | OpeningPhase::Approach { walk, .. } => walk.abort(cx),
             _ => {}
@@ -1632,7 +1642,7 @@ impl WalkOpening {
 
     /// `Some(result)` once the frozen `walkOpening` returned; `None` waits.
     pub(crate) fn advance(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
-        if interrupted() {
+        if interrupted(cx) {
             self.abort_walk(cx);
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
@@ -1742,11 +1752,12 @@ impl Family for WalkOpening {
     const CALLBACKS: &'static [&'static str] = &["log"];
     const SYNC_HOOKS: &'static [usize] = &[LOG];
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = true;
     type Args = WalkOpeningArgs;
     type Output = bool;
 
     fn begin(args: WalkOpeningArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        if interrupted() {
+        if interrupted(_cx) {
             return Begin::Done(false);
         }
         let dest = args.dest.world();
@@ -1760,6 +1771,10 @@ impl Family for WalkOpening {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            self.abort_walk(cx);
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1904,10 +1919,14 @@ impl DirectWalk {
 
 impl Family for DirectWalk {
     const NAME: &'static str = "direct-walk";
+    const WALKING_OPERATION: bool = true;
     type Args = DirectWalkArgs;
     type Output = bool;
 
     fn begin(args: DirectWalkArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if interrupted(cx) {
+            return Begin::Done(false);
+        }
         // `while (performance.now() < deadline)` never runs a zero bound.
         if args.timeout_ms == 0 {
             return Begin::Done(false);
@@ -1927,6 +1946,9 @@ impl Family for DirectWalk {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if interrupted(cx) {
+            return Step::Done(false);
+        }
         if self.delay_left > 1 {
             self.delay_left -= 1;
             return Step::Wait;
@@ -3403,6 +3425,154 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn manual_takeover_aborts_walk_opening_before_its_route_less_phase() {
+        reset();
+        post_walled_scene(vec![door_loc(1530, 2, 0)]);
+        let h = start_opening(&["door", "gate"]);
+        machine::step(&mut NoJs);
+        let token = opening_walk_token(10);
+
+        machine::on_manual_walk_takeover(2);
+        machine::on_pause();
+        machine::on_resume();
+        machine::step(&mut NoJs);
+
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
+        );
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
+
+    #[test]
+    fn operator_paused_walk_rebaselines_first_observation_after_resume() {
+        reset();
+        post_walled_scene(vec![door_loc(1530, 2, 0)]);
+        let h = start_opening(&["door", "gate"]);
+        machine::step(&mut NoJs);
+        let _token = opening_walk_token(10);
+
+        machine::on_pause();
+        machine::on_resume();
+        // The host posts no snapshot while Paused. Resume is queued first.
+        crate::observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        machine::step(&mut NoJs);
+
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+        assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn resumed_walk_click_before_resume_applies_cancels_once() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+
+        machine::on_pause();
+        // Host Resume is queued before the click, but the click's atomic
+        // notice is visible before the isolate dequeues that Resume.
+        publication.note_takeover(1);
+        machine::on_resume();
+        machine::on_manual_walk_takeover(1);
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
+        );
+        machine::step(&mut NoJs);
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn in_flight_tick_new_walk_before_takeover_snapshot_settles_without_timeout() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        // The tick still reads the pre-takeover snapshot. Its action stamp is
+        // therefore stale; seeing the atomic must cancel, not bless a new walk
+        // that the host will fence without ever delivering a route outcome.
+        publication.note_takeover(1);
+        let started = machine::start(
+            "walk-resilient",
+            json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": { "radius": 0 } }),
+            Vec::new(),
+            0,
+        );
+        let outcome = match started {
+            Started::Settled(outcome) => Take::Settled(outcome),
+            Started::Running(h) => {
+                machine::step(&mut NoJs);
+                machine::take(h)
+            }
+            Started::Refused(reason) => panic!("walk refused instead of settling: {reason}"),
+        };
+        assert_eq!(outcome, Take::Settled(Outcome::Done(json!(false))));
+        assert!(
+            machine::merge_ops(Vec::new())
+                .iter()
+                .all(|req| matches!(req, InteractReq::AbortWalk { .. })),
+            "no automatic walk may escape before its takeover snapshot"
+        );
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        let fresh = start(None);
+        machine::step(&mut NoJs);
+        let _fresh_request = walk_token();
+        assert_eq!(
+            machine::take(fresh),
+            Take::Pending,
+            "a new decision after observing the takeover can still walk"
+        );
+    }
+    #[test]
+    fn walking_owner_survives_guardian_hold_but_cannot_revive_after_takeover() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        let h = start(None);
+        assert!(publication.live());
+
+        machine::on_pause();
+        assert!(machine::walking_live());
+        machine::on_resume();
+        machine::on_hold(true);
+        assert!(
+            publication.live(),
+            "guardian hold freezes sends, not ownership"
+        );
+
+        machine::on_session_hold(true);
+        assert!(!publication.live(), "reconnect work is carried, not active");
+        machine::on_session_hold(false);
+        assert!(publication.live());
+
+        // The host signal arrives before the ordered isolate command. A later
+        // hold/phase publication must not resurrect the interrupted row.
+        publication.note_takeover(1);
+        assert!(!publication.live());
+        machine::on_hold(false);
+        machine::on_pause();
+        machine::on_resume();
+        assert!(!publication.live());
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert!(!publication.live());
     }
 
     #[test]

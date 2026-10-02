@@ -40,8 +40,8 @@ use crate::script_runtime::{
     deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
     reset_script_nav, script_active, script_observe_cached_with_channels, script_paint_of,
-    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot,
-    ScriptSlot, ScriptWall,
+    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
+    take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
@@ -1291,6 +1291,14 @@ fn spawn_slot_thread(
                             // Keep these commands for their normal late send/hold gate.
                             let (frame_input, wires) =
                                 take_slot_frame_input(&slot_input, name, &slot_wires, hold);
+                            take_manual_walk_ownership(
+                                &slot_scripts,
+                                &slot_navs,
+                                name,
+                                frame_input,
+                                c.ingame && !session_boundary,
+                                *script_tick,
+                            );
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             // The shared memory-mode command lands here for

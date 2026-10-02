@@ -58,6 +58,8 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
+    pub(crate) cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) user_move_intent_seq: u64,
 }
 
 /// One navigator-named gate short of a failed walk: the `MissingReq::Carry`
@@ -148,6 +150,11 @@ pub(crate) struct NavBot {
     /// The published route end is frozen `'blocked'`
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
+    pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// Every qualifying human gesture, including when no route exists.
+    pub(crate) user_move_intent_seq: u64,
+    /// Requests based on an older outcome cannot reclaim movement ownership.
+    pub(crate) manual_takeover_watermark: u64,
     /// The navigator-named gate shorts of that same published outcome: set
     /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
     /// is, so a list can never outlive the failure it belongs to.
@@ -170,6 +177,8 @@ pub(crate) struct CarriedWalk {
     /// The script run it belongs to (`SlotScript::runtime_generation`): a
     /// Stop, Start or watchdog restart since the reconnect drops it.
     runtime_generation: u64,
+    /// Route generation before `hold_script_nav` ends the session's follow.
+    route_generation: u64,
     request: script::shim::InteractReq,
 }
 
@@ -1787,6 +1796,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1831,6 +1841,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -1843,6 +1854,16 @@ impl NavBot {
     }
 
     pub(crate) fn clear_walk_outcome(&mut self) {
+        // AbortWalk is a release of the current operation, not a script-run
+        // boundary. Preserve its published UserInput terminal until an
+        // isolate observes it.
+        if self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput {
+            return;
+        }
+        self.reset_walk_outcome();
+    }
+
+    fn reset_walk_outcome(&mut self) {
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = false;
@@ -1856,9 +1877,105 @@ impl NavBot {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
+        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
         self.walk_missing_carry.clear();
+    }
+
+    pub(crate) fn walking_decision_is_current(&self, observed_seq: u64) -> bool {
+        observed_seq >= self.manual_takeover_watermark
+    }
+
+    /// Cancel active follow/work without sending anything over the human move.
+    /// Route generation fences every late route and bank completion.
+    pub(crate) fn cancel_for_manual_input(&mut self) {
+        let current = self
+            .requested_route
+            // A live outer family may outlast an already-settled route leg.
+            .filter(|_| {
+                self.walk_request_id != 0 && self.walk_outcome_request_id != self.walk_request_id
+            })
+            .map(|(to, radius, teleports, _, _, _)| {
+                (
+                    self.walk_request_id,
+                    to,
+                    radius,
+                    teleports,
+                    self.route_generation,
+                )
+            });
+        let carried = self.carried_walk.as_deref().and_then(|walk| {
+            let (request_id, to, radius, allow_teleports) = match &walk.request {
+                script::shim::InteractReq::Walk {
+                    x,
+                    z,
+                    level,
+                    allow_teleports,
+                    request_id,
+                    ..
+                } => (
+                    *request_id,
+                    WorldTile {
+                        x: *x,
+                        z: *z,
+                        level: *level,
+                    },
+                    0,
+                    *allow_teleports,
+                ),
+                script::shim::InteractReq::WalkNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                    allow_teleports,
+                    request_id,
+                    ..
+                } => (
+                    *request_id,
+                    WorldTile {
+                        x: *x,
+                        z: *z,
+                        level: *level,
+                    },
+                    *radius,
+                    *allow_teleports,
+                ),
+                _ => return None,
+            };
+            Some((
+                request_id,
+                to,
+                radius,
+                allow_teleports,
+                walk.route_generation,
+            ))
+        });
+        let identity = current.or(carried);
+        let native_owner = self.native_walk.is_some();
+        super::script_walk::abort_walk_on_bot_with_end(self, script::native::WalkEnd::UserInput);
+        // Route-less walking families still advance the dispatch fence, but
+        // cannot manufacture a correlated receipt for legacy request id zero.
+        self.bump_walk_outcome_seq();
+        self.manual_takeover_watermark = self.walk_outcome_seq;
+        if let Some((request_id, to, radius, teleports, generation)) =
+            identity.filter(|(request_id, ..)| *request_id != 0)
+        {
+            self.walk_outcome_generation = generation;
+            self.walk_outcome_request_id = request_id;
+            self.walk_outcome_failed = true;
+            self.walk_outcome_blocked = false;
+            self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+            self.walk_outcome_x = to.x;
+            self.walk_outcome_z = to.z;
+            self.walk_outcome_level = to.level;
+            self.walk_outcome_radius = radius;
+            self.walk_outcome_allow_teleports = teleports;
+            // Native terminals travel directly to their typed owner; this
+            // isolate-only guard has no compiled-slot release path.
+            self.walk_live_refusal_id = if native_owner { 0 } else { request_id };
+        }
     }
 
     /// Whether a script walk is armed, in flight or following.
@@ -1971,7 +2088,7 @@ impl NavBot {
 pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
         end_route_follow(nav);
-        nav.clear_walk_outcome();
+        nav.reset_walk_outcome();
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
         nav.carried_walk = None;
@@ -2000,6 +2117,7 @@ pub(crate) fn hold_script_nav(
     carry: Option<u64>,
 ) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
+        let route_generation = nav.route_generation;
         // A duel's screens belong to the dropped connection.
         nav.duel_offer_partner = None;
         let armed = nav.route.is_some()
@@ -2011,6 +2129,7 @@ pub(crate) fn hold_script_nav(
             // A nearest-bank walk still choosing its bank: re-ask for it.
             nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
+                route_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
             }));
         } else if let (Some(runtime_generation), true, Some(requested), None) =
@@ -2059,6 +2178,7 @@ pub(crate) fn hold_script_nav(
             };
             nav.carried_walk = Some(Box::new(CarriedWalk {
                 runtime_generation,
+                route_generation,
                 request,
             }));
         }
