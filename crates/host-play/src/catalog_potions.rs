@@ -12,8 +12,8 @@ pub struct VialFillerCycle {
 impl VialFillerCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         if self.filled.is_none()
-            && now.item_id(VIAL_OF_WATER_ID) >= 1
-            && baseline.item_id(VIAL_OF_WATER_ID) == 0
+            && now.item_id(catalog_item_id("vial_water")) >= 1
+            && baseline.item_id(catalog_item_id("vial_water")) == 0
             && near(now.tile, FALADOR_FOUNTAIN, 4)
         {
             self.filled = Some(now.clone());
@@ -23,8 +23,8 @@ impl VialFillerCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(VIAL_OF_WATER_ID) == 0
-            && now.bank_item_id(VIAL_OF_WATER_ID) >= 1
+            && now.item_id(catalog_item_id("vial_water")) == 0
+            && now.bank_item_id(catalog_item_id("vial_water")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -33,8 +33,9 @@ impl VialFillerCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(EMPTY_VIAL_ID) >= 1
-                && now.bank_item_id(EMPTY_VIAL_ID) < deposited.bank_item_id(EMPTY_VIAL_ID)
+                && now.item_id(catalog_item_id("vial_empty")) >= 1
+                && now.bank_item_id(catalog_item_id("vial_empty"))
+                    < deposited.bank_item_id(catalog_item_id("vial_empty"))
             {
                 self.withdrawn = Some(now.clone());
             }
@@ -48,7 +49,7 @@ impl VialFillerCycle {
                 && near(now.tile, FALADOR_FOUNTAIN, 4);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(VIAL_OF_WATER_ID) >= 1;
+            self.further |= !now.bank_open && now.item_id(catalog_item_id("vial_water")) >= 1;
         }
     }
 
@@ -95,18 +96,18 @@ impl PotionMakerCycle {
             || now.bank_item_id(wrong_unf) > 0
             || now.bank_item_id(wrong_finished) > 0;
         if named
-            && (now.item_id(GUAM_LEAF_ID) > 0
+            && (now.item_id(catalog_item_id("guam_leaf")) > 0
                 || (now.bank_open
                     && now.bank_loaded
                     && now.bank_generation > baseline.bank_generation
-                    && now.bank_item_id(GUAM_LEAF_ID) < 14))
+                    && now.bank_item_id(catalog_item_id("guam_leaf")) < 14))
         {
             self.filter_violated = true;
         }
         if self.unfinished.is_none()
             && now.item_id(unf) >= 1
             && now.item_id(herb) < 14
-            && now.item_id(VIAL_OF_WATER_ID) < 14
+            && now.item_id(catalog_item_id("vial_water")) < 14
             && now.item_id(finished) == 0
             && baseline.item_id(unf) == 0
             && baseline.item_id(finished) == 0
@@ -140,10 +141,11 @@ impl PotionMakerCycle {
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
                 && now.item_id(herb) >= 1
-                && now.item_id(VIAL_OF_WATER_ID) >= 1
+                && now.item_id(catalog_item_id("vial_water")) >= 1
                 && now.bank_item_id(herb) < deposited.bank_item_id(herb)
-                && now.bank_item_id(VIAL_OF_WATER_ID) < deposited.bank_item_id(VIAL_OF_WATER_ID)
-                && (!named || now.bank_item_id(GUAM_LEAF_ID) == 14)
+                && now.bank_item_id(catalog_item_id("vial_water"))
+                    < deposited.bank_item_id(catalog_item_id("vial_water"))
+                && (!named || now.bank_item_id(catalog_item_id("guam_leaf")) == 14)
             {
                 self.withdrawn = Some(now.clone());
             }
@@ -151,7 +153,8 @@ impl PotionMakerCycle {
         if let Some(withdrawn) = &self.withdrawn {
             self.further |= now.item_id(unf) >= 1
                 && now.item_id(herb) < withdrawn.item_id(herb)
-                && now.item_id(VIAL_OF_WATER_ID) < withdrawn.item_id(VIAL_OF_WATER_ID);
+                && now.item_id(catalog_item_id("vial_water"))
+                    < withdrawn.item_id(catalog_item_id("vial_water"));
         }
     }
 

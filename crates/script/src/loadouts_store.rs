@@ -892,7 +892,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn food_options_follow_selected_fixed_heal_facts() {
         let (_scratch, path) = tmp_path();

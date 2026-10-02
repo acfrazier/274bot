@@ -692,7 +692,10 @@ export const SETTINGS = {
         spell.options
     );
     let food = schema.iter().find(|s| s.id == "food").unwrap();
-    assert!(food.options.is_empty(), "revision options stay unresolved at parse time");
+    assert!(
+        food.options.is_empty(),
+        "revision options stay unresolved at parse time"
+    );
     assert_eq!(food.options_from.as_deref(), Some("FOOD_OPTIONS"));
     let banking = schema.iter().find(|s| s.id == "banking").unwrap();
     assert_eq!(banking.options, vec!["None", "Auto"]);

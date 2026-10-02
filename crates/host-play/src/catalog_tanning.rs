@@ -30,9 +30,9 @@ impl TannerBotCycle {
         if self.widget.is_none()
             && now.main_modal == TANNER_IF
             && now.has_widget(tan_all)
-            && now.item_id(COW_HIDE_ID) >= 1
+            && now.item_id(catalog_item_id("cow_hide")) >= 1
             && now.item_id(product) == 0
-            && now.item_id(COINS_ID) >= 1
+            && now.item_id(catalog_item_id("coins")) >= 1
             && near(now.tile, TANNER_STAND, 4)
             && now.main_modal != SHOPMAIN
         {
@@ -42,8 +42,8 @@ impl TannerBotCycle {
             if self.tanned.is_none()
                 && near(now.tile, TANNER_STAND, 4)
                 && now.item_id(product) >= 1
-                && now.item_id(COW_HIDE_ID) == 0
-                && now.item_id(COINS_ID) < widget.item_id(COINS_ID)
+                && now.item_id(catalog_item_id("cow_hide")) == 0
+                && now.item_id(catalog_item_id("coins")) < widget.item_id(catalog_item_id("coins"))
                 && now.item_id(wrong_product) == 0
                 && now.main_modal != SHOPMAIN
                 && !near(now.tile, DOMMIK_STAND, 4)
@@ -66,8 +66,9 @@ impl TannerBotCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(COW_HIDE_ID) >= 1
-                && now.bank_item_id(COW_HIDE_ID) < deposited.bank_item_id(COW_HIDE_ID)
+                && now.item_id(catalog_item_id("cow_hide")) >= 1
+                && now.bank_item_id(catalog_item_id("cow_hide"))
+                    < deposited.bank_item_id(catalog_item_id("cow_hide"))
             {
                 self.withdrawn = Some(now.clone());
             }
@@ -83,7 +84,7 @@ impl TannerBotCycle {
         if self.returned {
             self.further |= !now.bank_open
                 && now.item_id(product) >= 1
-                && now.item_id(COW_HIDE_ID) == 0
+                && now.item_id(catalog_item_id("cow_hide")) == 0
                 && now.item_id(wrong_product) == 0;
         }
     }

@@ -21,13 +21,13 @@ pub struct SmithingBotSpec {
 pub fn smithing_bot_spec(case: CoreCase) -> Option<SmithingBotSpec> {
     match case {
         CoreCase::SmithingBot => Some(SmithingBotSpec {
-            product: BRONZE_DAGGER_ID,
-            wrong: BRONZE_PLATEBODY_ID,
+            product: catalog_item_id("bronze_dagger"),
+            wrong: catalog_item_id("bronze_platebody"),
             bars_per: 1,
         }),
         CoreCase::SmithingBotPlatebody => Some(SmithingBotSpec {
-            product: BRONZE_PLATEBODY_ID,
-            wrong: BRONZE_DAGGER_ID,
+            product: catalog_item_id("bronze_platebody"),
+            wrong: catalog_item_id("bronze_dagger"),
             bars_per: 5,
         }),
         _ => None,
@@ -45,9 +45,9 @@ impl SmithingBotCycle {
         if self.panel.is_none()
             && now.has_main_make(product)
             && near(now.tile, VARROCK_ANVIL, 8)
-            && now.item_id(BRONZE_BAR_ID) >= bars_per
+            && now.item_id(catalog_item_id("bronze_bar")) >= bars_per
             && now.item_id(product) == 0
-            && now.item_id(HAMMER_ID) >= 1
+            && now.item_id(catalog_item_id("hammer")) >= 1
         {
             self.panel = Some(now.clone());
         }
@@ -55,7 +55,8 @@ impl SmithingBotCycle {
             if self.produced.is_none()
                 && near(now.tile, VARROCK_ANVIL, 8)
                 && now.item_id(product) >= 1
-                && now.item_id(BRONZE_BAR_ID) <= panel.item_id(BRONZE_BAR_ID) - bars_per
+                && now.item_id(catalog_item_id("bronze_bar"))
+                    <= panel.item_id(catalog_item_id("bronze_bar")) - bars_per
                 && now.skill_xp("smithing") > baseline.skill_xp("smithing")
                 && now.item_id(wrong) == 0
             {
@@ -69,7 +70,7 @@ impl SmithingBotCycle {
             && now.bank_generation > baseline.bank_generation
             && now.item_id(product) == 0
             && now.bank_item_id(product) >= 1
-            && now.item_id(HAMMER_ID) >= 1
+            && now.item_id(catalog_item_id("hammer")) >= 1
         {
             self.deposited = Some(now.clone());
         }
@@ -78,8 +79,9 @@ impl SmithingBotCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(BRONZE_BAR_ID) >= bars_per
-                && now.bank_item_id(BRONZE_BAR_ID) < deposited.bank_item_id(BRONZE_BAR_ID)
+                && now.item_id(catalog_item_id("bronze_bar")) >= bars_per
+                && now.bank_item_id(catalog_item_id("bronze_bar"))
+                    < deposited.bank_item_id(catalog_item_id("bronze_bar"))
             {
                 self.restocked = Some(now.clone());
             }

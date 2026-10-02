@@ -208,7 +208,6 @@ export default class T extends LoopingBot {
     assert_eq!(value["exact"], true);
 }
 
-
 #[test]
 fn food_options_come_from_selected_289_fixed_heal_facts() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

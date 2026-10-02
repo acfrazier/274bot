@@ -16,7 +16,7 @@ pub fn validate_case_baseline_with_preparation(
             near(baseline.tile, FALADOR_CHICKENS, 8)
                 && baseline.level("attack") >= 30
                 && baseline.level("strength") >= 30
-                && baseline.item_id(FEATHER_ID) == 0
+                && baseline.item_id(catalog_item_id("feather")) == 0
         }
         CoreCase::Thiever => {
             near(baseline.tile, (2661, 3306, 0), 10)
@@ -33,58 +33,58 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::AlcherLow => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= LOW_ALCH_LEVEL
-                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(NATURE_RUNE_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
-                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
-                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.item_id(catalog_item_id("rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("cert_rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("naturerune")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
+                && baseline.item_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.item_id(catalog_item_id("fire_battlestaff")) == 0
+                && baseline.equipment_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.equipment_id(catalog_item_id("fire_battlestaff")) == 0
         }
         CoreCase::AlcherFireBattlestaff => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= HIGH_ALCH_LEVEL
                 && baseline.level("attack") >= FIRE_BATTLESTAFF_WIELD_ATTACK
-                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(NATURE_RUNE_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
-                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
-                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.item_id(catalog_item_id("rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("cert_rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("naturerune")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
+                && baseline.item_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.item_id(catalog_item_id("fire_battlestaff")) == 0
+                && baseline.equipment_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.equipment_id(catalog_item_id("fire_battlestaff")) == 0
         }
         CoreCase::AlcherSwarmDrain => {
             near(baseline.tile, VARROCK_WEST_BANK, 6)
                 && baseline.level("magic") >= HIGH_ALCH_LEVEL
-                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
-                && baseline.item_id(YEW_LONGBOW_ID) == 0
-                && baseline.item_id(CERT_YEW_LONGBOW_ID) == 0
-                && baseline.item_id(NATURE_RUNE_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
-                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
-                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.item_id(catalog_item_id("rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("cert_rune_chainbody")) == 0
+                && baseline.item_id(catalog_item_id("yew_longbow")) == 0
+                && baseline.item_id(catalog_item_id("cert_yew_longbow")) == 0
+                && baseline.item_id(catalog_item_id("naturerune")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
+                && baseline.item_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.item_id(catalog_item_id("fire_battlestaff")) == 0
+                && baseline.equipment_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.equipment_id(catalog_item_id("fire_battlestaff")) == 0
         }
         CoreCase::AlcherDefaults => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= 55
-                && baseline.item_id(YEW_LONGBOW_ID) == 0
-                && baseline.item_id(CERT_YEW_LONGBOW_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
-                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item_id(catalog_item_id("yew_longbow")) == 0
+                && baseline.item_id(catalog_item_id("cert_yew_longbow")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
+                && baseline.item_id(catalog_item_id("naturerune")) == 0
                 && baseline.item("Rune chainbody") == 0
         }
         CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= 55
-                && baseline.item_id(ADAMANT_SCIMITAR_ID) == 0
-                && baseline.item_id(CERT_ADAMANT_SCIMITAR_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
-                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item_id(catalog_item_id("adamant_scimitar")) == 0
+                && baseline.item_id(catalog_item_id("cert_adamant_scimitar")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
+                && baseline.item_id(catalog_item_id("naturerune")) == 0
                 && baseline.item("Coins") == 0
                 && baseline.item("Rune chainbody") == 0
         }
@@ -96,16 +96,16 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::BankFletcherShafts => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && (held_id(baseline, KNIFE_ID) == 1 || baseline.item("Knife") == 1)
-                && baseline.item_id(LOGS_ID) == 27
-                && baseline.item_id(ARROW_SHAFT_ID) == 0
+                && (held_id(baseline, catalog_item_id("knife")) == 1 || baseline.item("Knife") == 1)
+                && baseline.item_id(catalog_item_id("logs")) == 27
+                && baseline.item_id(catalog_item_id("arrow_shaft")) == 0
                 && baseline.level("fletching") >= 1
         }
         CoreCase::BankFletcherHeadless => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(FEATHER_ID) == 30
-                && baseline.item_id(ARROW_SHAFT_ID) == 30
-                && baseline.item_id(HEADLESS_ARROW_ID) == 0
+                && baseline.item_id(catalog_item_id("feather")) == 30
+                && baseline.item_id(catalog_item_id("arrow_shaft")) == 30
+                && baseline.item_id(catalog_item_id("headless_arrow")) == 0
                 && baseline.level("fletching") >= 1
         }
         CoreCase::BankFletcherString => {
@@ -126,39 +126,39 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::DartFletcher => {
             near(baseline.tile, (3220, 3212, 0), 8)
-                && baseline.item_id(BRONZE_DART_TIP_ID) == 100
-                && baseline.item_id(FEATHER_ID) == 100
-                && baseline.item_id(BRONZE_DART_ID) == 0
-                && baseline.item_id(IRON_DART_ID) == 0
+                && baseline.item_id(catalog_item_id("bronze_dart_tip")) == 100
+                && baseline.item_id(catalog_item_id("feather")) == 100
+                && baseline.item_id(catalog_item_id("bronze_dart")) == 0
+                && baseline.item_id(catalog_item_id("iron_dart")) == 0
                 && baseline.level("fletching") >= 1
         }
         CoreCase::DartFletcherIron => {
             near(baseline.tile, (3220, 3212, 0), 8)
-                && baseline.item_id(IRON_DART_TIP_ID) == 100
-                && baseline.item_id(FEATHER_ID) == 100
-                && baseline.item_id(IRON_DART_ID) == 0
-                && baseline.item_id(BRONZE_DART_ID) == 0
+                && baseline.item_id(catalog_item_id("iron_dart_tip")) == 100
+                && baseline.item_id(catalog_item_id("feather")) == 100
+                && baseline.item_id(catalog_item_id("iron_dart")) == 0
+                && baseline.item_id(catalog_item_id("bronze_dart")) == 0
                 && baseline.level("fletching") >= 22
         }
         CoreCase::HerbCleaner => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
-                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.item_id(catalog_item_id("unidentified_guam")) == 0
+                && baseline.item_id(catalog_item_id("guam_leaf")) == 0
                 && baseline.level("herblore") >= 3
         }
         CoreCase::HerbCleanerNamed => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
-                && baseline.item_id(GUAM_LEAF_ID) == 0
-                && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                && baseline.item_id(catalog_item_id("unidentified_guam")) == 0
+                && baseline.item_id(catalog_item_id("guam_leaf")) == 0
+                && baseline.item_id(catalog_item_id("unidentified_marentill")) == 0
                 && baseline.level("herblore") >= 5
         }
         CoreCase::HerbCleanerEmptyBank => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
-                && baseline.item_id(GUAM_LEAF_ID) == 0
-                && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
-                && baseline.item_id(MARRENTILL_ID) == 0
+                && baseline.item_id(catalog_item_id("unidentified_guam")) == 0
+                && baseline.item_id(catalog_item_id("guam_leaf")) == 0
+                && baseline.item_id(catalog_item_id("unidentified_marentill")) == 0
+                && baseline.item_id(catalog_item_id("marentill")) == 0
                 && baseline.level("herblore") >= 20
                 && match start_preparation {
                     Some(receipt) => {
@@ -178,26 +178,26 @@ pub fn validate_case_baseline_with_preparation(
                     None => {
                         baseline.bank_open
                             && baseline.bank_loaded
-                            && baseline.bank_item_id(UNIDENTIFIED_GUAM_ID) == 20
-                            && baseline.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                            && baseline.bank_item_id(catalog_item_id("unidentified_guam")) == 20
+                            && baseline.bank_item_id(catalog_item_id("unidentified_marentill")) == 0
                     }
                 }
         }
         CoreCase::GemCutter => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(CHISEL_ID) == 0
-                && baseline.item_id(UNCUT_SAPPHIRE_ID) == 0
-                && baseline.item_id(SAPPHIRE_ID) == 0
-                && baseline.item_id(CRUSHED_GEMSTONE_ID) == 0
+                && baseline.item_id(catalog_item_id("chisel")) == 0
+                && baseline.item_id(catalog_item_id("uncut_sapphire")) == 0
+                && baseline.item_id(catalog_item_id("sapphire")) == 0
+                && baseline.item_id(catalog_item_id("crushed_gemstone")) == 0
                 && baseline.level("crafting") >= 20
         }
         CoreCase::GemCutterNamed => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(CHISEL_ID) == 0
-                && baseline.item_id(UNCUT_SAPPHIRE_ID) == 0
-                && baseline.item_id(SAPPHIRE_ID) == 0
-                && baseline.item_id(UNCUT_OPAL_ID) == 0
-                && baseline.item_id(CRUSHED_GEMSTONE_ID) == 0
+                && baseline.item_id(catalog_item_id("chisel")) == 0
+                && baseline.item_id(catalog_item_id("uncut_sapphire")) == 0
+                && baseline.item_id(catalog_item_id("sapphire")) == 0
+                && baseline.item_id(catalog_item_id("uncut_opal")) == 0
+                && baseline.item_id(catalog_item_id("crushed_gemstone")) == 0
                 && baseline.level("crafting") >= 20
         }
         CoreCase::DoorOpener => {
@@ -216,123 +216,123 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.level("agility") >= 52
                 && baseline.level("hitpoints") >= 40
                 && baseline.effective_level("hitpoints") >= 40
-                && baseline.item_id(LOBSTER_ID) >= 5
+                && baseline.item_id(catalog_item_id("lobster")) >= 5
         }
         CoreCase::BrimhavenAgility => {
             near(baseline.tile, BRIMHAVEN_START, 2)
                 && baseline.level("agility") >= 52
                 && baseline.effective_level("agility") >= 52
-                && baseline.item_id(COINS_ID) >= 200
-                && baseline.item_id(LOBSTER_ID) >= 10
-                && baseline.item_id(BRIMHAVEN_TICKET_ID) == 0
+                && baseline.item_id(catalog_item_id("coins")) >= 200
+                && baseline.item_id(catalog_item_id("lobster")) >= 10
+                && baseline.item_id(catalog_item_id("agilityarena_ticket")) == 0
                 && baseline.varp(BRIMHAVEN_ARENA_VARP) & 0b10 == 0
         }
         CoreCase::FlaxPicker => {
-            near(baseline.tile, FLAX_FIELD, 6) && baseline.item_id(FLAX_ID) == 0
+            near(baseline.tile, FLAX_FIELD, 6) && baseline.item_id(catalog_item_id("flax")) == 0
         }
         CoreCase::Superheater => superheater_baseline_ready(
             baseline,
-            BRONZE_BAR_ID,
-            COPPER_ORE_ID,
-            TIN_ORE_ID,
-            STAFF_OF_FIRE_ID,
+            catalog_item_id("bronze_bar"),
+            catalog_item_id("copper_ore"),
+            catalog_item_id("tin_ore"),
+            catalog_item_id("staff_of_fire"),
             1,
         ),
         CoreCase::SuperheaterSteel => superheater_baseline_ready(
             baseline,
-            STEEL_BAR_ID,
-            IRON_ORE_ID,
-            COAL_ID,
-            STAFF_OF_FIRE_ID,
+            catalog_item_id("steel_bar"),
+            catalog_item_id("iron_ore"),
+            catalog_item_id("coal"),
+            catalog_item_id("staff_of_fire"),
             30,
         ),
         CoreCase::SuperheaterFireBattlestaff => {
             superheater_baseline_ready(
                 baseline,
-                BRONZE_BAR_ID,
-                COPPER_ORE_ID,
-                TIN_ORE_ID,
-                FIRE_BATTLESTAFF_ID,
+                catalog_item_id("bronze_bar"),
+                catalog_item_id("copper_ore"),
+                catalog_item_id("tin_ore"),
+                catalog_item_id("fire_battlestaff"),
                 1,
-            ) && baseline.item_id(STAFF_OF_FIRE_ID) == 0
-                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+            ) && baseline.item_id(catalog_item_id("staff_of_fire")) == 0
+                && baseline.equipment_id(catalog_item_id("staff_of_fire")) == 0
                 && baseline.level("attack") >= 30
         }
         CoreCase::SuperheaterSilverLowNatures => superheater_baseline_ready(
             baseline,
-            SILVER_BAR_ID,
-            SILVER_ORE_ID,
-            SILVER_ORE_ID,
-            STAFF_OF_FIRE_ID,
+            catalog_item_id("silver_bar"),
+            catalog_item_id("silver_ore"),
+            catalog_item_id("silver_ore"),
+            catalog_item_id("staff_of_fire"),
             20,
         ),
         CoreCase::VialFiller => {
             near(baseline.tile, FALADOR_WEST_BANK, 6)
-                && baseline.item_id(EMPTY_VIAL_ID) == 0
-                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+                && baseline.item_id(catalog_item_id("vial_empty")) == 0
+                && baseline.item_id(catalog_item_id("vial_water")) == 0
         }
         CoreCase::VialFillerEast => {
             near(baseline.tile, FALADOR_EAST_BANK, 6)
-                && baseline.item_id(EMPTY_VIAL_ID) == 0
-                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+                && baseline.item_id(catalog_item_id("vial_empty")) == 0
+                && baseline.item_id(catalog_item_id("vial_water")) == 0
         }
         CoreCase::PotionMaker => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(GUAM_LEAF_ID) == 0
-                && baseline.item_id(VIAL_OF_WATER_ID) == 0
-                && baseline.item_id(EYE_OF_NEWT_ID) == 0
-                && baseline.item_id(GUAM_UNF_ID) == 0
-                && baseline.item_id(ATTACK_POTION_3_ID) == 0
+                && baseline.item_id(catalog_item_id("guam_leaf")) == 0
+                && baseline.item_id(catalog_item_id("vial_water")) == 0
+                && baseline.item_id(catalog_item_id("eye_of_newt")) == 0
+                && baseline.item_id(catalog_item_id("guamvial")) == 0
+                && baseline.item_id(catalog_item_id("3dose1attack")) == 0
                 && baseline.level("herblore") >= 3
         }
         CoreCase::PotionMakerNamed => {
             near(baseline.tile, (3185, 3440, 0), 6)
-                && baseline.item_id(RANARR_WEED_ID) == 0
-                && baseline.item_id(VIAL_OF_WATER_ID) == 0
-                && baseline.item_id(SNAPE_GRASS_ID) == 0
-                && baseline.item_id(RANARR_UNF_ID) == 0
-                && baseline.item_id(PRAYER_POTION_3_ID) == 0
-                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.item_id(catalog_item_id("ranarr_weed")) == 0
+                && baseline.item_id(catalog_item_id("vial_water")) == 0
+                && baseline.item_id(catalog_item_id("snape_grass")) == 0
+                && baseline.item_id(catalog_item_id("ranarrvial")) == 0
+                && baseline.item_id(catalog_item_id("3doseprayerrestore")) == 0
+                && baseline.item_id(catalog_item_id("guam_leaf")) == 0
                 && baseline.level("herblore") >= 38
         }
         CoreCase::TannerBot | CoreCase::TannerBotHard => {
             near(baseline.tile, AL_KHARID_BANK, 6)
-                && baseline.item_id(COW_HIDE_ID) == 0
-                && baseline.item_id(SOFT_LEATHER_ID) == 0
-                && baseline.item_id(HARD_LEATHER_ID) == 0
-                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(catalog_item_id("cow_hide")) == 0
+                && baseline.item_id(catalog_item_id("leather")) == 0
+                && baseline.item_id(catalog_item_id("hard_leather")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == 0
         }
         CoreCase::RuneCrafter => runecraft_baseline_ready(
             baseline,
             FALADOR_EAST_BANK,
-            AIR_RUNE_ID,
-            EARTH_RUNE_ID,
-            AIR_TALISMAN_ID,
+            catalog_item_id("airrune"),
+            catalog_item_id("earthrune"),
+            catalog_item_id("air_talisman"),
             1,
         ),
         CoreCase::RuneCrafterEarth => runecraft_baseline_ready(
             baseline,
             VARROCK_EAST_BANK,
-            EARTH_RUNE_ID,
-            AIR_RUNE_ID,
-            EARTH_TALISMAN_ID,
+            catalog_item_id("earthrune"),
+            catalog_item_id("airrune"),
+            catalog_item_id("earth_talisman"),
             9,
         ),
         CoreCase::MuleCrafter => runecraft_baseline_ready(
             baseline,
             FALADOR_EAST_BANK,
-            AIR_RUNE_ID,
-            EARTH_RUNE_ID,
-            AIR_TALISMAN_ID,
+            catalog_item_id("airrune"),
+            catalog_item_id("earthrune"),
+            catalog_item_id("air_talisman"),
             1,
         ),
         CoreCase::ArdyCakes => {
             near(baseline.tile, ARDY_CAKES_STAND, 6)
                 && baseline.level("thieving") >= 5
-                && baseline.item_id(KNIFE_ID) == ARDY_CAKES_BALLAST_KNIVES
+                && baseline.item_id(catalog_item_id("knife")) == ARDY_CAKES_BALLAST_KNIVES
                 && baseline.item_ids.values().copied().sum::<i32>() == ARDY_CAKES_BALLAST_KNIVES
                 && stall_food(baseline) == 0
-                && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+                && baseline.item_id(catalog_item_id("chocolate_cake")) == 0
                 && noted_stall_food(baseline) == 0
         }
         CoreCase::ArdyCakesFight => ardy_cakes_fight_baseline_ready(baseline),
@@ -345,34 +345,34 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::CoalTrucks => coal_trucks_baseline_ready(baseline) && baseline.combat_level >= 55,
         CoreCase::CookBot => cook_bot_baseline_ready(
             baseline,
-            RAW_SALMON_ID,
-            SALMON_ID,
-            LOBSTER_ID,
-            NOTED_RAW_SALMON_ID,
-            NOTED_SALMON_ID,
+            catalog_item_id("raw_salmon"),
+            catalog_item_id("salmon"),
+            catalog_item_id("lobster"),
+            catalog_item_id("cert_raw_salmon"),
+            catalog_item_id("cert_salmon"),
         ),
         CoreCase::CookBotLobster => cook_bot_baseline_ready(
             baseline,
-            RAW_LOBSTER_ID,
-            LOBSTER_ID,
-            SALMON_ID,
-            NOTED_RAW_LOBSTER_ID,
-            NOTED_LOBSTER_ID,
+            catalog_item_id("raw_lobster"),
+            catalog_item_id("lobster"),
+            catalog_item_id("salmon"),
+            catalog_item_id("cert_raw_lobster"),
+            catalog_item_id("cert_lobster"),
         ),
         CoreCase::SmelterBot => smelter_bot_baseline_ready(
             baseline,
-            COPPER_ORE_ID,
-            TIN_ORE_ID,
-            BRONZE_BAR_ID,
-            STEEL_BAR_ID,
+            catalog_item_id("copper_ore"),
+            catalog_item_id("tin_ore"),
+            catalog_item_id("bronze_bar"),
+            catalog_item_id("steel_bar"),
             1,
         ),
         CoreCase::SmelterBotSteel => smelter_bot_baseline_ready(
             baseline,
-            IRON_ORE_ID,
-            COAL_ID,
-            STEEL_BAR_ID,
-            BRONZE_BAR_ID,
+            catalog_item_id("iron_ore"),
+            catalog_item_id("coal"),
+            catalog_item_id("steel_bar"),
+            catalog_item_id("bronze_bar"),
             30,
         ),
         CoreCase::FlaxSpinner => flax_spinner_baseline_ready(baseline),
@@ -431,35 +431,39 @@ pub fn validate_case_baseline_with_preparation(
                     // card's loot class is refused by `combat_baseline_ready` itself
                     // (`combat_loot_count == 0`): the cell's deposit class must
                     // not be seeded before Start.
-                    CoreCase::AutoFighterBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
+                    CoreCase::AutoFighterBank => {
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                    }
                     CoreCase::MossGiantBank => {
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                            && baseline.item_id(LOBSTER_ID) == MOSS_GIANT_BANK_FOOD
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                            && baseline.item_id(catalog_item_id("lobster")) == MOSS_GIANT_BANK_FOOD
                     }
                     CoreCase::HillGiantBank => {
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                            && baseline.item_id(TROUT_ID) == HILL_GIANT_FOOD
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                            && baseline.item_id(catalog_item_id("trout")) == HILL_GIANT_FOOD
                     }
                     CoreCase::ChaosDruidBank => {
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                            && baseline.item_id(LOBSTER_ID) == CHAOS_DRUID_BANK_FOOD
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                            && baseline.item_id(catalog_item_id("lobster")) == CHAOS_DRUID_BANK_FOOD
                     }
                     CoreCase::ArdyFighterBank => {
                         // Guard-drop emptiness is `combat_baseline_ready`'s
                         // `CombatLoot::GuardDrop` count == 0.
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                            && baseline.item_id(CAKE_ID) == 0
-                            && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                            && baseline.item_id(catalog_item_id("cake")) == 0
+                            && baseline.item_id(catalog_item_id("chocolate_cake")) == 0
                     }
                     CoreCase::RockCrabBank => {
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
                             && baseline.dormant_rocks_seen
                     }
                     // The melee RockCrab core fights with the scoped weapon:
                     // the frozen card's own GearEquip refuses the carried
                     // fixture, so the cell has to arrive already wearing 1331
                     // (the fixture's own pre-Start wear is the native proof).
-                    CoreCase::RockCrab => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
+                    CoreCase::RockCrab => {
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                    }
                     CoreCase::GreenDragonPrepared
                     | CoreCase::GreenDragonSpecialPrepared
                     | CoreCase::GreenDragonPotionsPrepared
@@ -474,141 +478,145 @@ pub fn validate_case_baseline_with_preparation(
                     | CoreCase::GreenDragonMagePrepared => {
                         prepared_combat_baseline_ready(case, baseline)
                     }
-                    CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
-                    CoreCase::GreenDragonTele => {
-                        baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
-                            && baseline.level("magic") >= VARROCK_TELE_MAGIC
-                            && baseline.item_id(LAW_RUNE_ID) >= 1
-                            && baseline.item_id(AIR_RUNE_ID) >= 3
-                            && baseline.item_id(FIRE_RUNE_ID) >= 1
+                    CoreCase::GreenDragonBank => {
+                        baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
                     }
-                    CoreCase::FireGiantBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
+                    CoreCase::GreenDragonTele => {
+                        baseline.equipment_id(catalog_item_id("rune_scimitar")) == 1
+                            && baseline.level("magic") >= VARROCK_TELE_MAGIC
+                            && baseline.item_id(catalog_item_id("lawrune")) >= 1
+                            && baseline.item_id(catalog_item_id("airrune")) >= 3
+                            && baseline.item_id(catalog_item_id("firerune")) >= 1
+                    }
+                    CoreCase::FireGiantBank => {
+                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
+                    }
                     _ => true,
                 }
         }),
         CoreCase::AioTeleport => {
             near(baseline.tile, LUMBRIDGE_BANK, 8)
                 && baseline.level("magic") >= VARROCK_TELE_MAGIC
-                && baseline.equipment_id(STAFF_OF_AIR_ID) == 1
-                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
-                && baseline.item_id(FIRE_RUNE_ID) >= 1
+                && baseline.equipment_id(catalog_item_id("staff_of_air")) == 1
+                && baseline.item_id(catalog_item_id("lawrune")) >= AIO_LAW_PACK
+                && baseline.item_id(catalog_item_id("firerune")) >= 1
                 && !near(baseline.tile, VARROCK_TELE_LAND, 8)
         }
         CoreCase::AioTeleportFalador => {
             near(baseline.tile, LUMBRIDGE_BANK, 8)
                 && baseline.level("magic") >= FALADOR_TELE_MAGIC
-                && baseline.equipment_id(STAFF_OF_WATER_ID) == 1
-                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
-                && baseline.item_id(AIR_RUNE_ID) >= 3
+                && baseline.equipment_id(catalog_item_id("staff_of_water")) == 1
+                && baseline.item_id(catalog_item_id("lawrune")) >= AIO_LAW_PACK
+                && baseline.item_id(catalog_item_id("airrune")) >= 3
                 && !near(baseline.tile, FALADOR_TELE_LAND, 8)
         }
         CoreCase::AioTeleportNoStaff => {
             near(baseline.tile, LUMBRIDGE_BANK, 8)
                 && baseline.level("magic") >= VARROCK_TELE_MAGIC
-                && baseline.equipment_id(STAFF_OF_AIR_ID) == 0
-                && baseline.equipment_id(STAFF_OF_WATER_ID) == 0
-                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
-                && baseline.item_id(AIR_RUNE_ID) >= 3
-                && baseline.item_id(FIRE_RUNE_ID) >= 1
+                && baseline.equipment_id(catalog_item_id("staff_of_air")) == 0
+                && baseline.equipment_id(catalog_item_id("staff_of_water")) == 0
+                && baseline.item_id(catalog_item_id("lawrune")) >= AIO_LAW_PACK
+                && baseline.item_id(catalog_item_id("airrune")) >= 3
+                && baseline.item_id(catalog_item_id("firerune")) >= 1
                 && !near(baseline.tile, VARROCK_TELE_LAND, 8)
         }
         CoreCase::ShopBuyout => {
             near(baseline.tile, AEMAD_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(EMPTY_VIAL_ID) == 0
+                && baseline.item_id(catalog_item_id("vial_empty")) == 0
         }
         CoreCase::ShopBuyoutAubury => {
             near(baseline.tile, AUBURY_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(AIR_RUNE_ID) == 0
+                && baseline.item_id(catalog_item_id("airrune")) == 0
         }
         CoreCase::ShopBuyoutLowe => {
             near(baseline.tile, LOWE_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(BRONZE_ARROW_ID) == 0
+                && baseline.item_id(catalog_item_id("bronze_arrow")) == 0
         }
         CoreCase::ShopBuyoutHickton => {
             near(baseline.tile, HICKTON_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(BRONZE_ARROW_ID) == 0
+                && baseline.item_id(catalog_item_id("bronze_arrow")) == 0
         }
         CoreCase::ShopBuyoutHarry => {
             near(baseline.tile, HARRY_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(FISHING_BAIT_ID) == 0
+                && baseline.item_id(catalog_item_id("fishing_bait")) == 0
         }
         CoreCase::ShopBuyoutBetty => {
             near(baseline.tile, BETTY_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(FIRE_RUNE_ID) == 0
+                && baseline.item_id(catalog_item_id("firerune")) == 0
         }
         CoreCase::ShopBuyoutGerrant => {
             near(baseline.tile, GERRANT_STAND, 6)
                 && empty_pack(baseline)
-                && baseline.item_id(FEATHER_ID) == 0
+                && baseline.item_id(catalog_item_id("feather")) == 0
         }
         CoreCase::SmithingBot => {
             near(baseline.tile, VARROCK_WEST_BANK, 8)
                 && baseline.level("smithing") >= 1
                 && empty_pack(baseline)
-                && baseline.item_id(BRONZE_DAGGER_ID) == 0
-                && baseline.item_id(BRONZE_BAR_ID) == 0
+                && baseline.item_id(catalog_item_id("bronze_dagger")) == 0
+                && baseline.item_id(catalog_item_id("bronze_bar")) == 0
         }
         CoreCase::SmithingBotPlatebody => {
             near(baseline.tile, VARROCK_WEST_BANK, 8)
                 && baseline.level("smithing") >= BRONZE_PLATEBODY_SMITHING
                 && empty_pack(baseline)
-                && baseline.item_id(BRONZE_PLATEBODY_ID) == 0
-                && baseline.item_id(BRONZE_DAGGER_ID) == 0
-                && baseline.item_id(BRONZE_BAR_ID) == 0
+                && baseline.item_id(catalog_item_id("bronze_platebody")) == 0
+                && baseline.item_id(catalog_item_id("bronze_dagger")) == 0
+                && baseline.item_id(catalog_item_id("bronze_bar")) == 0
         }
         CoreCase::LeatherCrafter => {
             near(baseline.tile, AL_KHARID_BANK, 8)
                 && baseline.level("crafting") >= 1
                 && empty_pack(baseline)
-                && baseline.item_id(LEATHER_GLOVES_ID) == 0
-                && baseline.item_id(SOFT_LEATHER_ID) == 0
+                && baseline.item_id(catalog_item_id("leather_gloves")) == 0
+                && baseline.item_id(catalog_item_id("leather")) == 0
         }
         CoreCase::LeatherCrafterHardBody => {
             near(baseline.tile, AL_KHARID_BANK, 8)
                 && baseline.level("crafting") >= HARD_LEATHER_CRAFTING
                 && empty_pack(baseline)
-                && baseline.item_id(HARDLEATHER_BODY_ID) == 0
-                && baseline.item_id(HARD_LEATHER_ID) == 0
-                && baseline.item_id(LEATHER_GLOVES_ID) == 0
+                && baseline.item_id(catalog_item_id("hardleather_body")) == 0
+                && baseline.item_id(catalog_item_id("hard_leather")) == 0
+                && baseline.item_id(catalog_item_id("leather_gloves")) == 0
         }
         CoreCase::Firemaker => {
             near(baseline.tile, VARROCK_EAST_BANK, 8)
                 && baseline.level("firemaking") >= 1
                 && empty_pack(baseline)
-                && baseline.item_id(LOGS_ID) == 0
+                && baseline.item_id(catalog_item_id("logs")) == 0
                 && !fire_in_varrock_east_plot(baseline)
         }
         CoreCase::FiremakerOak => {
             near(baseline.tile, VARROCK_EAST_BANK, 8)
                 && baseline.level("firemaking") >= OAK_FIREMAKING
                 && empty_pack(baseline)
-                && baseline.item_id(OAK_LOGS_ID) == 0
-                && baseline.item_id(LOGS_ID) == 0
+                && baseline.item_id(catalog_item_id("oak_logs")) == 0
+                && baseline.item_id(catalog_item_id("logs")) == 0
                 && !fire_in_varrock_east_plot(baseline)
         }
         CoreCase::ClimbingBoots => {
             near(baseline.tile, TENZING_HUT_DOOR, 12)
-                && baseline.item_id(CLIMBING_BOOTS_ID) == 0
-                && baseline.bank_item_id(CLIMBING_BOOTS_ID) == 0
-                && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_WALK_PACK_COINS
-                && baseline.item_id(LAW_RUNE_ID) == 0
-                && baseline.item_id(AIR_RUNE_ID) == 0
-                && baseline.item_id(WATER_RUNE_ID) == 0
+                && baseline.item_id(catalog_item_id("death_climbingboots")) == 0
+                && baseline.bank_item_id(catalog_item_id("death_climbingboots")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == CLIMBING_BOOTS_WALK_PACK_COINS
+                && baseline.item_id(catalog_item_id("lawrune")) == 0
+                && baseline.item_id(catalog_item_id("airrune")) == 0
+                && baseline.item_id(catalog_item_id("waterrune")) == 0
         }
         CoreCase::ClimbingBootsTeleport => {
             near(baseline.tile, TENZING_HUT_DOOR, 12)
-                && baseline.item_id(CLIMBING_BOOTS_ID) == 0
-                && baseline.bank_item_id(CLIMBING_BOOTS_ID) == 0
-                && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_TELE_PACK_COINS
-                && baseline.item_id(LAW_RUNE_ID) == CLIMBING_BOOTS_RUNE_STOCK_MIN
-                && baseline.item_id(AIR_RUNE_ID) == 3
-                && baseline.item_id(WATER_RUNE_ID) == 1
+                && baseline.item_id(catalog_item_id("death_climbingboots")) == 0
+                && baseline.bank_item_id(catalog_item_id("death_climbingboots")) == 0
+                && baseline.item_id(catalog_item_id("coins")) == CLIMBING_BOOTS_TELE_PACK_COINS
+                && baseline.item_id(catalog_item_id("lawrune")) == CLIMBING_BOOTS_RUNE_STOCK_MIN
+                && baseline.item_id(catalog_item_id("airrune")) == 3
+                && baseline.item_id(catalog_item_id("waterrune")) == 1
                 && baseline.level("magic") >= FALADOR_TELE_MAGIC
         }
         CoreCase::RangingGuildRound => ranging_guild_round_baseline_ready(baseline),
