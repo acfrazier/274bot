@@ -79,11 +79,11 @@ pub(crate) fn capture_enabled(account: &str) -> bool {
     capture_for(account).is_some()
 }
 
-pub(crate) fn record_frame(account: &str, snapshot: &GameSnapshot) {
+pub(crate) fn record_frame(account: &str, tick: u64, snapshot: &GameSnapshot) {
     let Some(capture) = capture_for(account) else {
         return;
     };
-    let facts = snapshot_facts(snapshot);
+    let facts = snapshot_facts(snapshot, Some(tick));
     let signature = serde_json::to_string(&facts).unwrap_or_default();
     let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
     if capture.last_frame.as_deref() != Some(&signature) {
@@ -97,7 +97,7 @@ pub(crate) fn record_start_baseline(account: &str, snapshot: &GameSnapshot) {
         capture
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .start_baseline = Some(snapshot_facts(snapshot));
+            .start_baseline = Some(snapshot_facts(snapshot, None));
     }
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn record_interaction(
         "accepted": accepted,
         "wire_decoded": decoded,
         "wire_opcodes": wire_opcodes,
-        "snapshot": snapshot_facts(snapshot),
+        "snapshot": snapshot_facts(snapshot, Some(tick)),
     }));
     if capture.inject_maze_after_imp_attack
         && !capture.maze_pending
@@ -203,7 +203,7 @@ pub(crate) fn record_shim_interactions(
             "accepted": null,
             "wire_decoded": false,
             "wire_opcodes": [],
-            "snapshot": snapshot_facts(snapshot),
+            "snapshot": snapshot_facts(snapshot, Some(tick)),
         }));
     }
 }
@@ -255,7 +255,7 @@ pub(crate) fn record_walk(
         "accepted": null,
         "wire_decoded": false,
         "wire_opcodes": [],
-        "snapshot": snapshot_facts(snapshot),
+        "snapshot": snapshot_facts(snapshot, Some(tick)),
     }));
 }
 
@@ -376,7 +376,7 @@ fn status_field_value(value: &StatusValue) -> Value {
     }
 }
 
-pub(crate) fn snapshot_facts(snapshot: &GameSnapshot) -> Value {
+pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) -> Value {
     let local_slot = snapshot.self_slot();
     let nearby_npcs = snapshot
         .npcs()
@@ -462,7 +462,8 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot) -> Value {
         })
     });
     json!({
-        "tick": snapshot.tick(),
+        "tick": host_tick.unwrap_or_else(|| u64::from(snapshot.tick())),
+        "snapshot_tick": snapshot.tick(),
         "ingame": snapshot.ingame(),
         "scene_state": snapshot.scene_state(),
         "tile": snapshot.tile(),

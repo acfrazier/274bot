@@ -228,13 +228,13 @@ impl LiveState {
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
-        combat_proof::record_frame(&self.account, &self.snapshot);
 
         if self.runner.on_start_script() && !self.started {
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
-            if let Some(reason) =
-                start_preflight(self.case, &combat_proof::snapshot_facts(&self.snapshot))
-            {
+            if let Some(reason) = start_preflight(
+                self.case,
+                &combat_proof::snapshot_facts(&self.snapshot, None),
+            ) {
                 combat_proof::mark_invalid(&self.account, reason);
                 return;
             }
@@ -478,8 +478,19 @@ fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("Quester stage has a stand step");
+    // Quest colour needs the relog, but a dev-engine relog can reset position.
+    // Stage the exact combat stats and destination in the completed session.
+    let relog_index = scenario
+        .steps
+        .iter()
+        .rposition(|step| matches!(step.kind, StepKind::Relog))
+        .expect("Quester stage has a final quest-colour relog step");
+    let relog = scenario.steps.remove(relog_index);
+    scenario.steps.insert(stand_index, relog);
     let preparation = preparation_steps(case);
-    scenario.steps.splice(stand_index..stand_index, preparation);
+    scenario
+        .steps
+        .splice(stand_index + 1..stand_index + 1, preparation);
     let start_index = scenario
         .steps
         .iter()
@@ -1115,10 +1126,10 @@ fn has_corpse(capture: &CombatCapture, report: &Value) -> bool {
             .is_some_and(|tick| tick >= evidence_tick)
             && frame["nearby_npcs"].as_array().is_some_and(|npcs| {
                 npcs.iter().any(|npc| {
-                    integer(npc, "index") == Some(index)
+                    npc["index"].as_i64() == Some(index)
                         && npc["health"] == json!(0)
                         && npc["total_health"].as_i64().is_some_and(|total| total > 0)
-                        && engaged_type.is_none_or(|kind| integer(npc, "type") == Some(kind))
+                        && engaged_type.is_none_or(|kind| npc["type"].as_i64() == Some(kind))
                 })
             })
     })
@@ -1221,13 +1232,13 @@ fn wire_opcodes(action: &Value) -> Option<Vec<i64>> {
 }
 
 fn opheld_opcode(index: usize) -> Option<i64> {
-    use client::io::ClientProt;
+    use client::io::ClientProt289;
     let opcode = match index {
-        0 => ClientProt::OPHELD1,
-        1 => ClientProt::OPHELD2,
-        2 => ClientProt::OPHELD3,
-        3 => ClientProt::OPHELD4,
-        4 => ClientProt::OPHELD5,
+        0 => ClientProt289::OPHELD1,
+        1 => ClientProt289::OPHELD2,
+        2 => ClientProt289::OPHELD3,
+        3 => ClientProt289::OPHELD4,
+        4 => ClientProt289::OPHELD5,
         _ => return None,
     };
     Some(i64::from(opcode.id))
@@ -1279,7 +1290,7 @@ fn held_opcode(action: &Value) -> Option<i64> {
 }
 
 fn action_wire_valid(action: &Value) -> bool {
-    use client::io::ClientProt;
+    use client::io::{ClientProt, ClientProt289};
     if !accepted(action) || action["wire_decoded"] != json!(true) {
         return false;
     }
@@ -1289,11 +1300,11 @@ fn action_wire_valid(action: &Value) -> bool {
     let opcode = |prot: ClientProt| i64::from(prot.id);
     match action["request"]["op"].as_str() {
         Some("npc") if is_npc_attack(action) => {
-            let attack = opcode(ClientProt::OPNPC2);
-            actual == [attack] || actual == [opcode(ClientProt::MOVE_OPCLICK), attack]
+            let attack = opcode(ClientProt289::OPNPC2);
+            actual == [attack] || actual == [opcode(ClientProt289::MOVE_OPCLICK), attack]
         }
         Some("held" | "wear") => held_opcode(action).is_some_and(|expected| actual == [expected]),
-        Some("if-button" | "set-retaliate") => actual == [opcode(ClientProt::IF_BUTTON)],
+        Some("if-button" | "set-retaliate") => actual == [opcode(ClientProt289::IF_BUTTON)],
         _ => false,
     }
 }
@@ -1548,14 +1559,19 @@ fn protect_plan_ends_with_terminal(capture: &CombatCapture) -> bool {
     let Some(component) = prayer_component(capture, "Protect from Melee") else {
         return false;
     };
+    let Some(varp) = prayer_varp_for_name(capture, "Protect from Melee") else {
+        return false;
+    };
     capture
         .actions
         .iter()
         .filter(|action| prayer_action(action, component))
-        .all(|action| {
-            plan_rows(capture, action)
+        .all(|action| match prayer_varp(&action["snapshot"], varp) {
+            Some(1) => true, // WindDown deactivation owes no restoring attack.
+            Some(0) => plan_rows(capture, action)
                 .last()
-                .is_some_and(|last| is_npc_attack(last) || is_drink(last))
+                .is_some_and(|last| is_npc_attack(last) || is_drink(last)),
+            _ => false,
         })
 }
 
@@ -1588,7 +1604,7 @@ fn prayer_off_plan_after_corpse(capture: &CombatCapture, report: &Value) -> bool
     let Some(corpse) = capture.frames.iter().find(|frame| {
         frame["nearby_npcs"].as_array().is_some_and(|npcs| {
             npcs.iter().any(|npc| {
-                integer(npc, "index") == Some(index)
+                npc["index"].as_i64() == Some(index)
                     && npc["health"] == json!(0)
                     && npc["total_health"].as_i64().is_some_and(|total| total > 0)
             })
@@ -1703,7 +1719,7 @@ fn m2_restoration_runs_ok(capture: &CombatCapture, report: &Value) -> bool {
         frame["nearby_npcs"].as_array().and_then(|npcs| {
             npcs.iter()
                 .any(|npc| {
-                    integer(npc, "index") == Some(engaged_index)
+                    npc["index"].as_i64() == Some(engaged_index)
                         && npc["health"] == json!(0)
                         && npc["total_health"].as_i64().is_some_and(|total| total > 0)
                 })
@@ -1944,8 +1960,8 @@ fn m3_eat_plans_ok(capture: &CombatCapture) -> bool {
                 && packets
                     == [
                         held,
-                        i64::from(client::io::ClientProt::MOVE_OPCLICK.id),
-                        i64::from(client::io::ClientProt::OPNPC2.id),
+                        i64::from(client::io::ClientProt289::MOVE_OPCLICK.id),
+                        i64::from(client::io::ClientProt289::OPNPC2.id),
                     ]
                 && !capture.actions.iter().any(|action| {
                     is_eat(action)
@@ -2495,6 +2511,28 @@ fn run_case(case: Case) {
     drop(play);
     writer.flush();
 
+    let started = capture.lock().unwrap_or_else(|e| e.into_inner()).started;
+    if case == Case::M2 && started {
+        let proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+        let baseline = proof
+            .start_baseline
+            .as_ref()
+            .expect("native Start baseline");
+        let first = proof
+            .actions
+            .iter()
+            .find(|action| action["kind"] == "interaction")
+            .expect("M2 native Prep must dispatch after the completed relog");
+        assert_eq!(
+            first["snapshot"]["self_slot"], baseline["self_slot"],
+            "native Start must not precede the relog's session replacement"
+        );
+        assert_eq!(
+            first["snapshot"]["tile"], baseline["tile"],
+            "the first native Prep must retain the relogged seed's location"
+        );
+    }
+
     match writer.outcome.as_str() {
         "PASS" | "INVALID" | "NOT_STAGED" => {}
         other => panic!("{} live proof {other}: {:?}", case.key(), writer.error),
@@ -2535,4 +2573,43 @@ fn live_combat_m5_random_interrupt_clears_prayers() {
 #[ignore = "requires LIVE=1 and the isolated local R289 engine with cooked karambwan"]
 fn live_combat_m6_natural_warlord_combo_eat() {
     run_case(Case::M6);
+}
+
+#[test]
+fn corpse_identity_and_terminal_prayer_off_are_checked_in_their_own_shapes() {
+    let mut capture = CombatCapture::default();
+    capture.statuses.push(json!({"fields": {
+        "combat_end": "Killed",
+        "combat_engaged_index": 7,
+        "combat_engaged_npc_type": 477,
+        "combat_evidence_tick": 12,
+    }}));
+    capture.frames.push(json!({
+        "tick": 12,
+        "nearby_npcs": [{"index": 7, "type": 477, "health": 0, "total_health": 170}],
+    }));
+    assert!(every_killed_report_has_corpse(&capture));
+    capture.frames[0]["nearby_npcs"][0]["index"] = json!(8);
+    assert!(!every_killed_report_has_corpse(&capture));
+    capture.frames[0]["nearby_npcs"][0]["index"] = json!(7);
+    capture.frames[0]["nearby_npcs"][0]["type"] = json!(478);
+    assert!(!every_killed_report_has_corpse(&capture));
+
+    capture.prayer_facts.push(json!({
+        "name": "Protect from Melee", "button_com": 5623, "varp": 97,
+    }));
+    capture.actions = vec![
+        json!({"kind": "interaction", "tick": 10, "batch": 1, "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 0}]}}),
+        json!({"kind": "interaction", "tick": 10, "batch": 1, "request": {"op": "npc", "action": "Attack"}}),
+        json!({"kind": "interaction", "tick": 11, "batch": 3, "request": {"op": "if-button", "component_id": 5623},
+            "snapshot": {"prayer_varps": [{"index": 97, "value": 1}]}}),
+    ];
+    assert!(protect_plan_ends_with_terminal(&capture));
+    capture.actions.remove(1);
+    assert!(!protect_plan_ends_with_terminal(&capture));
+    capture.actions.remove(0);
+    assert!(protect_plan_ends_with_terminal(&capture));
+    capture.actions[0]["snapshot"]["prayer_varps"][0]["value"] = Value::Null;
+    assert!(!protect_plan_ends_with_terminal(&capture));
 }
