@@ -369,6 +369,27 @@ fn a_native_walk_refused_for_lack_of_a_world_gets_a_refused_receipt() {
     assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
 }
 
+#[test]
+fn an_unroutable_native_walk_delivers_one_failed_terminal() {
+    let mut rig = rig(Some(Arc::new(open_world(3, 1))), false);
+    rig.observe(1);
+    assert!(
+        wait_until(5_000, || rig.navs.lock().unwrap()["alice"]
+            .route_worker
+            .is_none()),
+        "the planner completes the unreachable request"
+    );
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Failed)));
+    for tick in 3..40 {
+        rig.observe(tick);
+        rig.step();
+    }
+    assert_eq!(rig.shared.lock().results.len(), 1);
+    assert_eq!(rig.shared.lock().begun, 1);
+    assert_eq!(rig.driver.walked, None);
+}
+
 /// The host's own route arm, as the watchdog's recovery walk and legacy
 /// script walks use it: no native authority.
 fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
