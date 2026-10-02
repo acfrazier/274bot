@@ -1,5 +1,6 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{reach, walk_step_evidence};
+use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
@@ -187,20 +188,6 @@ fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileEr
     })
 }
 
-fn resolve_bank(
-    bank: Option<api::named_banks::NamedBank>,
-    cx: &StepContext<'_, '_>,
-) -> Result<api::named_banks::NamedBank, ActionError> {
-    bank.or_else(|| {
-        cx.tick
-            .cx
-            .snapshot()
-            .here()
-            .and_then(|here| crate::bank_select::nearest_bank(here.value))
-    })
-    .ok_or_else(|| ActionError::Unavailable(Arc::from("no eligible bank")))
-}
-
 fn metal_family_rank(name: &str) -> Option<(usize, &str)> {
     const METALS: [&str; 8] = [
         "bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon",
@@ -322,16 +309,13 @@ struct BankPlan {
 }
 impl StepPlan for BankPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        Ok(Box::new(BankRun {
-            bank: resolve_bank(self.bank, cx)?,
-            memo_ids: Arc::clone(&self.memo_ids),
-            actions: Arc::clone(&self.actions),
-            partial_ok: self.partial_ok,
-            index: 0,
-            walk: None,
-            machine: None,
-            last: None,
-        }))
+        Ok(Box::new(BankRun::new(
+            self.bank,
+            Arc::clone(&self.memo_ids),
+            Arc::clone(&self.actions),
+            self.partial_ok,
+            cx.banks,
+        )))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_secs(12)
@@ -339,18 +323,114 @@ impl StepPlan for BankPlan {
 }
 
 struct BankRun {
-    bank: api::named_banks::NamedBank,
+    bank: Option<api::named_banks::NamedBank>,
+    explicit: Option<Arc<str>>,
+    selection: Option<ActionHandle<Select>>,
+    picked: bool,
+    access: Option<Arc<BankStandAccess>>,
+    target: Option<WorldTile>,
     memo_ids: Arc<[i32]>,
     actions: Arc<[BankAction]>,
     partial_ok: bool,
     index: usize,
+    walk_started: bool,
     walk: Option<ActionHandle<Walk>>,
+    open_started: bool,
+    opening: Option<ActionHandle<Open>>,
     machine: Option<ActionHandle<BankMachine>>,
     last: Option<BankReceipt>,
 }
+impl BankRun {
+    fn new(
+        bank: Option<api::named_banks::NamedBank>,
+        memo_ids: Arc<[i32]>,
+        actions: Arc<[BankAction]>,
+        partial_ok: bool,
+        facts: &api::named_banks::NamedBankFacts,
+    ) -> Self {
+        let explicit = bank.and_then(|requested| {
+            facts
+                .banks()
+                .iter()
+                .find(|candidate| candidate.tile == requested.tile)
+                .map(|candidate| Arc::from(candidate.name))
+        });
+        let picked = bank.is_some() && explicit.is_none();
+        Self {
+            bank,
+            explicit,
+            selection: None,
+            picked,
+            access: None,
+            target: bank.filter(|_| picked).map(|bank| bank.tile),
+            memo_ids,
+            actions,
+            partial_ok,
+            index: 0,
+            walk_started: false,
+            walk: None,
+            open_started: false,
+            opening: None,
+            machine: None,
+            last: None,
+        }
+    }
+}
 impl StepRun for BankRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.walk {
+        if !self.picked {
+            if let Some(handle) = self.selection.as_ref() {
+                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(selected)) => {
+                        self.selection = None;
+                        if selected.kind == PickKind::NoCandidate {
+                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                                "no eligible bank",
+                            ))));
+                        }
+                        let Some(access) = selected.access else {
+                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                                "no eligible bank",
+                            ))));
+                        };
+                        let Some(bank) = cx
+                            .banks
+                            .banks()
+                            .get(usize::from(selected.bank_index))
+                            .copied()
+                        else {
+                            return Poll::Ready(Err(ActionError::Stale));
+                        };
+                        self.bank = Some(bank);
+                        self.target = Some(selected.access_tile);
+                        self.access = Some(access);
+                        self.picked = true;
+                    }
+                }
+            }
+            if !self.picked {
+                let Some(from) = cx.tick.cx.snapshot().here() else {
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                        "player position unavailable for bank selection",
+                    ))));
+                };
+                self.selection = Some(cx.tick.actions.begin::<Select>(
+                    SelectArgs {
+                        facts: Arc::clone(cx.banks),
+                        from: from.value,
+                        preferences: api::named_banks::BankPreferences::default(),
+                        allow_wilderness: false,
+                        explicit: self.explicit.clone(),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                return Poll::Pending;
+            }
+        }
+
+        if let Some(handle) = self.walk.as_ref() {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -360,22 +440,45 @@ impl StepRun for BankRun {
                 }
             }
         }
-        if self.walk.is_none() && self.index == 0 && self.machine.is_none() {
+        if !self.walk_started {
+            self.walk_started = true;
+            let target = self.target.ok_or(ActionError::Stale)?;
             let near = cx
                 .tick
                 .cx
                 .snapshot()
                 .here()
-                .is_some_and(|here| reach::within(here.value, self.bank.tile, 0));
+                .is_some_and(|here| reach::within(here.value, target, 0));
             if !near {
                 self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(self.bank.tile, 0, None, cx.required_after),
+                    reach::walk_request(target, 0, None, cx.required_after),
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;
             }
         }
-        if let Some(handle) = &self.machine {
+
+        if let Some(handle) = self.opening.as_ref() {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => self.opening = None,
+            }
+        }
+        if !self.open_started {
+            if let Some(access) = self.access.as_ref() {
+                self.opening = Some(cx.tick.actions.begin::<Open>(
+                    OpenArgs {
+                        access: Arc::clone(access),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                self.open_started = true;
+                return Poll::Pending;
+            }
+        }
+
+        if let Some(handle) = self.machine.as_ref() {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -410,7 +513,20 @@ impl StepRun for BankRun {
             receipt,
         }))
     }
-    fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(handle) = self.selection.take() {
+            actions.cancel(handle);
+        }
+        if let Some(handle) = self.walk.take() {
+            actions.cancel(handle);
+        }
+        if let Some(handle) = self.opening.take() {
+            actions.cancel(handle);
+        }
+        if let Some(handle) = self.machine.take() {
+            actions.cancel(handle);
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -966,16 +1082,13 @@ impl StepPlan for LoadoutPlan {
             bank: if bank_actions.is_empty() {
                 None
             } else {
-                Some(BankRun {
-                    bank: resolve_bank(self.bank, cx)?,
-                    memo_ids: Arc::clone(&self.memo_ids),
-                    actions: Arc::from(bank_actions),
-                    partial_ok: false,
-                    index: 0,
-                    walk: None,
-                    machine: None,
-                    last: None,
-                })
+                Some(BankRun::new(
+                    self.bank,
+                    Arc::clone(&self.memo_ids),
+                    Arc::from(bank_actions),
+                    false,
+                    cx.banks,
+                ))
             },
             worn: Arc::from(worn),
             worn_index: 0,

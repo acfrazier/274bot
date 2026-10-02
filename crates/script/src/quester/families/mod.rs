@@ -1,5 +1,6 @@
 //! S1 step families and predicate plans.
 
+pub mod combat;
 pub mod dialogue;
 pub mod progress_predicates;
 pub mod reach;
@@ -121,6 +122,11 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
             version: 1,
             compile: s2::compile_loadout,
         },
+        super::compile::StepHandler {
+            kind: "combat",
+            version: 1,
+            compile: combat::compile,
+        },
     ]
 }
 
@@ -215,6 +221,11 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "prayer_points_at_least",
             version: 1,
             compile: compile_prayer_points,
+        },
+        super::compile::PredicateHandler {
+            kind: "combat_end",
+            version: 1,
+            compile: combat::compile_end_predicate,
         },
         super::compile::PredicateHandler {
             kind: "stage_in",
@@ -2121,6 +2132,9 @@ impl StepRun for AcquireRun {
     }
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.current.as_ref()?.waiting_for()
+    }
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        self.current.as_ref()?.in_flight_outcome()
     }
 }
 

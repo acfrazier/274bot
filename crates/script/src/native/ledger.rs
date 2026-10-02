@@ -1,5 +1,6 @@
 use super::owner::Owner;
 use super::{ActionError, InteractionReceipt, WalkReceipt, WalkRequest};
+use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use crate::shim::InteractReq;
 use api::selected::RunKey;
 use std::num::NonZeroU64;
@@ -26,6 +27,7 @@ impl Runtime {
 pub struct HostAction {
     pub(crate) owner: Arc<Owner>,
     pub request_id: NonZeroU64,
+    pub batch: u64,
     pub effect: HostEffect,
     pub observed_walk_outcome_seq: u64,
 }
@@ -33,6 +35,7 @@ pub struct HostAction {
 pub enum HostEffect {
     Interaction(InteractReq),
     Walk(WalkRequest),
+    BankPick(BankPickRequest),
 }
 
 /// A host continuation retains this fence after consuming the request payload.
@@ -51,6 +54,12 @@ impl HostAuthority {
         } else {
             self.owner.interaction_live(self.request)
         }
+    }
+
+    /// Observe the action owner's lifetime independently of this request.
+    /// This is not dispatch authority: request continuations must use `live`.
+    pub fn owner_live(&self) -> bool {
+        self.owner.live()
     }
 
     pub fn run(&self) -> RunKey {
@@ -74,7 +83,9 @@ pub struct QuietReadOwner {
 impl HostAction {
     pub fn live(&self) -> bool {
         match &self.effect {
-            HostEffect::Interaction(_) => self.owner.interaction_live(self.request_id),
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+                self.owner.interaction_live(self.request_id)
+            }
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
         }
     }
@@ -102,8 +113,10 @@ pub(crate) struct Ledger {
     pub walk: Option<WalkReceipt>,
     pub interaction: Option<InteractionReceipt>,
     pub interaction_request: Option<NonZeroU64>,
-    pub disposal_receipts: [Option<InteractionReceipt>; 5],
-    next_disposal_receipt: usize,
+    pub bank_pick: Option<BankPickReceipt>,
+    pub bank_pick_request: Option<NonZeroU64>,
+    pub batch_receipts: [Option<InteractionReceipt>; 5],
+    next_batch_receipt: usize,
     pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
 }
 
@@ -112,12 +125,14 @@ impl Default for Ledger {
         Self {
             owner: None,
             next_id: 1,
-            outbox: Vec::new(),
+            outbox: Vec::with_capacity(5),
             walk: None,
             interaction: None,
             interaction_request: None,
-            disposal_receipts: std::array::from_fn(|_| None),
-            next_disposal_receipt: 0,
+            bank_pick: None,
+            bank_pick_request: None,
+            batch_receipts: std::array::from_fn(|_| None),
+            next_batch_receipt: 0,
             quiet_since: None,
         }
     }
@@ -128,6 +143,24 @@ impl Ledger {
         let id = NonZeroU64::new(self.next_id).ok_or(ActionError::Cancelled)?;
         self.next_id = self.next_id.checked_add(1).unwrap_or(0);
         Ok(id)
+    }
+    /// Check that `count` consecutive nonzero ids can be consumed without
+    /// changing the cursor. Batches use this before reserving owner slots.
+    pub fn id_range(&self, count: usize) -> Result<NonZeroU64, ActionError> {
+        let first = NonZeroU64::new(self.next_id).ok_or(ActionError::Cancelled)?;
+        let last_offset = u64::try_from(count.checked_sub(1).ok_or(ActionError::Cancelled)?)
+            .map_err(|_| ActionError::Cancelled)?;
+        first
+            .get()
+            .checked_add(last_offset)
+            .ok_or(ActionError::Cancelled)?;
+        Ok(first)
+    }
+
+    /// Commit a previously checked consecutive id range.
+    pub fn commit_id_range(&mut self, first: NonZeroU64, count: usize) {
+        debug_assert_eq!(self.next_id, first.get());
+        self.next_id = first.get().checked_add(count as u64).unwrap_or(0);
     }
 
     pub fn quiet_read(&mut self, now: Instant) -> Option<QuietReadOwner> {
@@ -157,8 +190,10 @@ impl Ledger {
         self.walk = None;
         self.interaction = None;
         self.interaction_request = None;
-        self.disposal_receipts.fill(None);
-        self.next_disposal_receipt = 0;
+        self.bank_pick = None;
+        self.bank_pick_request = None;
+        self.batch_receipts.fill(None);
+        self.next_batch_receipt = 0;
         self.quiet_since = None;
     }
 
@@ -173,16 +208,31 @@ impl Ledger {
             return;
         }
         let owner = self.owner.as_ref().expect("owner checked");
-        if owner.disposal_live(authority.request_id()) {
-            self.disposal_receipts[self.next_disposal_receipt] = Some(receipt);
-            self.next_disposal_receipt =
-                (self.next_disposal_receipt + 1) % self.disposal_receipts.len();
+        if owner.batch_live(authority.request_id()) {
+            self.batch_receipts[self.next_batch_receipt] = Some(receipt);
+            self.next_batch_receipt = (self.next_batch_receipt + 1) % self.batch_receipts.len();
             owner.cancel_interaction(authority.request_id());
         } else if self.interaction_request == Some(authority.request_id())
             && self.interaction.is_none()
         {
             self.interaction = Some(receipt);
         }
+    }
+
+    pub fn complete_bank_pick(&mut self, authority: &HostAuthority, receipt: BankPickReceipt) {
+        let request = authority.request_id();
+        if !authority.live()
+            || request.get() != receipt.request_id
+            || authority.run() != receipt.evidence.run
+            || self.bank_pick_request != Some(request)
+            || self.bank_pick.is_some()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return;
+        }
+        self.bank_pick = Some(receipt);
     }
 }
 
@@ -198,7 +248,7 @@ impl Drop for Ledger {
 pub(crate) struct TickBudget {
     tick: Option<u64>,
     transitions: u8,
-    events: u8,
+    pub(super) events: u8,
 }
 
 impl TickBudget {
@@ -223,6 +273,13 @@ impl TickBudget {
             return false;
         }
         self.events += 1;
+        true
+    }
+    pub fn batch(&mut self) -> bool {
+        if self.events != 0 {
+            return false;
+        }
+        self.events = 5;
         true
     }
 }
@@ -330,6 +387,104 @@ mod tests {
             "late receipt revived cancelled work"
         );
     }
+    #[test]
+    fn id_ranges_check_the_last_id_without_consuming_the_cursor() {
+        let mut ledger = Ledger::default();
+        ledger.next_id = u64::MAX - 1;
+        let first = ledger.id_range(2).unwrap();
+        assert_eq!(first.get(), u64::MAX - 1);
+        assert_eq!(ledger.id_range(3), Err(ActionError::Cancelled));
+        assert_eq!(ledger.id_range(0), Err(ActionError::Cancelled));
+        assert_eq!(ledger.next_id, u64::MAX - 1);
+
+        ledger.commit_id_range(first, 2);
+        assert_eq!(ledger.next_id, 0, "the last nonzero id may be consumed");
+        assert_eq!(ledger.id_range(1), Err(ActionError::Cancelled));
+    }
+
+    #[test]
+    fn bank_pick_receipts_require_the_live_matching_owner_run_and_request() {
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
+        let mut ledger = Ledger::default();
+        let owner = Owner::new(run, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let old = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        let current = HostAuthority {
+            owner: Arc::clone(&owner),
+            request: ledger.next_id().unwrap(),
+            walk: false,
+        };
+        ledger.bank_pick_request = Some(current.request);
+        owner.set_interaction(current.request);
+        let receipt = BankPickReceipt {
+            request_id: current.request.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 4,
+                sequence: 4,
+            },
+            selected: crate::native_bank::SelectedBank {
+                bank_index: 7,
+                access_tile: api::snapshot::WorldTile {
+                    x: 100,
+                    z: 200,
+                    level: 0,
+                },
+                kind: crate::native_bank::PickKind::Reachable,
+                access: None,
+            },
+        };
+        ledger.complete_bank_pick(
+            &old,
+            BankPickReceipt {
+                request_id: old.request.get(),
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.bank_pick.is_none());
+        ledger.complete_bank_pick(
+            &current,
+            BankPickReceipt {
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: run.next_session().unwrap(),
+                    ..receipt.evidence
+                },
+                ..receipt.clone()
+            },
+        );
+        assert!(ledger.bank_pick.is_none());
+        ledger.complete_bank_pick(&current, receipt.clone());
+        assert_eq!(ledger.bank_pick, Some(receipt.clone()));
+        ledger.complete_bank_pick(
+            &current,
+            BankPickReceipt {
+                selected: crate::native_bank::SelectedBank {
+                    bank_index: 8,
+                    ..receipt.selected.clone()
+                },
+                ..receipt.clone()
+            },
+        );
+        assert_eq!(
+            ledger.bank_pick,
+            Some(receipt.clone()),
+            "a duplicate cannot replace the selected stand"
+        );
+        ledger.revoke();
+        ledger.complete_bank_pick(&current, receipt);
+        assert!(
+            ledger.bank_pick.is_none(),
+            "a late pick revived cancelled work"
+        );
+    }
 
     #[test]
     fn expired_guard_cannot_clear_a_replacement_for_the_same_request() {
@@ -386,6 +541,26 @@ mod tests {
         budget.observe(8);
         assert!(budget.event(false));
         assert!(budget.transition());
+    }
+    #[test]
+    fn batch_saturates_shared_events_until_the_next_observed_tick() {
+        let mut budget = TickBudget::default();
+        budget.observe(7);
+        assert!(budget.batch());
+        assert_eq!(budget.events, 5);
+        assert!(!budget.batch());
+        assert!(!budget.event(false));
+        assert!(!budget.event(true));
+
+        budget.observe(7);
+        assert_eq!(
+            budget.events, 5,
+            "same-tick re-observation cannot refill it"
+        );
+        assert!(!budget.batch());
+        budget.observe(8);
+        assert!(budget.batch(), "the next observed tick starts uncharged");
+        assert_eq!(budget.events, 5);
     }
 
     #[test]

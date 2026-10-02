@@ -1,6 +1,7 @@
 use super::ledger::{HostAction, HostEffect};
 use super::owner::Owner;
 use super::*;
+use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 impl ActionContext<'_> {
@@ -61,10 +62,52 @@ impl ActionContext<'_> {
         ledger.outbox.push(HostAction {
             owner,
             request_id,
+            batch: 0,
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
+    }
+    /// Admit one ordered, wire-bounded interaction batch by taking ownership
+    /// of its compact request prefix.
+    pub fn emit_batch(&mut self, mut rows: [Option<InteractReq>; 5]) -> Result<u64, ActionError> {
+        let owner = self.owner()?;
+        let len = validate_batch(&rows, self.pin.revision)?;
+        let ledger = self.ledger.as_ref().expect("owner checked");
+        if self.budget.events != 0
+            || ledger.outbox.capacity().saturating_sub(ledger.outbox.len()) < len
+            || owner.batch_free() < len
+        {
+            return Err(ActionError::BudgetExhausted);
+        }
+        let first_id = ledger.id_range(len)?;
+        if !owner.acquire_batch(first_id, len) {
+            return Err(ActionError::BudgetExhausted);
+        }
+        if !owner.live() {
+            release_batch(&owner, first_id, len);
+            return Err(ActionError::Cancelled);
+        }
+        if !self.budget.batch() {
+            release_batch(&owner, first_id, len);
+            return Err(ActionError::BudgetExhausted);
+        }
+
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        ledger.commit_id_range(first_id, len);
+        for (offset, row) in rows.iter_mut().take(len).enumerate() {
+            let request = row.take().expect("validated compact batch prefix");
+            let request_id =
+                NonZeroU64::new(first_id.get() + offset as u64).expect("validated id range");
+            ledger.outbox.push(HostAction {
+                owner: Arc::clone(&owner),
+                request_id,
+                batch: first_id.get(),
+                effect: HostEffect::Interaction(request),
+                observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+            });
+        }
+        Ok(first_id.get())
     }
 
     /// Queue a slot-exact drop without superseding another disposal request.
@@ -77,28 +120,71 @@ impl ActionContext<'_> {
                 LazyLock::new(|| Arc::from("disposal requires a slot-exact Drop"));
             return Err(ActionError::Unavailable(Arc::clone(&REASON)));
         }
-        if !owner.disposal_available() {
+        let ledger = self.ledger.as_ref().expect("owner checked");
+        if self.budget.events >= 5
+            || ledger.outbox.capacity() == ledger.outbox.len()
+            || owner.batch_free() == 0
+        {
             return Err(ActionError::BudgetExhausted);
         }
+        let request_id = ledger.id_range(1)?;
+        if !owner.acquire_batch(request_id, 1) {
+            return Err(ActionError::BudgetExhausted);
+        }
+        if !owner.live() {
+            owner.cancel_interaction(request_id);
+            return Err(ActionError::Cancelled);
+        }
         if !self.budget.event(true) {
+            owner.cancel_interaction(request_id);
             return Err(ActionError::BudgetExhausted);
         }
         let ledger = self.ledger.as_mut().expect("owner checked");
-        let request_id = ledger.next_id()?;
-        if !owner.acquire_disposal(request_id) {
-            return Err(ActionError::BudgetExhausted);
-        }
-        if ledger.outbox.capacity() < 5 {
-            // A batch has five rows, not Vec's geometric eight-row capacity.
-            ledger.outbox.reserve_exact(5 - ledger.outbox.len());
-        }
+        ledger.commit_id_range(request_id, 1);
         ledger.outbox.push(HostAction {
             owner,
             request_id,
+            batch: 0,
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
+    }
+
+    /// Queue one selector-owned bank pick. This computes a route choice; it
+    /// does not consume a game-interaction event.
+    pub fn bank_pick(&mut self, request: BankPickRequest) -> Result<u64, ActionError> {
+        let owner = self.owner()?;
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        let request_id = ledger.next_id()?;
+        owner.set_interaction(request_id);
+        ledger.interaction = None;
+        ledger.interaction_request = None;
+        ledger.bank_pick = None;
+        ledger.bank_pick_request = Some(request_id);
+        ledger.outbox.push(HostAction {
+            owner,
+            request_id,
+            batch: 0,
+            effect: HostEffect::BankPick(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
+        });
+        Ok(request_id.get())
+    }
+
+    pub fn bank_pick_receipt(&self, request_id: u64) -> Option<&BankPickReceipt> {
+        let ledger = self.ledger.as_ref()?;
+        let owner = ledger.owner.as_ref()?;
+        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+            return None;
+        }
+        ledger.bank_pick.as_ref().filter(|receipt| {
+            ledger
+                .bank_pick_request
+                .is_some_and(|id| id.get() == request_id)
+                && receipt.request_id == request_id
+                && receipt.evidence.run == self.run()
+        })
     }
 
     pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
@@ -116,6 +202,7 @@ impl ActionContext<'_> {
         ledger.outbox.push(HostAction {
             owner,
             request_id,
+            batch: 0,
             effect: HostEffect::Walk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
@@ -142,7 +229,7 @@ impl ActionContext<'_> {
         ledger
             .interaction
             .iter()
-            .chain(ledger.disposal_receipts.iter().flatten())
+            .chain(ledger.batch_receipts.iter().flatten())
             .find(|receipt| receipt.request_id == request_id && receipt.evidence.run == self.run())
     }
 
@@ -162,7 +249,11 @@ impl ActionContext<'_> {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
             }
-            for receipt in &mut ledger.disposal_receipts {
+            if ledger.bank_pick_request == Some(request_id) {
+                ledger.bank_pick_request = None;
+                ledger.bank_pick = None;
+            }
+            for receipt in &mut ledger.batch_receipts {
                 if receipt
                     .as_ref()
                     .is_some_and(|receipt| receipt.request_id == request_id.get())
@@ -206,6 +297,119 @@ fn not_an_interaction() -> ActionError {
     static REASON: LazyLock<Arc<str>> =
         LazyLock::new(|| Arc::from("not a native interaction: walks use ActionContext::walk"));
     ActionError::Unavailable(Arc::clone(&REASON))
+}
+const BATCH_ROWS: usize = 5;
+
+fn batch_shape_error() -> ActionError {
+    static REASON: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("batch shape"));
+    ActionError::Unavailable(Arc::clone(&REASON))
+}
+
+fn selected_protect_component(revision: api::selected::ClientRevision, component_id: i32) -> bool {
+    const PROTECT_NAMES: [&str; 3] = [
+        "Protect from Magic",
+        "Protect from Missiles",
+        "Protect from Melee",
+    ];
+    api::game_data::for_revision(revision)
+        .ok()
+        .is_some_and(|data| {
+            data.prayers().iter().any(|prayer| {
+                PROTECT_NAMES.contains(&prayer.name.as_str()) && prayer.button_com == component_id
+            })
+        })
+}
+
+fn validate_batch(
+    rows: &[Option<InteractReq>; BATCH_ROWS],
+    revision: api::selected::ClientRevision,
+) -> Result<usize, ActionError> {
+    let mut len = 0;
+    let mut ended = false;
+    for row in rows {
+        match row {
+            Some(_) if ended => return Err(batch_shape_error()),
+            Some(_) => len += 1,
+            None => ended = true,
+        }
+    }
+    if len == 0 {
+        return Err(batch_shape_error());
+    }
+
+    let mut wire_cost = 0;
+    let mut eats = 0;
+    let mut terminal_seen = false;
+    for (index, row) in rows.iter().take(len).enumerate() {
+        let request = row.as_ref().expect("compact prefix was counted");
+        if !native_interaction(request) {
+            return Err(batch_shape_error());
+        }
+        let (cost, terminal) = match request {
+            InteractReq::IfButton { .. }
+            | InteractReq::Wear { .. }
+            | InteractReq::SetRetaliate { .. } => (1, false),
+            InteractReq::Held { action, .. } if action == "Eat" => {
+                eats += 1;
+                if eats > 2 {
+                    return Err(batch_shape_error());
+                }
+                (1, eats == 2)
+            }
+            InteractReq::Held { action, .. } if action == "Drink" => (1, true),
+            InteractReq::Npc { .. }
+            | InteractReq::Player { .. }
+            | InteractReq::UseWidgetOn { .. }
+            | InteractReq::Obj { .. } => (2, true),
+            _ => return Err(batch_shape_error()),
+        };
+        wire_cost += cost;
+        if terminal {
+            if terminal_seen || index + 1 != len {
+                return Err(batch_shape_error());
+            }
+            terminal_seen = true;
+        }
+    }
+    if wire_cost > 5 {
+        return Err(batch_shape_error());
+    }
+
+    let mut repeated_component = None;
+    for index in 0..len {
+        let Some(InteractReq::IfButton { component_id }) = rows[index].as_ref() else {
+            continue;
+        };
+        let repeated = (0..index).find(|&previous| {
+            matches!(
+                rows[previous].as_ref(),
+                Some(InteractReq::IfButton {
+                    component_id: prior
+                }) if prior == component_id
+            )
+        });
+        if let Some(previous) = repeated {
+            if repeated_component.is_some()
+                || index != previous + 1
+                || !selected_protect_component(revision, *component_id)
+            {
+                return Err(batch_shape_error());
+            }
+            repeated_component = Some(*component_id);
+        }
+    }
+    if repeated_component.is_some() && wire_cost > 4 {
+        return Err(batch_shape_error());
+    }
+    Ok(len)
+}
+
+fn release_batch(owner: &Owner, first_id: NonZeroU64, len: usize) {
+    for offset in 0..len {
+        let request_id =
+            NonZeroU64::new(first_id.get() + offset as u64).expect("validated id range");
+        owner.cancel_interaction(request_id);
+    }
 }
 
 impl QuietReadLease {
@@ -533,6 +737,635 @@ mod tests {
             slot: Some(slot),
         }
     }
+    fn install_owner(cx: &mut ActionContext<'_>) -> Arc<Owner> {
+        let run = cx.run();
+        let owner = {
+            let ledger = cx.ledger.as_mut().expect("test ledger is prepared");
+            let owner = Owner::new(run, ledger.next_id().unwrap());
+            ledger.owner = Some(Arc::clone(&owner));
+            owner
+        };
+        cx.action_id = owner.id.get();
+        owner
+    }
+
+    fn one_row(request: InteractReq) -> [Option<InteractReq>; BATCH_ROWS] {
+        [Some(request), None, None, None, None]
+    }
+
+    fn eat_request(name: &str) -> InteractReq {
+        InteractReq::Held {
+            name: name.into(),
+            action: "Eat".into(),
+            slot: None,
+        }
+    }
+
+    fn drink_request() -> InteractReq {
+        InteractReq::Held {
+            name: "Prayer potion".into(),
+            action: "Drink".into(),
+            slot: None,
+        }
+    }
+
+    fn wear_request() -> InteractReq {
+        InteractReq::Wear {
+            name: "Bronze sword".into(),
+        }
+    }
+
+    fn retaliate_request() -> InteractReq {
+        InteractReq::SetRetaliate { on: true }
+    }
+
+    fn npc_attack() -> InteractReq {
+        InteractReq::Npc {
+            name: "Goblin".into(),
+            action: "Attack".into(),
+            index: Some(4),
+        }
+    }
+
+    fn protect_component() -> i32 {
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .prayers()
+            .iter()
+            .find(|prayer| prayer.name == "Protect from Melee")
+            .unwrap()
+            .button_com
+    }
+
+    fn assert_no_batch_change(
+        cx: &ActionContext<'_>,
+        owner: &Owner,
+        next_id: u64,
+        free_slots: usize,
+        outbox_len: usize,
+    ) {
+        let ledger = cx.ledger.as_ref().unwrap();
+        assert_eq!(ledger.id_range(1).unwrap().get(), next_id);
+        assert_eq!(owner.batch_free(), free_slots);
+        assert_eq!(ledger.outbox.len(), outbox_len);
+    }
+
+    fn assert_shape_refusal(
+        cx: &mut ActionContext<'_>,
+        owner: &Owner,
+        rows: [Option<InteractReq>; BATCH_ROWS],
+    ) {
+        let next_id = cx.ledger.as_ref().unwrap().id_range(1).unwrap().get();
+        let free_slots = owner.batch_free();
+        let outbox_len = cx.ledger.as_ref().unwrap().outbox.len();
+        assert!(matches!(
+            cx.emit_batch(rows),
+            Err(ActionError::Unavailable(reason)) if reason.as_ref() == "batch shape"
+        ));
+        assert_no_batch_change(cx, owner, next_id, free_slots, outbox_len);
+    }
+
+    #[test]
+    fn batch_accepts_each_native_combat_interaction_variant() {
+        let requests = [
+            InteractReq::IfButton { component_id: 900 },
+            eat_request("Shrimp"),
+            drink_request(),
+            wear_request(),
+            retaliate_request(),
+            npc_attack(),
+            InteractReq::Player {
+                name: "alice".into(),
+                action: "Attack".into(),
+            },
+            InteractReq::UseWidgetOn {
+                component_id: 1234,
+                kind: "npc".into(),
+                target_name: Some("Goblin".into()),
+                x: 2601,
+                z: 3200,
+                level: 0,
+                index: Some(4),
+            },
+            InteractReq::Obj {
+                x: 2601,
+                z: 3200,
+                level: 0,
+                name: Some("Ground item".into()),
+                action: "Take".into(),
+            },
+        ];
+        for request in requests {
+            let mut ledger = Some(Box::new(ledger::Ledger::default()));
+            with_frame(&mut ledger, Duration::ZERO, |cx| {
+                let owner = install_owner(cx);
+                let first = cx.emit_batch(one_row(request)).unwrap();
+                let action = &cx.ledger.as_ref().unwrap().outbox[0];
+                assert_eq!(first, 2);
+                assert_eq!(action.batch, first);
+                assert_eq!(action.request_id.get(), first);
+                assert!(action.live());
+                assert!(action.authority().live());
+                assert_eq!(owner.batch_free(), 4);
+            });
+        }
+    }
+
+    #[test]
+    fn batch_rejects_invalid_shapes_and_host_grammar_without_side_effects() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let protect = protect_component();
+            let invalid = [
+                [None, None, None, None, None],
+                [
+                    Some(InteractReq::IfButton { component_id: 900 }),
+                    None,
+                    Some(wear_request()),
+                    None,
+                    None,
+                ],
+                [Some(drop_request(1)), None, None, None, None],
+                [
+                    Some(InteractReq::Held {
+                        name: "Bones".into(),
+                        action: "Bury".into(),
+                        slot: None,
+                    }),
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                [Some(InteractReq::CloseModal), None, None, None, None],
+                [Some(InteractReq::WalkNearestBank), None, None, None, None],
+                [
+                    Some(drink_request()),
+                    Some(wear_request()),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some(eat_request("Shrimp")),
+                    Some(eat_request("Lobster")),
+                    Some(wear_request()),
+                    None,
+                    None,
+                ],
+                [Some(npc_attack()), Some(wear_request()), None, None, None],
+                [Some(drink_request()), Some(npc_attack()), None, None, None],
+                [
+                    Some(npc_attack()),
+                    Some(InteractReq::Player {
+                        name: "alice".into(),
+                        action: "Attack".into(),
+                    }),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some(eat_request("Shrimp")),
+                    Some(eat_request("Lobster")),
+                    Some(eat_request("Swordfish")),
+                    None,
+                    None,
+                ],
+                [
+                    Some(InteractReq::IfButton { component_id: 900 }),
+                    Some(wear_request()),
+                    Some(retaliate_request()),
+                    Some(eat_request("Shrimp")),
+                    Some(npc_attack()),
+                ],
+                [
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(InteractReq::IfButton { component_id: 900 }),
+                    Some(retaliate_request()),
+                    Some(wear_request()),
+                ],
+                [
+                    Some(InteractReq::IfButton { component_id: 5609 }),
+                    Some(InteractReq::IfButton { component_id: 5609 }),
+                    None,
+                    None,
+                    None,
+                ],
+                [
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(wear_request()),
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    None,
+                    None,
+                ],
+                [
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(InteractReq::IfButton { component_id: 5609 }),
+                    Some(InteractReq::IfButton { component_id: 5609 }),
+                    None,
+                ],
+            ];
+            for rows in invalid {
+                assert_shape_refusal(cx, &owner, rows);
+            }
+            assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn selected_protect_pair_is_adjacent_and_capped_at_four_wire_events() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            install_owner(cx);
+            let protect = protect_component();
+            let first = cx
+                .emit_batch([
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(InteractReq::IfButton {
+                        component_id: protect,
+                    }),
+                    Some(npc_attack()),
+                    None,
+                    None,
+                ])
+                .unwrap();
+            let actions = &cx.ledger.as_ref().unwrap().outbox;
+            assert_eq!(actions.len(), 3);
+            assert_eq!(actions[0].batch, first);
+            assert_eq!(actions[1].batch, first);
+            assert_eq!(actions[2].batch, first);
+        });
+    }
+
+    #[test]
+    fn stale_held_and_cancelled_batch_admission_is_side_effect_free() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            cx.action_id += 1;
+            assert_eq!(
+                cx.emit_batch(one_row(wear_request())),
+                Err(ActionError::Stale)
+            );
+            assert_no_batch_change(cx, &owner, 2, 5, 0);
+
+            cx.action_id = owner.id.get();
+            cx.eligible = false;
+            assert_eq!(
+                cx.emit_batch(one_row(wear_request())),
+                Err(ActionError::Held)
+            );
+            assert_no_batch_change(cx, &owner, 2, 5, 0);
+
+            cx.eligible = true;
+            assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), 2);
+            owner.revoke();
+            assert_eq!(
+                cx.emit_batch(one_row(wear_request())),
+                Err(ActionError::Cancelled)
+            );
+            assert_no_batch_change(cx, &owner, 3, 0, 1);
+        });
+    }
+
+    #[test]
+    fn insufficient_slots_and_reservation_races_leave_no_partial_batch_state() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let occupied = NonZeroU64::new(100).unwrap();
+            assert!(owner.acquire_batch(occupied, 4));
+            assert_eq!(owner.batch_free(), 1);
+            let rows = [Some(wear_request()), Some(npc_attack()), None, None, None];
+            assert_eq!(
+                cx.emit_batch(rows),
+                Err(ActionError::BudgetExhausted),
+                "two rows cannot fit in the single free reservation"
+            );
+            assert_no_batch_change(cx, &owner, 2, 1, 0);
+            for offset in 0..4 {
+                owner.cancel_interaction(NonZeroU64::new(occupied.get() + offset).unwrap());
+            }
+            assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), 2);
+        });
+
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let occupied = NonZeroU64::new(3).unwrap();
+            assert!(owner.acquire_batch(occupied, 1));
+            let rows = [
+                Some(InteractReq::IfButton { component_id: 900 }),
+                Some(wear_request()),
+                Some(retaliate_request()),
+                Some(npc_attack()),
+                None,
+            ];
+            assert_eq!(
+                cx.emit_batch(rows),
+                Err(ActionError::BudgetExhausted),
+                "the second id conflict must roll back the first reservation"
+            );
+            assert_no_batch_change(cx, &owner, 2, 4, 0);
+            assert!(!owner.batch_live(NonZeroU64::new(2).unwrap()));
+            assert!(owner.batch_live(occupied));
+            owner.cancel_interaction(occupied);
+            assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), 2);
+        });
+    }
+
+    #[test]
+    fn batch_excludes_other_native_actions_and_resets_on_the_next_tick() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let first = cx.emit_batch(one_row(wear_request())).unwrap();
+            assert_eq!(
+                cx.emit_batch(one_row(wear_request())),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(
+                cx.emit(InteractReq::CloseModal),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(
+                cx.emit_disposal(drop_request(1)),
+                Err(ActionError::BudgetExhausted)
+            );
+            let walk = WalkRequest {
+                target: api::WorldTile {
+                    x: 9,
+                    z: 9,
+                    level: 0,
+                },
+                radius: 0,
+                options: FindOptions::default(),
+                required_after: cx.evidence(),
+                evidence: None,
+                loc_id: None,
+                cross: Box::new([]),
+            };
+            assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
+            assert_no_batch_change(cx, &owner, first + 1, 4, 1);
+
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
+            for action in actions {
+                let receipt = InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: cx.evidence(),
+                    accepted: true,
+                    chat_since: 0,
+                };
+                cx.ledger
+                    .as_mut()
+                    .unwrap()
+                    .complete_interaction(&action.authority(), receipt);
+            }
+            assert_eq!(owner.batch_free(), 5);
+            cx.budget.observe(2);
+            assert_eq!(cx.emit_batch(one_row(wear_request())).unwrap(), first + 1);
+        });
+
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let ordinary = cx.emit(InteractReq::CloseModal).unwrap();
+            assert_eq!(
+                cx.emit_batch(one_row(wear_request())),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_no_batch_change(cx, &owner, ordinary + 1, 5, 1);
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox[0].batch, 0);
+        });
+    }
+
+    #[test]
+    fn batch_and_disposal_share_reservations_and_event_allowance() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let first = cx
+                .emit_batch([
+                    Some(InteractReq::IfButton { component_id: 900 }),
+                    Some(wear_request()),
+                    Some(retaliate_request()),
+                    Some(eat_request("Shrimp")),
+                    Some(InteractReq::IfButton { component_id: 901 }),
+                ])
+                .unwrap();
+            let batch_actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
+            assert_eq!(batch_actions.len(), 5);
+            assert!(batch_actions
+                .iter()
+                .all(|action| action.batch == first && action.live()));
+            assert_eq!(owner.batch_free(), 0);
+
+            cx.budget.observe(2);
+            assert_eq!(
+                cx.emit_disposal(drop_request(0)),
+                Err(ActionError::BudgetExhausted),
+                "a full batch leaves no disposal reservation"
+            );
+            cx.cancel_request(first);
+            assert!(!batch_actions[0].live());
+            assert_eq!(cx.emit_disposal(drop_request(0)).unwrap(), first + 5);
+            assert_eq!(owner.batch_free(), 0);
+            assert_eq!(
+                cx.emit_disposal(drop_request(1)),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(
+                cx.ledger.as_ref().unwrap().id_range(1).unwrap().get(),
+                first + 6
+            );
+
+            cx.cancel_request(first + 1);
+            assert!(!batch_actions[1].live());
+            assert_eq!(owner.batch_free(), 1);
+            assert_eq!(cx.emit_disposal(drop_request(1)).unwrap(), first + 6);
+            for offset in 2..5 {
+                cx.cancel_request(first + offset);
+            }
+            assert!(batch_actions.iter().all(|action| !action.live()));
+            assert_eq!(owner.batch_free(), 3);
+            for slot in 2..5 {
+                cx.emit_disposal(drop_request(slot)).unwrap();
+            }
+            assert_eq!(owner.batch_free(), 0);
+            assert_eq!(
+                cx.emit_disposal(drop_request(5)),
+                Err(ActionError::BudgetExhausted)
+            );
+            assert_eq!(
+                cx.ledger.as_ref().unwrap().id_range(1).unwrap().get(),
+                first + 10
+            );
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
+        });
+    }
+
+    #[test]
+    fn batch_ids_order_authorities_and_receipts_are_independent() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let owner = install_owner(cx);
+            let rows = [
+                Some(InteractReq::IfButton { component_id: 900 }),
+                Some(eat_request("Shrimp")),
+                Some(wear_request()),
+                Some(retaliate_request()),
+                Some(InteractReq::IfButton { component_id: 901 }),
+            ];
+            let first = cx.emit_batch(rows).unwrap();
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
+            assert_eq!(actions.len(), 5);
+            assert!(actions
+                .iter()
+                .all(|action| action.batch == first && action.live() && action.authority().live()));
+            assert!(actions
+                .windows(2)
+                .all(|pair| pair[1].request_id.get() == pair[0].request_id.get() + 1));
+            assert_eq!(actions[0].request_id.get(), first);
+            assert!(matches!(
+                &actions[0].effect,
+                HostEffect::Interaction(InteractReq::IfButton { component_id: 900 })
+            ));
+            assert!(matches!(
+                &actions[1].effect,
+                HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Eat"
+            ));
+            assert!(matches!(
+                &actions[2].effect,
+                HostEffect::Interaction(InteractReq::Wear { .. })
+            ));
+            assert!(matches!(
+                &actions[3].effect,
+                HostEffect::Interaction(InteractReq::SetRetaliate { on: true })
+            ));
+            assert!(matches!(
+                &actions[4].effect,
+                HostEffect::Interaction(InteractReq::IfButton { component_id: 901 })
+            ));
+
+            for (index, action) in actions.iter().enumerate() {
+                let authority = action.authority();
+                let receipt = InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: cx.evidence(),
+                    accepted: index != 2,
+                    chat_since: 0,
+                };
+                cx.ledger
+                    .as_mut()
+                    .unwrap()
+                    .complete_interaction(&authority, receipt);
+                assert!(!authority.live());
+                assert!(
+                    authority.owner_live(),
+                    "settling one request must not retire its action owner"
+                );
+                assert!(!action.live());
+                assert_eq!(owner.batch_free(), index + 1);
+                assert_eq!(cx.interaction_receipt(receipt.request_id), Some(&receipt));
+                assert!(actions.iter().skip(index + 1).all(HostAction::live));
+            }
+            assert_eq!(owner.batch_free(), 5);
+
+            cx.budget.observe(2);
+            let second = cx
+                .emit_batch([
+                    Some(InteractReq::IfButton { component_id: 902 }),
+                    Some(wear_request()),
+                    Some(retaliate_request()),
+                    None,
+                    None,
+                ])
+                .unwrap();
+            assert_eq!(second, first + 5);
+            let second_actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
+            let authorities =
+                std::array::from_fn::<_, 3, _>(|index| second_actions[index].authority());
+            assert!(second_actions
+                .iter()
+                .all(|action| action.batch == second && action.live()));
+            owner.revoke();
+            assert!(second_actions.iter().all(|action| !action.live()));
+            assert!(authorities.iter().all(|authority| !authority.live()));
+            assert!(authorities.iter().all(|authority| !authority.owner_live()));
+        });
+    }
+
+    #[test]
+    fn batch_moves_owned_strings_without_allocating_during_admission() {
+        let mut ledger = Some(Box::new(ledger::Ledger::default()));
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            install_owner(cx);
+            let food_name = String::from("Shrimp");
+            let food_action = String::from("Eat");
+            let npc_name = String::from("Goblin");
+            let npc_action = String::from("Attack");
+            let food_name_ptr = food_name.as_ptr();
+            let food_action_ptr = food_action.as_ptr();
+            let npc_name_ptr = npc_name.as_ptr();
+            let npc_action_ptr = npc_action.as_ptr();
+            let rows = [
+                Some(InteractReq::Held {
+                    name: food_name,
+                    action: food_action,
+                    slot: None,
+                }),
+                Some(InteractReq::Npc {
+                    name: npc_name,
+                    action: npc_action,
+                    index: Some(4),
+                }),
+                None,
+                None,
+                None,
+            ];
+            let mut admitted = None;
+            let allocations = allocation_counter::measure(|| {
+                admitted = Some(cx.emit_batch(rows));
+            });
+            assert_eq!(allocations.count_total, 0);
+            let first = admitted.unwrap().unwrap();
+            let outbox = &cx.ledger.as_ref().unwrap().outbox;
+            assert_eq!(outbox.len(), 2);
+            match &outbox[0].effect {
+                HostEffect::Interaction(InteractReq::Held { name, action, .. }) => {
+                    assert_eq!(name.as_ptr(), food_name_ptr);
+                    assert_eq!(action.as_ptr(), food_action_ptr);
+                }
+                _ => panic!("expected moved Eat row"),
+            }
+            match &outbox[1].effect {
+                HostEffect::Interaction(InteractReq::Npc { name, action, .. }) => {
+                    assert_eq!(name.as_ptr(), npc_name_ptr);
+                    assert_eq!(action.as_ptr(), npc_action_ptr);
+                }
+                _ => panic!("expected moved target row"),
+            }
+            assert!(outbox.iter().all(|action| action.batch == first));
+        });
+    }
 
     #[test]
     fn disposal_batch_keeps_five_authorities_and_correlates_receipts() {
@@ -556,6 +1389,13 @@ mod tests {
                 Err(ActionError::BudgetExhausted)
             );
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
+            assert!(cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| action.batch == 0));
             eprintln!(
                 "G1 disposal outbox retained bytes={}",
                 cx.ledger.as_ref().unwrap().outbox.capacity() * std::mem::size_of::<HostAction>(),
@@ -576,7 +1416,7 @@ mod tests {
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 5);
             cx.cancel_request(requests[2]);
             assert_eq!(cx.ledger.as_ref().unwrap().outbox.len(), 4);
-            let actions = std::mem::take(&mut cx.ledger.as_mut().unwrap().outbox);
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             for action in actions.into_iter().rev() {
                 let receipt = InteractionReceipt {
                     request_id: action.request_id.get(),
@@ -604,6 +1444,7 @@ mod tests {
             assert!(!owner.live());
         });
     }
+
     #[test]
     fn full_disposal_authority_refusal_preserves_budget_and_ids() {
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
@@ -616,7 +1457,7 @@ mod tests {
                 .map(|slot| cx.emit_disposal(drop_request(slot)).unwrap())
                 .collect();
             let reserved = cx.ledger.as_mut().unwrap().next_id().unwrap();
-            assert!(owner.acquire_disposal(reserved));
+            assert!(owner.acquire_batch(reserved, 1));
 
             assert_eq!(
                 cx.emit_disposal(drop_request(4)),
@@ -669,9 +1510,10 @@ mod tests {
                 cx.emit_disposal(drop_request(4)),
                 Err(ActionError::BudgetExhausted)
             );
-            let actions = std::mem::take(&mut cx.ledger.as_mut().unwrap().outbox);
+            let actions = cx.ledger.as_mut().unwrap().outbox.split_off(0);
             assert!(actions.iter().all(HostAction::live));
             assert_eq!(actions.len(), 5);
+            assert!(actions.iter().all(|action| action.batch == 0));
             for action in &actions {
                 let receipt = InteractionReceipt {
                     request_id: action.request_id.get(),
@@ -789,6 +1631,7 @@ mod tests {
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
+            assert_eq!(cx.ledger.as_ref().unwrap().outbox[0].batch, 0);
             assert!(actions.poll(&handle, cx).is_pending());
             (handle, authority)
         });
@@ -823,11 +1666,13 @@ mod tests {
                     tile,
                     distance: 0,
                     animation: -1,
+                    animation_frame: 0,
                     pose_animation: -1,
                     orientation: 0,
                     target_orientation: 0,
                     overhead_text: None,
                     spot_animation: -1,
+                    spot_animation_stamp: 0,
                     health: 10,
                     total_health: 10,
                     face_entity: -1,
@@ -838,6 +1683,7 @@ mod tests {
                 },
                 combat_level: 3,
                 skill_level: 3,
+                weapon: None,
             },
             energy: 100,
             weight: 0,

@@ -1,5 +1,6 @@
 use api::interact::Driver;
 use api::named_banks::{BankPreferences, NamedBankFacts};
+use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::bank_fetch::SAME_BANK;
 use nav::router::{
@@ -8,6 +9,12 @@ use nav::router::{
 use nav::world::NavWorld;
 use nav::WorldState;
 use script::isolate_fb::BankSelectionInput;
+use script::native::HostAuthority;
+use script::native_bank::{
+    AccessKind as NativeAccessKind, BankPickReceipt as NativeBankPickReceipt,
+    BankPickRequest as NativeBankPickRequest, BankStandAccess, PickKind as NativePickKind,
+    SelectedBank,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,6 +28,11 @@ enum PickKind {
     AirFallback = 3,
     NoCandidate = 4,
 }
+struct NativeBankPickInput {
+    request: NativeBankPickRequest,
+    authority: HostAuthority,
+    evidence: EvidenceStamp,
+}
 
 /// Selection completion is independent of movement. Both select-only and
 /// pick-and-walk share one worker and one latest pending replacement.
@@ -32,6 +44,7 @@ pub(crate) struct BankPickState {
     pending: Option<BankPickJob>,
     current: Option<ActivePick>,
     pub(crate) posted: BankSelectionInput,
+    native_receipt: Option<(HostAuthority, NativeBankPickReceipt)>,
     #[cfg(test)]
     facts: Option<Arc<NamedBankFacts>>,
 }
@@ -43,6 +56,27 @@ impl BankPickState {
         self.current
             .as_ref()
             .is_some_and(|active| active.job.request.walk_generation == Some(route_generation))
+    }
+
+    pub(crate) fn take_native_receipt(&mut self) -> Option<(HostAuthority, NativeBankPickReceipt)> {
+        self.native_receipt.take()
+    }
+
+    fn complete_native(&mut self, request: &BankPickRequest, index: Option<usize>, kind: PickKind) {
+        let Some(native) = &request.native else {
+            return;
+        };
+        if !native.authority.live() {
+            return;
+        }
+        self.native_receipt = Some((
+            native.authority.clone(),
+            NativeBankPickReceipt {
+                request_id: native.authority.request_id().get(),
+                evidence: native.evidence,
+                selected: request.selected(index, kind),
+            },
+        ));
     }
 }
 
@@ -65,6 +99,7 @@ impl BankPickState {
         self.pending = None;
         self.last_id = 0;
         self.posted = BankSelectionInput::default();
+        self.native_receipt = None;
     }
 
     pub(crate) fn poll(&mut self, now: Instant) -> BankSelectionInput {
@@ -89,6 +124,12 @@ impl BankPickState {
                     deadline: None,
                     job,
                 });
+            } else if active.job.request.native.is_some() {
+                self.complete_native(
+                    &active.job.request,
+                    active.job.request.first(),
+                    PickKind::AirFallback,
+                );
             } else {
                 self.posted = active
                     .job
@@ -104,11 +145,20 @@ impl BankPickState {
             return false;
         }
         if job.request.walk_generation.is_none() {
-            self.posted = job.result(result.index, result.kind);
+            if job.request.native.is_some() {
+                self.complete_native(&job.request, result.index, result.kind);
+            } else {
+                self.posted = job.result(result.index, result.kind);
+            }
         }
-        self.current = None;
         true
     }
+}
+
+#[derive(Clone)]
+struct NativePickContext {
+    authority: HostAuthority,
+    evidence: EvidenceStamp,
 }
 
 struct BankPickRequest {
@@ -120,6 +170,7 @@ struct BankPickRequest {
     state: WorldState,
     order: Vec<usize>,
     walk_generation: Option<u64>,
+    native: Option<NativePickContext>,
     #[cfg(test)]
     test_gate: Option<Arc<tests::Gate>>,
 }
@@ -160,6 +211,42 @@ impl BankPickRequest {
         )
     }
 
+    fn route_target(&self, index: usize) -> WorldTile {
+        let bank = self.facts.banks()[index];
+        if self.native.is_some() {
+            native_bank_access(&self.world, bank, self.from).map_or(bank.tile, |(tile, _)| tile)
+        } else {
+            bank.tile
+        }
+    }
+
+    fn selected(&self, index: Option<usize>, kind: PickKind) -> SelectedBank {
+        let Some(index) = index.filter(|&index| index < self.facts.banks().len()) else {
+            return native_no_candidate();
+        };
+        let Ok(bank_index) = u16::try_from(index) else {
+            return native_no_candidate();
+        };
+        if bank_index == u16::MAX {
+            return native_no_candidate();
+        }
+        let bank = self.facts.banks()[index];
+        let (access_tile, access) = match native_bank_access(&self.world, bank, self.from) {
+            Some((tile, access)) => (tile, Some(Arc::new(access))),
+            None => (bank.tile, None),
+        };
+        SelectedBank {
+            bank_index,
+            access_tile,
+            kind: match kind {
+                PickKind::NearShortcut => NativePickKind::NearShortcut,
+                PickKind::Reachable => NativePickKind::Reachable,
+                PickKind::AirFallback => NativePickKind::AirFallback,
+                PickKind::NoCandidate => NativePickKind::NoCandidate,
+            },
+            access,
+        }
+    }
     fn fallback(&self) -> PickResult {
         let index = self.first();
         let mut route = None;
@@ -200,7 +287,10 @@ impl BankPickRequest {
         if routed.is_empty() {
             return self.fallback();
         }
-        let targets: Vec<_> = routed.iter().map(|&i| self.facts.banks()[i].tile).collect();
+        let targets: Vec<_> = routed
+            .iter()
+            .map(|&index| self.route_target(index))
+            .collect();
         #[cfg(test)]
         if let Some(gate) = &self.test_gate {
             gate.bank_search();
@@ -243,6 +333,19 @@ impl BankPickRequest {
     }
 }
 
+fn native_no_candidate() -> SelectedBank {
+    SelectedBank {
+        bank_index: u16::MAX,
+        access_tile: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        kind: NativePickKind::NoCandidate,
+        access: None,
+    }
+}
+
 fn bank_air_distance(from: WorldTile, to: WorldTile) -> i64 {
     let dx = i64::from(from.x) - i64::from(to.x);
     let dz = i64::from(from.z) - i64::from(to.z);
@@ -251,6 +354,132 @@ fn bank_air_distance(from: WorldTile, to: WorldTile) -> i64 {
 
 fn near_bank(from: WorldTile, bank: WorldTile) -> bool {
     from.level == bank.level && from.x.abs_diff(bank.x).max(from.z.abs_diff(bank.z)) <= 4
+}
+
+fn native_bank_access(
+    world: &NavWorld,
+    bank: api::named_banks::NamedBank,
+    from: WorldTile,
+) -> Option<(WorldTile, BankStandAccess)> {
+    if let Some(definition) = bank.definition {
+        if let Some(operation) = definition.open_first.or(definition.object) {
+            return Some((
+                bank.tile,
+                BankStandAccess {
+                    bank,
+                    stand_tile: definition.tile,
+                    kind: NativeAccessKind::Booth,
+                    // Object operations are resolved against the live loc row
+                    // by BankMachine immediately before dispatch.
+                    stand_op: 0,
+                    name: Some(Arc::from(operation.name)),
+                    choose: definition.choose.map(Arc::from),
+                },
+            ));
+        }
+    }
+    let definition_npc = bank.definition.and_then(|definition| definition.npc);
+    let stand = world
+        .banks()
+        .iter()
+        .filter(|stand| {
+            stand.tile.level == bank.tile.level
+                && (stand.tile.x - bank.tile.x)
+                    .abs()
+                    .max((stand.tile.z - bank.tile.z).abs())
+                    <= SAME_BANK
+        })
+        .min_by_key(|stand| {
+            let kind_order = match (&stand.access, definition_npc) {
+                (nav::pack::BankAccess::Npc { name, .. }, Some(wanted))
+                    if name.eq_ignore_ascii_case(wanted.name) =>
+                {
+                    0
+                }
+                (nav::pack::BankAccess::Booth { .. }, Some(_)) => 1,
+                (nav::pack::BankAccess::Npc { .. }, Some(_)) => 2,
+                (nav::pack::BankAccess::Booth { .. }, None) => 0,
+                (nav::pack::BankAccess::Npc { .. }, None) => 1,
+            };
+            (
+                kind_order,
+                bank_air_distance(bank.tile, stand.tile),
+                stand.tile.x,
+                stand.tile.z,
+            )
+        })?;
+    let access_tile =
+        nav::bank_fetch::bank_access_tiles(&world.collision, stand).min_by_key(|tile| {
+            (
+                i32::from(tile.level != from.level),
+                bank_air_distance(from, *tile),
+                tile.x,
+                tile.z,
+            )
+        })?;
+    let (kind, stand_op, name, choose) = match &stand.access {
+        nav::pack::BankAccess::Booth { op } => (
+            NativeAccessKind::Booth,
+            *op,
+            Some(Arc::from(stand.name.as_str())),
+            None,
+        ),
+        nav::pack::BankAccess::Npc { name, op, choose } => (
+            NativeAccessKind::Teller,
+            *op,
+            Some(Arc::from(name.as_str())),
+            choose.as_deref().map(Arc::from).or_else(|| {
+                bank.definition
+                    .and_then(|definition| definition.choose.map(Arc::from))
+            }),
+        ),
+    };
+    Some((
+        access_tile,
+        BankStandAccess {
+            bank,
+            stand_tile: stand.tile,
+            kind,
+            stand_op,
+            name,
+            choose,
+        },
+    ))
+}
+
+pub(super) fn queue_native_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    request: NativeBankPickRequest,
+    authority: HostAuthority,
+    evidence: EvidenceStamp,
+) {
+    let from = request.from;
+    let preferences = request.preferences;
+    let allow_wilderness = request.allow_wilderness;
+    let request_id = authority.request_id().get();
+    queue_bank(
+        navs,
+        name,
+        world,
+        state,
+        from,
+        FindOptions {
+            allow_wilderness,
+            ..FindOptions::default()
+        },
+        request_id,
+        preferences,
+        None,
+        false,
+        Some(NativeBankPickInput {
+            request,
+            authority,
+            evidence,
+        }),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -279,6 +508,7 @@ pub(super) fn queue_bank_pick(
         preferences,
         fishing_base,
         false,
+        None,
     );
 }
 
@@ -303,6 +533,7 @@ pub(super) fn queue_bank_walk(
         BankPreferences::default(),
         fishing_base,
         true,
+        None,
     )
 }
 
@@ -318,6 +549,7 @@ fn queue_bank(
     preferences: BankPreferences,
     fishing_base: Option<i32>,
     walking: bool,
+    native: Option<NativeBankPickInput>,
 ) -> bool {
     let now = Instant::now();
     let mut all = navs.lock().unwrap();
@@ -335,23 +567,44 @@ fn queue_bank(
                 Some(_) => {}
             }
         }
-    } else if request_id == 0 || request_id <= bot.bank_pick.last_id {
+    } else if native.is_none() && (request_id == 0 || request_id <= bot.bank_pick.last_id) {
         return false;
     }
     let pick = &mut bot.bank_pick;
     pick.generation = pick.generation.wrapping_add(1);
-    if !walking {
+    if !walking && native.is_none() {
         pick.last_id = request_id;
     }
     pick.pending = None;
     pick.current = None;
-    let facts = world
+    pick.native_receipt = None;
+    let facts = native
         .as_ref()
-        .and_then(|world| world.named_bank_facts().cloned());
+        .map(|native| Arc::clone(&native.request.facts))
+        .or_else(|| {
+            world
+                .as_ref()
+                .and_then(|world| world.named_bank_facts().cloned())
+        });
     #[cfg(test)]
-    let facts = pick.facts.clone().or(facts);
-    let (Some(world), Some(facts)) = (world, facts) else {
-        if !walking {
+    let facts = if native.is_none() {
+        pick.facts.clone().or(facts)
+    } else {
+        facts
+    };
+    let (Some(world), Some(facts)) = (world.as_ref(), facts) else {
+        if let Some(native) = native.as_ref() {
+            if native.authority.live() {
+                pick.native_receipt = Some((
+                    native.authority.clone(),
+                    NativeBankPickReceipt {
+                        request_id,
+                        evidence: native.evidence,
+                        selected: native_no_candidate(),
+                    },
+                ));
+            }
+        } else if !walking {
             pick.posted = BankSelectionInput {
                 request_id,
                 generation: pick.generation,
@@ -362,15 +615,32 @@ fn queue_bank(
         return false;
     };
     let state = state.unwrap_or_default();
-    let mut order: Vec<_> = (0..facts.banks().len())
-        .filter(|&i| {
-            facts.banks()[i].eligible(
-                |id| if id == 10 { fishing_base } else { None },
-                |quest| state.quests.contains(quest),
-                preferences,
-            )
-        })
-        .collect();
+    let from = native.as_ref().map_or(from, |native| native.request.from);
+    let mut order: Vec<_> = if let Some(native) = native.as_ref() {
+        native
+            .request
+            .eligible
+            .iter()
+            .map(|&index| usize::from(index))
+            .filter(|&index| {
+                index < facts.banks().len()
+                    && native
+                        .request
+                        .explicit_bank
+                        .is_none_or(|explicit| usize::from(explicit) == index)
+            })
+            .collect()
+    } else {
+        (0..facts.banks().len())
+            .filter(|&i| {
+                facts.banks()[i].eligible(
+                    |id| if id == 10 { fishing_base } else { None },
+                    |quest| state.quests.contains(quest),
+                    preferences,
+                )
+            })
+            .collect()
+    };
     order.sort_by_key(|&i| bank_air_distance(from, facts.banks()[i].air_tile()));
     opts.essence = bot.traveller.essence();
     let first = order.first().copied();
@@ -382,6 +652,10 @@ fn queue_bank(
     } else {
         None
     };
+    let native = native.map(|native| NativePickContext {
+        authority: native.authority,
+        evidence: native.evidence,
+    });
     let request = Arc::new(BankPickRequest {
         request_id,
         world: Arc::clone(world),
@@ -391,17 +665,28 @@ fn queue_bank(
         state,
         order,
         walk_generation,
+        native,
         #[cfg(test)]
         test_gate: tests::capture_gate(),
     });
-    let near = first.is_some_and(|i| near_bank(from, request.facts.banks()[i].tile));
+    let near = first.is_some_and(|index| near_bank(from, request.route_target(index)));
     let job = BankPickJob {
         generation: pick.generation,
         request,
         route_only: near,
     };
     if first.is_none() || (near && !walking) {
-        if !walking {
+        if job.request.native.is_some() {
+            pick.complete_native(
+                &job.request,
+                first,
+                if near {
+                    PickKind::NearShortcut
+                } else {
+                    PickKind::NoCandidate
+                },
+            );
+        } else if !walking {
             pick.posted = job.result(
                 first,
                 if near {
@@ -530,6 +815,12 @@ fn queue_bank(
                         0,
                         active.job.request.opts.allow_teleports,
                         super::RouteOutcome::NoPath,
+                    );
+                } else if active.job.request.native.is_some() {
+                    pick.complete_native(
+                        &active.job.request,
+                        active.job.request.first(),
+                        PickKind::AirFallback,
                     );
                 } else {
                     pick.posted = active

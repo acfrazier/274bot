@@ -7352,7 +7352,7 @@
       "revision": 289,
       "output": "crates/api/data/game-data/289.json",
       "records": 4089,
-      "consumption": 250,
+      "consumption": 262,
       "pickpocket": 12,
       "drop_tables": 5,
       "spells": 16,
@@ -7519,8 +7519,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 4595520,
-      "sha256": "c71154493bd219e64b7c8e9a54599b31df0cda2afce0060c5ed1629843012f7f",
+      "bytes": 5172785,
+      "sha256": "491ef46976b1c00882f5de17763a29a5bd5b59151c1c063aa8089a4e7df4d332",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -7542,104 +7542,9 @@
       ],
       "content_inputs": [
         {
-          "path": "scripts/player/configs/consumption/consume.dbtable",
-          "bytes": 400,
-          "sha256": "501ebc5625d14d3cc719df05d72cbed0aaa8d97547469bbcd5787a2b6cbc627f"
-        },
-        {
-          "path": "scripts/player/configs/consumption/consume_normal.dbrow",
-          "bytes": 5825,
-          "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
-        },
-        {
-          "path": "scripts/player/configs/consumption/consume_effects.dbrow",
-          "bytes": 9036,
-          "sha256": "d97a0404917ff92534d134ac27ae0035430eac943ef65a38a785a0b60f4ad269"
-        },
-        {
-          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable",
-          "bytes": 223,
-          "sha256": "f999e5eeebf60d74a9473ab8109b6b72678f3bb95fd9ae5b09892ac360e8d00d"
-        },
-        {
-          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow",
-          "bytes": 3552,
-          "sha256": "c284d00db20d20d141d712619883e9b43262eecac9cd6bc589becd8bace3478b"
-        },
-        {
-          "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
-          "bytes": 6851,
-          "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
-        },
-        {
-          "path": "scripts/skill_combat/configs/magic/magic_combat_spells.dbrow",
-          "bytes": 18031,
-          "sha256": "1e531adbc6dff4ba08491b3f5439f0d073f79f4973cb6a3b0079b9643373f454"
-        },
-        {
-          "path": "scripts/skill_magic/configs/magic.dbtable",
-          "bytes": 868,
-          "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
-        },
-        {
-          "path": "scripts/skill_magic/configs/magic_spells.dbrow",
-          "bytes": 7265,
-          "sha256": "c8ff8a90cd8303c75615981fda33bf2c01c2459a0e64118dbe647e0bd8040f9d"
-        },
-        {
-          "path": "scripts/skill_magic/configs/magic_staff.dbrow",
-          "bytes": 698,
-          "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
-        },
-        {
-          "path": "scripts/skill_combat/configs/combat.constant",
-          "bytes": 90,
-          "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
-        },
-        {
-          "path": "scripts/skill_herblore/configs/herbs.obj",
-          "bytes": 7372,
-          "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
-        },
-        {
-          "path": "scripts/skill_herblore/configs/identifying/identify.param",
-          "bytes": 137,
-          "sha256": "b74e294aad7be8fa0cfd2a3810375e7625a9c2b223c4b68dd70b44f7e225d87f"
-        },
-        {
-          "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
-          "bytes": 2174,
-          "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
-        },
-        {
-          "path": "scripts/skill_prayer/configs/prayers.dbrow",
-          "bytes": 3194,
-          "sha256": "04a960ddd63d2f33c4e6de1fc471de03b8ab2750f24c43bbea11691bd8cc5fa9"
-        },
-        {
-          "path": "scripts/skill_prayer/configs/prayers.constant",
-          "bytes": 399,
-          "sha256": "3d71f9fd1581d966cbbf747f14d40e3d1efbee8a0abd927419189d80f7c3a550"
-        },
-        {
-          "path": "scripts/skill_prayer/interfaces/prayer.if",
-          "bytes": 11731,
-          "sha256": "5eb68ee2dabf251196d5540d8e79510bdff5b77ffae41ba8687b19eb79108ff1"
-        },
-        {
-          "path": "scripts/areas/area_falador/configs/dwarven_mine.inv",
-          "bytes": 1102,
-          "sha256": "55d857c26957896d617d01ec14318768997e4cd25ff47bf94a959138b4e1fa54"
-        },
-        {
-          "path": "scripts/areas/area_falador/configs/dwarven_mine.npc",
-          "bytes": 2250,
-          "sha256": "8d4990ea35f154442a6f180659d9ddf44fd8a705e8150869fa5ec6248d23a588"
-        },
-        {
-          "path": "scripts/skill_runecraft/configs/runecraft.constant",
-          "bytes": 500,
-          "sha256": "b6af925c204276b7f348dbe7a33500ff532951970c8a6227cae8233e35bf3d09"
+          "path": "maps/m42_55.jm2",
+          "bytes": 114035,
+          "sha256": "0ad7c15eacebab079181f1084524719d6bdf97649cfd16c254d00369492ff667"
         },
         {
           "path": "maps/m45_75.jm2",
@@ -7647,34 +7552,14 @@
           "sha256": "d6c7085e1beb35e61aec2e7daffa137da491fd1560c8c73ff2835c45ac577525"
         },
         {
-          "path": "pack/npc.pack",
-          "bytes": 31379,
-          "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
+          "path": "pack/category.pack",
+          "bytes": 5468,
+          "sha256": "b8f21d94a827783bddd24203ab2049192e3b446f1636158f316db2d46c2607c4"
         },
         {
-          "path": "scripts/quests/quest_murder/configs/quest_murder.loc",
-          "bytes": 2417,
-          "sha256": "549b33a51e81de6054e9b133520c935d8e63bc8023f4c13c66e56d49ce55a318"
-        },
-        {
-          "path": "scripts/general/configs/quest.enum",
-          "bytes": 1473,
-          "sha256": "69114ff5cc1507268f49512061a7eabd15721d43050f0065b515f73301c2b90f"
-        },
-        {
-          "path": "maps/m42_55.jm2",
-          "bytes": 114035,
-          "sha256": "0ad7c15eacebab079181f1084524719d6bdf97649cfd16c254d00369492ff667"
-        },
-        {
-          "path": "pack/loc.pack",
-          "bytes": 117164,
-          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
-        },
-        {
-          "path": "pack/obj.pack",
-          "bytes": 96738,
-          "sha256": "b5e97146856661a96b2f78690da7f366fed1e871637a0982d4a5ebfa30ac2bf7"
+          "path": "pack/enum.pack",
+          "bytes": 4027,
+          "sha256": "082fde35a3cc9bfc259917626baa5a3423d21268f2541f7a0aeb2cfe1b057351"
         },
         {
           "path": "pack/interface.pack",
@@ -7682,9 +7567,19 @@
           "sha256": "259f2c47f0e0b91807be1126c9a7cf66d39bc24efec8caf075c0a52805ec610a"
         },
         {
-          "path": "pack/varp.pack",
-          "bytes": 6665,
-          "sha256": "22f75da703461b26797f5291d36e655302b3409e6454d9b0b1169869e15ef6ef"
+          "path": "pack/loc.pack",
+          "bytes": 117164,
+          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+        },
+        {
+          "path": "pack/npc.pack",
+          "bytes": 31379,
+          "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
+        },
+        {
+          "path": "pack/obj.pack",
+          "bytes": 96738,
+          "sha256": "b5e97146856661a96b2f78690da7f366fed1e871637a0982d4a5ebfa30ac2bf7"
         },
         {
           "path": "pack/param.pack",
@@ -7692,109 +7587,344 @@
           "sha256": "5000136e59d80917ded02dc94bbf8a129d3ae4339ae09e081bf23021ca74515b"
         },
         {
+          "path": "pack/seq.pack",
+          "bytes": 31782,
+          "sha256": "dfc01f27c88c8babe81b5aa8f526a19376f046a4a833ec0c58af499a102f49eb"
+        },
+        {
+          "path": "pack/spotanim.pack",
+          "bytes": 7137,
+          "sha256": "26796244b15b49ad610f54a289497bfd1fb66ce842489fac4061e6cc637abd05"
+        },
+        {
+          "path": "pack/varp.pack",
+          "bytes": 6665,
+          "sha256": "22f75da703461b26797f5291d36e655302b3409e6454d9b0b1169869e15ef6ef"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_bank.rs2",
+          "bytes": 27257,
+          "sha256": "e4da079a502e7ee1f093e182de6ac992480fe3325fe7850e43a5ea3261264daa"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_clearinv.rs2",
+          "bytes": 473,
+          "sha256": "b343204197a64bc73131a92bb580f9ebccb111dfe60b41af630cadc0cb4a3627"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_com.rs2",
+          "bytes": 608,
+          "sha256": "df34c3b64e3a7e5c9f67415172cd2800d75bf45afb7cbdd467966e8809988b40"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_help.rs2",
+          "bytes": 3572,
+          "sha256": "6c8049a3349921b1cb102cc5f90787a99a11161af92afc15ee38e74447f82827"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_interactions.rs2",
+          "bytes": 13141,
+          "sha256": "45928806a5c75a1aefd41ad301bb177860eda009d6d07c7476fe2d5f484339a1"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_macro_event.rs2",
+          "bytes": 621,
+          "sha256": "272b9346217b85b0856e24a128c8b23c3e5bde46e9893d62ff2896b829f49eb0"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_magic.rs2",
+          "bytes": 455,
+          "sha256": "3d1915cc798e70bcf8ba4ce8bb89b94ad5e2fd788362e4b8b6149bd4189cc300"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_maxme.rs2",
+          "bytes": 860,
+          "sha256": "4add0beff21a2d5a176823fe76c518692817c604b7f6115e2a03e9aaff7aff6c"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_music.rs2",
+          "bytes": 670,
+          "sha256": "e5e1d3a9f3ab4f0fc0e41a0f01a7fe2976d83a4c985dc0ad69108f4309dea3ea"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_npc.rs2",
+          "bytes": 1586,
+          "sha256": "cead34304a6cd446da6c4fdbddb93bcfd72b7aa8e498eeba4a20cc37f03b72fb"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_other.rs2",
+          "bytes": 1710,
+          "sha256": "4bc1c467b11447f54ca945ad105e98d492d5f1a040d71844e3911925680b0287"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_pvp.rs2",
+          "bytes": 926,
+          "sha256": "19c48d0933526e0457763ba083cdcbec59825937f43468010bf6208a93a8f781"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_quest.rs2",
+          "bytes": 22516,
+          "sha256": "0ef657a414bc78b4114c1814b6ae3d9fad723eca988b92a78a8d65a79dc242b7"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_reset.rs2",
+          "bytes": 650,
+          "sha256": "d879495b40cd8dc631e725d6561e4c39c065b86d32620b0e555d0dcf7f177f8e"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_search.rs2",
+          "bytes": 1540,
+          "sha256": "96c7308a3d6e356b545528c7e17e71b11b5fcf74a46001cf4a6437f0d5364897"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_serverstats.rs2",
+          "bytes": 422,
+          "sha256": "61784300b9fce4f89d0ec8f9724d3897252647b73336888d5123b0c56e1bb352"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_teles.rs2",
+          "bytes": 3467,
+          "sha256": "d611ed9f16120e80a050bef953d780555638679b1fe335b00da9512df6e2f947"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_trawler.rs2",
+          "bytes": 426,
+          "sha256": "c7da47e54d67ea13676d33723207e3a29011b18efb21c1b3f16aa2444dc4dee5"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_treasuretrails.rs2",
+          "bytes": 9662,
+          "sha256": "328a08d46cc0fa72ee12952f18716b3bb074376b96cf80e63ebc7f19a7668bfd"
+        },
+        {
+          "path": "scripts/_test/scripts/cheats/cheat_zone.rs2",
+          "bytes": 3179,
+          "sha256": "e7d3361d127eeb0369668aeae1646b293540c157ce689e73c7b2c3a269eecba4"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_cannon.rs2",
+          "bytes": 2399,
+          "sha256": "1035fdaa9a3e10e4e6eecf37973924f642847bdee11848fa1f5fd2eab3b9b912"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_duelarena.rs2",
+          "bytes": 1323,
+          "sha256": "9f26b36ad1c8dd3c465b7214986fe50951bb6affd7a0490df88783597dcca847"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_firemaking.rs2",
+          "bytes": 485,
+          "sha256": "6722d160c865101f5f42fde181685b2941394fa70504dc0a53b0e2bf767ce457"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_fishing.rs2",
+          "bytes": 729,
+          "sha256": "4e917d3c73ce87cc8299b95f6906763c1736e2e20d6f312ea2342df4f9cdb1bf"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_gnomecooking.rs2",
+          "bytes": 4817,
+          "sha256": "b0ccc8c3ae7e23060881c2ff46611f82d5622becf4b3cac6008efece5f0a6672"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_kalphite.rs2",
+          "bytes": 7505,
+          "sha256": "ba348709f0238cf5edd5fe71b37286207fa8a63bf3b368a0e48d2f42bc015d5f"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_miscquest.rs2",
+          "bytes": 2580,
+          "sha256": "b8a646a4024fd6a7e084424d69e224760e3e040fa76ae4469e2a0452bf5a6d20"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_others.rs2",
+          "bytes": 1164,
+          "sha256": "3a98dc2e66aa0147b611888691ba1c9468fd2d40ff70db1ecca3eb96dc6750c1"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_quests.rs2",
+          "bytes": 27480,
+          "sha256": "72466fe0b1bf9296826768238f7074d87c40a7f6f9275631c2eb64100bac7a33"
+        },
+        {
+          "path": "scripts/_test/scripts/debug/debug_specs.rs2",
+          "bytes": 445,
+          "sha256": "5d198d08674871364f7bc53ce5a89f4472552fa927dc30e4ddfe4b4cb518394c"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/bugs.rs2",
+          "bytes": 1150,
+          "sha256": "c6d39dfbb676fd57f1feeb20f1368bce893cbf9abb73d091924f070a4002a380"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug.rs2",
+          "bytes": 510,
+          "sha256": "e7649666cbc5b97b3aa12b53e343bdfa9b2fe6c29f13be22ac7947ce34d63334"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_addobj.rs2",
+          "bytes": 945,
+          "sha256": "87e624e1eecee7dcc4d6fedabff6c6384244ee8f5df4fa1dbcbb4d72432c18f7"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_busy.rs2",
+          "bytes": 97,
+          "sha256": "cd0388c137b810b3065d2aac305830ef103228a0025f03b0f858023383f2ad86"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_coord.rs2",
+          "bytes": 223,
+          "sha256": "2a8136495374c3edb45ce4345cf567cf827a39deb612acb09993902383065661"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_delay.rs2",
+          "bytes": 121,
+          "sha256": "49861c24bb12f94cbfcbd6898fca884f0e4aa4bd9142508be2ae651cad4931f4"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_error.rs2",
+          "bytes": 44,
+          "sha256": "33d983f3261282995f82aea731e1f8ef4a885548480b6adfae836cf3bd9a6c36"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_findhero.rs2",
+          "bytes": 303,
+          "sha256": "1ec840f94536e827baf16591d76709c4ee36d4894528990ad6b4d424874dd654"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_huntall.rs2",
+          "bytes": 352,
+          "sha256": "4114dd0f724c22805153e4095096528f764ecac935a71d7182fa5c18f5fa7791"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_interface.rs2",
+          "bytes": 133,
+          "sha256": "c09b4291485721e1786a034884c1e6e197ef42d3667471e545cdf1be9da7c7b4"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_killme.rs2",
+          "bytes": 125,
+          "sha256": "f9b75fcdb017c789d44eea4e413e42d47b8124f47c29e58e8f6f6b8048345907"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_lineofwalk.rs2",
+          "bytes": 611,
+          "sha256": "a3e18475ba887d7b50f7154d67969669566405cfdb548cfb708457955617441b"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_loc.rs2",
+          "bytes": 483,
+          "sha256": "65dd8461f5ff023ce90aefc63ba39cd703c6e048638813315b0e3fc4601acb26"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_logout.rs2",
+          "bytes": 114,
+          "sha256": "c61bb3e64a029e1e05e3ea3ac4cd39ba50a0d838222efc2f15be8ac5a9c131b6"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_map_blocked.rs2",
+          "bytes": 508,
+          "sha256": "9f59dbd4f6154a332c8ba0fb0b24a74d6f4827d27887136517cea5b4a83805f1"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_map_findsquare.rs2",
+          "bytes": 451,
+          "sha256": "b1ba7d5b2a52c136e57ee4b04e31756092cb4c35b22c007f6cdd6e4eea642509"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_map_playercount.rs2",
+          "bytes": 101,
+          "sha256": "0b9ae6601da535c1d6e1c5eb66106cade1227c512bf37ccf714143e8d5291e7e"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_npc.rs2",
+          "bytes": 805,
+          "sha256": "92acc2fbf831774a1b88627b1b2e9cf1f84f2fd02c817d92ca94a4abdd3c0f46"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_npc_huntall.rs2",
+          "bytes": 660,
+          "sha256": "c5336ba8a2dc322de7e9d3e0c526c010cdf17aa86fc74db57a63a4997cfcc162"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_objdelayed.rs2",
+          "bytes": 307,
+          "sha256": "31492f859b6eef751fd3d577983efd7309eaa4084fe07c96492e9e0cd21fed63"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_players.rs2",
+          "bytes": 94,
+          "sha256": "9795c03112050cf9eb9cdc3f7b4c820d423dff9425a984abf9cca041c48cff2c"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_pos.rs2",
+          "bytes": 163,
+          "sha256": "cd4ed0cb7d9cc6f7129273156d526ba60a7e10b480e6425defdc82c8d943eb7a"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_queue.rs2",
+          "bytes": 703,
+          "sha256": "19dc405726890b4dabea167b5e633d8296fde16ab44623532a0c20114f93a7e9"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_seq.rs2",
+          "bytes": 284,
+          "sha256": "135c91cf38620bbc23cc11d3f6c2ed562a70b3b2bcfafd7809083c5a6c2db7ce"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_spotanim.rs2",
+          "bytes": 188,
+          "sha256": "8685534c00359b16979f59ab44c14bb513e724e98ce07fa287782f8742b0141f"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_stat.rs2",
+          "bytes": 313,
+          "sha256": "a8496fa7a234cb3adb3feeecd454f5634a3a1307a8828891cbdee96168c68eef"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_walktrigger.rs2",
+          "bytes": 431,
+          "sha256": "27ff753f69d472e22f1903db0572a613a69c87faf2579cb30d36d5570649459c"
+        },
+        {
+          "path": "scripts/_test/scripts/engine/debug_zone.rs2",
+          "bytes": 207,
+          "sha256": "01e4ce5da25a6106cf456e338323ce2cf5a6364ffe487f213cf4e133e622f762"
+        },
+        {
           "path": "scripts/_unpack/225/all.npc",
           "bytes": 109749,
           "sha256": "a1fac9f721daab99848f0cb30d8eb59ee880ed01a6ce095cd5ee28496cbc3a13"
         },
         {
-          "path": "scripts/areas/area_kalphite/configs/kalphite.npc",
-          "bytes": 5651,
-          "sha256": "619c213282f6485e2687a75b1dd61b0b69e712ff058aea658d1fbed59b88835f"
+          "path": "scripts/_unpack/244/all.npc",
+          "bytes": 1447,
+          "sha256": "9ff52a2dd3939a4805f320572a33a9ee328d842fc74965f313f8688ab10bc01b"
         },
         {
-          "path": "scripts/drop tables/scripts/giant.rs2",
-          "bytes": 2248,
-          "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
+          "path": "scripts/_unpack/254/all.npc",
+          "bytes": 2320,
+          "sha256": "1afce156993be3d45bb3d011907e31b0c611cdad6e773d8fc848a4cf60fb06a7"
         },
         {
-          "path": "scripts/drop tables/scripts/moss_giant.rs2",
-          "bytes": 2573,
-          "sha256": "292fd7e715a913740bcb305114d20c0ed9135abcdb9eb7bda431ea46c8b7a885"
+          "path": "scripts/_unpack/274/all.npc",
+          "bytes": 5173,
+          "sha256": "2137397bbabef022477e61a591816b776fd25bd170e592b3bd2e43634d692950"
         },
         {
-          "path": "scripts/drop tables/scripts/fire_giant.rs2",
-          "bytes": 2011,
-          "sha256": "405c5508bd5f8f4002dd2ea58bec6b05f013f1638ed7f57ea913e4c848907e3b"
+          "path": "scripts/_unpack/289/all.npc",
+          "bytes": 11226,
+          "sha256": "1d2f43289b2a6e4cca36fa83d424eb3e227a526e47095bd0c7086a84b7f2a677"
         },
         {
-          "path": "scripts/drop tables/scripts/green_dragon.rs2",
-          "bytes": 2051,
-          "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+          "path": "scripts/areas/area_alkharid/configs/alkharid.npc",
+          "bytes": 9631,
+          "sha256": "a201f3acd8d5cada312a19b8268677d5a9b1d5d26127df780de4ef7f92522ea7"
         },
         {
-          "path": "scripts/drop tables/scripts/kalphite_queen.rs2",
-          "bytes": 4036,
-          "sha256": "5e1c42893abcd571c656e417e700a9a70319919b0c35e7725ba3cadaba120865"
-        },
-        {
-          "path": "scripts/drop tables/scripts/shared_droptables.rs2",
-          "bytes": 3889,
-          "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
-        },
-        {
-          "path": "scripts/general/scripts/quests.rs2",
-          "bytes": 17588,
-          "sha256": "a9b2012c78dd7185c64a5b5c1215413a816dcff18177fe9b9e7a8ef45c19e7b6"
-        },
-        {
-          "path": "scripts/general/configs/quest.constant",
-          "bytes": 3295,
-          "sha256": "767678ee7d9aa2afd75f4b51165883e8e7e2273fd8224cbcf6b341073142ee52"
-        },
-        {
-          "path": "scripts/player/interfaces/questlist.if",
-          "bytes": 14857,
-          "sha256": "2f0b0e1eda82752ef657ed8888c29198581b88b9651497cde95a33b6bf50cc5c"
-        },
-        {
-          "path": "scripts/quests/quest_cook/scripts/quest_cook.rs2",
-          "bytes": 4197,
-          "sha256": "acc3d72665ea7d818d9d876252fd61ab94170cb6a0603c75a743cd15bcef613a"
-        },
-        {
-          "path": "scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2",
-          "bytes": 19822,
-          "sha256": "4a659081a07248ad23d8d8baa8b02d8355d64f7b87d25e1a55a1f6906ce24509"
-        },
-        {
-          "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
-          "bytes": 3670,
-          "sha256": "31375f0b99e0aaf5a07765cc1867100cf8280d602812166fcfba1b65d8d9e05c"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_easy.enum",
-          "bytes": 2175,
-          "sha256": "ff601cc4b5f59860c880885f1669e755ecfc9e4cfafdda151875d97c6a278a0c"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_easy.obj",
-          "bytes": 21380,
-          "sha256": "3bcbbd8764775c504ac22be1b00239ccf85c26d779a81dfee0f8c4577fc70a0f"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_medium.enum",
-          "bytes": 2026,
-          "sha256": "238e689ccf07eface54bb1ad2cb0e447bcaefd691254b110ef3585cdbefdd1a2"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_medium.obj",
-          "bytes": 24336,
-          "sha256": "5dd4c37eb2cfad0089a9689f7a09348fb0c3820a250a48929fd900da645f00c1"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_hard.enum",
-          "bytes": 2170,
-          "sha256": "60b4a013e99de6126b7a2088fd53fd0ab2d6c935e1e29f37eb071ead1bc9d85d"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_hard.obj",
-          "bytes": 32572,
-          "sha256": "1879300a884133a163cf3cf6ab7f3b4731aa93dace18198b2f5a3d73711748b4"
-        },
-        {
-          "path": "scripts/minigames/game_trail/configs/trail_casket.obj",
-          "bytes": 698,
-          "sha256": "f7477fc1204e759617d0d1f7c62a5f1c7ca91cc088b777298c4a646ccb937364"
+          "path": "scripts/areas/area_alkharid/configs/border_guard.npc",
+          "bytes": 1591,
+          "sha256": "a995b66a5b9c0af2658eaedb8886e1989ccb2c316b8b11df6b1671b21542f12b"
         },
         {
           "path": "scripts/areas/area_alkharid/scripts/al_kharid_warrior.rs2",
@@ -7885,6 +8015,21 @@
           "path": "scripts/areas/area_alkharid/scripts/zeke.rs2",
           "bytes": 1145,
           "sha256": "6475640c298dd7e0bfd2e418af130fb300423cd40eab02b3c195be7e49d093d0"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_east/configs/ardougne_east.npc",
+          "bytes": 16653,
+          "sha256": "de614abb89eb9e751636778749f4d98f6ebc5ea101aafd9237fe3ed9e0cac5cf"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_east/configs/legends_guild/legends_guild.npc",
+          "bytes": 5203,
+          "sha256": "0cfaf9aa30698773271587ee5bf8dedbcca57b71ebcdeb9648bc023fd74ecb9b"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_east/configs/port_khazard/port_khazard.npc",
+          "bytes": 703,
+          "sha256": "e4fbc2df4eb6f40e59e30abbf1806d0c7ead2584445b6864a01d7b590285776e"
         },
         {
           "path": "scripts/areas/area_ardougne_east/scripts/aemad.rs2",
@@ -8037,6 +8182,81 @@
           "sha256": "9ea59554cc52d71ebfeac16f720aa420287be48b191e6d8192e61aaa259b4eb7"
         },
         {
+          "path": "scripts/areas/area_ardougne_west/configs/carla.npc",
+          "bytes": 501,
+          "sha256": "8c91aa9cddd546c3b18944bca88ed35168efd4d09ebf5a3540a5e67ee8474534"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/chadwell.npc",
+          "bytes": 543,
+          "sha256": "3b6aacfc832be830860137048001ecd27d0a58192fd6d585c6b2657fbaf893f6"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/child.npc",
+          "bytes": 661,
+          "sha256": "50b0289ed9ef585d2d33aefbc13fd957e41d9606fc028a29f3c208a6224707d7"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/civilian.npc",
+          "bytes": 1272,
+          "sha256": "4bd840383db5731eb849f2cfebc2ea67d24e318c7ca755a6b9d2a286eeeee541"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/clerk.npc",
+          "bytes": 609,
+          "sha256": "e51908b77491680e95de378ad605721d153829c9907d565a2cd8f837ca4137f1"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/darkmage.npc",
+          "bytes": 486,
+          "sha256": "c5e70c3f951ae44523400d43f8bfa922fc2525e6abeeaf767fd469bed5ab1e2b"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/jethick.npc",
+          "bytes": 479,
+          "sha256": "01609640323fccedfe480f5043be29f00af086e2d1ab36bb7a2360ad70420598"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/kilron.npc",
+          "bytes": 473,
+          "sha256": "4b74610b6bf0dbfca06ce842000de87d30ad0a27c2553134fcdb53080c0846b2"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/man.npc",
+          "bytes": 3468,
+          "sha256": "7ce8cc48b8b2f9cd42c0e8dba4b3e1d1f0d1d17da97cc70cfb9dda7c7cec1206"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/mourner.npc",
+          "bytes": 6165,
+          "sha256": "996ae8d9660130a4caccb97ff6476ac3e76d5edceb5ba45fab4ffc311cf0a078"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/nurse_sarah.npc",
+          "bytes": 482,
+          "sha256": "463541e0d35a0ffc6566ca7fc6db0522cdf4d9817f77a28cfd4e53dcd389a93e"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/omart.npc",
+          "bytes": 539,
+          "sha256": "7b98de3e13c8150c005870b5ed5b909117b0fa9978c2c13573246af56c575547"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/priest.npc",
+          "bytes": 453,
+          "sha256": "be7a48257e2b08bee0cc681db0b0e871e9d6607bb73cb9c451111ac6e1d15a39"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/recruiter.npc",
+          "bytes": 476,
+          "sha256": "c7f493bae5574c98867baad279749f2c0810f87fce3eb1cfb07749c552d3f56a"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_west/configs/woman.npc",
+          "bytes": 4294,
+          "sha256": "a023527f852fab9e5913aa25f346ed994bf5b73eabcaef0640b69fb7180090fe"
+        },
+        {
           "path": "scripts/areas/area_ardougne_west/scripts/carla.rs2",
           "bytes": 1857,
           "sha256": "b795f49ebda0853679ea036dbe58289896424b06ae42556f3481bdb65f5ac88b"
@@ -8117,6 +8337,11 @@
           "sha256": "a85bdda2db48851250762e26547a2a2de0a888b8eced871c21a75ad186526d8f"
         },
         {
+          "path": "scripts/areas/area_barbarian_outpost/configs/barbarian_outpost.npc",
+          "bytes": 2209,
+          "sha256": "e1c7c8ffa3ef514fc842e889e81b759ff1a12cd60cc8a01861fc0a6e294cc5fe"
+        },
+        {
           "path": "scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2",
           "bytes": 3448,
           "sha256": "08a18965d46c159c55a1552fda3a5975a2e7d2d6dc87c67043fefd3ea6f3d44b"
@@ -8130,6 +8355,11 @@
           "path": "scripts/areas/area_barbarian_outpost/scripts/outpost_gate.rs2",
           "bytes": 957,
           "sha256": "049a17d58dd603c16f15bdeec859c8ef2eadf461c5521f5e83b6b598f8cc3c86"
+        },
+        {
+          "path": "scripts/areas/area_barbarian_village/configs/barbarian_village.npc",
+          "bytes": 764,
+          "sha256": "8026e8fa8b0799486529f0a6c74b405ad4bf2ee10a26d402b34bf2c7371c5414"
         },
         {
           "path": "scripts/areas/area_barbarian_village/scripts/barbarian.rs2",
@@ -8150,6 +8380,11 @@
           "path": "scripts/areas/area_barbarian_village/scripts/peksa.rs2",
           "bytes": 1004,
           "sha256": "505c46e7014ee59d7667b85620b8986cbdaaa6676f34b116ea414870eb72ab63"
+        },
+        {
+          "path": "scripts/areas/area_brimhaven/configs/brimhaven.npc",
+          "bytes": 3203,
+          "sha256": "b99a1bd05cf11faab4963367ae0f1b39352ecf2a5a152d96bc89029820e35aec"
         },
         {
           "path": "scripts/areas/area_brimhaven/scripts/alfonse_the_waiter.rs2",
@@ -8227,6 +8462,11 @@
           "sha256": "8d9d5f5eca312b91556b7bd4ffff02c0339c64a049aab755baf07fb04765879d"
         },
         {
+          "path": "scripts/areas/area_camelot/configs/camelot.npc",
+          "bytes": 7494,
+          "sha256": "5978f88da9a238a031e9fa35ac1361837afe16f667d19a366202d0fc79fcdb87"
+        },
+        {
           "path": "scripts/areas/area_camelot/scripts/king_arthur.rs2",
           "bytes": 6461,
           "sha256": "d8bbe2f19605a68bfb9cdeb0da545520f11fff56be4e293576ad5a4de92849e8"
@@ -8277,6 +8517,11 @@
           "sha256": "59f3ac7eb1406d5fd17570347c2d298628e3146437ee2a155babba96f37d88a0"
         },
         {
+          "path": "scripts/areas/area_canifis/configs/canifis.npc",
+          "bytes": 13354,
+          "sha256": "ce4fbe453923f0b31de3ac1fcacef39d66fdd38bca642fa935899e592659edde"
+        },
+        {
           "path": "scripts/areas/area_canifis/scripts/barker.rs2",
           "bytes": 451,
           "sha256": "4c9bce7416e7ab467b411dc24c1111c74aefadbec818762e5319bb8245648a11"
@@ -8317,6 +8562,11 @@
           "sha256": "36cf12bdfc9a8bd2c80f456c2d0c44f193a65bbeb3b62a17200e7284e2f4a2dd"
         },
         {
+          "path": "scripts/areas/area_catherby/configs/catherby.npc",
+          "bytes": 3546,
+          "sha256": "51bbdd0ed107dbdf6dcf68ff7412aa28ecfe522c4948c6d6407b219b5812cdb0"
+        },
+        {
           "path": "scripts/areas/area_catherby/scripts/arhein.rs2",
           "bytes": 3064,
           "sha256": "bb4d861196299a9439888d0aad479bfd7c0ea50b60b3dac213cccded5fb38554"
@@ -8337,9 +8587,29 @@
           "sha256": "3b2e21bbb5f8f40d3713461a09ef78c0dc9d70fe327805b520f058f0602369c1"
         },
         {
+          "path": "scripts/areas/area_combat_training/configs/combat_training_camp.npc",
+          "bytes": 2813,
+          "sha256": "47afb71da60786b2e40958dbb0ca250305ed6af6cd670c483dc4b9dfa730a58e"
+        },
+        {
           "path": "scripts/areas/area_combat_training/scripts/combat_training_camp.rs2",
           "bytes": 2474,
           "sha256": "f89473fce311a37c2abec3253e213df8e566ff2f70d3bed9d88d9d2927f5d28c"
+        },
+        {
+          "path": "scripts/areas/area_desert/configs/bedabincamp.npc",
+          "bytes": 2522,
+          "sha256": "82178b54407e930c48232e709afbf2953a521af26c1bb896b4deef6ecf6f6a57"
+        },
+        {
+          "path": "scripts/areas/area_desert/configs/desert.npc",
+          "bytes": 1308,
+          "sha256": "a84e7cbfc119f2d81cbe3c91cb7dcff748fbf65b75aefbe65072da3b28ab2bdc"
+        },
+        {
+          "path": "scripts/areas/area_desert/configs/shantaypass.npc",
+          "bytes": 3075,
+          "sha256": "05b23ed9fd3ce7190f830cb95cdf0bb33d52d231f83acc24fc729b10c22f8ef5"
         },
         {
           "path": "scripts/areas/area_desert/scripts/bedabin_nomad.rs2",
@@ -8355,6 +8625,11 @@
           "path": "scripts/areas/area_desert/scripts/kharidian_cactus.rs2",
           "bytes": 2125,
           "sha256": "a4624701fa4a3ccd61f48d111f4ee2fa4a823e1bebeff4db61bbaf81bbf35123"
+        },
+        {
+          "path": "scripts/areas/area_draynor/configs/draynor.npc",
+          "bytes": 6703,
+          "sha256": "9ac903bbca199263ca85b828ac3cb23d958b9e531718d927fbc45007cf3dbef2"
         },
         {
           "path": "scripts/areas/area_draynor/scripts/aggie.rs2",
@@ -8427,6 +8702,11 @@
           "sha256": "eadf85dc0143975ed3d99e12f98902d305d3ba7cd6c3b79ee9fb1a5eb7c260fa"
         },
         {
+          "path": "scripts/areas/area_edgeville/configs/edgeville.npc",
+          "bytes": 2671,
+          "sha256": "a7261ba684bde7e5174845b4b3bc58fb27efddde522edc965e14d29aa0adde7e"
+        },
+        {
           "path": "scripts/areas/area_edgeville/scripts/edgeville_dungeon.rs2",
           "bytes": 1640,
           "sha256": "647593765ce152241d054683a664bf140acc1612e0d6b1326bff06ca8b1b0aae"
@@ -8440,6 +8720,11 @@
           "path": "scripts/areas/area_edgeville/scripts/oziach.rs2",
           "bytes": 9415,
           "sha256": "12a59be034ec66d9ef93092ac715cdafc04b93652e023552708cbaf7bbb27252"
+        },
+        {
+          "path": "scripts/areas/area_entrana/configs/entrana.npc",
+          "bytes": 2633,
+          "sha256": "187aa23b1579cea4d9deebd00f8a48c6e87a8d9e747a4b876360a8bb1cd3124e"
         },
         {
           "path": "scripts/areas/area_entrana/scripts/cave_monk.rs2",
@@ -8470,6 +8755,26 @@
           "path": "scripts/areas/area_entrana/scripts/monk_of_entrana.rs2",
           "bytes": 457,
           "sha256": "6763e73e7111bed14e5e5cc3df8c0e1035f5756ee76e5a08c634dbf1b133c4a3"
+        },
+        {
+          "path": "scripts/areas/area_falador/configs/dwarven_mine.inv",
+          "bytes": 1102,
+          "sha256": "55d857c26957896d617d01ec14318768997e4cd25ff47bf94a959138b4e1fa54"
+        },
+        {
+          "path": "scripts/areas/area_falador/configs/dwarven_mine.npc",
+          "bytes": 2250,
+          "sha256": "8d4990ea35f154442a6f180659d9ddf44fd8a705e8150869fa5ec6248d23a588"
+        },
+        {
+          "path": "scripts/areas/area_falador/configs/falador.npc",
+          "bytes": 9560,
+          "sha256": "367f4f8f48f85145ee7e3d04501117244038376c6991dfcab1b0fa0e8860ac51"
+        },
+        {
+          "path": "scripts/areas/area_falador/configs/goblin_village/goblin_village.npc",
+          "bytes": 2115,
+          "sha256": "0b9f9bead58f5fe4dcd36d3cfa204790d7f4e62449cfe6e8b93ac306330200d5"
         },
         {
           "path": "scripts/areas/area_falador/scripts/barmaid.rs2",
@@ -8567,6 +8872,11 @@
           "sha256": "9535a4fe4e1f6614c01d65ed625a9703319e6f377168427290f84af8bd797a85"
         },
         {
+          "path": "scripts/areas/area_fishing_platform/configs/fishing_platform.npc",
+          "bytes": 4536,
+          "sha256": "d69bfe8130949bbb492f0f3d33aa3aa2811194c6735825e0bb0e6880bf216830"
+        },
+        {
           "path": "scripts/areas/area_fishing_platform/scripts/bailey.rs2",
           "bytes": 3962,
           "sha256": "1abbf4940e0b5d5cfb8f78ff28af9803ea21d655707cf131f6230eb7c6a2038c"
@@ -8595,6 +8905,11 @@
           "path": "scripts/areas/area_fishing_platform/scripts/kent.rs2",
           "bytes": 1510,
           "sha256": "89ca4536e0d3d42bef7f178234c8fca47de96835f9ea7429b20e1542be05db64"
+        },
+        {
+          "path": "scripts/areas/area_gnome/configs/gnome.npc",
+          "bytes": 20121,
+          "sha256": "fe8db3fd1604009f6e8c4f98137cbef3d9eef911af522e706c2abf094fada51c"
         },
         {
           "path": "scripts/areas/area_gnome/scripts/aluft_gianne.rs2",
@@ -8742,6 +9057,11 @@
           "sha256": "41fbdfefd6ad11588ae1cdd6df121019ef9f5833b63e1eb429ae093b24dbab0e"
         },
         {
+          "path": "scripts/areas/area_kalphite/configs/kalphite.npc",
+          "bytes": 5651,
+          "sha256": "619c213282f6485e2687a75b1dd61b0b69e712ff058aea658d1fbed59b88835f"
+        },
+        {
           "path": "scripts/areas/area_kalphite/scripts/kalphite.rs2",
           "bytes": 833,
           "sha256": "110abebe1dd6f36106a6cfede6389e08a5e291cef78d0fd052bd88638fe1768d"
@@ -8770,6 +9090,11 @@
           "path": "scripts/areas/area_kalphite/scripts/kalphite_worker_spawn.rs2",
           "bytes": 711,
           "sha256": "47c3d312ef9763bdf14dde3890022a0b4d1fea5c419609519f44e0da963fa258"
+        },
+        {
+          "path": "scripts/areas/area_karamja/configs/karamja.npc",
+          "bytes": 14707,
+          "sha256": "90edda09d39774bce45914f10a9b818f0b3a0e1340495dd01d1902446e72d9ce"
         },
         {
           "path": "scripts/areas/area_karamja/scripts/banana_tree.rs2",
@@ -8837,6 +9162,11 @@
           "sha256": "ce0404681527607ebd3fac9ab47099cb34e2cd6962fddfa99dbcc84cedac1357"
         },
         {
+          "path": "scripts/areas/area_lostcity/configs/lostcity.npc",
+          "bytes": 3634,
+          "sha256": "24fdb4ec38ce2553a5361df486252e1d3de4c9925312aa6e3db77fd382f56aca"
+        },
+        {
           "path": "scripts/areas/area_lostcity/scripts/doorman.rs2",
           "bytes": 1667,
           "sha256": "883250964c4450848f52488706b446b2697eb864335e7d2d97056bd975170531"
@@ -8865,6 +9195,11 @@
           "path": "scripts/areas/area_lostcity/scripts/lunderwin.rs2",
           "bytes": 1155,
           "sha256": "7a419bb56dddca61fdd3bca60507b359af155662206e5d5a21beb93bc0b5d091"
+        },
+        {
+          "path": "scripts/areas/area_lumbridge/configs/lumbridge.npc",
+          "bytes": 7822,
+          "sha256": "d8db53cceb2403e95350a07f31b9b1561478ed43987619a522132eeec517aad7"
         },
         {
           "path": "scripts/areas/area_lumbridge/scripts/archer_zanaris.rs2",
@@ -8925,6 +9260,11 @@
           "path": "scripts/areas/area_lumbridge/scripts/wizard_zanaris.rs2",
           "bytes": 1182,
           "sha256": "37cffd61b293409d77a4f4d2486be8533b31d0a95d544b7c57173c966be48ac6"
+        },
+        {
+          "path": "scripts/areas/area_mage_arena/configs/mage_arena.npc",
+          "bytes": 8919,
+          "sha256": "e8b58523472b1fa6adb17dfa2532839469ffd81557be2efa32ee9d2940d1b8dd"
         },
         {
           "path": "scripts/areas/area_mage_arena/scripts/battle_mage.rs2",
@@ -9002,6 +9342,11 @@
           "sha256": "628517b82a33239ea9b82d76f554b6ddfdd60fc484e4bf0ca7b8f8f3de831585"
         },
         {
+          "path": "scripts/areas/area_miscellania/configs/miscellania.npc",
+          "bytes": 35446,
+          "sha256": "4b36ac1f20b0065237db52e0480874169693fcc1318d3a22e770d8c4b5c2fe29"
+        },
+        {
           "path": "scripts/areas/area_miscellania/scripts/etc_fish_monger.rs2",
           "bytes": 693,
           "sha256": "71d53b7cd41116955172f1b8d2d7e68f1a4d050b7f425b46b0440e7aec451dbf"
@@ -9067,6 +9412,11 @@
           "sha256": "88bd172a3b29e80cef3525a16d4cec971e7ddb576a4e35e1fd179659f4e345a9"
         },
         {
+          "path": "scripts/areas/area_mortmyre/configs/mortmyre.npc",
+          "bytes": 12348,
+          "sha256": "7d9c89ca8c10a7aa99bbdc42de82982e8d448c7fd924e0ff4640d157f2fba20c"
+        },
+        {
           "path": "scripts/areas/area_mortmyre/scripts/snail.rs2",
           "bytes": 1945,
           "sha256": "9247ec58c1dd4efd05527666f416ae7b0db177b260dfabf4dd4bc6f7fe2d9488"
@@ -9090,6 +9440,11 @@
           "path": "scripts/areas/area_paterdomus/scripts/paterdomus_members_gate.rs2",
           "bytes": 223,
           "sha256": "8b23031b59f99b380deea9214829d3fb89410d1d8d34209fb6cd0589123086e2"
+        },
+        {
+          "path": "scripts/areas/area_port_sarim/configs/port_sarim.npc",
+          "bytes": 8040,
+          "sha256": "fadc467769a1afa8a468d2bfbdcb8520abca77ced65d1f13658de2d6ffa73f0f"
         },
         {
           "path": "scripts/areas/area_port_sarim/scripts/bartender.rs2",
@@ -9152,6 +9507,11 @@
           "sha256": "32ec69de33115548cb4c54bbab68b4d103e4ef1d5fa1462cae90a10ca59484eb"
         },
         {
+          "path": "scripts/areas/area_rimmington/configs/rimmington.npc",
+          "bytes": 2829,
+          "sha256": "f439f406f9fbb837a7f0716bb71f0a3c0e2689030222b5d34c8510b8883417f6"
+        },
+        {
           "path": "scripts/areas/area_rimmington/scripts/hetty.rs2",
           "bytes": 4337,
           "sha256": "5d34db97d24e476f14a32528ecce9997659d5d5d347d301c5bf9be7c184d55f4"
@@ -9160,6 +9520,16 @@
           "path": "scripts/areas/area_rimmington/scripts/rommik.rs2",
           "bytes": 698,
           "sha256": "34fe156d1acff75b45bbabd4eadc94482b984df7f515c82fc7f5eb2ed13558ba"
+        },
+        {
+          "path": "scripts/areas/area_seers/configs/hemenster/hemenster.npc",
+          "bytes": 3370,
+          "sha256": "f28bbcc018ea893c35d0595b6a11cb41fc9a10eb5bcdfdbdf88f090ae27e9563"
+        },
+        {
+          "path": "scripts/areas/area_seers/configs/seers.npc",
+          "bytes": 1811,
+          "sha256": "7a1c51a3855342675a9232558fd299d3b6cec5dd19ccfea2982e5e7a346407b0"
         },
         {
           "path": "scripts/areas/area_seers/scripts/bartender.rs2",
@@ -9237,6 +9607,11 @@
           "sha256": "b5e084e744c6a34e5ce60d0682fc2e217a4eff0139b3d776a6b38f142d565347"
         },
         {
+          "path": "scripts/areas/area_shilo/configs/shilo.npc",
+          "bytes": 4257,
+          "sha256": "bb85a1f6bc6176fd0058a4643015403b1cffa986e0f2dff3030ebf503b715cf6"
+        },
+        {
           "path": "scripts/areas/area_shilo/scripts/fernahei.rs2",
           "bytes": 455,
           "sha256": "55e201c0d1fbe8d30e0e88ef6f367515ca9cba468b4cb4ae667ba60d2092a6b6"
@@ -9275,6 +9650,16 @@
           "path": "scripts/areas/area_shilo/scripts/yohnus.rs2",
           "bytes": 1836,
           "sha256": "be4e6cf6f089e68cd3ce5a5e1282ecf77ab1a1d413cdb2a28b22b9ac2ec2d6e5"
+        },
+        {
+          "path": "scripts/areas/area_taverly/configs/taverly.npc",
+          "bytes": 3832,
+          "sha256": "174fbc5b01fb96198fb040556abb36b6e353fc2c1a636166492f40d1047a247f"
+        },
+        {
+          "path": "scripts/areas/area_taverly/dungeon/configs/taverly_dungeon.npc",
+          "bytes": 2065,
+          "sha256": "2e06461c5445aa2c6a02e160077331fe6a8c41dd579a8ee5ff48557492fc5e98"
         },
         {
           "path": "scripts/areas/area_taverly/dungeon/scripts/jail_doors.rs2",
@@ -9350,6 +9735,16 @@
           "path": "scripts/areas/area_trollweiss/scripts/chill.rs2",
           "bytes": 763,
           "sha256": "69176867490f8e55116770100e53d584e1700cc2d7b5c0f532bdf0ebd70d468d"
+        },
+        {
+          "path": "scripts/areas/area_varrock/configs/champions_guild.npc",
+          "bytes": 1828,
+          "sha256": "78800d77285812db08731ddb51eed0df5dac1a514f26aaadc23f2df99b9e9846"
+        },
+        {
+          "path": "scripts/areas/area_varrock/configs/varrock.npc",
+          "bytes": 20753,
+          "sha256": "ad404120c8a443bb7a2fe8c9e004dc28f1fe5c5bcc63fb17534169a687cc9179"
         },
         {
           "path": "scripts/areas/area_varrock/scripts/apothecary.rs2",
@@ -9547,6 +9942,11 @@
           "sha256": "e1b52f26d203c38f97b63918cec9459164eb375fb03acb2cda3c57235d67e97e"
         },
         {
+          "path": "scripts/areas/area_white_wolf_mountain/configs/white_wolf_mountain.npc",
+          "bytes": 334,
+          "sha256": "761a0bf72c908cbfda7defa25e16ad5e9496290f7828d60eb9c1c822d2810c5d"
+        },
+        {
           "path": "scripts/areas/area_white_wolf_mountain/scripts/mountain_dwarf.rs2",
           "bytes": 6400,
           "sha256": "8d90b2ff47414bece43ee50732881f1ef9e8d161d23f32f44d6bf12cd22d63cf"
@@ -9555,6 +9955,16 @@
           "path": "scripts/areas/area_white_wolf_mountain/scripts/white_wolf_mountain.rs2",
           "bytes": 1138,
           "sha256": "55d6c7c8deead16d283182588cf3ae3750b5cb8ca58fa2496b78ae2c37f8f34e"
+        },
+        {
+          "path": "scripts/areas/area_wilderness/configs/bandit_camp.npc",
+          "bytes": 5791,
+          "sha256": "988da2dac4c3cf5507d23a60302b9f0e5760fd436862b0feea309b07739e7deb"
+        },
+        {
+          "path": "scripts/areas/area_wilderness/configs/king_dragon.npc",
+          "bytes": 861,
+          "sha256": "66b561f8234ec43835a9c4a42af0920154547f279054319f1cfd5b1bbad4f23b"
         },
         {
           "path": "scripts/areas/area_wilderness/scripts/bandit_camp_guards.rs2",
@@ -9602,6 +10012,11 @@
           "sha256": "061cda94db929e7dd75481c8e677f8957197a748cf8b747fefb7d65dbdb53928"
         },
         {
+          "path": "scripts/areas/area_wizard_tower/configs/wizard_tower.npc",
+          "bytes": 1897,
+          "sha256": "c3db7b616a885d8d95b9c70bd62facdf6213b960beaa0a3933c79e88c0965774"
+        },
+        {
           "path": "scripts/areas/area_wizard_tower/scripts/armourmaking_wizard.rs2",
           "bytes": 7924,
           "sha256": "547ede6b01eae4b35322b797837bc919a2b681261524953da5b3c3a55942d11d"
@@ -9625,6 +10040,21 @@
           "path": "scripts/areas/area_wizard_tower/scripts/wizard_mizgog.rs2",
           "bytes": 3769,
           "sha256": "be0964a18f63ddac01a2f9cb9198338b8faafacad229113ba37f6a06cc96b833"
+        },
+        {
+          "path": "scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc",
+          "bytes": 2008,
+          "sha256": "6e495dfc0f5324d476574141b5ce3e62bcdb5b7f0e87109c574928cb3982b261"
+        },
+        {
+          "path": "scripts/areas/area_yanille/configs/ogre.npc",
+          "bytes": 12603,
+          "sha256": "133e2f01effcbecd5068a135c71ae2487060610bbd9f9d1c36db63d4817b8680"
+        },
+        {
+          "path": "scripts/areas/area_yanille/configs/yanille.npc",
+          "bytes": 5678,
+          "sha256": "a2f108cddda406814ce64d2ddb5319b413ef14a601f5c58a88779a7e4d35e43f"
         },
         {
           "path": "scripts/areas/area_yanille/scripts/agility_dungeon.rs2",
@@ -9692,6 +10122,11 @@
           "sha256": "32b758cb09d8672d3c6b59b728883e9a3fcf2f4f74bbe43fa0eee1504a5edaad"
         },
         {
+          "path": "scripts/areas/areas_heroes_guild/configs/heroes_guild.npc",
+          "bytes": 1463,
+          "sha256": "cc29575c9c893af57eee1060df44e0638808ab46d7c1fd7165ed1257c569ec1c"
+        },
+        {
           "path": "scripts/areas/areas_heroes_guild/scripts/achietties.rs2",
           "bytes": 3908,
           "sha256": "171de70ac13aa75c884cfb9cca323dc4aa5e5e8cc21ed99c19e3493d3dc35daf"
@@ -9710,6 +10145,11 @@
           "path": "scripts/areas/areas_heroes_guild/scripts/heroes_entrance.rs2",
           "bytes": 468,
           "sha256": "9caab94be92cf54e3bc538ed15c97dc2bb5455dccd734e700af76a632a5e1cdc"
+        },
+        {
+          "path": "scripts/areas/monastery/configs/prayer_guild.npc",
+          "bytes": 1704,
+          "sha256": "4830c7983ac610cd139f87e358c154a9e67b1d6d89ec55f89166c54a559fe829"
         },
         {
           "path": "scripts/areas/monastery/scripts/abbot_langley.rs2",
@@ -9872,6 +10312,16 @@
           "sha256": "b8267c5ed123a54ef29580cdc9942ea73b69f529723ee0bce014d4ea64d73337"
         },
         {
+          "path": "scripts/drop tables/scripts/fire_giant.rs2",
+          "bytes": 2011,
+          "sha256": "405c5508bd5f8f4002dd2ea58bec6b05f013f1638ed7f57ea913e4c848907e3b"
+        },
+        {
+          "path": "scripts/drop tables/scripts/giant.rs2",
+          "bytes": 2248,
+          "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
+        },
+        {
           "path": "scripts/drop tables/scripts/giant_rat.rs2",
           "bytes": 207,
           "sha256": "32924987080245bc5cfd2cb890dc416ce30be0637b76c23c9ab21289027d1e34"
@@ -9885,6 +10335,11 @@
           "path": "scripts/drop tables/scripts/greater_demon.rs2",
           "bytes": 1895,
           "sha256": "31b6cbc89a72f3dba32e64c0092b2cc2e8dcc3ad0f2da891cfcb659c4e060813"
+        },
+        {
+          "path": "scripts/drop tables/scripts/green_dragon.rs2",
+          "bytes": 2051,
+          "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
         },
         {
           "path": "scripts/drop tables/scripts/grip.rs2",
@@ -9957,6 +10412,11 @@
           "sha256": "ae1e62169a2a056456e69eb114ce32aa44ae9cf265e9cc9910005cd4cfd0e92a"
         },
         {
+          "path": "scripts/drop tables/scripts/kalphite_queen.rs2",
+          "bytes": 4036,
+          "sha256": "5e1c42893abcd571c656e417e700a9a70319919b0c35e7725ba3cadaba120865"
+        },
+        {
           "path": "scripts/drop tables/scripts/kalphite_soldier.rs2",
           "bytes": 1758,
           "sha256": "270a4477dd499c34c49aeffd3789235190ee1ea5692d4bf1897baabc8335680f"
@@ -9975,6 +10435,11 @@
           "path": "scripts/drop tables/scripts/man.rs2",
           "bytes": 2051,
           "sha256": "84dcc1682fb63c8946022c85f6bd47325b7f1a48fb468b52adcb1b1dc67e2110"
+        },
+        {
+          "path": "scripts/drop tables/scripts/moss_giant.rs2",
+          "bytes": 2573,
+          "sha256": "292fd7e715a913740bcb305114d20c0ed9135abcdb9eb7bda431ea46c8b7a885"
         },
         {
           "path": "scripts/drop tables/scripts/mountain_troll.rs2",
@@ -10040,6 +10505,11 @@
           "path": "scripts/drop tables/scripts/shadow_warrior.rs2",
           "bytes": 1417,
           "sha256": "dce435f088a72a014fa216832b1aac43e86ab97796b95443b4c2d39f9f083cbc"
+        },
+        {
+          "path": "scripts/drop tables/scripts/shared_droptables.rs2",
+          "bytes": 3889,
+          "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
         },
         {
           "path": "scripts/drop tables/scripts/skeleton.rs2",
@@ -10110,6 +10580,16 @@
           "path": "scripts/engine.rs2",
           "bytes": 53790,
           "sha256": "78d98ea82ce9332ab3ca30fdb2ddbf82cf02508dfba85635bb11839b8f230843"
+        },
+        {
+          "path": "scripts/general/configs/quest.constant",
+          "bytes": 3295,
+          "sha256": "767678ee7d9aa2afd75f4b51165883e8e7e2273fd8224cbcf6b341073142ee52"
+        },
+        {
+          "path": "scripts/general/configs/quest.enum",
+          "bytes": 1473,
+          "sha256": "69114ff5cc1507268f49512061a7eabd15721d43050f0065b515f73301c2b90f"
         },
         {
           "path": "scripts/general/scripts/book.rs2",
@@ -10250,6 +10730,11 @@
           "path": "scripts/general/scripts/player_count.rs2",
           "bytes": 193,
           "sha256": "a4e943bf24df1992458590e914ab49dbda9a13c7209ec902e3a2957de32371f9"
+        },
+        {
+          "path": "scripts/general/scripts/quests.rs2",
+          "bytes": 17588,
+          "sha256": "a9b2012c78dd7185c64a5b5c1215413a816dcff18177fe9b9e7a8ef45c19e7b6"
         },
         {
           "path": "scripts/general/scripts/scroll.rs2",
@@ -10422,9 +10907,19 @@
           "sha256": "61e3970aa1fca118221d953155476c3da17e5405d166fd1867ffc08b0f681c15"
         },
         {
+          "path": "scripts/holidayevents/xmas2004/configs/santa_clause.npc",
+          "bytes": 747,
+          "sha256": "b7e8c16c56bb1812d256cfa807a40f9c030fbf2e2b3bf13acea9c5d0b400fcdf"
+        },
+        {
           "path": "scripts/holidayevents/xmas2004/scripts/xmas2004.rs2",
           "bytes": 2264,
           "sha256": "bf16ca8c2f1945594f3e622d627de9cb7eed2a5758d8df416a521494447baed3"
+        },
+        {
+          "path": "scripts/interface_bank/configs/banker.npc",
+          "bytes": 3785,
+          "sha256": "def84147c0f951f2fb1b5a6861f9a343c9f80ee2d050332882c7a96704c5ff40"
         },
         {
           "path": "scripts/interface_bank/scripts/bank.rs2",
@@ -10647,6 +11142,11 @@
           "sha256": "f5eca607312a8c953d156129b2a2c18b411d0e314c37c9e313b2e17e5602c9ca"
         },
         {
+          "path": "scripts/macro events/configs/antimacro.npc",
+          "bytes": 31464,
+          "sha256": "1c434d07309cb29439ced54bfc68573a78ddd83e98d40d48549dec0438b45c44"
+        },
+        {
           "path": "scripts/macro events/scripts/fishing/macro_event_big_fish.rs2",
           "bytes": 1421,
           "sha256": "d18bdf2be90b8e8e50f35e3b6e9d61b53cac6dc71f692f7c29cf515f95cdb285"
@@ -10780,6 +11280,11 @@
           "path": "scripts/macro events/scripts/woodcutting/macro_event_woodcutting.rs2",
           "bytes": 660,
           "sha256": "d59b9d55ecb1cdd570d28d784adee4de999532fe98239a702bfd85e18a6e840c"
+        },
+        {
+          "path": "scripts/minigames/game_agilityarena/configs/agilityarena.npc",
+          "bytes": 1246,
+          "sha256": "d3aabad28393cb10a3ba0d89f737acfa19453677b42e939c54b9ac026e3a9735"
         },
         {
           "path": "scripts/minigames/game_agilityarena/scripts/agilityarena.rs2",
@@ -10917,6 +11422,11 @@
           "sha256": "270a26b715ee4e5cd44e7ad32bf0b941f6d65f08f77b35d80c7158724001db13"
         },
         {
+          "path": "scripts/minigames/game_duelarena/configs/duelarena.npc",
+          "bytes": 8615,
+          "sha256": "a0ea8b63c7eb1e0a859f30f57b9e15ef7ca23320d0614342cfddefcd8b487f4a"
+        },
+        {
           "path": "scripts/minigames/game_duelarena/scripts/duel_arena.rs2",
           "bytes": 41379,
           "sha256": "9f3ed124340835cd2b41e6aff20028232a2024e20b59dab6eccf55a29f3412dc"
@@ -11007,6 +11517,11 @@
           "sha256": "fe346485c6d622d03ea5a999cc49d337d2d136ee19b3f1a2f3438190e22757c0"
         },
         {
+          "path": "scripts/minigames/game_gamesroom/general/configs/boardgames.npc",
+          "bytes": 1269,
+          "sha256": "32bf287208b6966805d8d4a8be028d4eda169d195422cf7f811e001c545240e0"
+        },
+        {
           "path": "scripts/minigames/game_gamesroom/general/scripts/boardgames.rs2",
           "bytes": 12517,
           "sha256": "55ed996096158d1f1037efaded46ab1c7103709523f9d71e4eefcf5a26225401"
@@ -11020,6 +11535,11 @@
           "path": "scripts/minigames/game_gamesroom/general/scripts/boardgames_barmaid2.rs2",
           "bytes": 101,
           "sha256": "952d731a23911e188e93bd0db89ffa12623c58921c13397a394c43157953ffd9"
+        },
+        {
+          "path": "scripts/minigames/game_gnomeball/configs/gnomeball.npc",
+          "bytes": 6614,
+          "sha256": "c45fc5c9d81028b573b0ea0146b75ab715184470804d7bed4d04bb018dbd7934"
         },
         {
           "path": "scripts/minigames/game_gnomeball/scripts/gnome_baller.rs2",
@@ -11077,6 +11597,11 @@
           "sha256": "8fdba5b10af4958e58e12adef544179688bf5f5107466c2e4dcc63803370cdf6"
         },
         {
+          "path": "scripts/minigames/game_mortton/configs/mortton_shades.npc",
+          "bytes": 6939,
+          "sha256": "3a92693b034109d000d6bd169292a81b607b67fa7d7f47190044ff985012bb2c"
+        },
+        {
           "path": "scripts/minigames/game_mortton/scripts/flamtaer_temple.rs2",
           "bytes": 12071,
           "sha256": "a39bb78f678d1191481a78a29efe0922451bc932690a42c6548afd8fa93566c4"
@@ -11095,6 +11620,11 @@
           "path": "scripts/minigames/game_mortton/scripts/mortton_shades.rs2",
           "bytes": 9052,
           "sha256": "a51ab9048eba03adb56e3b858ab721d1da5a16e4fa9d196e043bf8929fd122c3"
+        },
+        {
+          "path": "scripts/minigames/game_partyroom/configs/partyroom.npc",
+          "bytes": 1963,
+          "sha256": "7ccfeafdade20aaa27a961fe41d9cc0a5fd6f85cf5d5310ba07fc79fa9b138a1"
         },
         {
           "path": "scripts/minigames/game_partyroom/scripts/party_pete.rs2",
@@ -11120,6 +11650,11 @@
           "path": "scripts/minigames/game_partyroom/scripts/partyroom_megan.rs2",
           "bytes": 1205,
           "sha256": "a231e6a03a1c21e39d7e4d0ce59fbc4ef46a61592381813a7b5f5b4dd03c5d62"
+        },
+        {
+          "path": "scripts/minigames/game_ranging/configs/ranging.npc",
+          "bytes": 11605,
+          "sha256": "362e5617d52d7341ee5dc48ab88ffa55e6a8d07ab804c9c12cef32d2483909aa"
         },
         {
           "path": "scripts/minigames/game_ranging/scripts/armour_salesman.rs2",
@@ -11170,6 +11705,46 @@
           "path": "scripts/minigames/game_ranging/scripts/tribal_weapon_salesman.rs2",
           "bytes": 472,
           "sha256": "367a02425e780a65fc7636f9205f91d9a03e0d431a72ab8dd7f573093d041cf1"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail.npc",
+          "bytes": 1660,
+          "sha256": "c887dd15b12fb6817b3c7df5afe22ab80daa8f07bc69863a590b8c1b4d27a4d8"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_casket.obj",
+          "bytes": 698,
+          "sha256": "f7477fc1204e759617d0d1f7c62a5f1c7ca91cc088b777298c4a646ccb937364"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.enum",
+          "bytes": 2175,
+          "sha256": "ff601cc4b5f59860c880885f1669e755ecfc9e4cfafdda151875d97c6a278a0c"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.obj",
+          "bytes": 21380,
+          "sha256": "3bcbbd8764775c504ac22be1b00239ccf85c26d779a81dfee0f8c4577fc70a0f"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.enum",
+          "bytes": 2170,
+          "sha256": "60b4a013e99de6126b7a2088fd53fd0ab2d6c935e1e29f37eb071ead1bc9d85d"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.obj",
+          "bytes": 32572,
+          "sha256": "1879300a884133a163cf3cf6ab7f3b4731aa93dace18198b2f5a3d73711748b4"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.enum",
+          "bytes": 2026,
+          "sha256": "238e689ccf07eface54bb1ad2cb0e447bcaefd691254b110ef3585cdbefdd1a2"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.obj",
+          "bytes": 24336,
+          "sha256": "5dd4c37eb2cfad0089a9689f7a09348fb0c3820a250a48929fd900da645f00c1"
         },
         {
           "path": "scripts/minigames/game_trail/scripts/easy/trail_clue_easy.rs2",
@@ -11235,6 +11810,11 @@
           "path": "scripts/minigames/game_trail/scripts/trail_sextant.rs2",
           "bytes": 7909,
           "sha256": "bf96fe552def4f3abbb06c397ba8f98ebe5dc318a37cfcf6aead307ac0cb6778"
+        },
+        {
+          "path": "scripts/minigames/game_trawler/configs/trawler.npc",
+          "bytes": 4229,
+          "sha256": "0acb905946f7674520760618c89d94f1b4b859722b6e1ce798529b6ca83b8bbe"
         },
         {
           "path": "scripts/minigames/game_trawler/scripts/murphy.rs2",
@@ -11397,6 +11977,31 @@
           "sha256": "c4f29a755765a782baf4c7ec6c8e88049375584a03e75c51f266d31c7ad45615"
         },
         {
+          "path": "scripts/player/configs/consumption/consume.dbtable",
+          "bytes": 400,
+          "sha256": "501ebc5625d14d3cc719df05d72cbed0aaa8d97547469bbcd5787a2b6cbc627f"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_effects.dbrow",
+          "bytes": 9036,
+          "sha256": "d97a0404917ff92534d134ac27ae0035430eac943ef65a38a785a0b60f4ad269"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_messages.dbrow",
+          "bytes": 25448,
+          "sha256": "406d47d6ca916085e994ffa6b7155a6b9270cc2a6c00b10b34606aea6f715b2f"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_normal.dbrow",
+          "bytes": 5825,
+          "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
+        },
+        {
+          "path": "scripts/player/interfaces/questlist.if",
+          "bytes": 14857,
+          "sha256": "2f0b0e1eda82752ef657ed8888c29198581b88b9651497cde95a33b6bf50cc5c"
+        },
+        {
           "path": "scripts/player/playerwalk.rs2",
           "bytes": 572,
           "sha256": "e041b767927828da469cd21c447a569a38807e56d9c4d8cf0813c25ed4a1fc74"
@@ -11440,6 +12045,11 @@
           "path": "scripts/player/scripts/consumption/effects/scripts/ape_atoll_food.rs2",
           "bytes": 549,
           "sha256": "332eaec1c605fd650a17a890fcab814237d99605a281f685c048d2dcc7a39004"
+        },
+        {
+          "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
+          "bytes": 6851,
+          "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
         },
         {
           "path": "scripts/player/scripts/consumption/effects/scripts/kebab.rs2",
@@ -11552,6 +12162,11 @@
           "sha256": "200fc009c22d62249ad951a5a08945424846e58aa842da441535b90baed7c47b"
         },
         {
+          "path": "scripts/quests/quest_arena/configs/quest_arena.npc",
+          "bytes": 11147,
+          "sha256": "b47c13ea146e4db760b94c7325f962686e4a751d822582fc3b5a0133d5a0daf6"
+        },
+        {
           "path": "scripts/quests/quest_arena/scripts/arena_journal.rs2",
           "bytes": 16535,
           "sha256": "e4398ef1baaf449f3f29d77097850643d3687bb69b750fa49ef21d9b36791ce0"
@@ -11622,6 +12237,16 @@
           "sha256": "0f6efc2e4456d412f2c958d5de2b61d0f25fc19fc0edab0bb949b0229bfb0b02"
         },
         {
+          "path": "scripts/quests/quest_arthur/configs/beggar.npc",
+          "bytes": 535,
+          "sha256": "d94b21766614e5a6f02f0d1f2bdea44de8e4a84c914651e53bd5c991a1443380"
+        },
+        {
+          "path": "scripts/quests/quest_arthur/configs/keep_le_faye.npc",
+          "bytes": 2492,
+          "sha256": "ff9438d71ec49e3221e818f10dc7725c6fd4dc1917bf38faf21b872e7c350b19"
+        },
+        {
           "path": "scripts/quests/quest_arthur/scripts/arthur_journal.rs2",
           "bytes": 9062,
           "sha256": "5fdb7b920ba86ee2d0f955e630188740b0a678b7f40010e965d4fb402f9502d1"
@@ -11640,6 +12265,11 @@
           "path": "scripts/quests/quest_arthur/scripts/sir_mordred.rs2",
           "bytes": 3619,
           "sha256": "80bd4e4032faf83bf79d854a838221208c9fb82c1a605437386c9a4b89b2cd4b"
+        },
+        {
+          "path": "scripts/quests/quest_ball/configs/witches_house.npc",
+          "bytes": 3161,
+          "sha256": "ecfef5df548013c2f0562297f8550b58fc7d2ec229827e82562645a37f53b2cc"
         },
         {
           "path": "scripts/quests/quest_ball/scripts/ball_journal.rs2",
@@ -11670,6 +12300,11 @@
           "path": "scripts/quests/quest_barcrawl/scripts/quest_barcrawl.rs2",
           "bytes": 493,
           "sha256": "7854a6a0db6b7b0e2a1c75a3a8394d17e0cc0c6db945c2679bc992b38f7215e2"
+        },
+        {
+          "path": "scripts/quests/quest_biohazard/configs/quest_biohazard.npc",
+          "bytes": 5674,
+          "sha256": "cfebe45e0ed0ebaa12c14f20f0d9994668b3d31d753ba1ad669170738b5c7ae2"
         },
         {
           "path": "scripts/quests/quest_biohazard/scripts/biohazard_journal.rs2",
@@ -11732,6 +12367,11 @@
           "sha256": "0932bac7586022d54ca741262bdeacaf3a8e4d469bb75191e3868cd9660e5cd9"
         },
         {
+          "path": "scripts/quests/quest_blackknight/configs/quest_blackknight.npc",
+          "bytes": 2159,
+          "sha256": "ee92e0b4e396a9af64fa740231728381a87a71f9e4cd3472a63f915a5fcbc621"
+        },
+        {
           "path": "scripts/quests/quest_blackknight/scripts/blackknight_journal.rs2",
           "bytes": 2891,
           "sha256": "c03b5edd522bc1c39f818e9549ff0a4a3dacc999a9dff907fdc51ca4839cde30"
@@ -11745,6 +12385,11 @@
           "path": "scripts/quests/quest_blackknight/scripts/quest_blackknight.rs2",
           "bytes": 7437,
           "sha256": "0aa5fab2d31debb25f4a9707976d713281addf8842e85ceedf34df639cd769ce"
+        },
+        {
+          "path": "scripts/quests/quest_chompybird/configs/quest_chompybird.npc",
+          "bytes": 2228,
+          "sha256": "41e385324eb18cc72123bea086886fac8fab676d244baad4811efb3034a388ed"
         },
         {
           "path": "scripts/quests/quest_chompybird/scripts/bloated_toad.rs2",
@@ -11802,6 +12447,11 @@
           "sha256": "0f9a93031b17caa74865d877f4dd33700393ecee12918808cf517697d43b33e0"
         },
         {
+          "path": "scripts/quests/quest_cog/configs/quest_cog.npc",
+          "bytes": 482,
+          "sha256": "4f6ceff23867b0524dac07191d66ba67eead5cdacbeb1ab3c752b2b79ef702ba"
+        },
+        {
           "path": "scripts/quests/quest_cog/scripts/cog_journal.rs2",
           "bytes": 2737,
           "sha256": "8ef427d48fd3295d0180c815a777047c00c2d3ac22b1449de2b1e341d8e19ae8"
@@ -11847,6 +12497,16 @@
           "sha256": "07a888ceb94cb8ecb0d89c51781396c60e927c828a20f1fb21c7655516a0fd75"
         },
         {
+          "path": "scripts/quests/quest_cook/scripts/quest_cook.rs2",
+          "bytes": 4197,
+          "sha256": "acc3d72665ea7d818d9d876252fd61ab94170cb6a0603c75a743cd15bcef613a"
+        },
+        {
+          "path": "scripts/quests/quest_crest/configs/quest_crest.npc",
+          "bytes": 1208,
+          "sha256": "0bc27507549448ecbc7f2d17d11e48c57107695289e0109590738405a924601c"
+        },
+        {
           "path": "scripts/quests/quest_crest/scripts/crest_boot.rs2",
           "bytes": 1237,
           "sha256": "93d28105dd8a791b8efbe4d2df655ccb0e5276279a701e49d27d439850155a77"
@@ -11885,6 +12545,11 @@
           "path": "scripts/quests/quest_crest/scripts/quest_crest.rs2",
           "bytes": 4852,
           "sha256": "b75113af367bde3cfc4a9d2f20bee0fa3e98b718423144192ca16bd46bddc23a"
+        },
+        {
+          "path": "scripts/quests/quest_death/configs/quest_death.npc",
+          "bytes": 39206,
+          "sha256": "26bfbd48fb800e7d81c9d454fdb172648042643d6c1b0b1fa871d65b1cf5c30b"
         },
         {
           "path": "scripts/quests/quest_death/scripts/death_archer.rs2",
@@ -11937,6 +12602,11 @@
           "sha256": "0d286a80eae37bc717777a904c0404658fff92ee9619aaa34795c6e874e59e50"
         },
         {
+          "path": "scripts/quests/quest_demon/configs/demon.npc",
+          "bytes": 863,
+          "sha256": "a7b4c3f6ad4c15fb0a90369cf1a526eab5def292c216735abd16f3b03f86dd57"
+        },
+        {
           "path": "scripts/quests/quest_demon/scripts/delrith.rs2",
           "bytes": 2298,
           "sha256": "ed3cbe5e0411aaa64773b79ea9f67f49db5b544c5c457af44b2eb093b6d8a659"
@@ -11950,6 +12620,11 @@
           "path": "scripts/quests/quest_demon/scripts/demon_slayer.rs2",
           "bytes": 2049,
           "sha256": "2fbe0cdd5abde0638366e7e06620a58a801317023f9750d57efb9da6a687e7fe"
+        },
+        {
+          "path": "scripts/quests/quest_desertrescue/configs/desertrescue.npc",
+          "bytes": 8354,
+          "sha256": "591486205f146506d471d6dc0f253b691b8684d45ee1047b28d45afe1857e523"
         },
         {
           "path": "scripts/quests/quest_desertrescue/scripts/al_shabim.rs2",
@@ -12022,6 +12697,11 @@
           "sha256": "ed6355ac0a91740afa233750b643efbf30e2fee0f12f753ec37e8e5e1fc509cd"
         },
         {
+          "path": "scripts/quests/quest_dragon/configs/quest_dragon.npc",
+          "bytes": 5502,
+          "sha256": "c05bdd9999e5ff9837a8567c74ae2b040ac0a97d6d1cc7338664261e2af0d648"
+        },
+        {
           "path": "scripts/quests/quest_dragon/scripts/crandor.rs2",
           "bytes": 1744,
           "sha256": "b341da2bfac4ff17b6ff7d732e0477ccd1f8bc4ca4a4fc6ba4ed665aa2d4e230"
@@ -12087,6 +12767,11 @@
           "sha256": "09e61fb25b74abaddd2ada67982f81a23614e86709c1ffd05565848ffe0b6038"
         },
         {
+          "path": "scripts/quests/quest_druidspirit/configs/quest_druidspirit.npc",
+          "bytes": 2800,
+          "sha256": "bbf72bd3683b32a399d9301fb205832a04a095fdd1a40156545d0ba9b18b2a1e"
+        },
+        {
           "path": "scripts/quests/quest_druidspirit/scripts/druidspirit_journal.rs2",
           "bytes": 21382,
           "sha256": "395f75a64586fb841b12ce047d58755895c281f4c0f9dd54e6019c4cb50fd0cc"
@@ -12127,6 +12812,11 @@
           "sha256": "5369ac1f2f1cf5b69bcc4e0e8cf59a77880de222590bb95b71b5ac00546a5c4c"
         },
         {
+          "path": "scripts/quests/quest_eadgar/configs/quest_eadgar.npc",
+          "bytes": 5138,
+          "sha256": "2175b2ef9e1d8284d9bace05f5d9093244ad3ce0c8450a2d01389c4711b36d64"
+        },
+        {
           "path": "scripts/quests/quest_eadgar/scripts/eadgar_druid_washing.rs2",
           "bytes": 1908,
           "sha256": "c6db6237ff48faa17fd916050b98bf9a1f9f67e601a5d805b78c4421faffd980"
@@ -12155,6 +12845,11 @@
           "path": "scripts/quests/quest_eadgar/scripts/quest_eadgar.rs2",
           "bytes": 27066,
           "sha256": "787fea2c6a1a096a5fdc770d7261f1ca0775bd782d306774d0c6059b5d61609d"
+        },
+        {
+          "path": "scripts/quests/quest_elemental_workshop/configs/quest_elemental_workshop.npc",
+          "bytes": 2824,
+          "sha256": "e9e7098a656befcbd013eb708380c8af536a3a5cb8cbb85b91dd8485780f7626"
         },
         {
           "path": "scripts/quests/quest_elemental_workshop/scripts/elemental_air.rs2",
@@ -12190,6 +12885,36 @@
           "path": "scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2",
           "bytes": 11688,
           "sha256": "86508821f5226f8de13ad948019a3c61cbacffc0ec39d237337d9f9e722ade11"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/alrena.npc",
+          "bytes": 610,
+          "sha256": "596f5ae4c2faa940721220d5964709c650dcf74873d0a366b2739b901af1b5aa"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/bravek.npc",
+          "bytes": 496,
+          "sha256": "cec95397aa3dfb4dc04d647c0391f5352e9308b33fb1556fffe7619d1394be29"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/edmond.npc",
+          "bytes": 554,
+          "sha256": "5054569b87982fab3a67b1f8685afefbf48e5eb68c8e151eceaffdca0055755a"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/elena.npc",
+          "bytes": 948,
+          "sha256": "1f623cf1d8c53ee55565180af37419a79f687240e55feb5bf3e81525b89d4d4e"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/mourner.npc",
+          "bytes": 500,
+          "sha256": "a0736846faf8b5b8576a24b00d33d3aef1075c38daa7d9024d28b65f5afc1280"
+        },
+        {
+          "path": "scripts/quests/quest_elena/configs/rehnisons.npc",
+          "bytes": 1641,
+          "sha256": "97ae05ccc11bf694d33622f91901bd4f172754f928a9d57c0914a9dcfd170337"
         },
         {
           "path": "scripts/quests/quest_elena/scripts/alrena.rs2",
@@ -12292,6 +13017,11 @@
           "sha256": "3e178f7aaf428ee5904d78926f6026b1b40793d123ac50dcf00679c280931e39"
         },
         {
+          "path": "scripts/quests/quest_fluffs/configs/quest_fluffs.npc",
+          "bytes": 8785,
+          "sha256": "f3c16210d23d74a3351dfa6bf6d95327eccdf41f609d21515a0132b33c5c6787"
+        },
+        {
           "path": "scripts/quests/quest_fluffs/scripts/fluffs_journal.rs2",
           "bytes": 2574,
           "sha256": "c035f60f33eaa3162be5586c95f6710d1e6114702e3bf76f9d68c30e940e4afe"
@@ -12320,6 +13050,11 @@
           "path": "scripts/quests/quest_gobdip/scripts/quest_gobdip.rs2",
           "bytes": 7096,
           "sha256": "ade84354f199c0ae323abd29872829e564e2ce7c0e89f2c7514a454d0a32a719"
+        },
+        {
+          "path": "scripts/quests/quest_grail/configs/fisher_realm.npc",
+          "bytes": 6152,
+          "sha256": "2ceaf0a56e2e699af4f3be3d2a4476df1a10d938dcab3263b394fbfbaace2041"
         },
         {
           "path": "scripts/quests/quest_grail/scripts/black_knight_titan.rs2",
@@ -12370,6 +13105,11 @@
           "path": "scripts/quests/quest_grail/scripts/sir_percival.rs2",
           "bytes": 2612,
           "sha256": "6521830948b6b7e925a2a7dc095bc1b5c5e6f2808dc92a806950d7587d5b16a8"
+        },
+        {
+          "path": "scripts/quests/quest_grandtree/configs/quest_grandtree.npc",
+          "bytes": 4265,
+          "sha256": "6d37e3d271b4040f4397d323203c2acd6f0442e4af1f1c44c330c5526b7f1018"
         },
         {
           "path": "scripts/quests/quest_grandtree/scripts/anita.rs2",
@@ -12432,6 +13172,11 @@
           "sha256": "65065104b40c5bc07719cf4756173c1ba10816c75a6c3a60fea19c75a97facfd"
         },
         {
+          "path": "scripts/quests/quest_haunted/configs/ernest.npc",
+          "bytes": 705,
+          "sha256": "34722816bfdb3813fc451c3f895bb07d95ecb02ef9182c8aa4acee24142c89bd"
+        },
+        {
           "path": "scripts/quests/quest_haunted/scripts/haunted_journal.rs2",
           "bytes": 1573,
           "sha256": "e86205e8e69953c1ee379b1bfc3a923a4bc9730d8793cd6f6d6adbd123c44667"
@@ -12440,6 +13185,11 @@
           "path": "scripts/quests/quest_haunted/scripts/quest_haunted.rs2",
           "bytes": 7061,
           "sha256": "6814015a89f3ca620c74b9d3ee75c8c78c5ae8595eabaae3d7780f03fea1bf25"
+        },
+        {
+          "path": "scripts/quests/quest_hazeelcult/configs/quest_hazeelcult.npc",
+          "bytes": 6552,
+          "sha256": "ff1739a9d7bf176ae24195cadd176c68b533828ae54363a644a24f363d2f80e5"
         },
         {
           "path": "scripts/quests/quest_hazeelcult/scripts/alomone.rs2",
@@ -12490,6 +13240,11 @@
           "path": "scripts/quests/quest_hazeelcult/scripts/quest_hazeelcult.rs2",
           "bytes": 8324,
           "sha256": "bb4b24e47a79a2b0f4fe0508742ff054589ba19a5b45893e2e8f11a0f2526c2d"
+        },
+        {
+          "path": "scripts/quests/quest_hero/configs/quest_hero.npc",
+          "bytes": 3877,
+          "sha256": "f5a3eb520b6ce0365aec53897ea0f2f12e5ef3c531ea7776b572229ce81d88ca"
         },
         {
           "path": "scripts/quests/quest_hero/scripts/hero_journal.rs2",
@@ -12560,6 +13315,11 @@
           "path": "scripts/quests/quest_hetty/scripts/quest_hetty.rs2",
           "bytes": 574,
           "sha256": "65ee7401a2201175de218f7550971b5b5e5f8a31aa04aed1285f76a9311f3314"
+        },
+        {
+          "path": "scripts/quests/quest_horror/configs/quest_horror.npc",
+          "bytes": 18316,
+          "sha256": "27e5166a4f78c9f4076e6d9d1010a7783bc1d77a9c3efee1af27c8deee1e28c6"
         },
         {
           "path": "scripts/quests/quest_horror/scripts/basalt_rocks.rs2",
@@ -12637,6 +13397,11 @@
           "sha256": "56e93710c793e0e2e5a6038796a9198eab17a898f630969689bf131b4c6641b6"
         },
         {
+          "path": "scripts/quests/quest_ikov/configs/quest_ikov.npc",
+          "bytes": 5333,
+          "sha256": "7075fb1e60e6577fea54acaac46cc147edd59a433042a9e17a494eb3db08a4a4"
+        },
+        {
           "path": "scripts/quests/quest_ikov/scripts/fire_warrior_of_leskarus.rs2",
           "bytes": 991,
           "sha256": "8d210a2ff0c8b290255a4aec5de621ebdfbec658021ddfd20103d29944db221a"
@@ -12680,6 +13445,11 @@
           "path": "scripts/quests/quest_imp/scripts/quest_imp.rs2",
           "bytes": 300,
           "sha256": "97001a06e33ead56e603b6cc40b24faff598b97dcd89da62d9f727b35dc4b875"
+        },
+        {
+          "path": "scripts/quests/quest_itexam/configs/quest_itexam.npc",
+          "bytes": 4086,
+          "sha256": "a41ef39118b90dac226ced79b53f2db2a974bff6a948a797a0cc5c5a7ae0707c"
         },
         {
           "path": "scripts/quests/quest_itexam/scripts/arcaeological_expert.rs2",
@@ -12745,6 +13515,16 @@
           "path": "scripts/quests/quest_itexam/scripts/student3.rs2",
           "bytes": 6042,
           "sha256": "01f1c41d2577903cd454bd0955973a8356cb2c06f725a418c5692b57e0c8436b"
+        },
+        {
+          "path": "scripts/quests/quest_itgronigen/configs/grave_of_scorpius.npc",
+          "bytes": 1413,
+          "sha256": "c78072d93416d73e46158c26bd7a736ab1235f242176829010dcd60ee45f184d"
+        },
+        {
+          "path": "scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc",
+          "bytes": 2339,
+          "sha256": "cb32cae31024900ddcda39f4c8b0989a7ff968bdd021e3502466e00ed258261b"
         },
         {
           "path": "scripts/quests/quest_itgronigen/scripts/book_of_astrology.rs2",
@@ -12867,6 +13647,11 @@
           "sha256": "b11264e7bd345ee205a1b514f29427459d035ee9d2164cef5a0cff1b36e5c010"
         },
         {
+          "path": "scripts/quests/quest_legends/configs/quest_legends.npc",
+          "bytes": 9183,
+          "sha256": "ae6bee355bee0ef636104ddbc67c12c3adb2fc866a7d692f7bceff6b289200b4"
+        },
+        {
           "path": "scripts/quests/quest_legends/scripts/book_of_binding.rs2",
           "bytes": 5501,
           "sha256": "9bdf37607384dde87ffbb1e93ddc0051b377c7d127ed26bc80555d72e6a9b448"
@@ -12970,6 +13755,11 @@
           "path": "scripts/quests/quest_legends/scripts/viyeldi.rs2",
           "bytes": 3064,
           "sha256": "484a84be27f28725679acb048473e28be50e3d03e86a0b4b080991fd1ba9b026"
+        },
+        {
+          "path": "scripts/quests/quest_mcannon/configs/quest_mcannon.npc",
+          "bytes": 1967,
+          "sha256": "3e817d0b82e1e19ffebaced9c8420b9745ed032e88f9374b357e87cbde7f4f88"
         },
         {
           "path": "scripts/quests/quest_mcannon/scripts/cannon_fire.rs2",
@@ -13105,6 +13895,11 @@
           "path": "scripts/quests/quest_misc/scripts/quest_misc.rs2",
           "bytes": 2122,
           "sha256": "89d82367d8f182a4eeadebcfcc6251d939e6df5c793322c98c917a3655d2174a"
+        },
+        {
+          "path": "scripts/quests/quest_mm/configs/quest_mm.npc",
+          "bytes": 43776,
+          "sha256": "b24dfbf139cf2a52d73a02d2d614992c52b52623044b28fdf8d5c3911929dca8"
         },
         {
           "path": "scripts/quests/quest_mm/scripts/aa_market.rs2",
@@ -13292,6 +14087,11 @@
           "sha256": "f13edfdc4887041667c13fc341db22a24a8307eda3a8d1f3869d86f0980ac7c7"
         },
         {
+          "path": "scripts/quests/quest_mortton/configs/quest_mortton.npc",
+          "bytes": 7266,
+          "sha256": "bba7aa41487ed942c687a59ecaba1f8df26565cfdf062b742ff5aa543f8dc127"
+        },
+        {
           "path": "scripts/quests/quest_mortton/scripts/afflicted.rs2",
           "bytes": 9899,
           "sha256": "1e2e56fdcde705366e3c7d0e84c1b6ffbd72a0142b94f91d179ced8e4257b32a"
@@ -13320,6 +14120,16 @@
           "path": "scripts/quests/quest_mortton/scripts/ulsquire_shauncy.rs2",
           "bytes": 16332,
           "sha256": "a725f0c1940308cb4c753fa9a86daedfe8d9cee59393f61f48e20571cdff0de8"
+        },
+        {
+          "path": "scripts/quests/quest_murder/configs/quest_murder.loc",
+          "bytes": 2417,
+          "sha256": "549b33a51e81de6054e9b133520c935d8e63bc8023f4c13c66e56d49ce55a318"
+        },
+        {
+          "path": "scripts/quests/quest_murder/configs/sinclair_mansion.npc",
+          "bytes": 7724,
+          "sha256": "6b98d5c87929591f1d92284f6ad3e14f91558226b7ecf78492fb537c39a3a7c7"
         },
         {
           "path": "scripts/quests/quest_murder/scripts/anna.rs2",
@@ -13407,6 +14217,11 @@
           "sha256": "0036b6df84a87b1b5ceb0bc08442f8118a05a1c55a3775f3757661f2b62880f9"
         },
         {
+          "path": "scripts/quests/quest_priest/configs/quest_priest.npc",
+          "bytes": 1114,
+          "sha256": "6cc0e0c3e02e17a73be6bac469c28a43f9f67753507f6c2432b9603b44473ff6"
+        },
+        {
           "path": "scripts/quests/quest_priest/scripts/priest_journal.rs2",
           "bytes": 2082,
           "sha256": "113b20e6452b452852ddb82cb26434bcfba26a3e0ed1e9db819187e2ccf62eae"
@@ -13420,6 +14235,11 @@
           "path": "scripts/quests/quest_priest/scripts/restless_ghost.rs2",
           "bytes": 8455,
           "sha256": "fa6e114acfb1ffb7aae64948e09e58685c5eda9995402e6ad993e642ca705878"
+        },
+        {
+          "path": "scripts/quests/quest_priestperil/configs/priestperil.npc",
+          "bytes": 2897,
+          "sha256": "52ea308e2dee6edb4845b75ec03dbad19aef0927c39d66ea23148ef5679d1506"
         },
         {
           "path": "scripts/quests/quest_priestperil/scripts/evil_monks.rs2",
@@ -13452,6 +14272,11 @@
           "sha256": "6191c65c327bd0e1e33a949d6f674ed1d7de37a9e7cb18d745b06be445eb96c4"
         },
         {
+          "path": "scripts/quests/quest_prince/configs/quest_prince.npc",
+          "bytes": 459,
+          "sha256": "35fb1dac0b46445e14e3772b4786971e9affcc39f4a0b3d3150b03162e2adb67"
+        },
+        {
           "path": "scripts/quests/quest_prince/scripts/prince_journal.rs2",
           "bytes": 7464,
           "sha256": "922af04f24d38172310ab54840fd57fe66b7c8b55409c46219256e712a443a48"
@@ -13460,6 +14285,11 @@
           "path": "scripts/quests/quest_prince/scripts/quest_prince.rs2",
           "bytes": 1694,
           "sha256": "862041a33803fa2c870ab497434f9de223663bd2f2d9de9dd2bd82be33a9078b"
+        },
+        {
+          "path": "scripts/quests/quest_regicide/configs/quest_regicide.npc",
+          "bytes": 15012,
+          "sha256": "0b6394fd5a50beb99b74fed9cd6e0da89618a42265ec2687feea5bc5719395f3"
         },
         {
           "path": "scripts/quests/quest_regicide/scripts/idris.rs2",
@@ -13557,6 +14387,11 @@
           "sha256": "10f467266c8d75d80fdd9dbf7f4bae67bd4b8f6fbd68a23308c6bc618914ef40"
         },
         {
+          "path": "scripts/quests/quest_routequest/configs/quest_routequest.npc",
+          "bytes": 8405,
+          "sha256": "f0083b15e0334e6aa1010c6c5d6011930b9aed005f3571660e064889f4df2693"
+        },
+        {
           "path": "scripts/quests/quest_routequest/scripts/debug_routequest.rs2",
           "bytes": 1804,
           "sha256": "6ebd57d1e5744d9d6fcbda403f32f04b08cf304feb04dc37eff3ab50566da38a"
@@ -13597,6 +14432,11 @@
           "sha256": "f9d3049d8af96a4c72792cd4fe7132e9285636e3f2da706c78bef6ed362e97b6"
         },
         {
+          "path": "scripts/quests/quest_runemysteries/configs/quest_runemysteries.npc",
+          "bytes": 622,
+          "sha256": "8090a2be45cc3d30563ece960c6ab37e68beddc3866ca1347ebcf5edb1e70e42"
+        },
+        {
           "path": "scripts/quests/quest_runemysteries/scripts/quest_runemysteries.rs2",
           "bytes": 289,
           "sha256": "40ca78bcbd758d10176e2ec2afe51233aebee8ea0dc65b492e6a073c58a973f3"
@@ -13605,6 +14445,11 @@
           "path": "scripts/quests/quest_runemysteries/scripts/runemysteries_journal.rs2",
           "bytes": 4798,
           "sha256": "12f53b69b69b08c06b44670a7065f49575b7f42ca1571a1f7155c1a69733dceb"
+        },
+        {
+          "path": "scripts/quests/quest_scorpcatcher/configs/quest_scorpcatcher.npc",
+          "bytes": 760,
+          "sha256": "d0ad9d85194bef427250b392d925f91592d5ddca4b1d664154b3d812c615f9ac"
         },
         {
           "path": "scripts/quests/quest_scorpcatcher/scripts/quest_scorpcatcher.rs2",
@@ -13635,6 +14480,11 @@
           "path": "scripts/quests/quest_sheep/scripts/sheep_journal.rs2",
           "bytes": 1056,
           "sha256": "5be48037e6368eb4a919ac151b5c5fc8f52d0d1d07c4b095d89ae9b0777f5b7c"
+        },
+        {
+          "path": "scripts/quests/quest_sheepherder/configs/quest_sheepherder.npc",
+          "bytes": 3127,
+          "sha256": "122cb311a18610242c191c2f1352a5a36a7565f8c47ea1445cf8214076952cd2"
         },
         {
           "path": "scripts/quests/quest_sheepherder/scripts/locs/sheepherder_furnace.rs2",
@@ -13687,6 +14537,11 @@
           "sha256": "91f41606e401467ad86dd85eb3525bd267ce608da180318b8d1246eb05548452"
         },
         {
+          "path": "scripts/quests/quest_tbwt/configs/quest_tbwt.npc",
+          "bytes": 7362,
+          "sha256": "c86529308f9893c796ea62ff76fb7d5dc8b50a382fbaca444be51f70972557b4"
+        },
+        {
           "path": "scripts/quests/quest_tbwt/scripts/monkey.rs2",
           "bytes": 2024,
           "sha256": "efdf61b1208b0c4b554bb4032403cca88c63c9e97b4ee3dbe038f3d9e01aa9e5"
@@ -13737,6 +14592,16 @@
           "sha256": "25b94151f748231df17cff61e757685b7fc10d8a62355b24510d022202c3712f"
         },
         {
+          "path": "scripts/quests/quest_tree/configs/gnome_battlefield.npc",
+          "bytes": 3288,
+          "sha256": "6726305dd7151a1553374d357cff50d612e5601e4972200c16580451df466290"
+        },
+        {
+          "path": "scripts/quests/quest_tree/configs/tracker_gnome.npc",
+          "bytes": 971,
+          "sha256": "4aa4bf52b688e52b1fc9d8c92a0a8ee530e5e36fab2f23d41f3d49f8259c4785"
+        },
+        {
           "path": "scripts/quests/quest_tree/scripts/khazard_warlord.rs2",
           "bytes": 2960,
           "sha256": "6d3430047b4a0420573d06c2254f9aac9f1047574b2a0454bd0e27a05931b230"
@@ -13755,6 +14620,11 @@
           "path": "scripts/quests/quest_tree/scripts/tree_journal.rs2",
           "bytes": 4134,
           "sha256": "7decf91e8a0d8403acc94972649bde0b411c4a6858c3aa88f4c2a4685acda36b"
+        },
+        {
+          "path": "scripts/quests/quest_troll/configs/quest_troll.npc",
+          "bytes": 21731,
+          "sha256": "5096898654731c144a1f269c93df3a2837febb759e253e0d50fab8167cf25583"
         },
         {
           "path": "scripts/quests/quest_troll/scripts/quest_troll.rs2",
@@ -13792,6 +14662,11 @@
           "sha256": "e17c994207d37d893a7c15c00573c4d3a2e39e9eccf8feb90d01e29d44f32892"
         },
         {
+          "path": "scripts/quests/quest_troll_love/configs/quest_troll_love.npc",
+          "bytes": 9513,
+          "sha256": "6832b4874853efd43663b1edf16758703c3aa7d6e759900857a596c6da4239a8"
+        },
+        {
           "path": "scripts/quests/quest_troll_love/scripts/aga.rs2",
           "bytes": 3071,
           "sha256": "badd078016b2dd2a9f26791cc1f7b74240d593cc4fb6e33af17f942534f0307c"
@@ -13815,6 +14690,11 @@
           "path": "scripts/quests/quest_troll_love/scripts/ug.rs2",
           "bytes": 6363,
           "sha256": "81eb59c508c3691883a405540d942b70f989efc3c4bd1696e0ac2fad28cb00af"
+        },
+        {
+          "path": "scripts/quests/quest_upass/configs/upass.npc",
+          "bytes": 17021,
+          "sha256": "26eba8def650e3c4e5c9311bd39a901bcc51321cefa4b253f537c6b3574ba92f"
         },
         {
           "path": "scripts/quests/quest_upass/scripts/doomion.rs2",
@@ -13927,6 +14807,11 @@
           "sha256": "3c8ccda5f094db1108158456a499dbc40a9ab939f32939077333a5a152eebb95"
         },
         {
+          "path": "scripts/quests/quest_vampire/configs/quest_vampire.npc",
+          "bytes": 1402,
+          "sha256": "92c9f62934abac0d810d623bf1d600a39c3e92b3905f9d70789ae091502dc746"
+        },
+        {
           "path": "scripts/quests/quest_vampire/scripts/count_draynor.rs2",
           "bytes": 2190,
           "sha256": "38b8570cad40e4deee6c16f765f26e68e50eacb9c8c26fc64bedc0ceb9031a0e"
@@ -13940,6 +14825,16 @@
           "path": "scripts/quests/quest_vampire/scripts/vampire_journal.rs2",
           "bytes": 4245,
           "sha256": "ab55b874d39a1a7ceacee5a5a27c650194230bf87a2ce35d99e3533ca982608c"
+        },
+        {
+          "path": "scripts/quests/quest_viking/configs/horror_rockcrab.npc",
+          "bytes": 2169,
+          "sha256": "7a9cae98ad72537e37fef1422a597d6cf1322fdbdb77ad96992cb0afe8b566a2"
+        },
+        {
+          "path": "scripts/quests/quest_viking/configs/viking.npc",
+          "bytes": 44450,
+          "sha256": "a316cf30662a8f35985dbc5d922cffb55976f58b14b310efdd36dc24830e8d6c"
         },
         {
           "path": "scripts/quests/quest_viking/scripts/horror_rockcrab.rs2",
@@ -14042,6 +14937,11 @@
           "sha256": "4984533c3e3bf7e29d92c6e75a544f7ffdf40382e13cc84a8444d3960fb07745"
         },
         {
+          "path": "scripts/quests/quest_waterfall/configs/waterfall.npc",
+          "bytes": 2032,
+          "sha256": "751e4eaf525f7f11e3f51d21beea9a5c50f45f3c7b9e4a274a49c69e64a48796"
+        },
+        {
           "path": "scripts/quests/quest_waterfall/scripts/almera.rs2",
           "bytes": 3292,
           "sha256": "ad2054e612278eb341dc1dad95ea07321b1474cabea72cdc16939a8b82c3c8bb"
@@ -14072,6 +14972,11 @@
           "sha256": "eb5dd99e3efe43c94cb9d69b27126d76bed07c8644bbd92aa2c239e9ce1659bd"
         },
         {
+          "path": "scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2",
+          "bytes": 19822,
+          "sha256": "4a659081a07248ad23d8d8baa8b02d8355d64f7b87d25e1a55a1f6906ce24509"
+        },
+        {
           "path": "scripts/quests/quest_waterfall/scripts/waterfall_journal.rs2",
           "bytes": 11595,
           "sha256": "3fd9c5c24e8d20851e68f7e07c912edb9216f4ee97b396b9288ff95accf2d421"
@@ -14080,6 +14985,21 @@
           "path": "scripts/quests/quest_waterfall/scripts/waterfall_pillars.rs2",
           "bytes": 1590,
           "sha256": "ed8089d7d513c543c9409b9cde85e220022a564f899954a067439b9d4a5a3e4c"
+        },
+        {
+          "path": "scripts/quests/quest_zanaris/configs/shamus.npc",
+          "bytes": 520,
+          "sha256": "2ddb535116d1321b4d7fbcaf9a8699d7ae65cbe3aa9660fb7f75cd74936d3b48"
+        },
+        {
+          "path": "scripts/quests/quest_zanaris/configs/tree_spirit.npc",
+          "bytes": 532,
+          "sha256": "694bc89fdb1cd49459e7514f54688e3d1e2a4d0d0eff83bc37a4428bd3582a97"
+        },
+        {
+          "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+          "bytes": 3670,
+          "sha256": "31375f0b99e0aaf5a07765cc1867100cf8280d602812166fcfba1b65d8d9e05c"
         },
         {
           "path": "scripts/quests/quest_zanaris/scripts/shamus.rs2",
@@ -14095,6 +15015,11 @@
           "path": "scripts/quests/quest_zanaris/scripts/zanaris_journal.rs2",
           "bytes": 5032,
           "sha256": "aaf0be3aaf133c7eaec788fccae5f3579bf9c6fbc210a38bfe4fccc4ca0bd754"
+        },
+        {
+          "path": "scripts/quests/quest_zombiequeen/configs/quest_zombiequeen.npc",
+          "bytes": 6310,
+          "sha256": "1bc3f1b94c1abc1d98fded05903badfe4d44f5e630ac2258b8f9d95524704006"
         },
         {
           "path": "scripts/quests/quest_zombiequeen/scripts/mosol_rei.rs2",
@@ -14160,6 +15085,31 @@
           "path": "scripts/skill_agility/scripts/wilderness_course.rs2",
           "bytes": 6881,
           "sha256": "db69683bd6b23f73241a4274334e40b3e9ebae954e853869c45b0d6cab5c3fe9"
+        },
+        {
+          "path": "scripts/skill_combat/configs/combat.constant",
+          "bytes": 90,
+          "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+        },
+        {
+          "path": "scripts/skill_combat/configs/combat.dbrow",
+          "bytes": 5262,
+          "sha256": "492c99a36699b1b558a4dd33322b4df0dece841bbe46b46ea54f2577d185f39c"
+        },
+        {
+          "path": "scripts/skill_combat/configs/combat.dbtable",
+          "bytes": 76,
+          "sha256": "91ae933640f511806d69d4b5abe40a5a8bfc94c1f46f204388cf55d909fd95ab"
+        },
+        {
+          "path": "scripts/skill_combat/configs/combat_damagestyles.constant",
+          "bytes": 239,
+          "sha256": "5f3f4fa1a65e2b640a884cca7305309536e1aeccc2f56df79ca9643185238403"
+        },
+        {
+          "path": "scripts/skill_combat/configs/magic/magic_combat_spells.dbrow",
+          "bytes": 18031,
+          "sha256": "1e531adbc6dff4ba08491b3f5439f0d073f79f4973cb6a3b0079b9643373f454"
         },
         {
           "path": "scripts/skill_combat/scripts/combat.rs2",
@@ -14427,6 +15377,11 @@
           "sha256": "add9883adf4d9f298f23fbc4ef3894a0a336e2cb43e46e21d211b8b363dbccd1"
         },
         {
+          "path": "scripts/skill_cooking/configs/cooking_guild/cooking_guild.npc",
+          "bytes": 566,
+          "sha256": "8be29c4b06e5cbe80a6466fd7f373d1036ab5d5978450b95809db2b5909e688d"
+        },
+        {
           "path": "scripts/skill_cooking/scripts/cooking.rs2",
           "bytes": 8218,
           "sha256": "4c1c94b15c9ab7dc3d5c5f9623035912853f5bd648cb5d603dce6a01a989b47a"
@@ -14532,6 +15487,11 @@
           "sha256": "2a1694125d0274aad3e53cce29f86103848b07f776f78141dd00196936f6e325"
         },
         {
+          "path": "scripts/skill_crafting/configs/crafting_guild/crafting_guild.npc",
+          "bytes": 584,
+          "sha256": "3c3f619777201d6179922f0f03feb4f90feabcdb4a29831c8ce05e3fc89214d9"
+        },
+        {
           "path": "scripts/skill_crafting/scripts/battlestaves/battlestaves.rs2",
           "bytes": 1009,
           "sha256": "716503de509abe8682d3c95ff191cd0ae5c65c5908f70fa202fc1af8d6504310"
@@ -14605,6 +15565,16 @@
           "path": "scripts/skill_firemaking/scripts/light_source.rs2",
           "bytes": 453,
           "sha256": "9e237a47a8d54c0c571bcede2349472830954e89aff0deca910c28742562d7be"
+        },
+        {
+          "path": "scripts/skill_fishing/configs/fishing.npc",
+          "bytes": 17340,
+          "sha256": "c1c222a2b911f65c833ff83522671eb3e207bd06b67fe9f190b4d2d23f461e40"
+        },
+        {
+          "path": "scripts/skill_fishing/configs/fishing_guild/fishing_guild.npc",
+          "bytes": 1499,
+          "sha256": "9ddc3e0e06d49aa1e67c8bd3e31a8794d9650bc877e52a537df2c6d8b8369663"
         },
         {
           "path": "scripts/skill_fishing/scripts/fishing.rs2",
@@ -14702,6 +15672,16 @@
           "sha256": "746a1ca3f5c810582e69019d4ba5a2b643e513a95a807e89b1e5eb9f905c637b"
         },
         {
+          "path": "scripts/skill_herblore/configs/herbs.obj",
+          "bytes": 7372,
+          "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
+        },
+        {
+          "path": "scripts/skill_herblore/configs/identifying/identify.param",
+          "bytes": 137,
+          "sha256": "b74e294aad7be8fa0cfd2a3810375e7625a9c2b223c4b68dd70b44f7e225d87f"
+        },
+        {
           "path": "scripts/skill_herblore/scripts/brewing/brew_potion.rs2",
           "bytes": 6124,
           "sha256": "e961944ce9751408dd6d3795129388d72527ae26c7267855a6647e4ead1a513f"
@@ -14725,6 +15705,26 @@
           "path": "scripts/skill_herblore/scripts/herblore.rs2",
           "bytes": 1559,
           "sha256": "ebffe60f7b4bcf742f1fb04992b54e1cfd20366827e08d50fda0b867d2ce33ec"
+        },
+        {
+          "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
+          "bytes": 2174,
+          "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
+        },
+        {
+          "path": "scripts/skill_magic/configs/magic.dbtable",
+          "bytes": 868,
+          "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
+        },
+        {
+          "path": "scripts/skill_magic/configs/magic_spells.dbrow",
+          "bytes": 7265,
+          "sha256": "c8ff8a90cd8303c75615981fda33bf2c01c2459a0e64118dbe647e0bd8040f9d"
+        },
+        {
+          "path": "scripts/skill_magic/configs/magic_staff.dbrow",
+          "bytes": 698,
+          "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
         },
         {
           "path": "scripts/skill_magic/scripts/magic.rs2",
@@ -14790,6 +15790,21 @@
           "path": "scripts/skill_mining/scripts/prospect.rs2",
           "bytes": 1083,
           "sha256": "ae01223ea09bbb7aed6bbc1a56d484c2507ddb154f357ba482cc802c60a2c0d5"
+        },
+        {
+          "path": "scripts/skill_prayer/configs/prayers.constant",
+          "bytes": 399,
+          "sha256": "3d71f9fd1581d966cbbf747f14d40e3d1efbee8a0abd927419189d80f7c3a550"
+        },
+        {
+          "path": "scripts/skill_prayer/configs/prayers.dbrow",
+          "bytes": 3194,
+          "sha256": "04a960ddd63d2f33c4e6de1fc471de03b8ab2750f24c43bbea11691bd8cc5fa9"
+        },
+        {
+          "path": "scripts/skill_prayer/interfaces/prayer.if",
+          "bytes": 11731,
+          "sha256": "5eb68ee2dabf251196d5540d8e79510bdff5b77ffae41ba8687b19eb79108ff1"
         },
         {
           "path": "scripts/skill_prayer/scripts/altar.rs2",
@@ -14882,6 +15897,11 @@
           "sha256": "5d1d3d280c1cc9838849ae164f907cebcdce0ff0484112429e1523dd856cb5a5"
         },
         {
+          "path": "scripts/skill_runecraft/configs/runecraft.constant",
+          "bytes": 500,
+          "sha256": "b6af925c204276b7f348dbe7a33500ff532951970c8a6227cae8233e35bf3d09"
+        },
+        {
           "path": "scripts/skill_runecraft/scripts/essence_mine.rs2",
           "bytes": 2232,
           "sha256": "6bd3b7e004672d652afc97d9f64a0818cd2993e9047ffc03c7ac5af1cc1fbf90"
@@ -14912,6 +15932,16 @@
           "sha256": "0e1d546bb650ff7c898ae287d6f970b92c757bb885c38919ca930d8d2837765a"
         },
         {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow",
+          "bytes": 3552,
+          "sha256": "c284d00db20d20d141d712619883e9b43262eecac9cd6bc589becd8bace3478b"
+        },
+        {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable",
+          "bytes": 223,
+          "sha256": "f999e5eeebf60d74a9473ab8109b6b72678f3bb95fd9ae5b09892ac360e8d00d"
+        },
+        {
           "path": "scripts/skill_thieving/scripts/chest/trapped_chest.rs2",
           "bytes": 3102,
           "sha256": "b171d813643cbc670c60b5429eabcd214ceae68aa3d9d2700b739afc9afbbc1e"
@@ -14940,6 +15970,11 @@
           "path": "scripts/skill_woodcutting/scripts/woodcut.rs2",
           "bytes": 7316,
           "sha256": "2f5bdacf9743c4bd5478098aaf3af80467204e3921a1b475be057f994d4a36fb"
+        },
+        {
+          "path": "scripts/tutorial/configs/tutorial.npc",
+          "bytes": 7816,
+          "sha256": "82add3da0617ef1016cd5d479fd9fd6a2fa4ef5c702be614aafc73d384c7a7d0"
         },
         {
           "path": "scripts/tutorial/scripts/guides/brother_brace.rs2",

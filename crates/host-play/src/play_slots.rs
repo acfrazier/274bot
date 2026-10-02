@@ -91,10 +91,27 @@ pub(super) fn take_slot_frame_input(
 /// Slot thread stack: 1 MiB (the Java client thread default).
 const THREAD_STACK: usize = 1024 * 1024;
 /// Per-slot nav latch key: the `(player gen, here)` pair the pump last
-/// pump last stepped. The step is skipped until either half changes, so a
-/// hop is sent once per server tick, not every 20 ms frame (panel
-/// `tick_latch`).
-type NavStepKey = (u64, Option<(i32, i32, i32)>);
+/// stepped. Follow advances at most once per key. Hold or a dispatched
+/// exclusive batch suppresses that key's step but still advances the latch,
+/// so follow resumes on the next player key.
+pub(crate) type NavStepKey = (u64, Option<(i32, i32, i32)>);
+
+pub(crate) fn nav_step_due<F>(
+    last: &mut Option<NavStepKey>,
+    key: NavStepKey,
+    hold: bool,
+    exclusive: bool,
+    route_armed: F,
+) -> bool
+where
+    F: FnOnce() -> bool,
+{
+    if *last == Some(key) {
+        return false;
+    }
+    *last = Some(key);
+    key.1.is_some() && !hold && !exclusive && route_armed()
+}
 /// Retire one failed lifetime's script state without replaying its poisoned
 /// mutex on the UI thread. `stop` is still attempted to tear down a usable
 /// isolate; a second cleanup panic is contained because the slot has already
@@ -1288,6 +1305,71 @@ fn spawn_slot_thread(
                             if let Some(line) = welcome_step.notice.as_deref() {
                                 host_log!(stderr; Category::Echo, Level::Info, "{line}");
                             }
+                            #[cfg(test)]
+                            let injected_maze_hold = if ready
+                                && !status.hold
+                                && !session_boundary
+                                && crate::combat_proof::maze_injection_pending(name)
+                            {
+                                if crate::combat_proof::protect_from_melee_active(&nav_snapshot) {
+                                    match script_slot(&slot_scripts, name) {
+                                        Some(slot) => match slot.lock() {
+                                            Ok(mut slot) => {
+                                                let event = DetectedRandom {
+                                                    kind: host::RandomKind::Maze,
+                                                    name: "combat-live-proof synthetic Maze hold"
+                                                        .to_owned(),
+                                                    ours: true,
+                                                    npc_index: None,
+                                                };
+                                                let owner_live_before =
+                                                    crate::combat_proof::maze_attack_owner_live(
+                                                        name,
+                                                    );
+                                                let claim = slot.on_random(&event);
+                                                let owner_live_after =
+                                                    crate::combat_proof::maze_attack_owner_live(
+                                                        name,
+                                                    );
+                                                crate::combat_proof::record_maze_injection(
+                                                    name,
+                                                    Some(*script_tick),
+                                                    &nav_snapshot,
+                                                    claim,
+                                                    owner_live_before,
+                                                    owner_live_after,
+                                                );
+                                                true
+                                            }
+                                            Err(_) => {
+                                                crate::combat_proof::record_maze_injection_failure(
+                                                    name,
+                                                    "script slot mutex poisoned at Maze injection",
+                                                );
+                                                false
+                                            }
+                                        },
+                                        None => {
+                                            crate::combat_proof::record_maze_injection_failure(
+                                                name,
+                                                "script slot absent at Maze injection",
+                                            );
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    true
+                                }
+                            } else {
+                                false
+                            };
+                            #[cfg(test)]
+                            let hold = status.hold
+                                || !ready
+                                || session_boundary
+                                || welcome_step.hold
+                                || injected_maze_hold;
+                            #[cfg(not(test))]
                             let hold = status.hold || !ready || session_boundary || welcome_step.hold;
                             // Collect intent before either follow pump or script
                             // dispatch; this is the shared takeover ordering seam.
@@ -1400,6 +1482,7 @@ fn spawn_slot_thread(
                             let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
+                                exclusive,
                             } = script_observe_cached_with_channels(
                                 c,
                                 name,
@@ -1428,6 +1511,21 @@ fn spawn_slot_thread(
                                 Some(run_policy),
                                 Some(&mut debug_replies),
                             );
+                            #[cfg(test)]
+                            if crate::combat_proof::capture_enabled(name) {
+                                crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
+                                crate::combat_proof::record_observation(
+                                    name,
+                                    *script_tick,
+                                    &nav_snapshot,
+                                    exclusive,
+                                );
+                                if let Some(status) = script_slot(&slot_scripts, name)
+                                    .and_then(|slot| slot.lock().ok()?.native_status())
+                                {
+                                    crate::combat_proof::record_status(name, &status);
+                                }
+                            }
                             c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
@@ -1438,6 +1536,20 @@ fn spawn_slot_thread(
                             // when it presses a dialog the guardian is
                             // talking through, but a walk while held is
                             // dropped (the hold freezes the follow too).
+                            #[cfg(test)]
+                            if crate::combat_proof::capture_enabled(name) {
+                                for wire in &wires {
+                                    if !hold || !matches!(wire, WireCmd::Walk { .. }) {
+                                        crate::combat_proof::record_other_request(
+                                            name,
+                                            Some(*script_tick),
+                                            &nav_snapshot,
+                                            "play-slot-wire",
+                                            &format!("{wire:?}"),
+                                        );
+                                    }
+                                }
+                            }
                             if !wires.is_empty() {
                                 dispatch_wires(c, &nav_snapshot, wires.into(), hold);
                             }
@@ -1445,40 +1557,36 @@ fn spawn_slot_thread(
                             // player-gen/tile latch like the panel's WalkTo
                             // hook so a hop is sent once per server tick,
                             // not re-sent every 20 ms frame. The snapshot
-                            // was already rebuilt above. The guardian's
-                            // hold freezes the follow — the armed route
-                            // stays latched and resumes when it lifts.
+                            // was already rebuilt above. Guardian hold and
+                            // a dispatched batch freeze follow for this key;
+                            // the armed route resumes at the next key.
                             let nav_key = (c.gens.player, here);
-                            if last_nav_step != Some(nav_key) {
-                                last_nav_step = Some(nav_key);
-                                if here.is_some()
-                                    && !hold
-                                    && slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                        b.route.is_some() || b.bank_fetch.is_some()
-                                    })
-                                {
-                                    step_nav_bot(
-                                        c,
-                                        name,
-                                        here,
-                                        &nav_snapshot,
-                                        &slot_navs,
-                                        &slot_statuses,
-                                        slot_world.as_ref(),
-                                        hold,
-                                        map_members,
-                                        || {
-                                            slot_arrival_reach(
-                                                &slot_scripts,
-                                                name,
-                                                &nav_snapshot,
-                                                here,
-                                                slot_world.as_deref(),
-                                                slot_canlight.as_deref(),
-                                            )
-                                        },
-                                    );
-                                }
+                            if nav_step_due(&mut last_nav_step, nav_key, hold, exclusive, || {
+                                slot_navs.lock().unwrap().get(name).is_some_and(|b| {
+                                    b.route.is_some() || b.bank_fetch.is_some()
+                                })
+                            }) {
+                                step_nav_bot(
+                                    c,
+                                    name,
+                                    here,
+                                    &nav_snapshot,
+                                    &slot_navs,
+                                    &slot_statuses,
+                                    slot_world.as_ref(),
+                                    hold,
+                                    map_members,
+                                    || {
+                                        slot_arrival_reach(
+                                            &slot_scripts,
+                                            name,
+                                            &nav_snapshot,
+                                            here,
+                                            slot_world.as_deref(),
+                                            slot_canlight.as_deref(),
+                                        )
+                                    },
+                                );
                             }
                             // Busy flag for the idle scheduler: a slot with
                             // a running script, queued cheats, or an armed
