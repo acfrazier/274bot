@@ -772,20 +772,6 @@ mod tests {
         );
     }
 
-    /// Open 64x64 scene at (2790,3530): no walls, so reach is pure BFS rank.
-    fn open_view(here: WorldTile) -> api::query::ReachQueryView {
-        let scene = api::snapshot::SceneView {
-            available: true,
-            base_x: 2790,
-            base_z: 3530,
-            level: 0,
-            width: 64,
-            height: 64,
-            collision_flags: vec![0; 64 * 64],
-        };
-        let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
-        api::query::pack_reach_query(&scene, flood.as_ref())
-    }
 
     fn route_end_native(seq: u64, request_id: u64, radius: i32) -> NativeFactsInput<'static> {
         NativeFactsInput {
@@ -802,25 +788,21 @@ mod tests {
         }
     }
 
-    /// AR-1 / frozen `'closest'`: an r=12 walk in open terrain ends on its
-    /// approach tile, 12 tiles out, where every tile has BFS rank >= 529 >
-    /// 512, so `isArrived` is false. The host's route-end outcome settles it.
+    /// Compat 'closest' may settle a correlated route end even when a wall
+    /// separates that endpoint from the requested tile.
     #[test]
-    fn route_end_settles_true_where_is_arrived_is_false() {
+    fn route_end_can_settle_closest_without_crossing_a_closed_wall() {
         on_reset();
-        let token = begin(2820, 3557, 0, 12, false);
+        let token = begin(2820, 3557, 0, 3, false);
         let approach = WorldTile {
-            x: 2808,
-            z: 3557,
+            x: 2820,
+            z: 3554,
             level: 0,
         };
-        let view = open_view(approach);
+        let view = walled_view(approach);
         observe_at(2, approach, &view);
-        assert!(
-            !settled(token),
-            "ring 12 in open terrain is past the 512 reach budget"
-        );
-        observe_at_with(3, approach, &view, route_end_native(1, token, 12));
+        assert!(!settled(token), "proximity cannot cross the closed wall");
+        observe_at_with(3, approach, &view, route_end_native(1, token, 3));
         assert!(settled(token), "the route end settles the wait");
         assert!(value(token), "frozen 'closest' returns true");
     }
@@ -830,11 +812,11 @@ mod tests {
         on_reset();
         let token = begin(2820, 3557, 0, 12, false);
         let approach = WorldTile {
-            x: 2808,
-            z: 3557,
+            x: 2820,
+            z: 3554,
             level: 0,
         };
-        let view = open_view(approach);
+        let view = walled_view(approach);
         observe_at_with(2, approach, &view, route_end_native(1, token + 1, 12));
         assert!(!settled(token), "another request's route end");
         observe_at_with(3, approach, &view, route_end_native(2, token, 11));
