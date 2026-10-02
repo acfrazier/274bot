@@ -36,6 +36,13 @@ const WARLORD_ANCHOR: WorldTile = WorldTile {
     z: 3302,
     level: 0,
 };
+// Outside every nearby static tree's one-tile hunt range. The fixture's first
+// native walk approaches3109/3346 only after the exact HP8 Start baseline.
+const TREE_APPROACH: WorldTile = WorldTile {
+    x: 3110,
+    z: 3346,
+    level: 0,
+};
 const TREE_SPAWNS: [WorldTile; 3] = [
     WorldTile {
         x: 3108,
@@ -147,10 +154,11 @@ impl Case {
         match self {
             Self::M1 | Self::M5 => Ok(IMP_START),
             Self::M2 | Self::M3 | Self::M6 => standable_neighbor(world, WARLORD_ANCHOR),
-            Self::M4 => TREE_SPAWNS
-                .iter()
-                .find_map(|spawn| standable_neighbor(world, *spawn).ok())
-                .ok_or_else(|| "no standable Draynor Manor nasty_tree neighbor".to_owned()),
+            Self::M4 => world
+                .collision
+                .standable(TREE_APPROACH)
+                .then_some(TREE_APPROACH)
+                .ok_or_else(|| "safe Draynor Manor tree approach is not standable".to_owned()),
         }
     }
 
