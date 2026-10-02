@@ -385,6 +385,23 @@ impl MouseState {
 /// Total pending script-mouse events per slot (not per isolate batch).
 const SCRIPT_MOUSE_QUEUE_CAP: usize = 32;
 
+struct UserInput {
+    rx: Option<Receiver<InputEv>>,
+    keyboard_enabled: bool,
+    release_pending: bool,
+}
+
+impl UserInput {
+    /// A detach survives receiver replacement and disable/re-enable before
+    /// the consumer runs. Buffered presses belong to the detached input.
+    fn detach(&mut self) {
+        self.release_pending = true;
+        if let Some(rx) = &self.rx {
+            while rx.try_recv().is_ok() {}
+        }
+    }
+}
+
 pub struct SlotInput {
     enabled: AtomicBool,
     /// 50 fps frame-cadence latch: the panel's sidecar-50 pref sets this
@@ -396,9 +413,10 @@ pub struct SlotInput {
     /// its `Renderer` — flipping it on a live slot drops + reattaches the
     /// head (the `Client` and its socket stay up).
     prefer_cpu: AtomicBool,
-    rx: Mutex<Option<Receiver<InputEv>>>,
+    /// Serializes detach/replace with applying user input to the shell.
+    rx: Mutex<UserInput>,
     /// SlotScript publishes/revokes; consume holds this across latch.
-    /// Lock order: authority, then [`Self::mouse`].
+    /// Lock order: authority, then [`Self::rx`], then [`Self::mouse`].
     authority: Arc<NativeInputAuthority>,
     mouse: Mutex<MouseState>,
     /// Guardian / `!up` gate set by the slot thread before consume.
@@ -412,7 +430,11 @@ impl SlotInput {
             enabled: AtomicBool::new(false),
             full_rate: AtomicBool::new(false),
             prefer_cpu: AtomicBool::new(false),
-            rx: Mutex::new(None),
+            rx: Mutex::new(UserInput {
+                rx: None,
+                keyboard_enabled: true,
+                release_pending: false,
+            }),
             authority: NativeInputAuthority::new(),
             mouse: Mutex::new(MouseState::new()),
             host_consume_allowed: AtomicBool::new(true),
@@ -427,10 +449,25 @@ impl SlotInput {
         self.host_consume_allowed.store(on, Ordering::Release);
     }
     pub fn set_enabled(&self, on: bool) {
+        let mut user = self.rx.lock().unwrap();
+        if !on || !self.enabled.load(Ordering::Relaxed) {
+            user.detach();
+        }
         self.enabled.store(on, Ordering::Relaxed);
     }
     pub fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Panel/window keyboard focus is independent of mouse click-through.
+    /// Losing it detaches outstanding user holds; new mouse input still
+    /// works while new keys are gated. No queued synthetic ups are needed.
+    pub fn set_keyboard_enabled(&self, on: bool) {
+        let mut user = self.rx.lock().unwrap();
+        if user.keyboard_enabled != on {
+            user.detach();
+            user.keyboard_enabled = on;
+        }
     }
     pub fn set_full_rate(&self, on: bool) {
         self.full_rate.store(on, Ordering::Relaxed);
@@ -445,80 +482,74 @@ impl SlotInput {
         self.prefer_cpu.load(Ordering::Relaxed)
     }
     pub fn connect_rx(&self, rx: Receiver<InputEv>) {
-        *self.rx.lock().unwrap() = Some(rx);
+        let mut user = self.rx.lock().unwrap();
+        user.detach();
+        user.rx = Some(rx);
     }
     pub fn disconnect_rx(&self) {
-        *self.rx.lock().unwrap() = None;
+        let mut user = self.rx.lock().unwrap();
+        user.detach();
+        user.rx = None;
     }
     pub fn drain(&self, shell: &mut GameShell) {
         self.drain_user(shell);
     }
 
     fn drain_user(&self, shell: &mut GameShell) {
-        if !self.enabled.load(Ordering::Relaxed) {
-            // Capture revocation still owes ups for keys/buttons already
-            // held by the client. Reuse the release-only queue drain.
-            self.discard_user(shell);
-            return;
+        self.apply_user(shell, false);
+    }
+
+    fn release_user_mouse(shell: &mut GameShell, mouse: &mut MouseState) {
+        if mouse.held == MouseOwner::User {
+            shell.apply_mouse_up();
+            mouse.held = MouseOwner::None;
         }
-        let mut events = Vec::new();
-        {
-            let mut g = self.rx.lock().unwrap();
-            let Some(rx) = g.as_mut() else {
-                return;
-            };
-            while let Ok(ev) = rx.try_recv() {
-                events.push(ev);
-            }
-        }
-        if events.is_empty() {
-            return;
-        }
+    }
+
+    fn apply_user(&self, shell: &mut GameShell, discard: bool) {
+        // Hold both locks through apply: a detach cannot race a batch of
+        // already-collected downs back into the shell after its release.
+        let mut user = self.rx.lock().unwrap();
         let mut mouse = self.mouse.lock().unwrap();
-        for ev in events {
+        if user.release_pending {
+            for ch in 1..shell.key_held.len() {
+                if shell.key_held[ch] != 0 {
+                    shell.apply_key(false, 0, ch as i32);
+                }
+            }
+            Self::release_user_mouse(shell, &mut mouse);
+            if mouse.pending == MouseOwner::User {
+                shell.clear_unlatched_click();
+                mouse.pending = MouseOwner::None;
+            }
+            user.release_pending = false;
+        }
+        let enabled = !discard && self.enabled.load(Ordering::Relaxed);
+        let Some(rx) = &user.rx else {
+            return;
+        };
+        while let Ok(ev) = rx.try_recv() {
             match ev {
-                InputEv::Move { x, y } => shell.apply_mouse_move(x, y),
-                InputEv::Down { button, x, y } => {
+                InputEv::Move { x, y } if enabled => shell.apply_mouse_move(x, y),
+                InputEv::Down { button, x, y } if enabled => {
                     shell.apply_mouse_down(button, x, y);
                     mouse.held = MouseOwner::User;
                     mouse.pending = MouseOwner::User;
                 }
-                InputEv::Up => {
-                    shell.apply_mouse_up();
-                    mouse.held = MouseOwner::None;
+                InputEv::Up => Self::release_user_mouse(shell, &mut mouse),
+                InputEv::Key { down, ch } if !down || (enabled && user.keyboard_enabled) => {
+                    shell.apply_key(down, 0, ch);
                 }
-                InputEv::Key { down, ch } => shell.apply_key(down, 0, ch),
+                InputEv::Move { .. } | InputEv::Down { .. } | InputEv::Key { .. } => {}
             }
         }
     }
 
-    /// Drop the user input buffered while the slot ran no frames (a login
-    /// wait or handshake outside the client pump), so a click or key made
-    /// then cannot act on the next title. Button and key releases still
-    /// reach the shell, so nothing stays held.
+    /// Drop user input buffered during a login wait/handshake so presses
+    /// cannot act on the next title. Apply releases and any pending detach
+    /// through the same consumer path as ordinary frames.
     pub fn discard_user(&self, shell: &mut GameShell) {
-        let mut g = self.rx.lock().unwrap();
-        let Some(rx) = g.as_mut() else {
-            return;
-        };
-        let mut released = false;
-        while let Ok(ev) = rx.try_recv() {
-            match ev {
-                InputEv::Up => {
-                    shell.apply_mouse_up();
-                    released = true;
-                }
-                InputEv::Key { down: false, ch } => shell.apply_key(false, 0, ch),
-                InputEv::Move { .. } | InputEv::Down { .. } | InputEv::Key { down: true, .. } => {}
-            }
-        }
-        drop(g);
-        if released {
-            let mut mouse = self.mouse.lock().unwrap();
-            if mouse.held == MouseOwner::User {
-                mouse.held = MouseOwner::None;
-            }
-        }
+        self.apply_user(shell, true);
     }
 
     /// Map frozen/script client coordinates onto applet pixels.
@@ -835,6 +866,7 @@ mod tests {
         map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, ManualMoveIntent,
         MouseOwner, SlotInput,
     };
+    use client::client::GameShell;
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
     use std::time::{Duration, Instant};
@@ -1183,6 +1215,162 @@ mod tests {
         let inp = SlotInput::new();
         inp.authority().publish_live();
         inp
+    }
+
+    #[test]
+    fn user_detach_releases_all_holds_without_queued_ups() {
+        enum Detach {
+            Disable,
+            Disconnect,
+            Replace,
+        }
+        for detach in [Detach::Disable, Detach::Disconnect, Detach::Replace] {
+            for button in [1, 2] {
+                let input = live_input();
+                let (tx, rx) = std::sync::mpsc::channel();
+                input.connect_rx(rx);
+                input.set_enabled(true);
+                for ch in [1, 58, 65] {
+                    tx.send(InputEv::Key { down: true, ch }).unwrap();
+                }
+                tx.send(InputEv::Down {
+                    button,
+                    x: 20,
+                    y: 30,
+                })
+                .unwrap();
+                let mut shell = GameShell::new();
+                input.drain(&mut shell);
+                assert_eq!(shell.mouse_button, button);
+                assert_eq!(
+                    (shell.key_held[1], shell.key_held[58], shell.key_held[65]),
+                    (1, 1, 1)
+                );
+                match detach {
+                    Detach::Disable => input.set_enabled(false),
+                    Detach::Disconnect => input.disconnect_rx(),
+                    Detach::Replace => {
+                        let (_tx, rx) = std::sync::mpsc::channel();
+                        input.connect_rx(rx);
+                    }
+                }
+                // The release must also run outside ordinary frames and
+                // without a receiver (title/login discard path).
+                input.discard_user(&mut shell);
+                assert_eq!(shell.key_held, [0; 128]);
+                assert_eq!(shell.mouse_button, 0);
+                shell.latch_click();
+                assert_eq!(shell.mouse_click_button, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn user_detach_survives_reattach_before_consumer_and_preserves_new_downs() {
+        for replace in [false, true] {
+            let input = live_input();
+            let (mut tx, rx) = std::sync::mpsc::channel();
+            input.connect_rx(rx);
+            input.set_enabled(true);
+            tx.send(InputEv::Key { down: true, ch: 1 }).unwrap();
+            tx.send(InputEv::Down {
+                button: 1,
+                x: 10,
+                y: 20,
+            })
+            .unwrap();
+            let mut shell = GameShell::new();
+            input.consume_native_frame(&mut shell);
+            assert_eq!((shell.key_held[1], shell.mouse_button), (1, 1));
+            // Buffered attached and disabled presses must not replay.
+            tx.send(InputEv::Key { down: true, ch: 58 }).unwrap();
+            input.set_enabled(false);
+            tx.send(InputEv::Key { down: true, ch: 65 }).unwrap();
+            tx.send(InputEv::Down {
+                button: 2,
+                x: 30,
+                y: 40,
+            })
+            .unwrap();
+            if replace {
+                let (new_tx, rx) = std::sync::mpsc::channel();
+                input.connect_rx(rx);
+                tx = new_tx;
+            }
+            input.set_enabled(true);
+            tx.send(InputEv::Key { down: true, ch: 2 }).unwrap();
+            tx.send(InputEv::Down {
+                button: 2,
+                x: 50,
+                y: 60,
+            })
+            .unwrap();
+            assert_eq!(input.consume_native_frame(&mut shell), MouseOwner::User);
+            let mut expected = [0; 128];
+            expected[2] = 1;
+            assert_eq!(shell.key_held, expected);
+            assert_eq!(shell.poll_key(), -1, "detached text must not replay");
+            assert_eq!(
+                (shell.mouse_button, shell.mouse_click_x, shell.mouse_click_y),
+                (2, 50, 60)
+            );
+            tx.send(InputEv::Key { down: false, ch: 2 }).unwrap();
+            tx.send(InputEv::Up).unwrap();
+            input.consume_native_frame(&mut shell);
+            assert_eq!(shell.key_held, [0; 128]);
+            assert_eq!(shell.mouse_button, 0);
+        }
+    }
+
+    #[test]
+    fn keyboard_detach_gates_keys_but_keeps_new_mouse_click_through() {
+        let input = live_input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        input.set_enabled(true);
+        tx.send(InputEv::Key { down: true, ch: 1 }).unwrap();
+        let mut shell = GameShell::new();
+        input.drain(&mut shell);
+        input.set_keyboard_enabled(false);
+        tx.send(InputEv::Key { down: true, ch: 58 }).unwrap();
+        tx.send(InputEv::Down {
+            button: 2,
+            x: 20,
+            y: 30,
+        })
+        .unwrap();
+        assert_eq!(input.consume_native_frame(&mut shell), MouseOwner::User);
+        assert_eq!(shell.key_held, [0; 128]);
+        assert_eq!(shell.poll_key(), -1);
+        assert_eq!((shell.mouse_button, shell.mouse_click_button), (2, 2));
+        input.set_keyboard_enabled(true);
+        tx.send(InputEv::Key { down: true, ch: 65 }).unwrap();
+        input.drain(&mut shell);
+        assert_eq!(shell.key_held[65], 1);
+        assert_eq!(shell.poll_key(), 65);
+        assert_eq!(shell.mouse_button, 0);
+    }
+
+    #[test]
+    fn user_detach_and_stale_mouse_up_do_not_release_script_hold() {
+        let input = live_input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        input.set_enabled(true);
+        let mut shell = GameShell::new();
+        input.enqueue_script_mouse(true, 20.0, 30.0, 0);
+        assert!(matches!(
+            input.consume_native_frame(&mut shell),
+            MouseOwner::Script { .. }
+        ));
+        input.set_enabled(false);
+        tx.send(InputEv::Up).unwrap();
+        input.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        assert!(input.script_held());
+        input.enqueue_script_mouse(false, 20.0, 30.0, 0);
+        input.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
     }
 
     fn intent_client() -> client::client::Client {

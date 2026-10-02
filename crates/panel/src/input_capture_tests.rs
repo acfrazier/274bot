@@ -4,8 +4,9 @@ use host::InputEv;
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
-    add_shifted_key_event, capture_key_ch, discard_unconsumed_native_capture, maybe_send_click,
-    shifted_imgui_key, shifted_imgui_key_at_location, stream_capture, KeyboardOwner,
+    add_shifted_key_event, capture_key_ch, discard_unconsumed_native_capture,
+    game_keyboard_available, maybe_send_click, shifted_imgui_key, shifted_imgui_key_at_location,
+    stream_capture, KeyboardOwner,
 };
 
 struct KeyCapture {
@@ -618,14 +619,6 @@ fn native_type_hi_enter(io: &mut dear_imgui_rs::Io) {
     tap_named(io, NamedKey::ArrowLeft);
 }
 
-fn apply_keys_to_shell(shell: &mut GameShell, evs: &[InputEv]) {
-    for ev in evs {
-        if let InputEv::Key { down, ch } = ev {
-            shell.apply_key(*down, 0, *ch);
-        }
-    }
-}
-
 /// Headed report: typing in a panel text field (Debug search) also lands in
 /// the client's chat. Drive the native KeyboardInput adapter used by
 /// `window_event` (`add_shifted_key_event`) → native queue → hovered
@@ -686,50 +679,35 @@ fn focused_panel_text_field_does_not_forward_keys_to_client() {
     );
 }
 
-/// Hold ArrowLeft over the game, focus Debug search in the same ImGui
-/// context, then release: GameShell must observe the key-up. Uses the
-/// KeyboardInput adapter `window_event` calls (`add_shifted_key_event`).
+/// Hold ArrowLeft over the game, focus Debug search, then rehover the game
+/// while that field still owns the keyboard. The real consumer must release
+/// the held key and must not restart it when the physical up arrives.
 #[test]
 fn held_game_key_release_reaches_client_after_panel_focus() {
     let _guard = crate::test_support::imgui_context_guard();
-    discard_unconsumed_native_capture();
-    let mut ctx = dear_imgui_rs::Context::create();
-    let mut capture = KeyCapture::new();
-    let _ = ctx.set_ini_filename(None::<String>);
-    let mut shell = GameShell::new();
-    let mut buf = String::new();
-
-    window_keyboard(ctx.io_mut(), WinitKey::Named(NamedKey::ArrowLeft), true);
-    let game = stream_hovered_keys(&mut ctx, None, false, false, &mut capture);
-    apply_keys_to_shell(&mut shell, &game);
+    let mut probe = OwnershipProbe::new();
+    probe.hold_arrow();
+    probe.ctx.io_mut().add_mouse_pos_event(probe.field);
+    probe
+        .ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    probe.frame("click panel search");
+    probe
+        .ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    probe.frame("panel search mouse up");
+    probe.frame("settled panel search");
+    probe.ctx.io_mut().add_mouse_pos_event(probe.game);
     assert_eq!(
-        key_chs(&game),
-        vec![(true, 1)],
-        "game pane must receive ArrowLeft down, got {game:?}"
+        probe.frame("game hovered with search focused"),
+        (true, true)
     );
-    assert_eq!(
-        shell.key_held[1], 1,
-        "client must hold ArrowLeft after down"
-    );
-
-    debug_search_frame(&mut ctx, &mut buf, true);
-    debug_search_frame(&mut ctx, &mut buf, false);
-
-    window_keyboard(ctx.io_mut(), WinitKey::Named(NamedKey::ArrowLeft), false);
-    let focused = stream_hovered_keys(&mut ctx, Some(&mut buf), false, true, &mut capture);
-    apply_keys_to_shell(&mut shell, &focused);
-    assert!(
-        key_chs(&focused).contains(&(false, 1)),
-        "release of a game-owned key must reach the client while the panel field is focused, got {focused:?}"
-    );
-    assert!(
-        !key_chs(&focused).contains(&(true, 1)),
-        "panel focus must not start a new ArrowLeft down, got {focused:?}"
-    );
-    assert_eq!(
-        shell.key_held[1], 0,
-        "client must not keep ArrowLeft held after the native release"
-    );
+    assert_eq!(probe.shell.key_held, [0; 128]);
+    probe.key(NamedKey::ArrowLeft, false);
+    assert_eq!(probe.frame("physical up with search focused"), (true, true));
+    assert_eq!(probe.shell.key_held, [0; 128]);
 }
 
 /// Real ImGui Image hover and InputText click transitions, through the
@@ -775,6 +753,7 @@ impl OwnershipProbe {
         self.ctx.prepare_frame(prepare_opts());
         let ui = self.ctx.frame();
         let captured = ui.io().want_capture_keyboard();
+        self.input.set_keyboard_enabled(game_keyboard_available(ui));
         self.keyboard
             .process_ownership(ui, self.tx.as_ref(), Some("game"));
         let mut hovered = false;
@@ -830,6 +809,18 @@ impl OwnershipProbe {
         self.key(NamedKey::ArrowLeft, true);
         assert_eq!(self.frame("ArrowLeft down"), (false, true));
         assert_eq!(self.shell.key_held[1], 1);
+    }
+
+    /// Ownership runs before the Game/grid/rail/chooser windows. Do not
+    /// drain the old slot here: its disabled wake tick already ran.
+    fn ownership_frame(&mut self, target: &str) {
+        self.ctx.prepare_frame(prepare_opts());
+        let ui = self.ctx.frame();
+        self.input.set_keyboard_enabled(game_keyboard_available(ui));
+        self.keyboard
+            .process_ownership(ui, self.tx.as_ref(), Some(target));
+        discard_unconsumed_native_capture();
+        self.ctx.render();
     }
 }
 
@@ -942,4 +933,70 @@ fn reconnecting_capture_for_same_slot_keeps_keys_on_current_receiver() {
     probe.key(NamedKey::ArrowRight, false);
     probe.frame("release new press after reconnect");
     assert_eq!(probe.shell.key_held[2], 0);
+}
+
+#[test]
+fn reselect_after_disabled_wake_does_not_lose_held_key_release() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut probe = OwnershipProbe::new();
+    probe.hold_arrow();
+    // The rail/grid/chooser select occurs after this frame's ownership pass.
+    probe.ownership_frame("game");
+    probe.input.set_enabled(false);
+    probe.input.drain(&mut probe.shell); // outgoing slot's immediate wake
+    println!(
+        "reselect disabled wake: alice[1]={}",
+        probe.shell.key_held[1]
+    );
+
+    let bob = host::SlotInput::new();
+    let (bob_tx, bob_rx) = std::sync::mpsc::channel();
+    bob.connect_rx(bob_rx);
+    bob.set_enabled(true);
+    probe.tx = Some(bob_tx);
+    probe.ownership_frame("bob"); // R3 queues alice's up after its wake
+
+    let (alice_tx, alice_rx) = std::sync::mpsc::channel();
+    probe.input.connect_rx(alice_rx); // reselect drops the old queued up
+    probe.input.set_enabled(true);
+    probe.tx = Some(alice_tx);
+    probe.key(NamedKey::ArrowLeft, false);
+    probe.ownership_frame("game");
+    probe.input.drain(&mut probe.shell);
+    let mut bob_shell = GameShell::new();
+    bob.drain(&mut bob_shell);
+    println!(
+        "reselect and physical up: alice[1]={} bob[1]={}",
+        probe.shell.key_held[1], bob_shell.key_held[1]
+    );
+    assert_eq!(probe.shell.key_held, [0; 128]);
+    assert_eq!(bob_shell.key_held, [0; 128]);
+}
+
+#[test]
+fn capture_reenable_after_disabled_wake_does_not_lose_held_key_release() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut probe = OwnershipProbe::new();
+    probe.hold_arrow();
+    probe.input.set_enabled(false);
+    probe.tx = None;
+    probe.input.drain(&mut probe.shell); // wake precedes the ownership pass
+    println!(
+        "capture disabled wake: key_held[1]={}",
+        probe.shell.key_held[1]
+    );
+    probe.ownership_frame("game"); // R3 queues an up after the disabled drain
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    probe.input.connect_rx(rx); // capture_on replaces the undrained receiver
+    probe.input.set_enabled(true);
+    probe.tx = Some(tx);
+    probe.key(NamedKey::ArrowLeft, false);
+    probe.ownership_frame("game");
+    probe.input.drain(&mut probe.shell);
+    println!(
+        "capture reenable and physical up: key_held[1]={}",
+        probe.shell.key_held[1]
+    );
+    assert_eq!(probe.shell.key_held, [0; 128]);
 }
