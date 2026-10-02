@@ -88,6 +88,11 @@ owns the slot, not saved for replay after it ends. This deliberately differs
 from design §3.6's held-walk deferral: an old route must not regain foreground
 authority after a native session. The carried host walk is not counted as a
 dropped script row. When the session ends ordinary game dispatch resumes.
+The Load-slot seat's worked example is
+`crates/script/examples/gather_quest_v2.ts` (authoritative) beside
+`gather_quest_v2.js` (checked-in plain-JS form): one Power-mode gather session
+to a drop quota, then one read-only `questProgress` check, with no script game
+actions. See [js-api-v2.md](js-api-v2.md) "Worked example: GatherQuest v2".
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
