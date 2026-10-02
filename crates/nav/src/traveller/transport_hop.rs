@@ -176,6 +176,17 @@ pub(super) fn chat_seq(snapshot: &GameSnapshot) -> i32 {
     Query::new(snapshot.chat_lines()).latest_sequence()
 }
 
+const WEB_CUT_FAILURE_MESSAGE: &str = "You fail to cut through it.";
+
+/// A cut failure authorizes exactly one retry; the watermark advances on
+/// the next successful send so the same chat line cannot arm another.
+fn observed_web_cut_failure(snapshot: &GameSnapshot, after: i32) -> bool {
+    snapshot
+        .chat_lines()
+        .iter()
+        .any(|line| line.sequence > after && line.text == WEB_CUT_FAILURE_MESSAGE)
+}
+
 /// The door's own tile: the edge's `at` — in the new edge model `at` IS
 /// the loc tile (the interact target), so no midpoint derivation. The
 /// door-troll read compares the loc's live id at this tile against the
@@ -248,11 +259,9 @@ impl FollowRun {
     /// One transport-hop settle step: match the positional `arrived(edge.to)`
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), recover an
-    /// NPC reach failure within its attempt/leg bounds, or lapse the budget.
-    /// Non-NPC hops still fail on fresh "I can't reach that!" chat.
-    /// A door hop that lapses its cheap budget escalates to the automatic
-    /// troll (see [`FollowRun::troll_door`]); only a troll hop (or a
-    /// non-door transport) lapses to the real `Stalled`.
+    /// NPC reach failure within its attempt/leg bounds, retry a web only on
+    /// its content failure message, or lapse the budget. Ordinary doors still
+    /// escalate a lapsed cheap hop to the automatic troll; webs do not.
     pub(super) fn poll_transport<D: Driver>(
         &mut self,
         d: &mut D,
@@ -412,6 +421,53 @@ impl FollowRun {
                 }
             }
         }
+        if hop.approach.is_none() {
+            let web_edge = match &hop.leg {
+                Leg::Transport { edge } if edge.is_slashable_web() => Some(edge.clone()),
+                _ => None,
+            };
+            if let Some(edge) =
+                web_edge.filter(|_| observed_web_cut_failure(snapshot, hop.chat_seq))
+            {
+                let Some(target) = find_transport_target_instance(snapshot, &edge, hop.npc_index)
+                else {
+                    self.loc_wait += 1;
+                    if self.loc_wait > self.budget {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        return Poll::Terminal(TravelOutcome::Blocked {
+                            at: here,
+                            leg: self.leg_index,
+                            detail: format!(
+                                "slashable web loc {} disappeared before retrying its observed cut failure",
+                                edge.loc_id
+                            ),
+                        });
+                    }
+                    self.transport = Some(hop);
+                    return Poll::Watching;
+                };
+                let chat_seq_at_send = chat_seq(snapshot);
+                let arrival_footprint = target.footprint();
+                let mut ix = Interactions::new(snapshot, d);
+                return match interact_transport(snapshot, &mut ix, target, &edge, options) {
+                    SendResult::Sent { .. } => {
+                        hop.chat_seq = chat_seq_at_send;
+                        hop.ticks_waited = 0;
+                        hop.sent_tile = Some(here);
+                        hop.arrival_footprint = arrival_footprint;
+                        hop.tries = hop.tries.saturating_add(1);
+                        hop.open_sent_tick = Some(snapshot.tick());
+                        self.loc_wait = 0;
+                        self.transport = Some(hop);
+                        Poll::Watching
+                    }
+                    SendResult::Refused { reason, .. } => {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                    }
+                };
+            }
+        }
         // Loc-backed pre-interact approach; NPC approaches are driven above.
         if hop.approach.is_some() {
             match self.poll_approach(d, snapshot, &mut hop, options) {
@@ -429,7 +485,8 @@ impl FollowRun {
             let target = find_transport_target_instance(snapshot, &edge, hop.npc_index);
             return match target {
                 Some(target) => {
-                    let chat_seq_at_send = npc_backed(&edge).then(|| chat_seq(snapshot));
+                    let chat_seq_at_send =
+                        (npc_backed(&edge) || edge.is_slashable_web()).then(|| chat_seq(snapshot));
                     let arrival_footprint = target.footprint();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(snapshot, &mut ix, target, &edge, options) {
@@ -817,16 +874,16 @@ impl FollowRun {
                     return Poll::Terminal(self.npc_expired(snapshot, &hop));
                 }
                 if hop.ticks_waited > self.budget {
-                    // The cheap one-interact door hop lapsed: a door the
-                    // closer keeps slamming can never cross that way, so
-                    // escalate this same leg to the automatic troll
-                    // instead of stalling. Re-open while closed, probe the
-                    // adjacent crossing after Open, and walk when open; only
-                    // a troll hop that lapses again — or a
-                    // non-door transport — returns the real `Stalled`.
+                    // An ordinary wall door that the closer keeps slamming
+                    // can never cross the cheap way, so escalate to the
+                    // automatic troll: re-open while closed, probe the
+                    // adjacent crossing after Open, and walk when open.
+                    // Slashable webs never enter this timer-based path; they
+                    // retry only on an observed failure line.
                     let door_leg = matches!(
                         &hop.leg,
-                        Leg::Transport { edge } if edge.kind == TransportKind::Door
+                        Leg::Transport { edge }
+                            if edge.kind == TransportKind::Door && !edge.is_slashable_web()
                     );
                     if door_leg && !hop.troll {
                         hop.troll = true;
@@ -934,11 +991,12 @@ impl FollowRun {
             None => {
                 approach.ticks_waited += 1;
                 if approach.ticks_waited > self.budget {
-                    // Preserve the existing loc/door approach behavior:
-                    // only NPC re-arms share the cumulative clock above.
+                    // Preserve the existing loc/door approach behavior;
+                    // slashable webs still require their observed fail line.
                     let door_leg = matches!(
                         &hop.leg,
-                        Leg::Transport { edge } if edge.kind == TransportKind::Door
+                        Leg::Transport { edge }
+                            if edge.kind == TransportKind::Door && !edge.is_slashable_web()
                     );
                     if door_leg && !hop.troll {
                         hop.troll = true;

@@ -1983,6 +1983,39 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
     }
 }
 
+/// Slashable webs declare both knife `oplocu` and worn-blade `oploc1` edges.
+/// When both pass the live state, mirror `slash_checker` by suppressing the
+/// knife choice in routing, independent of pack edge order.
+fn prefer_worn_slash_for_web(
+    graph: &TransportGraph,
+    edge: &TransportEdge,
+    state: &WorldState,
+    relax: Relax,
+) -> bool {
+    if relax != Relax::Strict
+        || !edge.is_slashable_web()
+        || edge.option != 0
+        || edge.item_req.is_empty()
+    {
+        return false;
+    }
+    graph.at.get(&edge.at).is_some_and(|indices| {
+        indices.iter().any(|&index| {
+            let alternative = &graph.edges[index];
+            alternative.is_slashable_web()
+                && alternative.option == 1
+                && alternative.at == edge.at
+                && alternative.to == edge.to
+                && alternative.dir == edge.dir
+                && alternative.ticks == edge.ticks
+                && alternative.open_loc_id == edge.open_loc_id
+                && alternative.item_req.is_empty()
+                && !alternative.worn_req.is_empty()
+                && edge_allowed(state, alternative, relax)
+        })
+    })
+}
+
 /// The outcome and peak scratch of one search's backward proof.
 #[derive(Clone, Copy, Default)]
 struct ReverseReport {
@@ -2482,6 +2515,9 @@ fn search_kernel(
                             continue;
                         }
                         if !edge_allowed(state, edge, relax) {
+                            continue;
+                        }
+                        if prefer_worn_slash_for_web(graph, edge, state, relax) {
                             continue;
                         }
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {

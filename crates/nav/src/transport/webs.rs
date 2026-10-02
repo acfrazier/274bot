@@ -4,9 +4,10 @@ use super::*;
 /// far-side dir — `oplocu` with an unequippable knife (`option` 0,
 /// `item_req`), and `oploc1` Slash (`option` 1) when any
 /// `slashattack_anim` blade is worn (`worn_req`, any-of). `loc_change`
-/// to `bigweb_slashed`. Same crossing shape as a door so the traveller
-/// trolls the 50% slash fail. Wilderness placements pack too; [`crate::router::find`]
-/// still refuses wildy tiles unless the search opts in.
+/// to `bigweb_slashed`. Same crossing shape as a door; the traveller retries
+/// only after the exact content failure message and accepts the `loc_change`
+/// as success, never using a timer guess. Wilderness placements pack too;
+/// [`crate::router::find`] still refuses wildy tiles unless the search opts in.
 pub(super) const WEB_TICKS: i32 = 2;
 /// `oplocu`: use the first `item_req` obj on the loc (the knife).
 pub(super) const WEB_USE_OPTION: i32 = 0;
