@@ -301,6 +301,7 @@ fn run_quester_sheep() -> Result<(), String> {
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
             if run_state == script::RunState::Running {
@@ -313,6 +314,19 @@ fn run_quester_sheep() -> Result<(), String> {
         }
         if let Some(error) = script_error {
             break Err(format!("Quester lifecycle error: {error}"));
+        }
+        if let Some(receipt) = lifecycle.as_ref() {
+            match receipt.state {
+                script::ScriptTerminalState::Failed
+                | script::ScriptTerminalState::Cancelled
+                | script::ScriptTerminalState::Stopped => {
+                    break Err(format!(
+                        "quester_sheep native run ended {:?}: {receipt:?}",
+                        receipt.state
+                    ));
+                }
+                script::ScriptTerminalState::Completed => {}
+            }
         }
         match runner_status {
             RunnerStatus::Failed(error) => {
@@ -332,20 +346,26 @@ fn run_quester_sheep() -> Result<(), String> {
                         ));
                     }
                 }
-                println!(
-                    "{}",
-                    json!({
-                        "phase": "witness",
-                        "live_case": CELL,
-                        "scenario": "quester_sheep",
-                        "native_phase": native_status
-                            .as_ref()
-                            .map(|status| format!("{:?}", status.phase)),
-                        "run_state": format!("{run_state:?}"),
-                        "start_count": start_count,
-                    })
-                );
-                break Ok(());
+                let completed = lifecycle
+                    .as_ref()
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Completed);
+                if completed && run_state == script::RunState::Idle {
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "witness",
+                            "live_case": CELL,
+                            "scenario": "quester_sheep",
+                            "native_phase": native_status
+                                .as_ref()
+                                .map(|status| format!("{:?}", status.phase)),
+                            "run_state": format!("{run_state:?}"),
+                            "lifecycle": format!("{lifecycle:?}"),
+                            "start_count": start_count,
+                        })
+                    );
+                    break Ok(());
+                }
             }
             RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
         }
@@ -356,7 +376,7 @@ fn run_quester_sheep() -> Result<(), String> {
                 .snapshot
                 .tile();
             break Err(format!(
-                "quester_sheep timed out: runner={runner_status:?} native_status={native_status:?} tile={tile:?}"
+                "quester_sheep timed out: runner={runner_status:?} native_status={native_status:?} lifecycle={lifecycle:?} run_state={run_state:?} tile={tile:?}"
             ));
         }
         std::thread::sleep(POLL_INTERVAL);
@@ -368,6 +388,7 @@ fn run_quester_sheep() -> Result<(), String> {
             "account": account,
             "result": format!("{:?}", result),
             "native_status": format!("{:?}", play.script_native_status(&account)),
+            "lifecycle": format!("{:?}", play.script_lifecycle_receipt(&account)),
             "run_state": format!("{:?}", play.script_state(&account)),
         })
     );

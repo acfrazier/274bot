@@ -1,7 +1,8 @@
 use super::*;
-use crate::native::{HostEffect, InteractionReceipt};
-use crate::quester::families::tests::with_tick;
+use crate::native::{HostEffect, InteractionReceipt, NativeOutput, ScriptStatus};
+use crate::quester::families::tests::{with_tick, with_tick_output};
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
+use api::selected::Truth;
 use api::snapshot::{GameSnapshot, QuestStatusView};
 
 fn fixture(journal: bool) -> (Quester, GameSnapshot) {
@@ -767,4 +768,106 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
             "{step} must continue with fresh quest progress, not bank or Duke recovery"
         );
     }
+}
+
+fn sheep_complete_snapshot() -> (Quester, GameSnapshot) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let path = super::super::compile::compile_path(
+        super::super::compile::SHEEP_JSON.as_bytes(),
+        &data,
+        &quests,
+    )
+    .unwrap();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Sheep Shearer".into(),
+            component_id: 0,
+            colour: 0x00F800,
+        }],
+        true,
+    );
+    (
+        Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            quests,
+        ),
+        snapshot,
+    )
+}
+
+#[derive(Default)]
+struct StatusCapture(Vec<ScriptStatus>);
+impl NativeOutput for StatusCapture {
+    fn status(&mut self, status: ScriptStatus) {
+        self.0.push(status);
+    }
+    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+    fn settings_applied(&mut self, _: u64) {}
+}
+
+#[test]
+fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
+    let (mut script, snapshot) = sheep_complete_snapshot();
+    let mut ledger = None;
+    let mut output = StatusCapture::default();
+    let mut flow = ScriptFlow::Continue;
+    for tick in 1..=8 {
+        flow = with_tick_output(&snapshot, &mut ledger, tick, &mut output, |t| {
+            script.tick(t).unwrap()
+        });
+        if matches!(flow, ScriptFlow::Complete) {
+            break;
+        }
+    }
+    assert!(
+        matches!(flow, ScriptFlow::Complete),
+        "colour Complete must end the sheep Path, got {flow:?}"
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "sheep:2");
+    assert_eq!(script.progress().unwrap().complete, Truth::True);
+    let last = output.0.last().expect("terminal status");
+    assert_eq!(
+        last.phase,
+        NativePhase::Complete,
+        "the terminal tick must publish Complete, not Working; status={last:?}"
+    );
+
+    let (script, snapshot) = sheep_complete_snapshot();
+    let mut slot = crate::SlotScript::new();
+    slot.bind_incarnation(1);
+    slot.start_test_script(Box::new(script), None).unwrap();
+    for tick in 1..=8 {
+        slot.on_game_tick(&mut crate::ScriptCtx {
+            driver: &mut crate::ctx::test_support::NullDriver::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: crate::CompiledTick::default(),
+        });
+        if slot.state() == crate::RunState::Idle {
+            break;
+        }
+    }
+    assert_eq!(slot.state(), crate::RunState::Idle);
+    assert!(
+        slot.native_status().is_none(),
+        "teardown drops compiled status; observers must use the lifecycle receipt"
+    );
+    assert_eq!(
+        slot.lifecycle_receipt().expect("completed receipt").state,
+        crate::ScriptTerminalState::Completed
+    );
 }
