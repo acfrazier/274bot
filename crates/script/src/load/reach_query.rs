@@ -74,7 +74,7 @@ pub(crate) fn posted_here() -> Option<WorldTile> {
     })
 }
 
-/// Frozen `isArrived` ([`api::query::is_arrived`]) from the last posted
+/// Shared `isArrived` ([`api::query::is_arrived`]) from the last posted
 /// player tile over the cached reach view. Legacy/compat walks carry no loc
 /// identity, so this stays anchor-based; native Walk selects tile or explicit
 /// loc arrival from its request. No posted tile is not arrived.
@@ -124,9 +124,14 @@ pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
             z: z as i32,
             level: here.level,
         };
-        // `dist > radius` failed: the radius does not bound the probes.
-        let bound =
-            i32::try_from(here.x.abs_diff(dest.x).max(here.z.abs_diff(dest.z))).unwrap_or(i32::MAX);
+        // Preserve the requested integer goal region for the shared reach
+        // budget. NaN keeps the comparison-only fallback; fractional radii
+        // cover the same integer tiles as their floor.
+        let bound = if radius.is_nan() {
+            dist as i32
+        } else {
+            radius.floor() as i32
+        };
         return with_view(|view| api::query::is_arrived(here, dest, bound, || view));
     }
     with_view(|view| {
@@ -615,6 +620,44 @@ mod tests {
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         crate::observed::apply(&snap);
         apply(&snap);
+    }
+
+    #[test]
+    fn numeric_arrival_preserves_the_requested_reach_region() {
+        use client::dash3d::CollisionFlag;
+        post(false);
+        let here = WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        };
+        let target = WorldTile {
+            x: 11,
+            z: 10,
+            level: 0,
+        };
+        let mut scene = api::snapshot::SceneView {
+            available: true,
+            base_x: 8,
+            base_z: 8,
+            level: 0,
+            width: 7,
+            height: 7,
+            collision_flags: vec![0; 49],
+        };
+        for z in 0..5 {
+            scene.collision_flags[2 * 7 + z] |= CollisionFlag::W_E;
+            scene.collision_flags[3 * 7 + z] |= CollisionFlag::W_W;
+        }
+        let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
+        set_view_for_tests(api::query::pack_reach_query(&scene, flood.as_ref()));
+        assert!(!arrived_at(11.0, 10.0, 0.0, 1.0), "the wall needs a detour");
+        assert!(arrived(target, 4), "the larger region admits that detour");
+        assert!(
+            arrived_at(11.0, 10.0, 0.0, 4.0),
+            "numeric arrival must not replace the requested radius with distance"
+        );
+        assert!(arrived_at(11.0, 10.0, 0.0, 4.5));
     }
 
     /// Frozen `isArrived` over JS numbers: `dist > radius` alone rejects,

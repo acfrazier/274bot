@@ -1,4 +1,4 @@
-//! Read-only state exposed for the persistent manual-click LIVE proofs.
+//! State and clock controls for the feature-gated manual-click LIVE proofs.
 
 use crate::{script_runtime::script_slot, Play};
 
@@ -11,11 +11,25 @@ impl Play {
             serde_json::json!({
                 "runtime_generation": slot.runtime_generation(),
                 "run_state": format!("{:?}", slot.state()),
+                "live_walking_operation": slot.live_walking_operation(),
                 "walk_result": slot
                     .probe("globalThis.__manual_walk_result")
                     .unwrap_or(serde_json::Value::Null),
+                "v2_reason": slot
+                    .probe("globalThis.__manual_v2_reason ?? null")
+                    .unwrap_or(serde_json::Value::Null),
+                "watchdog_state": format!("{:?}", slot.watchdog().state()),
+                "recovering_anchor": slot.watchdog().recovering_anchor().map(|tile| [
+                    tile.x, tile.z, tile.level,
+                ]),
+                "rearm_pending": slot.watchdog().rearm_pending(),
+                "idle_ms": slot.progress(std::time::Instant::now()).and_then(|p| p.idle_for)
+                    .map(|elapsed| elapsed.as_millis() as u64),
                 "terminal_count": slot
                     .probe("globalThis.__manual_terminal_count || 0")
+                    .unwrap_or(serde_json::Value::Null),
+                "npc_boxes": slot
+                    .probe("globalThis.__rs2b0t_host.snapshot.npc_boxes")
                     .unwrap_or(serde_json::Value::Null),
                 "error": slot.last_error(),
             })
@@ -51,5 +65,57 @@ impl Play {
             })
         });
         serde_json::json!({ "script": script, "nav": nav })
+    }
+
+    /// Advance the gameplay idle clock for a LIVE recovery trial without
+    /// replacing the production watchdog, anchor callback, route or input path.
+    #[doc(hidden)]
+    pub fn manual_click_live_age_gameplay(
+        &self,
+        name: &str,
+        here: api::snapshot::WorldTile,
+    ) -> Result<(), String> {
+        if let Some(cell) = script_slot(&self.scripts, name) {
+            let mut slot = cell.lock().unwrap();
+            if !matches!(slot.watchdog().state(), script::WatchdogState::Armed) {
+                return Ok(());
+            }
+            let xp: Vec<i32> = serde_json::from_value(
+                slot.probe("globalThis.__rs2b0t_host.snapshot.stats.map(row => row.xp)")
+                    .map_err(|error| {
+                        format!(
+                            "{error}; owner={:?}; watchdog={:?}; last_error={:?}",
+                            slot.state(),
+                            slot.watchdog().state(),
+                            slot.last_error(),
+                        )
+                    })?,
+            )
+            .map_err(|error| error.to_string())?;
+            slot.feed_watchdog(
+                std::time::Instant::now()
+                    - script::watchdog::WEDGE
+                    - std::time::Duration::from_secs(1),
+                Some((here.x, here.z, here.level)),
+                &xp,
+                false,
+                true,
+                &[script::shim::InteractReq::NoteProgress],
+            );
+            // Evaluate the aged clock before live movement can restamp it.
+            // Sample the real isolate callback; production still owns ArmWalk.
+            let action = slot.feed_watchdog(
+                std::time::Instant::now(),
+                Some((here.x, here.z, here.level)),
+                &xp,
+                false,
+                true,
+                &[script::shim::InteractReq::LoopSettled],
+            );
+            if action == script::WatchdogAction::RequestAnchor {
+                slot.request_recovery_anchor();
+            }
+        }
+        Ok(())
     }
 }
