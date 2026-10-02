@@ -92,7 +92,7 @@ fn fixed_food_heals<'s>(
     let Some(data) = supply_v2::selected_data() else {
         return Ok(array.into());
     };
-    for (index, (name, _)) in data.fixed_food_heals().enumerate() {
+    for (index, name) in data.fixed_food_options_best_first().into_iter().enumerate() {
         let name = v8_str(scope, name)?;
         array
             .set_index(scope, index as u32, name)

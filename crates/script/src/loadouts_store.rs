@@ -501,8 +501,9 @@ fn resolve_food_options(
         return ResolvedSettingOptions::default();
     };
     ResolvedSettingOptions::from_values(
-        data.fixed_food_heals()
-            .map(|(name, _)| name.to_string())
+        data.fixed_food_options_best_first()
+            .into_iter()
+            .map(str::to_string)
             .collect(),
     )
 }
@@ -909,6 +910,15 @@ mod tests {
             .iter()
             .all(|name| data.fixed_food_heal(name).is_some()));
         assert_eq!(options.labels, options.values);
+        let heals: Vec<i32> = options
+            .values
+            .iter()
+            .map(|name| data.fixed_food_heal(name).unwrap())
+            .collect();
+        assert!(
+            heals.windows(2).all(|pair| pair[0] >= pair[1]),
+            "food choices list the best heal first: {heals:?}"
+        );
     }
     #[test]
     fn w1c_equipment_options_closed_without_game_data() {
