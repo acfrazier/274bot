@@ -114,6 +114,7 @@ pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
     for w in ESSENCE_WIZARDS {
         graph.edges.push(TransportEdge {
             kind: TransportKind::Npc,
+            player_delta: None,
             at: w.at,
             to: ESSENCE_MINE_PAD,
             loc_id: w.npc,
@@ -206,6 +207,7 @@ pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
     for e in ELKOY_ESCORTS {
         graph.edges.push(TransportEdge {
             kind: TransportKind::Npc,
+            player_delta: None,
             at: e.at,
             to: e.to,
             loc_id: e.npc,

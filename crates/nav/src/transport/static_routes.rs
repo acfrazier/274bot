@@ -292,6 +292,7 @@ pub(super) fn boat_edges(
             graph,
             TransportEdge {
                 kind: TransportKind::Boat,
+                player_delta: None,
                 at: r.at,
                 to: r.to,
                 loc_id: r.npc,
@@ -313,6 +314,7 @@ pub(super) fn boat_edges(
         if let Some(p) = r.plank {
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Ladder,
+                player_delta: None,
                 at: p.at,
                 to: p.to,
                 loc_id: p.loc_id,
@@ -409,6 +411,7 @@ pub(super) fn cart_edges(graph: &mut TransportGraph) {
     for r in CART_ROUTES {
         graph.edges.push(TransportEdge {
             kind: TransportKind::Npc,
+            player_delta: None,
             at: r.at,
             to: r.to,
             loc_id: r.npc,

@@ -72,6 +72,7 @@ pub(super) fn magicguild_door_edges(
                 };
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at,
                     to,
                     loc_id: id,

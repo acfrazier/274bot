@@ -37,7 +37,7 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::quest_gates::QuestFamilyMismatch;
-use crate::transport::{TransportEdge, TransportGraph};
+use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
 use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
@@ -1983,6 +1983,32 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
     }
 }
 
+/// Slashable webs declare both knife `oplocu` and worn-blade `oploc1` edges.
+/// When both pass the live state, mirror `slash_checker` by suppressing the
+/// knife choice in routing, independent of pack edge order.
+fn prefer_worn_slash_for_web(
+    graph: &TransportGraph,
+    edge: &TransportEdge,
+    state: &WorldState,
+    relax: Relax,
+) -> bool {
+    if relax != Relax::Strict
+        || !edge.is_slashable_web()
+        || edge.option != 0
+        || edge.item_req.is_empty()
+    {
+        return false;
+    }
+    graph.at.get(&edge.at).is_some_and(|indices| {
+        select_web_action(
+            indices.iter().map(|&index| &graph.edges[index]),
+            edge,
+            |candidate| edge_allowed(state, candidate, relax),
+        )
+        .is_some_and(|selected| selected.option == 1)
+    })
+}
+
 /// The outcome and peak scratch of one search's backward proof.
 #[derive(Clone, Copy, Default)]
 struct ReverseReport {
@@ -2193,7 +2219,9 @@ impl<'a> ReverseClosure<'a> {
         }
         let admitted = self.seen.len();
         for (index, edge) in graph.edges.iter().enumerate() {
-            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax) {
+            if (edge.player_delta.is_some() || self.seen.contains(&edge.to))
+                && edge_allowed(state, edge, self.relax)
+            {
                 if let Some(proof) = self.admit_edge_takeoffs(index) {
                     return Some(proof);
                 }
@@ -2215,7 +2243,6 @@ impl<'a> ReverseClosure<'a> {
     /// sides and source wall faces. Radius-only predecessors are not a proof.
     fn admit_edge_takeoffs(&mut self, index: usize) -> Option<ReverseProof> {
         let (min, max) = self.graph.takeoff_bounds(index);
-        let to = self.graph.edges[index].to;
         for x in min.x..=max.x {
             for z in min.z..=max.z {
                 let takeoff = WorldTile {
@@ -2223,12 +2250,20 @@ impl<'a> ReverseClosure<'a> {
                     z,
                     level: min.level,
                 };
-                if self.graph.admissible_from(self.collision, index, takeoff)
-                    && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                if !self.graph.admissible_from(self.collision, index, takeoff) {
+                    continue;
+                }
+                let edge = &self.graph.edges[index];
+                let Some(to) = edge.landing_from(takeoff) else {
+                    continue;
+                };
+                if (edge.player_delta.is_some() && !self.seen.contains(&to))
+                    || !wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
                 {
-                    if let Some(proof) = self.admit(takeoff) {
-                        return Some(proof);
-                    }
+                    continue;
+                }
+                if let Some(proof) = self.admit(takeoff) {
+                    return Some(proof);
                 }
             }
         }
@@ -2484,23 +2519,26 @@ fn search_kernel(
                         if !edge_allowed(state, edge, relax) {
                             continue;
                         }
-                        if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
+                        if prefer_worn_slash_for_web(graph, edge, state, relax) {
                             continue;
                         }
-                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, edge.to)) {
+                        let Some(to) = edge.landing_from(cur) else {
+                            continue;
+                        };
+                        if !avoid.is_empty() && !escaping && tile_in_any_avoid(to, avoid) {
                             continue;
                         }
-                        if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
+                        if zones.is_some_and(|filter| filter.blocks(&graph.wilderness, to)) {
+                            continue;
+                        }
+                        if !wildy_step_ok(graph, cur, to, allow_wilderness) {
                             continue;
                         }
                         let nd = n.cost + edge.ticks as f64;
-                        if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
-                            dist.insert(edge.to, nd);
-                            came_from.insert(edge.to, Back::Transport { from: cur, ei });
-                            heap.push(HeapNode {
-                                cost: nd,
-                                tile: edge.to,
-                            });
+                        if !done.contains(&to) && dist.get(&to).is_none_or(|&g| g > nd) {
+                            dist.insert(to, nd);
+                            came_from.insert(to, Back::Transport { from: cur, ei });
+                            heap.push(HeapNode { cost: nd, tile: to });
                         }
                     }
                 }
@@ -2770,7 +2808,10 @@ fn reconstruct(
                 ticks += walk_ticks(&walk_rev, model);
                 walk_rev.reverse();
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
-                let edge = graph.edges[ei].clone();
+                let mut edge = graph.edges[ei].clone();
+                if edge.player_delta.is_some() {
+                    edge.to = t;
+                }
                 ticks += edge.ticks as f64;
                 legs_rev.push(Leg::Transport { edge });
                 // The walk leg before the transport resumes from the tile

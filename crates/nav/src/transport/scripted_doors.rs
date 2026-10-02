@@ -182,6 +182,7 @@ pub(super) fn scripted_door_edges(
                 let gated = guild.skill.is_some() && dir == gated_dir;
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at,
                     to,
                     loc_id,

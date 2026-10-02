@@ -1,7 +1,8 @@
 //! Process-lifetime advisory lock on `~/.274bot/instance.lock`.
 //!
 //! Uses [`std::fs::File::try_lock`] (POSIX `flock` / Windows `LockFileEx`).
-//! The lock is released when this process exits or the handle drops.
+//! The lock is explicitly released when its owner drops, even if a child
+//! briefly inherited the file descriptor during process creation.
 //!
 //! Holder identity (`panel|tui` + pid) is a separate plain file,
 //! `~/.274bot/instance.holder`, published after the lock is taken (tmp +
@@ -75,6 +76,7 @@ pub struct InstanceLock {
 impl Drop for InstanceLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(instance_holder_path());
+        let _ = self._file.unlock();
     }
 }
 
@@ -296,7 +298,7 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read};
     use std::process::{Command, Stdio};
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::{mpsc, Mutex, MutexGuard};
 
     fn lock_test_guard() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
@@ -439,25 +441,42 @@ mod tests {
             };
             write_holder(kind).unwrap();
         }
-        println!("holder-ready {}", std::process::id());
+        println!("\nholder-ready {}", std::process::id());
         let mut buf = [0u8; 1];
         let _ = std::io::stdin().read(&mut buf);
-        drop(file);
+        file.unlock().expect("release child lock");
     }
 
     struct HolderProc {
         child: std::process::Child,
-        stdout: BufReader<std::process::ChildStdout>,
+        reader: Option<std::thread::JoinHandle<()>>,
         pid: u32,
     }
 
     impl HolderProc {
         fn reap(mut self) {
             drop(self.child.stdin.take());
-            let mut stdout = self.stdout.into_inner();
-            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
-            let status = self.child.wait().expect("wait holder");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = self.child.try_wait().expect("wait holder") {
+                    break status;
+                }
+                assert!(Instant::now() < deadline, "holder child exit timed out");
+                std::thread::sleep(Duration::from_millis(10));
+            };
             assert!(status.success(), "holder child {status:?}");
+        }
+    }
+
+    impl Drop for HolderProc {
+        fn drop(&mut self) {
+            if self.child.try_wait().ok().flatten().is_none() {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+            if let Some(reader) = self.reader.take() {
+                reader.join().expect("holder stdout reader");
+            }
         }
     }
 
@@ -477,16 +496,24 @@ mod tests {
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        let pid = loop {
-            line.clear();
-            let n = stdout.read_line(&mut line).expect("holder line");
-            assert!(n > 0, "holder-ready");
-            if let Some(rest) = line.trim_end().strip_prefix("holder-ready ") {
-                break rest.parse().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.expect("holder line");
+                if let Some(rest) = line.trim_end().strip_prefix("holder-ready ") {
+                    let _ = ready_tx.send(rest.parse::<u32>().expect("holder pid"));
+                }
             }
+        });
+        let mut holder = HolderProc {
+            child,
+            reader: Some(reader),
+            pid: 0,
         };
-        HolderProc { child, stdout, pid }
+        holder.pid = ready_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("holder-ready within timeout");
+        holder
     }
 }

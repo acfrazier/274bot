@@ -185,34 +185,41 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
-fn plant_snapshot(unpack: &Path, packs: &[(String, Vec<u8>)]) {
+fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    struct FixtureEntries;
+    impl client::unpack::EntrySource for FixtureEntries {
+        fn fetch_entries(
+            &mut self,
+            _archive: i32,
+            files: &[i32],
+        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+        }
+    }
     let versionlist = &packs
         .iter()
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let version = client::unpack::version_hash(versionlist);
-    let dir = unpack.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut manifest = format!(
-        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
-        dir.display()
-    );
+    let transfer = nav::manifest::hash_bytes(versionlist);
+    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let input = unpack.join("fixture-input");
+    std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
-        std::fs::write(dir.join(name), bytes).unwrap();
-        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+        std::fs::write(input.join(name), bytes).unwrap();
     }
-    for name in ["models", "anims", "midi", "maps"] {
-        let mut bin = 0u32.to_le_bytes().to_vec();
-        bin.extend_from_slice(&4u32.to_le_bytes());
-        bin.extend_from_slice(b"body");
-        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
-        manifest += &format!(
-            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
-            bin.len()
-        );
-    }
-    std::fs::write(dir.join("manifest"), manifest).unwrap();
+    let out = unpack
+        .join(format!("revision-{revision}"))
+        .join(negotiated)
+        .join(transfer);
+    // Use the same verified retained publisher fixture as host runtime_bind.
+    // Legacy size-only markers are not ordinary-launch asset candidates.
+    client::unpack::fetch_snapshot(
+        &input.to_string_lossy(),
+        &out.to_string_lossy(),
+        &mut FixtureEntries,
+    )
+    .unwrap();
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
@@ -287,7 +294,7 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     )
     .unwrap();
     let unpack = root.join("unpack");
-    plant_snapshot(&unpack, &packs);
+    plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
     (root, cache, manifest_path, unpack, port)
 }
@@ -1612,6 +1619,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         TransportGraph {
             edges: vec![TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: WorldTile {
                     x: 3202,
                     z: 3202,
@@ -2077,6 +2085,7 @@ fn door_route() -> Route {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: WorldTile {
                         x: 3202,
                         z: 3200,
@@ -2325,6 +2334,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: tiles[300],
                     to: tiles[301],
                     loc_id: 1530,
@@ -3325,6 +3335,7 @@ fn toll_world() -> NavWorld {
     }
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 2,
@@ -3526,6 +3537,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -3631,6 +3643,7 @@ fn picker_confirm_uses_find_with_options() {
     };
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
