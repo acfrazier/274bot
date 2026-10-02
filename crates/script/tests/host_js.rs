@@ -488,6 +488,62 @@ for (const quest of ['cook', 'sheep', 'runemysteries', 'romeojuliet']) {
 void api.questProgress('cook');
 "#;
 
+/// Slice-C sample compile gate (pinned TypeScript 5.8.3): the authoritative
+/// `examples/gather_quest_v2.ts` sample must type-check against the rendered
+/// declarations with the same strict flags as the slice-A/B consumer probes.
+/// The sample uses every slice-A/B member, so a missing or mistyped member
+/// fails here. The checked-in `.js` beside it carries the same logic for
+/// plain-JS loading; it is not a second implementation.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_gather_quest_sample_type_checks() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!(
+        "host-js-gather-quest-sample-{}",
+        std::process::id()
+    ));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear gather-quest sample dir");
+    }
+    // Preserve the sample's relative `../host-js/index.d.ts` import.
+    let host_js = dir.join("host-js");
+    let examples = dir.join("examples");
+    std::fs::create_dir_all(&host_js).expect("create sample host-js dir");
+    std::fs::create_dir_all(&examples).expect("create sample examples dir");
+    std::fs::write(host_js.join("index.d.ts"), render_host_js_dts())
+        .expect("write sample declarations");
+    std::fs::write(
+        examples.join("gather_quest_v2.ts"),
+        include_str!("../examples/gather_quest_v2.ts"),
+    )
+    .expect("write gather-quest sample");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(examples.join("gather_quest_v2.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc gather-quest sample failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove gather-quest sample dir");
+    assert!(
+        output.status.success(),
+        "gather-quest sample failed:\n{stdout}\n{stderr}"
+    );
+}
+
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]

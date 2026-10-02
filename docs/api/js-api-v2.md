@@ -37,17 +37,20 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `request(op)` — enqueue one supported op; **returns void**
 - `bankNearestReachable({from?, allow_wilderness?, use_mage_bank?, use_zanaris_bank?})`
   — awaited select-only `HelperResult<BankLocation | null>`, retaining object
-  or NPC access metadata. The origin defaults to the observed player; native
-  wilderness admission defaults to false. Mage Arena and Zanaris require their
-  explicit opt-ins (or the captured boolean settings), defaulting to false.
-  Base Fishing level and completed quests gate the full stable 20-bank catalog.
-  A same-plane
+  or NPC access metadata. Omitted input is `{}`. The origin defaults to the
+  observed player; native wilderness admission defaults to false. Mage Arena
+  and Zanaris require their explicit opt-ins (or the captured boolean
+  settings), defaulting to false. Base Fishing level and completed quests gate
+  the full stable 20-bank catalog. A same-plane
   air-nearest stand within four tiles bypasses routing. Otherwise one
   off-thread native search ranks resolved candidates by walk cost, with
   stable air-order ties. No route, budget exhaustion without a winner, or
   an incomplete five-second window falls back to the eligible air-nearest bank
   captured at the call. The waiter starts that bound before host admission, so
   a dropped request also settles; its machine clock freezes during pause/hold.
+  A newer select supersedes the older waiter (`aborted: superseded`). The
+  settlement is `{ok:true, value}` where `value` is `null` when selection has
+  no bank to return (no origin, or the bound with no eligible fallback).
   A bank result does not by itself prove reachability. Selection does not
   replace a walk, move, or open a bank.
   World-specific object/NPC placements and collision resolve legitimate walk
@@ -57,7 +60,8 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
   bank queries retain Euclidean air ranking to `approach ?? tile`, ignoring plane.
 - `snapshot.bank_selection` — latest select-only completion, with request
   identity, generation, bank and `near` / `reachable` / `fallback` / `none`
-  disposition. Stop, reset and replacement requests reject stale results.
+  disposition. Only the completion carrying the caller's `request_id` settles
+  it; an empty (`kind 0`) post reads as `null`. Stop, reset and replacement requests reject stale results.
 
 Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 `request` ops throw `not impl: request.<op>`.
@@ -321,8 +325,8 @@ the session.
 Declarations are generated from the Rust tables
 (`cargo test -p script --test host_js regen_host_js -- --ignored`)
 and pinned by the freshness gate plus pinned TypeScript 5.8.3 consumer
-probes: gather-only, and quest progress using both calls and every row
-field.
+probes: gather-only, quest progress using both calls and every row
+field, and the gather_quest_v2 sample below.
 
 ## Quest progress
 
@@ -391,6 +395,54 @@ if (out.kind === 'done' && out.value.end === 'done') {
   api.log(`Cook's Assistant: colour=${row.colour} stage=${stage} complete=${row.complete}`);
 }
 ```
+
+## Worked example: GatherQuest v2
+
+`crates/script/examples/gather_quest_v2.ts` is the authoritative gather-then-quest
+sample. `gather_quest_v2.js` is the checked-in plain-JavaScript form with the same
+logic and loadable v2 export declarations; it is not a second implementation.
+Either file can be loaded as a NativeApi v2 card. The sample uses only the public
+`NativeApi` surface and issues no game actions of its own — gathering, dropping
+and the journal read are all host-owned:
+
+- `SETTINGS.logs` (`number`, default 56) is read with
+  `api.settings.num('logs', 56)`;
+- one Power-mode normal-logs session at Start (radius 12): the `run` promise is
+  kept with `.then`, never awaited, and each tick polls `api.snapshot.gather`
+  until `status.dropped >= logs`, then calls `api.gather.stop()`. The stop
+  quota (default 56) is two full 28-slot power-drop cycles;
+- the settled `run` outcome is handled explicitly: sync `refused`
+  (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`,
+  `busy`), nested `refused` / `blocked` / `failed`, and machine `aborted`
+  all stop the script with their reason; only `stopped` continues. A failed
+  `stop()` (`no-session`) stops the script too;
+- one read-only Cook's Assistant check: `questPaths()` is read sync and must
+  list `cook`, then a single `await api.questProgress({ quest: 'cook' })`
+  resolves the row; the script logs `colour` / `stage` / `complete` and stops
+  with `done`.
+
+Receipts for the live harness are the four `api.log` lines (`gather outcome:`,
+`gather stop:`, `quest paths:`, `quest progress:`), each carrying the exact
+machine envelope or helper result as JSON. They are consumer logs, not a second
+host wire.
+
+The sample type-checks against the generated declarations with pinned
+TypeScript 5.8.3 (strict, ES2022, `ESNext`, `Bundler`):
+
+```sh
+cargo test -p script --test host_js tsc_gather_quest_sample_type_checks -- --ignored
+```
+
+The slice-C live cell loads the checked-in `.js` through the real Load path
+with the read-only test-support seam and requires `--features test-support`:
+
+```sh
+LIVE=1 cargo test -p host-play --features test-support --test script_api_live -- --ignored --test-threads=1
+```
+
+with `WORLD_ENGINE_DIR`, `WORLD_NAV_PACK`, `BOT_CACHE_DIR`,
+`BOT_EVIDENCE_DIR` and `BOT_LIVE_NAME_PREFIX` set. No panel/TUI presentation
+and no bank-trip (slice E) behavior is claimed here.
 
 ## Quest query helpers
 
