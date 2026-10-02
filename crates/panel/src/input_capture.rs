@@ -252,6 +252,22 @@ fn take_native_capture() -> Vec<(bool, i32)> {
     std::mem::take(&mut *NATIVE_CAPTURE.lock().expect("native capture"))
 }
 
+/// Record an IME commit as capture key taps. ImGui already received the
+/// characters via the winit backend; this is only the game-chat path.
+/// Control and non-ASCII characters are skipped, matching KeyboardInput
+/// capture which only queues ASCII `ch` values.
+pub(crate) fn note_native_ime_commit(text: &str) {
+    let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
+    for ch in text.chars() {
+        if ch.is_control() || !ch.is_ascii() {
+            continue;
+        }
+        let code = ch as i32;
+        queued.push((true, code));
+        queued.push((false, code));
+    }
+}
+
 /// Drop unconsumed capture so capture-off / unhovered frames cannot
 /// replay later. Held press-character ownership is cleared only when
 /// events were actually discarded: an empty queue after a drained press
@@ -300,7 +316,16 @@ pub(crate) fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
 /// same-frame `a`/Space/`b` stays `a b`. Produced printables are the
 /// characters recorded at KeyboardInput so a later Shift sample cannot
 /// rewrite `:` into `;`.
-pub(crate) fn capture_keys(_ui: &Ui) -> Vec<(bool, i32)> {
+///
+/// When ImGui wants the keyboard (a focused text field or another active
+/// widget), discard the queue instead of forwarding so panel typing cannot
+/// land in the client's chat. Unhovered / capture-off frames still drop
+/// leftovers via [`discard_unconsumed_native_capture`].
+pub(crate) fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
+    if ui.io().want_capture_keyboard() {
+        discard_unconsumed_native_capture();
+        return Vec::new();
+    }
     take_native_capture()
 }
 

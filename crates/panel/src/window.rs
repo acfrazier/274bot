@@ -1672,7 +1672,8 @@ where
                     // Add only the missing key lifecycle and record the
                     // produced/named capture ch in event order: text must
                     // not be queued a second time, and key-repeat must not
-                    // extra-deliver.
+                    // extra-deliver. Forwarding to the client is gated
+                    // later by `capture_keys` on WantCaptureKeyboard.
                     if !event.repeat {
                         crate::input_capture::add_shifted_key_event(
                             window.imgui.context.io_mut(),
@@ -1681,6 +1682,9 @@ where
                             event.state == winit::event::ElementState::Pressed,
                         );
                     }
+                }
+                if let WindowEvent::Ime(winit::event::Ime::Commit(text)) = &event {
+                    crate::input_capture::note_native_ime_commit(text);
                 }
 
                 match event {
