@@ -705,7 +705,7 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
             ui.text_disabled(format!("{} / 80 bytes", wire.len()));
             if command.destructive {
                 ui.set_item_tooltip(
-                    "Destructive command — confirmation is required before sending.",
+                    "Destructive command — it clears, resets, or lowers account state; confirmation is required before sending.",
                 );
             }
             let targets = target_rows(session);
@@ -754,7 +754,7 @@ fn is_picker_kind(kind: &str) -> bool {
 fn destructive_tooltip(ui: &Ui) {
     ui.tooltip(|| {
         let _red = ui.push_style_color(StyleColor::Text, ERROR);
-        ui.text("Destructive command: it may change or remove game state.");
+        ui.text("Destructive command: it irreversibly clears, resets, or lowers account state.");
     });
 }
 
@@ -868,7 +868,7 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
         ui.text("Destructive debug command");
         red.pop();
         ui.text_wrapped(format!(
-            "Send {} to {}? This command may change or remove game state.",
+            "Send {} to {}? This command irreversibly clears, resets, or lowers account state (inventory or bank, a quest or stats, a stat level, or items).",
             pending.summary,
             target_description(&pending.targets)
         ));
