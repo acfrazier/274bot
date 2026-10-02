@@ -37,7 +37,7 @@ const WARLORD_ANCHOR: WorldTile = WorldTile {
     level: 0,
 };
 // Outside every nearby static tree's one-tile hunt range. The fixture's first
-// native walk approaches3109/3346 only after the exact HP8 Start baseline.
+// native walk enters3108/3346's one-tile hunt range after the exact HP8 Start.
 const TREE_APPROACH: WorldTile = WorldTile {
     x: 3110,
     z: 3346,
@@ -1152,9 +1152,7 @@ fn m5_ready(capture: &CombatCapture) -> bool {
     else {
         return false;
     };
-    injection["active_combat_owner_live_before"] == json!(true)
-        && injection["active_combat_owner_live_after"] == json!(false)
-        && injection["delivery"] == json!("Play.observe -> PlaySlotScript.on_random")
+    m5_owner_preempted(capture, injection)
         && clear_prayers_before_next_operation(capture, injection)
         && native_interactions_wire_valid(capture)
         && batch_plan_contract(capture, &batch_plans(capture))
@@ -2266,6 +2264,27 @@ fn m4_conditional_eat_ok(capture: &CombatCapture, report: &Value) -> bool {
             && receipt["eat_admitted_before_ready"] == json!(true))
 }
 
+fn m5_owner_preempted(capture: &CombatCapture, injection: &Value) -> bool {
+    let owner = &injection["active_combat_owner"];
+    injection["active_combat_owner_live_before"] == json!(true)
+        && injection["active_combat_owner_live_after"] == json!(false)
+        && injection["active_combat_owner_liveness_basis"]
+            == json!("native action owner revocation bit")
+        && injection["delivery"] == json!("Play.observe -> PlaySlotScript.on_random")
+        && owner["action_id"].as_u64().is_some_and(|id| id > 0)
+        && capture.actions.iter().any(|action| {
+            is_npc_attack(action)
+                && accepted(action)
+                && action["run"] == owner["run"]
+                && action["action_id"] == owner["action_id"]
+                && action["request_id"] == owner["request_id"]
+                && action["sequence"]
+                    .as_u64()
+                    .zip(injection["action_sequence_at_injection"].as_u64())
+                    .is_some_and(|(attack, injection)| attack <= injection)
+        })
+}
+
 fn clear_prayers_before_next_operation(capture: &CombatCapture, injection: &Value) -> bool {
     if injection["hold"] != json!(true) {
         return false;
@@ -2308,11 +2327,15 @@ fn clear_prayers_before_next_operation(capture: &CombatCapture, injection: &Valu
     };
     let cleanup = &after[..next_operation_index];
     let next_operation = after[next_operation_index];
-    expected_components.iter().all(|component| {
-        cleanup
-            .iter()
-            .any(|action| prayer_action(action, *component) && action_wire_valid(action))
-    }) && all_prayer_bits_off(&next_operation["snapshot"])
+    cleanup.len() == expected_components.len()
+        && expected_components.iter().all(|component| {
+            cleanup
+                .iter()
+                .filter(|action| prayer_action(action, *component) && action_wire_valid(action))
+                .count()
+                == 1
+        })
+        && all_prayer_bits_off(&next_operation["snapshot"])
 }
 
 fn no_attack_after_report(capture: &CombatCapture, report: &Value) -> bool {
@@ -2896,4 +2919,84 @@ fn every_imp_corpse_episode_requires_its_own_exact_killed_outcome() {
     capture.statuses[1]["fields"]["combat_evidence_tick"] = json!(20);
     capture.statuses[1]["fields"]["combat_engaged_npc_type"] = json!(477);
     assert!(!every_imp_corpse_has_outcome(&capture));
+}
+
+#[test]
+fn hygiene_clear_prefix_rejects_missing_clear_empty_prayers_and_other_clicks() {
+    let varps = |active| {
+        (83..=97)
+            .map(|index| json!({"index": index, "value": i32::from(active && index == 97)}))
+            .collect::<Vec<_>>()
+    };
+    let injection = json!({
+        "hold": true, "action_sequence_at_injection": 1,
+        "prayer_varps_at_injection": varps(true)
+    });
+    let clear = json!({
+        "kind": "interaction", "sequence": 2,
+        "request": {"op": "if-button", "component_id": 5623},
+        "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [client::io::ClientProt289::IF_BUTTON.id],
+    });
+    let next = json!({
+        "kind": "walk", "sequence": 3,
+        "snapshot": {"prayer_varps": varps(false)}
+    });
+    let mut capture = CombatCapture::default();
+    capture
+        .prayer_facts
+        .push(json!({"varp": 97, "button_com": 5623}));
+    capture.actions = vec![clear.clone(), next.clone()];
+    assert!(clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[0]["request"]["component_id"] = json!(999);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions[0] = clear.clone();
+    let mut empty = injection.clone();
+    empty["prayer_varps_at_injection"] = json!(varps(false));
+    assert!(!clear_prayers_before_next_operation(&capture, &empty));
+    capture.actions = vec![next.clone()];
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions = vec![next.clone(), clear.clone()];
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions = vec![clear.clone(), next.clone()];
+    capture.actions[1]["snapshot"]["prayer_varps"][14]["value"] = json!(1);
+    assert!(!clear_prayers_before_next_operation(&capture, &injection));
+    capture.actions = vec![clear.clone(), next];
+    let mut unrelated = clear;
+    unrelated["request"]["component_id"] = json!(999);
+    capture.actions.insert(1, unrelated);
+    assert!(
+        !clear_prayers_before_next_operation(&capture, &injection),
+        "an unrelated if-button is not part of ClearPrayers"
+    );
+}
+
+#[test]
+fn hygiene_owner_oracle_requires_the_same_live_then_revoked_combat_owner() {
+    let mut capture = CombatCapture::default();
+    capture.actions.push(json!({
+        "kind": "interaction", "sequence": 1, "accepted": true,
+        "run": "run-1", "action_id": 7, "request_id": 9,
+        "request": {"op": "npc", "action": "Attack"}
+    }));
+    let mut injection = json!({
+        "active_combat_owner": {"run": "run-1", "action_id": 7, "request_id": 9},
+        "active_combat_owner_live_before": true,
+        "active_combat_owner_live_after": false,
+        "active_combat_owner_liveness_basis": "native action owner revocation bit",
+        "delivery": "Play.observe -> PlaySlotScript.on_random",
+        "action_sequence_at_injection": 1
+    });
+    assert!(m5_owner_preempted(&capture, &injection));
+    injection["active_combat_owner_live_before"] = json!(false);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    injection["active_combat_owner_live_before"] = json!(true);
+    injection["active_combat_owner_live_after"] = json!(true);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    injection["active_combat_owner_live_after"] = json!(false);
+    injection["active_combat_owner"]["action_id"] = json!(8);
+    assert!(!m5_owner_preempted(&capture, &injection));
+    injection["active_combat_owner"]["action_id"] = json!(7);
+    injection["active_combat_owner_liveness_basis"] = json!("request reservation");
+    assert!(!m5_owner_preempted(&capture, &injection));
 }

@@ -154,6 +154,7 @@ pub(crate) fn record_interaction(
         "kind": "interaction",
         "tick": tick,
         "run": format!("{:?}", authority.run()),
+        "action_id": authority.action_id().get(),
         "request_id": request_id,
         "batch": batch,
         "request": request_value,
@@ -271,7 +272,10 @@ pub(crate) fn maze_injection_pending(account: &str) -> bool {
 pub(crate) fn maze_attack_owner_live(account: &str) -> Option<bool> {
     let capture = capture_for(account)?;
     let capture = capture.lock().unwrap_or_else(|e| e.into_inner());
-    capture.m5_attack_owner.as_ref().map(HostAuthority::live)
+    capture
+        .m5_attack_owner
+        .as_ref()
+        .map(HostAuthority::owner_live)
 }
 
 pub(crate) fn record_maze_injection(
@@ -293,6 +297,13 @@ pub(crate) fn record_maze_injection(
             .last()
             .map(|frame| frame["prayer_varps"].clone())
             .unwrap_or(Value::Null);
+        let active_combat_owner = capture.m5_attack_owner.as_ref().map(|authority| {
+            json!({
+                "run": format!("{:?}", authority.run()),
+                "action_id": authority.action_id().get(),
+                "request_id": authority.request_id().get(),
+            })
+        });
         capture.random_events.push(json!({
             "kind": "Maze",
             "name": "combat-live-proof synthetic Maze hold",
@@ -302,6 +313,8 @@ pub(crate) fn record_maze_injection(
             "hold": true,
             "active_combat_owner_live_before": owner_live_before,
             "active_combat_owner_live_after": owner_live_after,
+            "active_combat_owner": active_combat_owner,
+            "active_combat_owner_liveness_basis": "native action owner revocation bit",
             "action_sequence_at_injection": action_sequence_at_injection,
             "prayer_varps_at_injection": prayer_varps_at_injection,
         }));
