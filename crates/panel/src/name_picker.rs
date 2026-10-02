@@ -566,12 +566,13 @@ mod tests {
         work_area: PopupWorkArea,
         anchor: [[f32; 2]; 2],
         rows: &mut PickerRows,
-    ) -> ([f32; 2], [f32; 2]) {
+    ) -> (PopupLayout, ([f32; 2], [f32; 2])) {
         ctx.prepare_frame(
             FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
         );
         let hits = [row("Bow", "shortbow")];
         let mut actual = None;
+        let mut layout = None;
         {
             let ui = ctx.frame();
             ui.window("dp-synthetic-popup-parent")
@@ -580,7 +581,7 @@ mod tests {
                 .size([400.0, 300.0], Condition::Always)
                 .build(|| {
                     ui.open_popup(id);
-                    popup(
+                    let next = popup(
                         ui,
                         id,
                         rows,
@@ -592,10 +593,11 @@ mod tests {
                             ui.close_current_popup();
                         },
                     );
+                    layout = Some(next);
                 });
         }
         ctx.render();
-        actual.expect("popup opened")
+        (layout.expect("popup layout"), actual.expect("popup opened"))
     }
 
     fn assert_rect_inside(area: PopupWorkArea, pos: [f32; 2], size: [f32; 2]) {
@@ -798,10 +800,10 @@ mod tests {
             FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
         );
         let area = PopupWorkArea {
-            min: [100.0, 100.0],
-            max: [400.0, 300.0],
+            min: [250.0, 150.0],
+            max: [580.0, 350.0],
         };
-        let anchor = [[150.0, 150.0], [150.0, 170.0]];
+        let anchor = [[350.0, 250.0], [350.0, 270.0]];
         let hits = [row("Bow", "shortbow")];
         let mut rows = PickerRows::default();
         let content_ran = Cell::new(false);
@@ -810,7 +812,7 @@ mod tests {
             ui.window("dp-closed-popup-parent")
                 .size([400.0, 300.0], Condition::Always)
                 .build(|| {
-                    popup(
+                    let layout = popup(
                         ui,
                         "##closed-picker-popup",
                         &mut rows,
@@ -827,6 +829,17 @@ mod tests {
                         }
                     });
                     assert_eq!(flags, 0, "closed popup left next-window data pending");
+                    let mut following_position = None;
+                    ui.window("dp-following-plain-window")
+                        .size([200.0, 100.0], Condition::Always)
+                        .build(|| {
+                            following_position = Some(ui.window_pos());
+                        });
+                    assert_ne!(
+                        following_position.expect("following plain window built"),
+                        layout.position,
+                        "closed popup position leaked onto the following window"
+                    );
                 });
         }
         ctx.render();
@@ -843,7 +856,7 @@ mod tests {
             min: [100.0, 100.0],
             max: [100.0, 100.0],
         };
-        let zero_size_rect = draw_synthetic_popup_frame(
+        let (zero_layout, zero_size_rect) = draw_synthetic_popup_frame(
             &mut ctx,
             "##zero-size-picker-popup",
             zero_size_area,
@@ -851,19 +864,21 @@ mod tests {
             &mut rows,
         );
         assert!(
-            zero_size_rect
-                .0
+            zero_layout
+                .position
                 .iter()
+                .chain(zero_size_rect.0.iter())
                 .chain(zero_size_rect.1.iter())
                 .all(|value| value.is_finite()),
-            "zero-size work area produced non-finite popup geometry: {zero_size_rect:?}"
+            "zero-size work area produced non-finite popup geometry: \
+             layout={zero_layout:?}, rect={zero_size_rect:?}"
         );
 
         let nonfinite_area = PopupWorkArea {
             min: [f32::NAN; 2],
             max: [f32::NAN; 2],
         };
-        let nonfinite_rect = draw_synthetic_popup_frame(
+        let (nonfinite_layout, nonfinite_rect) = draw_synthetic_popup_frame(
             &mut ctx,
             "##nonfinite-picker-popup",
             nonfinite_area,
@@ -871,12 +886,14 @@ mod tests {
             &mut rows,
         );
         assert!(
-            nonfinite_rect
-                .0
+            nonfinite_layout
+                .position
                 .iter()
+                .chain(nonfinite_rect.0.iter())
                 .chain(nonfinite_rect.1.iter())
                 .all(|value| value.is_finite()),
-            "non-finite work area produced non-finite popup geometry: {nonfinite_rect:?}"
+            "non-finite work area produced non-finite popup geometry: \
+             layout={nonfinite_layout:?}, rect={nonfinite_rect:?}"
         );
     }
 }
