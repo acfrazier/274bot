@@ -45,8 +45,9 @@ fn can_step_local(
     dx: i32,
     dz: i32,
 ) -> bool {
-    let nx = lx + dx;
-    let nz = lz + dz;
+    let (Some(nx), Some(nz)) = (lx.checked_add(dx), lz.checked_add(dz)) else {
+        return false;
+    };
     if dx == 0 && dz == 0 {
         return false;
     }
@@ -108,6 +109,12 @@ fn can_reach_adjacent_tile(
     f & wall_mask == 0
 }
 
+#[derive(Default)]
+struct ReachScratch {
+    seen: std::collections::HashSet<(i32, i32)>,
+    queue: Vec<(i32, i32)>,
+}
+
 /// BFS over `can_step_local` (the m8aq `canReachLocal`).
 fn can_reach_local(
     flags: &dyn Fn(i32, i32) -> Option<i32>,
@@ -115,36 +122,39 @@ fn can_reach_local(
     to: (i32, i32),
     max_steps: u32,
     adjacent_ok: bool,
+    scratch: &mut ReachScratch,
 ) -> bool {
     if flags(from.0, from.1).is_none() {
         return false;
     }
-    let key = |lx: i32, lz: i32| lx * 256 + lz;
-    let mut seen: Vec<i32> = vec![key(from.0, from.1)];
-    let mut queue: Vec<(i32, i32)> = vec![from];
-    let mut head = 0;
-    let mut expansions = 0u32;
-    while head < queue.len() {
-        let cur = queue[head];
+    scratch.seen.clear();
+    scratch.queue.clear();
+    scratch.seen.insert(from);
+    scratch.queue.push(from);
+    let mut head = 0usize;
+    while head < scratch.queue.len() {
+        let cur = scratch.queue[head];
         head += 1;
         if cur == to {
             return true;
         }
         if adjacent_ok
-            && (cur.0 - to.0).abs() + (cur.1 - to.1).abs() == 1
+            && u64::from(cur.0.abs_diff(to.0)) + u64::from(cur.1.abs_diff(to.1)) == 1
             && can_reach_adjacent_tile(flags, to.0, to.1, to.0 - cur.0, to.1 - cur.1)
         {
             return true;
         }
-        expansions += 1;
-        if expansions > max_steps {
+        if head as u64 > u64::from(max_steps) {
             return false;
         }
         for (dx, dz) in DIRS {
-            let k = key(cur.0 + dx, cur.1 + dz);
-            if !seen.contains(&k) && can_step_local(flags, cur.0, cur.1, dx, dz) {
-                seen.push(k);
-                queue.push((cur.0 + dx, cur.1 + dz));
+            let (Some(nx), Some(nz)) = (cur.0.checked_add(dx), cur.1.checked_add(dz)) else {
+                continue;
+            };
+            let next = (nx, nz);
+            if !scratch.seen.contains(&next) && can_step_local(flags, cur.0, cur.1, dx, dz) {
+                scratch.seen.insert(next);
+                scratch.queue.push(next);
             }
         }
     }
@@ -312,6 +322,7 @@ impl<'a> SceneQuery<'a> {
             (to.lx, to.lz),
             options.max_steps.unwrap_or(400),
             options.adjacent_ok,
+            &mut ReachScratch::default(),
         )
     }
 
@@ -452,9 +463,94 @@ impl ReachFlood {
     }
 }
 
-/// Frozen `ARRIVAL_MAX_STEPS` (`geometry/Reachability.ts:8`): the BFS
-/// budget of both arrival reach probes.
-pub const ARRIVAL_MAX_STEPS: u32 = 512;
+/// Collision probes used by the shared walk-arrival rule. Cached scene views
+/// answer from their origin's flood ranks; packed goals use the same bounded
+/// collision BFS without retaining a scene or adding per-bot state.
+pub trait ArrivalProbe {
+    fn can_reach_from(
+        &self,
+        origin: WorldTile,
+        destination: WorldTile,
+        options: &SceneReachOptions,
+    ) -> bool;
+    fn walkable(&self, tile: WorldTile) -> bool;
+    fn probeable(&self, tile: WorldTile) -> bool;
+}
+
+impl ArrivalProbe for ReachQueryView {
+    fn can_reach_from(
+        &self,
+        origin: WorldTile,
+        destination: WorldTile,
+        options: &SceneReachOptions,
+    ) -> bool {
+        self.flooded_from(origin) && self.can_reach(destination, options)
+    }
+
+    fn walkable(&self, tile: WorldTile) -> bool {
+        ReachQueryView::walkable(self, tile)
+    }
+
+    fn probeable(&self, tile: WorldTile) -> bool {
+        ReachQueryView::probeable(self, tile)
+    }
+}
+
+/// A borrowed collision surface for packed arrival goals. Scratch is reused
+/// across candidate probes and dropped with this call-local adapter. At most
+/// eight neighbours per permitted expansion can enter its queue/visited set.
+pub struct CollisionArrivalProbe<F> {
+    collision_at: F,
+    scratch: std::cell::RefCell<ReachScratch>,
+}
+
+impl<F: Fn(WorldTile) -> Option<i32>> CollisionArrivalProbe<F> {
+    pub fn new(collision_at: F) -> Self {
+        Self {
+            collision_at,
+            scratch: std::cell::RefCell::new(ReachScratch::default()),
+        }
+    }
+}
+
+impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for CollisionArrivalProbe<F> {
+    fn can_reach_from(
+        &self,
+        origin: WorldTile,
+        destination: WorldTile,
+        options: &SceneReachOptions,
+    ) -> bool {
+        if origin.level != destination.level
+            || (!options.adjacent_ok && !self.walkable(destination) && origin != destination)
+        {
+            return false;
+        }
+        let flags = |x, z| {
+            (self.collision_at)(WorldTile {
+                x,
+                z,
+                level: origin.level,
+            })
+        };
+        can_reach_local(
+            &flags,
+            (origin.x, origin.z),
+            (destination.x, destination.z),
+            options.max_steps.unwrap_or(400),
+            options.adjacent_ok,
+            &mut self.scratch.borrow_mut(),
+        )
+    }
+
+    fn walkable(&self, tile: WorldTile) -> bool {
+        flags_open((self.collision_at)(tile), CollisionFlag::SQ_BLOCKED)
+    }
+
+    fn probeable(&self, tile: WorldTile) -> bool {
+        (self.collision_at)(tile).is_some()
+    }
+}
+
 
 /// Compact derived reach query posted on the isolate snapshot. Not a
 /// scene retain and not a second flood: walkable bits come from the same
@@ -739,22 +835,22 @@ pub fn door_is_open<'a>(actions: impl IntoIterator<Item = &'a str>) -> bool {
         .any(|action| action.trim().eq_ignore_ascii_case("close"))
 }
 
-/// Walk arrival, the one rule the isolate walk wait and the host follow
-/// share: frozen `isArrived` (`geometry/arrival.ts:18-35`) over
-/// `Reachability.arrivalProbe()` (`geometry/Reachability.ts:74-81`).
+/// Walk arrival, shared by packed route goals, native walks and compat waits.
 ///
 /// Same level, then Chebyshev `<= radius`; standing on `dest` arrives.
-/// Otherwise, in order: `canReach(dest)` within [`ARRIVAL_MAX_STEPS`]
-/// arrives; a walkable dest that is not reached does not; an unwalkable
-/// dest arrives when the scene cannot probe it, or when the bounded
-/// adjacent reach (`adjacentOk`) touches it through an open wall edge.
+/// Otherwise, in order: exact reach arrives; a walkable but unreached dest
+/// does not; an unwalkable dest arrives when it cannot be probed, or when
+/// adjacent reach touches it through an open wall edge.
 ///
-/// `view` is asked only when a probe is needed (`0 < dist <= radius`), so a
-/// caller whose reach view sits behind a cache or a lock pays for it only
-/// then. Reach reads the view's flood ranks: O(1), no BFS. The probes run
-/// from `me`, so a flood posted from another tile cannot answer them; both
-/// reach probes read false until a flood from `me` is posted.
-pub fn is_arrived<V: std::ops::Deref<Target = ReachQueryView>>(
+/// Both reach probes permit `(2 * radius + 1)^2` expansions: the number of
+/// tiles the requested goal region can contain, saturated to the reach API's
+/// budget type. Radius does not widen distance or wall tolerance.
+///
+/// `view` is asked only when a probe is needed (`0 < dist <= radius`).
+/// Posted views read cached flood ranks in O(1), with no BFS or allocation;
+/// a stale origin cannot answer either reach probe. Packed goals borrow their
+/// collision surface and use the same bounded BFS as scene coordinate reach.
+pub fn is_arrived<P: ArrivalProbe, V: std::ops::Deref<Target = P>>(
     me: WorldTile,
     dest: WorldTile,
     radius: i32,
@@ -764,23 +860,27 @@ pub fn is_arrived<V: std::ops::Deref<Target = ReachQueryView>>(
         return false;
     }
     let dist = me.x.abs_diff(dest.x).max(me.z.abs_diff(dest.z));
-    if !u32::try_from(radius).is_ok_and(|radius| dist <= radius) {
+    let Ok(radius) = u32::try_from(radius) else {
+        return false;
+    };
+    if dist > radius {
         return false;
     }
     if dist == 0 {
         return true;
     }
     let view = view();
-    let from_me = view.flooded_from(me);
+    let side = u64::from(radius) * 2 + 1;
+    let max_steps = u32::try_from(side.saturating_mul(side)).unwrap_or(u32::MAX);
     let reach = |adjacent_ok| {
-        from_me
-            && view.can_reach(
-                dest,
-                &SceneReachOptions {
-                    max_steps: Some(ARRIVAL_MAX_STEPS),
-                    adjacent_ok,
-                },
-            )
+        view.can_reach_from(
+            me,
+            dest,
+            &SceneReachOptions {
+                max_steps: Some(max_steps),
+                adjacent_ok,
+            },
+        )
     };
     if reach(false) {
         return true;

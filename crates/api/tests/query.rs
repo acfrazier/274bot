@@ -1399,12 +1399,11 @@ fn is_arrived_matches_frozen_is_arrived() {
     assert!(!is_arrived(me, at(3253, 3252), 2, || &elsewhere));
 }
 
-/// Both reach probes use frozen `ARRIVAL_MAX_STEPS` (512): a walkable dest
-/// in radius whose BFS dequeue rank is 512 arrives, rank 513 does not.
+/// A nearby goal behind a long serpentine needs more reach work than its
+/// straight-line distance suggests. Increasing the requested region admits
+/// that route without changing distance, level, or blocked-wall semantics.
 #[test]
-fn is_arrived_reach_budget_is_arrival_max_steps() {
-    // A one-wide serpentine: open rows lz = 0, 2, .., 10 joined at
-    // alternating ends, so BFS rank is path length.
+fn is_arrived_bounds_exact_and_solid_reach_by_the_requested_region() {
     let mut scene = open_scene();
     scene.collision_flags.fill(CollisionFlag::SQ_BLOCKED);
     for lz in (0..=10).step_by(2) {
@@ -1420,31 +1419,29 @@ fn is_arrived_reach_budget_is_arrival_max_steps() {
         z: 3200,
         level: 0,
     };
-    let sq = SceneQuery::new(&scene, Some(me));
-    let flood = sq.flood_reach().expect("serpentine flood");
-    let view = pack_reach_query(&scene, Some(&flood));
-    let ranked = |rank: u16| {
-        let i = flood
-            .ranks()
-            .0
-            .iter()
-            .position(|&r| r == rank)
-            .expect("rank on path");
-        WorldTile {
-            x: 3200 + (i / 104) as i32,
-            z: 3200 + (i % 104) as i32,
-            level: 0,
-        }
+    let target = WorldTile {
+        x: 3202,
+        z: 3210,
+        level: 0,
     };
-    let (at_budget, past_budget) = (ranked(512), ranked(513));
-    let budget = SceneReachOptions {
-        max_steps: Some(ARRIVAL_MAX_STEPS),
-        adjacent_ok: false,
+    let check = |scene: &SceneView, radius, expected| {
+        let view = arrival_view(scene, me);
+        let query = SceneQuery::new(scene, Some(me));
+        let collision = CollisionArrivalProbe::new(|tile| query.collision_at(tile));
+        assert_eq!(is_arrived(me, target, radius, || &view), expected);
+        assert_eq!(is_arrived(me, target, radius, || &collision), expected);
     };
-    assert!(sq.can_reach(at_budget, &budget));
-    assert!(!sq.can_reach(past_budget, &budget));
-    assert!(is_arrived(me, at_budget, 104, || &view));
-    assert!(!is_arrived(me, past_budget, 104, || &view));
+    check(&scene, 12, false);
+    check(&scene, 13, true);
+    check(&scene, i32::MAX, true);
+
+    // The solid target's first legal adjacent stand is reached before the
+    // exact tile would be. Radius12 admits it, but cannot cross a closed face.
+    scene.collision_flags[2 * 104 + 10] = CollisionFlag::SQ_BLOCKED;
+    check(&scene, 12, true);
+    scene.collision_flags[2 * 104 + 10] |=
+        CollisionFlag::W_N | CollisionFlag::W_E | CollisionFlag::W_S | CollisionFlag::W_W;
+    check(&scene, 13, false);
 }
 
 #[test]

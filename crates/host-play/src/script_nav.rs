@@ -1208,25 +1208,15 @@ pub(crate) fn approach_tiles(
             }
         }
     }
-    if r > 0 && !estimate {
-        if world.collision.standable(to) {
-            let connected = nav::router::local_step_component(&world.collision, to, r);
-            tiles.retain(|tile| connected.contains(tile));
-        } else {
-            let mut connected = std::collections::HashSet::new();
-            for seed in api::query::arrival_stands(
-                to,
-                |stand| world.collision.standable(stand),
-                |stand| Some(world.collision.walkable_word(stand.x, stand.z, stand.level) as i32),
-            ) {
-                connected.extend(nav::router::local_step_component(
-                    &world.collision,
-                    seed,
-                    r + 1,
-                ));
-            }
-            tiles.retain(|tile| connected.contains(tile));
-        }
+    if !estimate {
+        let collision = &world.collision;
+        let probe = api::query::CollisionArrivalProbe::new(|tile: WorldTile| {
+            let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+            let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+            ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+                .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+        });
+        tiles.retain(|&tile| api::query::is_arrived(tile, to, radius, || &probe));
     }
     tiles.sort_by_key(|t| {
         (
