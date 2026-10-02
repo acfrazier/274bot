@@ -772,7 +772,6 @@ mod tests {
         );
     }
 
-
     fn route_end_native(seq: u64, request_id: u64, radius: i32) -> NativeFactsInput<'static> {
         NativeFactsInput {
             walk_outcome_seq: seq,
