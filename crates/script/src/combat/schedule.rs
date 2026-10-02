@@ -182,9 +182,9 @@ impl Schedule {
         self.settle(OpKind::Attack);
     }
     pub fn restore_ready(&self, tick: u16) -> bool {
-        self.restore_owed
-            && self.interaction == Interaction::Cleared
-            && reached(tick, self.restore_due)
+        // An observed auto-retaliation swing may reinstall the interaction,
+        // but only our admitted Attack discharges a Fight clearing run.
+        self.restore_owed && reached(tick, self.restore_due)
     }
     pub fn stale_ready(&self, tick: u16, rate: u8) -> bool {
         if !self.ready(OpKind::Attack, tick)

@@ -991,6 +991,122 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
         std::mem::size_of::<ActionHandle<Combat>>(), std::mem::size_of::<ledger::HostAction>(),
         std::mem::size_of::<ledger::Ledger>(), std::mem::size_of::<crate::native::InteractionReceipt>(), std::mem::size_of::<crate::native::WalkReceipt>());
+    let native_ledger = harness.runtime.ledger.as_ref().unwrap();
+    println!(
+        "Owner={} TickBudget={} OutboxHeader={} OutboxReserved={} BatchReceiptRing={}",
+        std::mem::size_of_val(native_ledger.owner.as_deref().unwrap()),
+        std::mem::size_of_val(&harness.runtime.budget),
+        std::mem::size_of_val(&native_ledger.outbox),
+        native_ledger.outbox.capacity() * std::mem::size_of::<ledger::HostAction>(),
+        std::mem::size_of_val(&native_ledger.batch_receipts),
+    );
+}
+
+#[test]
+fn offensive_prayers_wait_for_live_combat_before_the_floor_sip() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.stat(5, 26, 43);
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack(harness.pending(&scene, 1));
+    // Facing our selected target proves engagement, not a live attack on us.
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 2), 0);
+
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.npcs[0].animation_frame = 0;
+    scene.refresh();
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let sip = harness.pending_batch(&scene, 3);
+    assert_len(&sip, 2);
+    prayer_row(&sip, 0, protect.button_com);
+    held_row(&sip, 1, "Drink");
+    scene.prayer(protect.varp, true);
+    scene.inventory.clear();
+    scene.stat(5, 43, 43);
+    scene.refresh();
+    for tick in 4..6 {
+        assert_len(&harness.pending_batch(&scene, tick), 0);
+    }
+    let restore = harness.pending_batch(&scene, 6);
+    assert_len(&restore, 3);
+    for (index, name) in ["Ultimate Strength", "Incredible Reflexes"]
+        .into_iter()
+        .enumerate()
+    {
+        let row = scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == name)
+            .unwrap();
+        prayer_row(&restore, index, row.button_com);
+    }
+    attack_row(&restore, 2);
+    assert_eq!(harness.machine.counters.restorations, 1);
+}
+
+#[test]
+fn lock_end_swing_cannot_discharge_the_explicit_drink_restoration() {
+    for onset_offset in 1..=3 {
+        let mut scene = Scene::new("khazard_warlord");
+        let protect = scene
+            .data
+            .prayers()
+            .iter()
+            .find(|row| row.name == "Protect from Melee")
+            .unwrap()
+            .varp;
+        scene.stat(5, 17, 43);
+        scene.prayer(protect, true);
+        scene.face_us();
+        scene.refresh();
+        let mut harness = fight(&mut scene);
+        scene.stat(5, 0, 43);
+        scene.inventory.push(scene.held("1doseprayerrestore", 0));
+        scene.refresh();
+        held(harness.pending(&scene, 3), "Drink");
+
+        // M2's target and drinking animation clear after the sip, then
+        // auto-retaliation supplies a fresh swing before/at the lock end.
+        scene.inventory.clear();
+        scene.stat(5, 17, 43);
+        scene.local.player.actor.target = None;
+        scene.local.player.actor.animation = -1;
+        for tick in 4..=6 {
+            if tick >= 3 + onset_offset {
+                scene.install();
+                scene.local.player.actor.animation = scene.melee_seq();
+                scene.local.player.actor.animation_frame = (tick - 3 - onset_offset) as i32;
+            }
+            scene.refresh();
+            let plan = harness.pending_batch(&scene, tick);
+            if tick < 6 {
+                assert_len(&plan, 0);
+            } else {
+                assert_len(&plan, 1);
+                attack_row(&plan, 0);
+            }
+        }
+        assert_eq!(harness.machine.counters.locked, 2);
+        assert_eq!(harness.machine.counters.restorations, 1);
+        scene.local.player.actor.animation_frame += 1;
+        scene.refresh();
+        assert_len(&harness.pending_batch(&scene, 7), 0);
+        assert_eq!(harness.machine.counters.restorations, 1);
+    }
 }
 
 #[test]

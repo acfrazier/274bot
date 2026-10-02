@@ -1498,6 +1498,7 @@ impl Combat {
         }
         let offense = self.flags & BOOST_WORTH != 0
             && self.request.allow.prayer
+            && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
             && (points > floor
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
