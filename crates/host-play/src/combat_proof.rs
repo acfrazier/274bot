@@ -289,7 +289,7 @@ pub(crate) fn protect_from_melee_active(snapshot: &GameSnapshot) -> bool {
 
 pub(crate) fn record_maze_injection(
     account: &str,
-    observer_tick: u32,
+    snapshot: &GameSnapshot,
     claim: impl std::fmt::Debug,
     owner_live_before: Option<bool>,
     owner_live_after: Option<bool>,
@@ -301,11 +301,11 @@ pub(crate) fn record_maze_injection(
         capture.maze_owner_live_before = owner_live_before;
         capture.maze_owner_live_after = owner_live_after;
         let action_sequence_at_injection = capture.actions.len() as u64;
-        let prayer_varps_at_injection = capture
-            .frames
-            .last()
-            .map(|frame| frame["prayer_varps"].clone())
-            .unwrap_or(Value::Null);
+        // record_frame runs after this observe's injection check, so
+        // frames.last() is the previous tick (often still all-off). Use the
+        // same snapshot that gated protect_from_melee_active.
+        let facts = snapshot_facts(snapshot, Some(u64::from(snapshot.tick())));
+        let prayer_varps_at_injection = facts["prayer_varps"].clone();
         let active_combat_owner = capture.m5_attack_owner.as_ref().map(|authority| {
             json!({
                 "run": format!("{:?}", authority.run()),
@@ -316,7 +316,7 @@ pub(crate) fn record_maze_injection(
         capture.random_events.push(json!({
             "kind": "Maze",
             "name": "combat-live-proof synthetic Maze hold",
-            "observer_tick": observer_tick,
+            "observer_tick": snapshot.tick(),
             "claim": format!("{claim:?}"),
             "delivery": "Play.observe -> PlaySlotScript.on_random",
             "hold": true,

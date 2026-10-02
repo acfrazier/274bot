@@ -1294,7 +1294,7 @@ fn spawn_slot_thread(
                                                     );
                                                 crate::combat_proof::record_maze_injection(
                                                     name,
-                                                    nav_snapshot.tick(),
+                                                    &nav_snapshot,
                                                     claim,
                                                     owner_live_before,
                                                     owner_live_after,

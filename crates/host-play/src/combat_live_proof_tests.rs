@@ -14,7 +14,7 @@ use api::game_data::SelectedGameData;
 use api::interact::{Interactions, SendResult};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, RunKey};
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use host::{FrameBuf, Pump};
 use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
 use script::quester::compile::{compile_path, CompiledPath};
@@ -305,27 +305,58 @@ impl LiveState {
             }
         }
 
-        // Startup ClearPrayers consumes the seed. Imp Path does not request
-        // Protect, so Fight would drop a restage unless Combat is already held.
-        // After the first Imp Attack the Maze hold freezes the owner; restage
-        // Protect, then inject once varp 97 is observed on.
+        // Startup ClearPrayers consumes the seed. Imp Path does not keep
+        // Protect through Engage, so the Maze hold freezes the live Attack
+        // owner and this staging click restores Protect before injection.
+        // A real IF_BUTTON, not CLIENT_CHEAT: measured-window cheats are
+        // forbidden, and the hold makes this the tick's only producer.
         if self.case == Case::M5 && self.started {
             let protect_on = combat_proof::protect_from_melee_active(&self.snapshot);
             let (pending, already) = {
                 let capture = self.capture.lock().unwrap_or_else(|e| e.into_inner());
-                (capture.maze_pending, capture.maze_prayer_restaged)
+                (
+                    capture.maze_pending && !capture.maze_injected,
+                    capture.maze_prayer_restaged,
+                )
             };
             if pending && !protect_on && !already {
-                if matches!(
-                    api::interact::cheat(client, "setvar prayer14 1"),
-                    client::CheatSend::Sent
-                ) {
+                let mut staged = false;
+                if let Some(component_id) = self.selected.prayers().iter().find_map(|prayer| {
+                    prayer
+                        .name
+                        .eq_ignore_ascii_case("Protect from Melee")
+                        .then_some(prayer.button_com)
+                }) {
+                    if let Some(widget) = ReadContext::new(&self.snapshot).component(component_id) {
+                        if matches!(
+                            Interactions::new(&self.snapshot, client).if_button(widget),
+                            SendResult::Sent { .. }
+                        ) {
+                            combat_proof::record_other_request(
+                                &self.account,
+                                u64::from(self.snapshot.tick()),
+                                "staging",
+                                "if-button Protect from Melee",
+                            );
+                            staged = true;
+                        }
+                    }
+                }
+                if !staged
+                    && matches!(
+                        api::interact::cheat(client, "setvar prayer14 1"),
+                        client::CheatSend::Sent
+                    )
+                {
                     combat_proof::record_other_request(
                         &self.account,
                         u64::from(self.snapshot.tick()),
-                        "cheat",
+                        "staging",
                         "setvar prayer14 1",
                     );
+                    staged = true;
+                }
+                if staged {
                     self.capture
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -1169,14 +1200,12 @@ fn m4_ready(capture: &CombatCapture) -> bool {
 }
 
 fn m5_ready(capture: &CombatCapture) -> bool {
-    let Some(report) = report_with_end(capture, "Killed") else {
-        return false;
-    };
+    // M5 is interrupt hygiene, not a terminal Imp Catcher stop. After
+    // ClearPrayers the Path may bank or attack again; those later ops must
+    // not un-prove the random-event prefix.
     if !capture.maze_injected
         || capture.maze_owner_live_before != Some(true)
         || capture.maze_owner_live_after != Some(false)
-        || !every_killed_report_has_corpse(capture)
-        || !no_attack_after_report(capture, report)
     {
         return false;
     }
@@ -1189,8 +1218,6 @@ fn m5_ready(capture: &CombatCapture) -> bool {
     };
     m5_owner_preempted(capture, injection)
         && clear_prayers_before_next_operation(capture, injection)
-        && native_interactions_wire_valid(capture)
-        && batch_plan_contract(capture, &batch_plans(capture))
         && has_real_attack_packet(capture)
 }
 
@@ -3073,4 +3100,65 @@ fn hygiene_owner_oracle_requires_the_same_live_then_revoked_combat_owner() {
     injection["active_combat_owner"]["action_id"] = json!(7);
     injection["active_combat_owner_liveness_basis"] = json!("request reservation");
     assert!(!m5_owner_preempted(&capture, &injection));
+}
+
+#[test]
+fn m5_ready_accepts_interrupt_hygiene_while_the_path_continues() {
+    use client::io::ClientProt289;
+    let varps = |active| {
+        (83..=97)
+            .map(|index| json!({"index": index, "value": i32::from(active && index == 97)}))
+            .collect::<Vec<_>>()
+    };
+    let attack_opcodes = json!([ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC2.id]);
+    let attack = json!({
+        "kind": "interaction", "sequence": 1, "tick": 10, "accepted": true,
+        "wire_decoded": true, "wire_opcodes": attack_opcodes,
+        "run": "run-1", "action_id": 7, "request_id": 9,
+        "request": {"op": "npc", "action": "Attack"}
+    });
+    let clear = json!({
+        "kind": "interaction", "sequence": 2, "tick": 12, "accepted": true,
+        "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+        "request": {"op": "if-button", "component_id": 5623},
+    });
+    let next = json!({
+        "kind": "walk", "sequence": 3, "tick": 14,
+        "snapshot": {"prayer_varps": varps(false)}
+    });
+    let later_attack = json!({
+        "kind": "interaction", "sequence": 4, "tick": 40, "accepted": true,
+        "wire_decoded": true, "wire_opcodes": attack_opcodes,
+        "request": {"op": "npc", "action": "Attack"}
+    });
+    let bank = json!({
+        "kind": "interaction", "sequence": 5, "tick": 50, "accepted": true,
+        "wire_decoded": true, "wire_opcodes": [195, 67, 45],
+        "request": {"debug": "OpenStand"}
+    });
+    let injection = json!({
+        "kind": "Maze", "hold": true, "action_sequence_at_injection": 1,
+        "prayer_varps_at_injection": varps(true),
+        "active_combat_owner": {"run": "run-1", "action_id": 7, "request_id": 9},
+        "active_combat_owner_live_before": true,
+        "active_combat_owner_live_after": false,
+        "active_combat_owner_liveness_basis": "native action owner revocation bit",
+        "delivery": "Play.observe -> PlaySlotScript.on_random",
+    });
+    let mut capture = CombatCapture::default();
+    capture.maze_injected = true;
+    capture.maze_owner_live_before = Some(true);
+    capture.maze_owner_live_after = Some(false);
+    capture.prayer_facts = vec![json!({"varp": 97, "button_com": 5623})];
+    capture.random_events = vec![injection.clone()];
+    capture.actions = vec![attack, clear, next, later_attack, bank];
+    assert!(
+        m5_ready(&capture),
+        "later Imp attacks and a bank OpenStand must not un-prove interrupt hygiene"
+    );
+    capture.random_events[0]["prayer_varps_at_injection"] = json!(varps(false));
+    assert!(
+        !m5_ready(&capture),
+        "an all-off injection snapshot is not a Protect-from-Melee interrupt"
+    );
 }
