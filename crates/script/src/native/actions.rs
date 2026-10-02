@@ -1270,6 +1270,10 @@ mod tests {
                     .unwrap()
                     .complete_interaction(&authority, receipt);
                 assert!(!authority.live());
+                assert!(
+                    authority.owner_live(),
+                    "settling one request must not retire its action owner"
+                );
                 assert!(!action.live());
                 assert_eq!(owner.batch_free(), index + 1);
                 assert_eq!(cx.interaction_receipt(receipt.request_id), Some(&receipt));
@@ -1297,6 +1301,7 @@ mod tests {
             owner.revoke();
             assert!(second_actions.iter().all(|action| !action.live()));
             assert!(authorities.iter().all(|authority| !authority.live()));
+            assert!(authorities.iter().all(|authority| !authority.owner_live()));
         });
     }
 

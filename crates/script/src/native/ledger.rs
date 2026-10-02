@@ -54,6 +54,12 @@ impl HostAuthority {
         }
     }
 
+    /// Observe the action owner's lifetime independently of this request.
+    /// This is not dispatch authority: request continuations must use `live`.
+    pub fn owner_live(&self) -> bool {
+        self.owner.live()
+    }
+
     pub fn run(&self) -> RunKey {
         self.owner.run
     }
