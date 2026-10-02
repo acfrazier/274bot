@@ -591,7 +591,8 @@ fn preparation_steps(case: Case) -> Vec<Step> {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
             steps.push(cheat_step(
                 "seed Protect from Melee before Start",
-                "setvar 97 1".to_owned(),
+                // R289 setvar resolves debug names; varp.pack maps97 to prayer14.
+                "setvar prayer14 1".to_owned(),
                 Proof::VarpExact { id: 97, value: 1 },
             ));
         }
