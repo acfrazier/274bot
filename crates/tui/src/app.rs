@@ -433,6 +433,12 @@ pub struct TuiApp {
     pub map_bake: MapBakeChoice,
     /// The settings popup changed [`Self::map_bake`]; the binary persists it.
     pub map_bake_dirty: bool,
+    /// Global nav preference: pause a script after its owned walk is
+    /// cancelled by manual movement.
+    pub pause_script_on_manual_walk_abort: bool,
+    /// The global manual-movement pause preference changed; the session persists it.
+    pub pause_script_on_manual_walk_abort_dirty: bool,
+    shared_preferences_path: Option<std::path::PathBuf>,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: RunState,
@@ -543,6 +549,9 @@ impl TuiApp {
             memory: None,
             settings_memory: None,
             map_bake: MapBakeChoice::Ask,
+            pause_script_on_manual_walk_abort: true,
+            pause_script_on_manual_walk_abort_dirty: false,
+            shared_preferences_path: None,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: RunState::Idle,
@@ -579,10 +588,22 @@ impl TuiApp {
             script_area: Rect::default(),
         }
     }
-    /// Restore shared map preferences from the path selected by the binary.
-    /// Tests pass an isolated path; constructing an app never reads `$HOME`.
-    pub fn restore_map_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
+    /// Restore shared `panel-ui.json` navigation preferences from the path
+    /// selected by the binary or an isolated test.
+    pub fn restore_preferences(&mut self, path: impl Into<std::path::PathBuf>) {
+        let path = path.into();
+        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference_at(
+            &path,
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            None,
+        )
+        .unwrap_or(true);
+        self.shared_preferences_path = Some(path.clone());
         self.map.restore_persisted_wilderness(path);
+    }
+
+    pub(crate) fn shared_preferences_path(&self) -> Option<&std::path::Path> {
+        self.shared_preferences_path.as_deref()
     }
 
     pub(crate) fn toggle_map_wilderness(&mut self) {

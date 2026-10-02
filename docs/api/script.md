@@ -400,6 +400,22 @@ baseline and settles false during admission or its next machine step, rather tha
 waiting on a request the host's dispatch fence rejected. Stop/Start clears the prior
 run's cancellation outcome and delivery guard.
 
+The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
+displayed as “Pause script on manual movement,” and defaults to ON. It gates
+only pausing the script that owns the cancelled operation; OFF still cancels
+and publishes the same terminal while leaving the script running. In that mode
+compat walking settles `false`, while v2 can inspect its correlated
+`walk_outcome_cancel_reason: 'user-input'` and make its own decision. The
+setting does not forbid a fresh script-issued walk after the takeover is
+observed.
+
+This differs from movement during work that was already operator-paused or
+reconnect-carried: that idle carry is excluded from cancellation and retains
+its existing Resume behavior. Conversely, after an active walk is cancelled,
+explicit Resume may permit a native script to make a fresh decision, but the
+old cancelled request, host carry, queued work, and watchdog recovery never
+replay automatically.
+
 ## Catalog walking and recovery (compat v1)
 
 The rs2b0t walk and reach helpers are Rust step machines; the shim passes

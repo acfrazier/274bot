@@ -23,6 +23,7 @@ pub mod log;
 pub mod log_file;
 pub mod map_bake;
 pub mod marked;
+pub mod nav_prefs;
 pub mod operations;
 pub mod profile_form;
 pub mod profile_saves;
@@ -47,6 +48,7 @@ pub use marked::{
     prepare_apply_settings_marked, restart_scope, run_marked_command, MarkedCommandReport,
     RestartScope,
 };
+pub use nav_prefs::{nav_preference_at, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,

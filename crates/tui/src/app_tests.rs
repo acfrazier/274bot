@@ -358,7 +358,7 @@ fn wilderness_persistence_errors_are_visible() {
     std::fs::write(&parent, b"file").unwrap();
 
     let mut app = TuiApp::new("274bot headless");
-    app.restore_map_preferences(parent.join("panel-ui.json"));
+    app.restore_preferences(parent.join("panel-ui.json"));
     app.toggle_map_wilderness();
 
     assert!(app.map.layers.wilderness);
@@ -581,6 +581,28 @@ fn settings_enter_flips_random_events_and_marks_dirty() {
     app.on_key(key(KeyCode::Enter));
     assert!(!app.settings.random_events, "popup flips random_events");
     assert!(app.settings_dirty, "the binary persists the change");
+}
+
+#[test]
+fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped() {
+    let mut app = TuiApp::new("274bot headless");
+    assert!(app.pause_script_on_manual_walk_abort);
+    app.settings_state.open = true;
+    for _ in 0..6 {
+        assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
+    }
+    assert_eq!(app.settings_state.row, 6);
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(!app.pause_script_on_manual_walk_abort);
+    assert!(app.pause_script_on_manual_walk_abort_dirty);
+
+    for _ in 0..20 {
+        app.on_key(key(KeyCode::Down));
+    }
+    assert_eq!(
+        app.settings_state.row, 8,
+        "memory remains reachable at the last row"
+    );
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out
