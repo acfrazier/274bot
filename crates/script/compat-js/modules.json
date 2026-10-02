@@ -392,6 +392,10 @@
     "shim": "clue_paint.js"
   },
   {
+    "module": "api/ai/clues/data/cluedb.js",
+    "shim": "cluedb.js"
+  },
+  {
     "module": "api/ai/clues/data/toolAcquire.js",
     "shim": "clue_tool_acquire.js"
   },
