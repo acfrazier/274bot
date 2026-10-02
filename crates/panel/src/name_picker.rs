@@ -180,23 +180,26 @@ pub(crate) struct PopupWorkArea {
 
 impl PopupWorkArea {
     pub(crate) fn current(ui: &Ui) -> Self {
-        // SAFETY: called during an active Ui frame, where ImGui has a current
-        // window; the returned window remains live until this immediate read.
-        let window = unsafe { dear_imgui_rs::sys::igGetCurrentWindowRead() };
-        if window.is_null() {
-            let pos = ui.window_pos();
-            let size = ui.window_size();
-            return Self {
-                min: pos,
-                max: [pos[0] + size[0], pos[1] + size[1]],
-            };
-        }
-        // SAFETY: `window` is the non-null current window returned above.
-        let (work, clip) = unsafe { ((*window).WorkRect, (*window).InnerClipRect) };
-        Self {
-            min: [work.Min.x.max(clip.Min.x), work.Min.y.max(clip.Min.y)],
-            max: [work.Max.x.min(clip.Max.x), work.Max.y.min(clip.Max.y)],
-        }
+        ui.with_bound_context(|| {
+            use dear_imgui_rs::sys;
+
+            // SAFETY: `with_bound_context` installs this `Ui`'s context in
+            // `GImGui`, and the `Ui` is in its active frame.
+            let window = unsafe { sys::igGetCurrentWindowRead() };
+            if window.is_null() {
+                return Self {
+                    min: [0.0; 2],
+                    max: [0.0; 2],
+                };
+            }
+            // SAFETY: `window` was just returned as this context's current
+            // window; copy its POD rectangles immediately without retaining it.
+            let (work, clip) = unsafe { ((*window).WorkRect, (*window).InnerClipRect) };
+            Self {
+                min: [work.Min.x.max(clip.Min.x), work.Min.y.max(clip.Min.y)],
+                max: [work.Max.x.min(clip.Max.x), work.Max.y.min(clip.Max.y)],
+            }
+        })
     }
 
     fn extent(self, axis: usize) -> Option<f32> {
@@ -213,10 +216,13 @@ impl PopupWorkArea {
 pub(crate) struct PopupLayout {
     pub(crate) content_width: f32,
     pub(crate) list_height: f32,
+    position: [f32; 2],
+    desired_window_width: f32,
+    constrained_height: f32,
 }
 
-/// Position and constrain the next popup to the parent's work area. The popup
-/// border and padding are removed from the available content dimensions first.
+/// Compute popup geometry for the parent's work area. The resulting geometry
+/// is applied by `popup`, which immediately begins the popup.
 pub(crate) fn prepare_popup(
     ui: &Ui,
     work_area: PopupWorkArea,
@@ -262,15 +268,27 @@ pub(crate) fn prepare_popup(
     let desired_window_height =
         (fixed_content_height + list_height + chrome[1]).min(max_window_height);
 
+    let fallback_position = [
+        if work_area.min[0].is_finite() {
+            work_area.min[0]
+        } else {
+            0.0
+        },
+        if work_area.min[1].is_finite() {
+            work_area.min[1]
+        } else {
+            0.0
+        },
+    ];
     let anchor_min_x = if anchor[0][0].is_finite() {
         anchor[0][0]
     } else {
-        work_area.min[0]
+        fallback_position[0]
     };
     let anchor_min_y = if anchor[0][1].is_finite() {
         anchor[0][1]
     } else {
-        work_area.min[1]
+        fallback_position[1]
     };
     let anchor_max_y = if anchor[1][1].is_finite() {
         anchor[1][1]
@@ -285,6 +303,11 @@ pub(crate) fn prepare_popup(
             work_area.min[0]
         }
     });
+    let position_x = if position_x.is_finite() {
+        position_x
+    } else {
+        fallback_position[0]
+    };
     let position_y = work_height.map_or(anchor_max_y, |_| {
         let below = anchor_max_y;
         let above = anchor_min_y - desired_window_height;
@@ -296,18 +319,44 @@ pub(crate) fn prepare_popup(
             work_area.min[1]
         }
     });
+    let position_y = if position_y.is_finite() {
+        position_y
+    } else {
+        fallback_position[1]
+    };
     let constrained_height = work_height.map_or(max_window_height, |height| {
         (work_area.max[1] - position_y).max(0.0).min(height)
     });
 
+    PopupLayout {
+        content_width,
+        list_height,
+        position: [position_x, position_y],
+        desired_window_width,
+        constrained_height,
+    }
+}
+
+/// Apply prepared geometry and begin the popup as one operation so its
+/// next-window data cannot leak to a later window.
+pub(crate) fn popup<State>(
+    ui: &Ui,
+    id: &str,
+    state: &mut State,
+    prepare: impl FnOnce(&mut State) -> PopupLayout,
+    draw: impl FnOnce(&mut State, PopupLayout),
+) -> PopupLayout {
+    let layout = prepare(state);
     use dear_imgui_rs::sys;
-    // SAFETY: this function runs inside the current Dear ImGui frame, before
-    // BeginPopup consumes the next-window data; all vectors are finite.
-    unsafe {
+    // SAFETY: `with_bound_context` installs this `Ui`'s context in `GImGui`.
+    // The position is finite and the computed constraints are finite and
+    // non-negative. `ui.popup` immediately follows and calls BeginPopup on
+    // this same `Ui`, consuming this context's next-window data on every path.
+    ui.with_bound_context(|| unsafe {
         sys::igSetNextWindowPos(
             sys::ImVec2_c {
-                x: position_x,
-                y: position_y,
+                x: layout.position[0],
+                y: layout.position[1],
             },
             sys::ImGuiCond_Always,
             sys::ImVec2_c { x: 0.0, y: 0.0 },
@@ -315,18 +364,15 @@ pub(crate) fn prepare_popup(
         sys::igSetNextWindowSizeConstraints(
             sys::ImVec2_c { x: 0.0, y: 0.0 },
             sys::ImVec2_c {
-                x: desired_window_width,
-                y: constrained_height,
+                x: layout.desired_window_width,
+                y: layout.constrained_height,
             },
             None,
             std::ptr::null_mut(),
         );
-    }
-
-    PopupLayout {
-        content_width,
-        list_height,
-    }
+    });
+    ui.popup(id, || draw(state, layout));
+    layout
 }
 
 /// Index of the row to highlight: the row matching the field's current value,
@@ -487,27 +533,69 @@ mod tests {
                     ui.button("Pick");
                     let anchor = [ui.item_rect_min(), ui.item_rect_max()];
                     ui.open_popup("##debug-name-picker");
-                    let next = prepare_popup(ui, area, anchor, hits, cached_rows);
+                    let next = popup(
+                        ui,
+                        "##debug-name-picker",
+                        cached_rows,
+                        |rows| prepare_popup(ui, area, anchor, hits, rows),
+                        |rows, next| {
+                            ui.text("Pick object");
+                            ui.set_next_item_width(next.content_width);
+                            let mut query = String::new();
+                            ui.input_text("##headless-picker-query", &mut query).build();
+                            ui.child_window("##headless-picker-rows")
+                                .size([next.content_width, next.list_height])
+                                .build(ui, || {
+                                    draw_hit_rows(ui, hits, rows, None);
+                                });
+                            ui.button("Close##headless-picker-close");
+                            actual = Some((ui.window_pos(), ui.window_size()));
+                        },
+                    );
                     layout = Some(next);
-                    ui.popup("##debug-name-picker", || {
-                        ui.text("Pick object");
-                        ui.set_next_item_width(next.content_width);
-                        let mut query = String::new();
-                        ui.input_text("##headless-picker-query", &mut query).build();
-                        ui.child_window("##headless-picker-rows")
-                            .size([next.content_width, next.list_height])
-                            .build(ui, || {
-                                draw_hit_rows(ui, hits, cached_rows, None);
-                            });
-                        ui.button("Close##headless-picker-close");
-                        actual = Some((ui.window_pos(), ui.window_size()));
-                    });
                 });
         }
         ctx.render();
         let area = work_area.expect("parent window work area");
         let (pos, size) = actual.expect("popup opened");
         (area, pos, size, layout.expect("popup layout"))
+    }
+    fn draw_synthetic_popup_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        id: &str,
+        work_area: PopupWorkArea,
+        anchor: [[f32; 2]; 2],
+        rows: &mut PickerRows,
+    ) -> ([f32; 2], [f32; 2]) {
+        ctx.prepare_frame(
+            FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+        );
+        let hits = [row("Bow", "shortbow")];
+        let mut actual = None;
+        {
+            let ui = ctx.frame();
+            ui.window("dp-synthetic-popup-parent")
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_SAVED_SETTINGS)
+                .position([20.0, 20.0], Condition::Always)
+                .size([400.0, 300.0], Condition::Always)
+                .build(|| {
+                    ui.open_popup(id);
+                    popup(
+                        ui,
+                        id,
+                        rows,
+                        |rows| prepare_popup(ui, work_area, anchor, &hits, rows),
+                        |_, layout| {
+                            ui.text("Popup geometry");
+                            ui.set_next_item_width(layout.content_width);
+                            actual = Some((ui.window_pos(), ui.window_size()));
+                            ui.close_current_popup();
+                        },
+                    );
+                });
+        }
+        ctx.render();
+        actual.expect("popup opened")
     }
 
     fn assert_rect_inside(area: PopupWorkArea, pos: [f32; 2], size: [f32; 2]) {
@@ -684,12 +772,14 @@ mod tests {
                         min: [100.0, 100.0],
                         max: [100.0, 600.0],
                     };
-                    let layout = prepare_popup(
+                    let layout = popup(
                         ui,
-                        area,
-                        [[100.0, 140.0], [100.0, 160.0]],
-                        &hits,
+                        "##no-positive-width",
                         &mut cached_rows,
+                        |rows| {
+                            prepare_popup(ui, area, [[100.0, 140.0], [100.0, 160.0]], &hits, rows)
+                        },
+                        |_, _| {},
                     );
                     assert_eq!(
                         layout.content_width,
@@ -698,5 +788,95 @@ mod tests {
                 });
         }
         ctx.render();
+    }
+
+    #[test]
+    fn closed_popup_consumes_next_window_data() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+        );
+        let area = PopupWorkArea {
+            min: [100.0, 100.0],
+            max: [400.0, 300.0],
+        };
+        let anchor = [[150.0, 150.0], [150.0, 170.0]];
+        let hits = [row("Bow", "shortbow")];
+        let mut rows = PickerRows::default();
+        let content_ran = Cell::new(false);
+        {
+            let ui = ctx.frame();
+            ui.window("dp-closed-popup-parent")
+                .size([400.0, 300.0], Condition::Always)
+                .build(|| {
+                    popup(
+                        ui,
+                        "##closed-picker-popup",
+                        &mut rows,
+                        |rows| prepare_popup(ui, area, anchor, &hits, rows),
+                        |_, _| content_ran.set(true),
+                    );
+                    let flags = ui.with_bound_context(|| {
+                        // SAFETY: `with_bound_context` binds the live context
+                        // whose next-window data is being inspected.
+                        unsafe {
+                            (*dear_imgui_rs::sys::igGetCurrentContext())
+                                .NextWindowData
+                                .HasFlags
+                        }
+                    });
+                    assert_eq!(flags, 0, "closed popup left next-window data pending");
+                });
+        }
+        ctx.render();
+        assert!(!content_ran.get(), "the popup was unexpectedly open");
+    }
+
+    #[test]
+    fn nan_anchor_and_degenerate_work_area_keep_popup_rect_finite() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let anchor = [[f32::NAN; 2]; 2];
+        let mut rows = PickerRows::default();
+        let zero_size_area = PopupWorkArea {
+            min: [100.0, 100.0],
+            max: [100.0, 100.0],
+        };
+        let zero_size_rect = draw_synthetic_popup_frame(
+            &mut ctx,
+            "##zero-size-picker-popup",
+            zero_size_area,
+            anchor,
+            &mut rows,
+        );
+        assert!(
+            zero_size_rect
+                .0
+                .iter()
+                .chain(zero_size_rect.1.iter())
+                .all(|value| value.is_finite()),
+            "zero-size work area produced non-finite popup geometry: {zero_size_rect:?}"
+        );
+
+        let nonfinite_area = PopupWorkArea {
+            min: [f32::NAN; 2],
+            max: [f32::NAN; 2],
+        };
+        let nonfinite_rect = draw_synthetic_popup_frame(
+            &mut ctx,
+            "##nonfinite-picker-popup",
+            nonfinite_area,
+            anchor,
+            &mut rows,
+        );
+        assert!(
+            nonfinite_rect
+                .0
+                .iter()
+                .chain(nonfinite_rect.1.iter())
+                .all(|value| value.is_finite()),
+            "non-finite work area produced non-finite popup geometry: {nonfinite_rect:?}"
+        );
     }
 }

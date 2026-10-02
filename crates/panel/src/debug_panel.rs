@@ -785,70 +785,82 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
         return;
     };
 
-    refresh_picker_hits(session, catalog, &kind);
     let work_area = name_picker::PopupWorkArea::current(ui);
     let anchor = session
         .debug_panel
         .picker_anchor
         .unwrap_or([work_area.min, work_area.min]);
-    let layout = name_picker::prepare_popup(
+    name_picker::popup(
         ui,
-        work_area,
-        anchor,
-        &session.debug_panel.picker_hits,
-        &mut session.debug_panel.picker_rows,
-    );
-    ui.popup(PICKER_POPUP, || {
-        ui.text(format!("Pick {kind}"));
-        ui.set_next_item_width(layout.content_width);
-        ui.input_text(
-            "##debug-picker-search",
-            &mut session.debug_panel.picker_query,
-        )
-        .hint("Search name or alias")
-        .build();
+        PICKER_POPUP,
+        session,
+        |session| {
+            refresh_picker_hits(session, catalog, &kind);
+            name_picker::prepare_popup(
+                ui,
+                work_area,
+                anchor,
+                &session.debug_panel.picker_hits,
+                &mut session.debug_panel.picker_rows,
+            )
+        },
+        |session, layout| {
+            ui.text(format!("Pick {kind}"));
+            ui.set_next_item_width(layout.content_width);
+            ui.input_text(
+                "##debug-picker-search",
+                &mut session.debug_panel.picker_query,
+            )
+            .hint("Search name or alias")
+            .build();
 
-        refresh_picker_hits(session, catalog, &kind);
-        session
-            .debug_panel
-            .picker_rows
-            .ensure(ui, &session.debug_panel.picker_hits);
-        if session.debug_panel.picker_hits.is_empty() {
-            ui.text_disabled("No matches.");
-        }
-
-        let current = session
-            .debug_panel
-            .values
-            .get(index)
-            .cloned()
-            .unwrap_or_default();
-        let state = &mut session.debug_panel;
-        let selected = name_picker::selected_row(&state.picker_hits, &current);
-        let picked = ui
-            .child_window("##debug-picker-hits")
-            .size([layout.content_width, layout.list_height])
-            .build(ui, || {
-                name_picker::draw_hit_rows(ui, &state.picker_hits, &mut state.picker_rows, selected)
-            })
-            .flatten();
-
-        if let Some(row) = picked {
-            let name = session
+            refresh_picker_hits(session, catalog, &kind);
+            session
                 .debug_panel
-                .picker_hits
-                .get(row)
-                .map(|hit| hit.alias.clone())
+                .picker_rows
+                .ensure(ui, &session.debug_panel.picker_hits);
+            if session.debug_panel.picker_hits.is_empty() {
+                ui.text_disabled("No matches.");
+            }
+
+            let current = session
+                .debug_panel
+                .values
+                .get(index)
+                .cloned()
                 .unwrap_or_default();
-            set_picked_value(session, index, &name);
-            ui.close_current_popup();
-        }
-        if ui.button("Close##debug-picker-close") {
-            session.debug_panel.picker_arg = None;
-            session.debug_panel.picker_anchor = None;
-            ui.close_current_popup();
-        }
-    });
+            let state = &mut session.debug_panel;
+            let selected = name_picker::selected_row(&state.picker_hits, &current);
+            let picked = ui
+                .child_window("##debug-picker-hits")
+                .size([layout.content_width, layout.list_height])
+                .build(ui, || {
+                    name_picker::draw_hit_rows(
+                        ui,
+                        &state.picker_hits,
+                        &mut state.picker_rows,
+                        selected,
+                    )
+                })
+                .flatten();
+
+            if let Some(row) = picked {
+                let name = session
+                    .debug_panel
+                    .picker_hits
+                    .get(row)
+                    .map(|hit| hit.alias.clone())
+                    .unwrap_or_default();
+                set_picked_value(session, index, &name);
+                ui.close_current_popup();
+            }
+            if ui.button("Close##debug-picker-close") {
+                session.debug_panel.picker_arg = None;
+                session.debug_panel.picker_anchor = None;
+                ui.close_current_popup();
+            }
+        },
+    );
 }
 
 /// Re-run the name search when the kind or query changed since the last
