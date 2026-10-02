@@ -551,7 +551,6 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for CollisionArrivalProbe<F> 
     }
 }
 
-
 /// Compact derived reach query posted on the isolate snapshot. Not a
 /// scene retain and not a second flood: walkable bits come from the same
 /// borrowed [`SceneView`] the flood already used.

@@ -22137,25 +22137,58 @@ fn real_v13_return_radius_endpoint_is_native_arrival() {
     let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
         .expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
-    assert_eq!((flags.width, flags.height), (world.collision.width, world.collision.height));
+    assert_eq!(
+        (flags.width, flags.height),
+        (world.collision.width, world.collision.height)
+    );
     world.collision.flags = Some(Arc::try_unwrap(flags.flags).expect("sole flags owner"));
-    let origin = WorldTile { x: 3185, z: 3440, level: 0 };
-    let target = WorldTile { x: 3017, z: 3170, level: 0 };
-    let endpoint = WorldTile { x: 3005, z: 3182, level: 0 };
+    let origin = WorldTile {
+        x: 3185,
+        z: 3440,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 3017,
+        z: 3170,
+        level: 0,
+    };
+    let endpoint = WorldTile {
+        x: 3005,
+        z: 3182,
+        level: 0,
+    };
     let candidates = approach_tiles(&world, origin, target, 12, false);
     assert_eq!(candidates.first(), Some(&endpoint));
     let request = ScriptRouteRequest {
-        generation: 1, request_id: 1, world: Arc::new(world), from: origin,
-        to: target, radius: 12, loc_id: None,
-        opts: FindOptions { allow_teleports: false, allow_wilderness: false,
-            allow_bank_fetch: false, ..FindOptions::default() },
-        state: None, bank: Vec::new(), live_candidates: None, exclusions: None,
+        generation: 1,
+        request_id: 1,
+        world: Arc::new(world),
+        from: origin,
+        to: target,
+        radius: 12,
+        loc_id: None,
+        opts: FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            ..FindOptions::default()
+        },
+        state: None,
+        bank: Vec::new(),
+        live_candidates: None,
+        exclusions: None,
         completion: Default::default(),
     };
     let route = nav::router::find_with_avoid(
-        &request.world.collision, &request.world.graph, origin, endpoint,
-        request.opts, &nav::WorldState::empty(), &[],
-    ).expect("reported fallback endpoint routes");
+        &request.world.collision,
+        &request.world.graph,
+        origin,
+        endpoint,
+        request.opts,
+        &nav::WorldState::empty(),
+        &[],
+    )
+    .expect("reported fallback endpoint routes");
     assert_eq!(route.dest, endpoint);
     let mut client = nav_client();
     client.map_build_base_x = 2960;
@@ -22163,13 +22196,17 @@ fn real_v13_return_radius_endpoint_is_native_arrival() {
     for lx in 0..104 {
         for lz in 0..104 {
             client.collision[0].flags[lx][lz] =
-                request.world.collision.flag(2960 + lx as i32, 3160 + lz as i32, 0) as i32;
+                request
+                    .world
+                    .collision
+                    .flag(2960 + lx as i32, 3160 + lz as i32, 0) as i32;
         }
     }
     let mut snapshot = GameSnapshot::new();
     nav_snapshot_at(&mut client, &mut snapshot, endpoint.x, endpoint.z);
     let flood = api::query::SceneQuery::new(snapshot.scene(), Some(endpoint))
-        .flood_reach().expect("fresh endpoint flood");
+        .flood_reach()
+        .expect("fresh endpoint flood");
     let view = api::query::pack_reach_query(snapshot.scene(), Some(&flood));
     let index = (target.x - view.base_x) as usize * view.height as usize
         + (target.z - view.base_z) as usize;
@@ -22177,15 +22214,26 @@ fn real_v13_return_radius_endpoint_is_native_arrival() {
         view.available, view.walkable(target), view.exact_rank[index],
         view.adjacent_rank[index], candidates.len());
     assert!(view.available && view.probeable(target));
-    assert_eq!(view.exact_rank[(endpoint.x - view.base_x) as usize * view.height as usize
-        + (endpoint.z - view.base_z) as usize], 0);
+    assert_eq!(
+        view.exact_rank[(endpoint.x - view.base_x) as usize * view.height as usize
+            + (endpoint.z - view.base_z) as usize],
+        0
+    );
     let stamp = api::quest_progress::EvidenceStamp {
-        run: api::selected::RunKey { slot: 1, run: 1, session: 1 },
-        tick: snapshot.tick() as u64, sequence: 1,
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: snapshot.tick() as u64,
+        sequence: 1,
     };
-    assert!(api::snapshot::SnapshotView::new(Some(&snapshot), stamp)
-        .with_reach(Some(&view)).walk_arrived(endpoint, target, 12),
-        "planner endpoint must satisfy the native arrival predicate");
+    assert!(
+        api::snapshot::SnapshotView::new(Some(&snapshot), stamp)
+            .with_reach(Some(&view))
+            .walk_arrived(endpoint, target, 12),
+        "planner endpoint must satisfy the native arrival predicate"
+    );
 }
 
 /// A radius walk settling at its arrival-capable approach tile publishes a
