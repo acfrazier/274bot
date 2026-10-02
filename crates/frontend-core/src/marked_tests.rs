@@ -18,6 +18,7 @@ use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+const THIEVER: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 struct Fixture {
     core: OperatorSession<()>,
@@ -80,8 +81,12 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
 
 impl Fixture {
     fn card(&mut self, file: &str) -> (script::JsCard, script::ScriptSel) {
+        self.card_src(file, LOOPING)
+    }
+
+    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, script::ScriptSel) {
         let path = self.dir.join(file);
-        std::fs::write(&path, LOOPING).unwrap();
+        std::fs::write(&path, src).unwrap();
         let card = self.scripts.js.load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
         (card, sel)
@@ -133,6 +138,12 @@ impl Fixture {
 
     fn assignment_key(&self, name: &str) -> Option<String> {
         Scripts::assignment(&self.core, name).map(|a| a.key())
+    }
+
+    fn run_has_bag(&self, name: &str, bag: &serde_json::Map<String, serde_json::Value>) -> bool {
+        let play = self.core.play().unwrap();
+        let identity = play.script_source_identity(name).unwrap();
+        !play.script_post_settings_fenced(name, bag, &identity, self.generation(name))
     }
 }
 
@@ -583,14 +594,87 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
     f.core.play().unwrap().script_stop("alice");
 }
 
-/// Fleet-window sequence from the 2026-10-02 operator session: settings on
-/// the focused bot, Apply while a marked bot has no assignment, Assign the
-/// card, a pending copy confirm, then Start. Apply covers the unassigned
-/// bot; Start does not run until the confirm is applied.
+/// Apply to marked is the only settings shortcut that treats an unassigned
+/// bot as a target. The confirmation names the assignment; unmarked
+/// unassigned wall members stay unassigned.
+#[test]
+fn apply_to_marked_assigns_unassigned_and_says_so() {
+    let mut f = fixture("apply-marked-assign", &["alice", "bob", "carol", "dave"], 4);
+    let (card, sel) = f.card_src("thiever.ts", THIEVER);
+    f.assign("alice", &card);
+    f.assign("dave", &card);
+    f.scripts
+        .set_profile_setting(
+            &mut f.core,
+            "alice",
+            card.source,
+            &card.name,
+            &card.path,
+            "target",
+            serde_json::json!("Knight of Ardougne"),
+        )
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let marked = marks(&[1, 2, 4]);
+    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
+        .unwrap()
+        .clone();
+    assert_eq!(scope.targets, ["bob", "dave"]);
+    assert_eq!(scope.assigning, ["bob"]);
+    let prompt = scope.prompt();
+    assert!(
+        prompt.contains("Assign")
+            && prompt.contains("1 bot")
+            && prompt.contains("copy its settings")
+            && prompt.contains("alice")
+            && prompt.contains("2 marked bot(s)")
+            && prompt.contains("1 unmarked bot(s) left unchanged"),
+        "{prompt}"
+    );
+
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        Scripts::assignment(&f.core, "bob").unwrap().key(),
+        card.identity_key()
+    );
+    assert!(
+        Scripts::assignment(&f.core, "carol").is_none(),
+        "unmarked unassigned carol is not a wall-wide assign"
+    );
+    let want: serde_json::Map<String, serde_json::Value> = std::iter::once((
+        "target".to_string(),
+        serde_json::json!("Knight of Ardougne"),
+    ))
+    .collect();
+    let saved = |f: &Fixture, name: &str| {
+        f.core
+            .vault()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&card.identity_key())
+            .cloned()
+    };
+    assert_eq!(saved(&f, "bob"), Some(want.clone()));
+    assert_eq!(saved(&f, "dave"), Some(want));
+    assert_eq!(saved(&f, "carol"), None);
+}
+
+/// Fleet-window sequence from the 2026-10-02 operator session: wall-wide
+/// Apply while Bob is unassigned (skipped, not assigned), Assign the card,
+/// a pending copy confirm, ordinary Start, then Apply and Start. Start is
+/// blocked until Apply or Cancel; after Apply it runs the copied Knight
+/// bag, not the card default.
 #[test]
 fn operator_apply_assign_start_does_not_start_on_defaults() {
-    let mut f = fixture("operator-apply", &["alice", "bob"], 2);
-    let (card, sel) = f.card("thiever.ts");
+    let mut f = fixture("operator-apply", &["alice", "bob", "carol"], 3);
+    let (card, sel) = f.card_src("thiever.ts", THIEVER);
     f.assign("alice", &card);
     f.scripts
         .set_profile_setting(
@@ -606,38 +690,112 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
 
-    let marked = marks(&[1, 2]);
-    let scope = prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel)
-        .unwrap()
-        .clone();
-    assert_eq!(scope.targets, ["bob"]);
+    f.scripts
+        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    let wall = f.scripts.prepared_settings_sync().unwrap();
+    assert!(
+        wall.targets.is_empty(),
+        "wall-wide Apply does not take unassigned bots: {:?}",
+        wall.targets
+    );
+    assert!(
+        wall.skipped
+            .iter()
+            .any(|(n, r)| n == "bob" && r == "no assignment")
+            && wall
+                .skipped
+                .iter()
+                .any(|(n, r)| n == "carol" && r == "no assignment"),
+        "{:?}",
+        wall.skipped
+    );
+    assert!(
+        !wall.prompt().to_ascii_lowercase().contains("assign"),
+        "{}",
+        wall.prompt()
+    );
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    assert_eq!(
-        Scripts::assignment(&f.core, "bob").unwrap().key(),
-        card.identity_key()
-    );
+    assert!(Scripts::assignment(&f.core, "bob").is_none());
+    assert!(Scripts::assignment(&f.core, "carol").is_none());
 
+    let marked = marks(&[2]);
     let report = assign_marked(&marked, &mut f.core, &mut f.scripts, &sel, None);
     assert!(
         report.summary().contains("assigned"),
         "{}",
         report.summary()
     );
+    assert_eq!(
+        Scripts::assignment(&f.core, "bob").unwrap().key(),
+        card.identity_key()
+    );
 
-    prepare_apply_settings_marked(&marked, &f.core, &mut f.scripts, "alice", &sel).unwrap();
+    f.scripts
+        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
+    assert_eq!(f.scripts.prepared_settings_sync().unwrap().targets, ["bob"]);
+
+    let blocked = f
+        .scripts
+        .start_selected(&mut f.core, "bob", None, None)
+        .unwrap_err();
+    assert!(
+        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
+        "{blocked}"
+    );
+    let blocked = f
+        .scripts
+        .start_profile(&mut f.core, "bob", None)
+        .unwrap_err();
+    assert!(
+        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
+        "{blocked}"
+    );
     start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
-    let blocked = f.scripts.last_bulk_report().unwrap();
-    assert!(blocked.starts_with("Start selected: blocked"), "{blocked}");
+    let bulk = f.scripts.last_bulk_report().unwrap();
+    assert!(bulk.contains("blocked"), "{bulk}");
     assert_eq!(f.state("bob"), script::RunState::Idle);
 
+    f.scripts.cancel_settings_sync();
+    f.scripts
+        .start_selected(&mut f.core, "bob", None, None)
+        .unwrap();
+    f.until("starts to settle", |f| !f.scripts.starts_pending());
+    f.until("bob running on default", |f| {
+        f.state("bob") == script::RunState::Running
+    });
+    let guard: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(("target".to_string(), serde_json::json!("Guard"))).collect();
+    assert!(
+        f.run_has_bag("bob", &guard),
+        "Cancel then Start uses the card default, not the unapplied copy"
+    );
+    f.core.play().unwrap().script_stop("bob");
+    f.until("bob idle after cancel-start", |f| {
+        f.state("bob") == script::RunState::Idle
+    });
+
+    f.scripts
+        .prepare_settings_sync(&f.core, "alice", card.source, &card.name, &card.path);
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
+    f.scripts
+        .start_selected(&mut f.core, "bob", None, None)
+        .unwrap();
     f.until("starts to settle", |f| !f.scripts.starts_pending());
     f.until("bob running", |f| {
         f.state("bob") == script::RunState::Running
     });
+    let knight: serde_json::Map<String, serde_json::Value> = std::iter::once((
+        "target".to_string(),
+        serde_json::json!("Knight of Ardougne"),
+    ))
+    .collect();
+    assert!(
+        f.run_has_bag("bob", &knight),
+        "Start after Apply consumes the copied Knight bag"
+    );
+    assert!(Scripts::assignment(&f.core, "carol").is_none());
 }
