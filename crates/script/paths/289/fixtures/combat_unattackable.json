@@ -41,7 +41,10 @@
               "kind": "walk",
               "version": 1,
               "args": { "tile": [3108, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; native radius1 approaches its one-tile hunt range after HP8 Start", "radius": 1 },
-              "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } },
+                { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } }
+              ] },
               "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } }
             },
             {
@@ -64,7 +67,10 @@
               "kind": "walk",
               "version": 1,
               "args": { "tile": [3093, 3243, 0], "source": "A defs/cooksassistant.ts:145", "radius": 2 },
-              "skip_if": { "Not": { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } } },
+              "skip_if": { "Any": [
+                { "Not": { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } } },
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3093, 3243, 0], "radius": 2 } } }
+              ] },
               "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3093, 3243, 0], "radius": 2 } } }
             }
           ]
