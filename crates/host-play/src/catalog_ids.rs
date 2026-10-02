@@ -4,6 +4,9 @@ static R289_GAME_DATA: LazyLock<Arc<api::game_data::SelectedGameData>> = LazyLoc
     api::game_data::for_revision(client::io::ClientRevision::R289)
         .unwrap_or_else(|error| panic!("selected R289 game data unavailable: {error}"))
 });
+pub(super) fn selected_catalog_game_data() -> &'static api::game_data::SelectedGameData {
+    R289_GAME_DATA.as_ref()
+}
 
 pub(crate) fn catalog_item_id(alias: &'static str) -> i32 {
     R289_GAME_DATA

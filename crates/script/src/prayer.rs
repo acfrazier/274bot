@@ -17,9 +17,9 @@ use api::prayer::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// Prayer points/max and the overlay varps, read from the isolate scene. A
-/// logout forgets the session: only pages posted since login count. A varp
-/// row the last varps page did not carry stays unobserved.
+/// Prayer points/max and overlay varps from the isolate scene. A logout
+/// forgets the session: only pages posted since login count, and a missing
+/// overlay varp stays unobserved.
 fn prayer_observation(scene: &Scene) -> PrayerObservation {
     let session = scene.since_login();
     let mut obs = PrayerObservation::empty();
@@ -28,7 +28,6 @@ fn prayer_observation(scene: &Scene) -> PrayerObservation {
         obs.max = row.base;
     }
     for row in session.varps().into_iter().flatten() {
-        // Rows outside the 15 overlay varps are ignored by `set_varp`.
         obs.set_varp(row.index, row.value);
     }
     obs
@@ -334,6 +333,19 @@ mod tests {
         api::game_data::for_revision(rev).expect("selected data")
     }
 
+    fn protect_identity() -> (i32, i32, i32) {
+        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let prayer = data
+            .prayer_by_name("Protect from Melee")
+            .expect("Protect from Melee row");
+        (prayer.varp, prayer.level, prayer.button_com)
+    }
+
+    fn set_protect(value: i32) {
+        let (varp, level, _) = protect_identity();
+        set_obs(level, level, varp, value);
+    }
+
     /// Stand in for a post carrying the prayer stat and one more overlay
     /// varp; earlier varp rows stay on the page.
     fn set_obs(points: i32, max: i32, varp: i32, value: i32) {
@@ -397,7 +409,7 @@ mod tests {
     #[test]
     fn matching_set_does_not_click_and_unknown_is_error() {
         prepare(ClientRevision::R274);
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         assert_eq!(
             start(set(on(true))),
             Started::Settled(Outcome::Done(
@@ -432,7 +444,7 @@ mod tests {
     #[test]
     fn unavailable_on_does_not_click_off_ignores_available() {
         prepare(ClientRevision::R289);
-        set_obs(0, 1, 97, 0);
+        set_obs(0, 1, protect_identity().0, 0);
         assert_eq!(
             start(set(on(true))),
             Started::Settled(Outcome::Done(
@@ -441,10 +453,15 @@ mod tests {
         );
         assert!(drain().is_empty());
 
-        set_obs(0, 1, 97, 1);
+        set_obs(0, 1, protect_identity().0, 1);
         let handle = running(start(set(on(false))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
-        set_obs(0, 1, 97, 0);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
+        set_obs(0, 1, protect_identity().0, 0);
         tick();
         assert_eq!(
             done(handle),
@@ -455,9 +472,14 @@ mod tests {
     #[test]
     fn omitted_on_clicks_then_times_out_after_the_frozen_window() {
         prepare(ClientRevision::R274);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let handle = running(start(set(json!({ "kind": "undefined" }))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         tick();
         assert_eq!(
             machine::take(handle),
@@ -476,9 +498,14 @@ mod tests {
     #[test]
     fn a_second_start_supersedes_the_first() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let first = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         let second = running(start(set(on(true))));
         assert_eq!(
             machine::take(first),
@@ -487,10 +514,12 @@ mod tests {
         );
         assert_eq!(
             drain(),
-            vec![InteractReq::IfButton { component_id: 5623 }],
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }],
             "each admitted set clicks for itself"
         );
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         tick();
         assert_eq!(
             done(second),
@@ -502,9 +531,14 @@ mod tests {
     #[test]
     fn a_v2_admit_refuses_busy_before_anything_is_emitted() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let admitted = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         let mut refusing = set(on(false));
         refusing["admit"] = json!("refuse-busy");
         assert_eq!(
@@ -513,7 +547,7 @@ mod tests {
             "the admitted row keeps the click"
         );
         assert!(drain().is_empty(), "a refused start emits nothing");
-        set_obs(43, 43, 97, 1);
+        set_protect(1);
         tick();
         assert_eq!(
             done(admitted),
@@ -528,7 +562,7 @@ mod tests {
     #[test]
     fn pause_and_hold_freeze_the_deadline_and_reset_settles_the_row() {
         prepare(ClientRevision::R289);
-        set_obs(43, 43, 97, 0);
+        set_protect(0);
         let handle = running(start(set(on(true))));
         machine::on_pause();
         // The frozen clock reads the pause instant, so a row that stepped
@@ -567,7 +601,12 @@ mod tests {
 
         let _ = drain();
         let handle = running(start(set(on(true))));
-        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: protect_identity().2
+            }]
+        );
         machine::on_reset();
         assert_eq!(
             machine::take(handle),

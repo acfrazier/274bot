@@ -3,7 +3,7 @@
 
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 thread_local! {
@@ -11,18 +11,25 @@ thread_local! {
     /// The gathering catalog this isolate thread has read: shared with every other holder through the api's
     /// weak cache, and released when the slot is reconfigured or the thread ends.
     static GATHERING: RefCell<Option<Arc<GatherCatalog>>> = const { RefCell::new(None) };
+    static RANDOM_EVENT_CASKET_ID: Cell<Option<i32>> = const { Cell::new(None) };
 }
 /// The actionable explanation when selected content facts were not verified.
 pub(crate) const GAME_DATA_UNAVAILABLE: &str =
     "game data unavailable: this server's content isn't verified (see profile/engine settings)";
 
 pub fn configure(data: Option<Arc<SelectedGameData>>) {
+    let casket_id = api::content::random_event_casket_id(data.as_deref());
     GAME_DATA.with(|slot| *slot.borrow_mut() = data);
     GATHERING.with(|slot| slot.borrow_mut().take());
+    RANDOM_EVENT_CASKET_ID.with(|slot| slot.set(casket_id));
 }
 
 pub(crate) fn selected_data() -> Option<Arc<SelectedGameData>> {
     GAME_DATA.with(|slot| slot.borrow().clone())
+}
+
+pub(crate) fn random_event_casket_id() -> Option<i32> {
+    RANDOM_EVENT_CASKET_ID.with(Cell::get)
 }
 
 /// The selected gathering catalog, prepared lazily on first use and retained by this isolate thread until the

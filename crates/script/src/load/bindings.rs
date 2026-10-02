@@ -190,7 +190,13 @@ pub(super) fn wire_runtime(
                 let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
                 let id = args.get(1).and_then(|v| v.as_i64()).unwrap_or(-1);
                 Ok(serde_json::Value::Bool(i32::try_from(id).ok().is_some_and(
-                    |id| api::content::matches_common_bank_loot(name, id),
+                    |id| {
+                        api::content::matches_common_bank_loot(
+                            crate::supply_v2::random_event_casket_id(),
+                            name,
+                            id,
+                        )
+                    },
                 )))
             },
         )
