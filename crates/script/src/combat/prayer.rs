@@ -439,7 +439,9 @@ mod tests {
             );
             match action.effect {
                 HostEffect::Interaction(request) => requests.push(request),
-                HostEffect::Walk(_) => panic!("prayer clear only emits interactions"),
+                HostEffect::Walk(_) | HostEffect::BankPick(_) => {
+                    panic!("prayer clear only emits interactions")
+                }
             }
         }
         requests

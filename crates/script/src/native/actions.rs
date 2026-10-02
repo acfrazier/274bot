@@ -162,6 +162,7 @@ impl ActionContext<'_> {
         ledger.outbox.push(HostAction {
             owner,
             request_id,
+            batch: 0,
             effect: HostEffect::BankPick(request),
         });
         Ok(request_id.get())
