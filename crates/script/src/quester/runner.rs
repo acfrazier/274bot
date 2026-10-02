@@ -56,6 +56,10 @@ pub struct Quester {
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
     last_outcome: Option<StepOutcome>,
+    /// Latest Combat family receipt, kept after later non-combat steps begin
+    /// so Path `combat_end` skip_if can still select the caller walk-out
+    /// (design-combat.md:664).
+    last_combat: Option<StepOutcome>,
     published_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
     advances: bool,
     in_prelude: bool,
@@ -290,6 +294,7 @@ impl Quester {
             clear_prayers: None,
             prayer_cleanup_pending: true,
             last_outcome: None,
+            last_combat: None,
             published_receipt: None,
             advances: false,
             in_prelude: false,
@@ -385,7 +390,8 @@ impl Quester {
             .as_ref()
             .and_then(|step| step.in_flight_outcome())
             .or(self.last_outcome.as_ref());
-        let receipt = outcome.and_then(|outcome| outcome.receipt.as_ref());
+        let combat_status = self.last_combat.as_ref().or(outcome);
+        let receipt = combat_status.and_then(|outcome| outcome.receipt.as_ref());
         let unchanged = match (receipt, self.published_receipt.as_ref()) {
             (Some(current), Some(previous)) => Arc::ptr_eq(current, previous),
             (None, None) => true,
@@ -430,7 +436,7 @@ impl Quester {
                 }),
             },
         ];
-        append_combat_status(&mut fields, outcome);
+        append_combat_status(&mut fields, combat_status);
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "progress",
@@ -785,6 +791,7 @@ impl Script for Quester {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
             self.cancel_step(tick);
+            self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
         }
@@ -798,6 +805,7 @@ impl Script for Quester {
         }
         if self.death.observe(tick.cx.snapshot()) {
             self.cancel_step(tick);
+            self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
             self.needs_read = true;
             self.progress = None;
@@ -978,7 +986,7 @@ impl Script for Quester {
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome: self.last_outcome.as_ref(),
+                    outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
                     bank: &self.bank,
                 };
                 match select(&self.path, self.seq_index, &pred) {
@@ -1030,6 +1038,9 @@ impl Script for Quester {
             };
             self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
+            if step.kind.as_ref() == "combat" {
+                self.last_combat = None;
+            }
             let mut step_cx = StepContext {
                 tick,
                 quests: &self.quests,
@@ -1094,6 +1105,15 @@ impl Script for Quester {
                 }) {
                     self.bank.update(receipt);
                 }
+                if outcome.receipt.as_ref().is_some_and(|receipt| {
+                    receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
+                }) {
+                    self.last_combat = Some(StepOutcome {
+                        progress: outcome.progress.clone(),
+                        evidence: outcome.evidence,
+                        receipt: outcome.receipt.clone(),
+                    });
+                }
                 self.last_outcome = Some(outcome);
                 self.prayer_cleanup_pending = true;
                 self.dirty = true;
@@ -1142,6 +1162,7 @@ impl Script for Quester {
                 self.step = None;
                 self.prayer_cleanup_pending = true;
                 self.last_outcome = None;
+                self.last_combat = None;
                 self.settling = false;
                 self.journal = None;
                 self.progress = None;
@@ -1157,6 +1178,7 @@ impl Script for Quester {
                 self.step = None;
                 self.prayer_cleanup_pending = true;
                 self.last_outcome = None;
+                self.last_combat = None;
                 self.journal = None;
                 self.progress = None;
                 self.settling = false;
@@ -1177,6 +1199,7 @@ impl Script for Quester {
         self.needs_read = true;
         self.prayer_cleanup_pending = true;
         self.last_outcome = None;
+        self.last_combat = None;
         self.advances = false;
         self.attempts = 0;
         self.progress = None;
@@ -1201,6 +1224,7 @@ impl Script for Quester {
         self.clear_prayers = None;
         self.prayer_cleanup_pending = false;
         self.last_outcome = None;
+        self.last_combat = None;
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
@@ -1219,6 +1243,7 @@ impl Script for Quester {
         self.clear_prayers = None;
         self.prayer_cleanup_pending = true;
         self.last_outcome = None;
+        self.last_combat = None;
         self.journal = None;
         self.progress = None;
         self.settling = false;
@@ -1376,6 +1401,21 @@ mod tests {
             .fields
             .iter()
             .any(|field| field.key == "combat_end"));
+
+        script.last_combat = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report,
+                target_gone_restarts: 1,
+            })),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 4);
+        assert!(output.0[3].fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+        }));
     }
 
     #[test]
