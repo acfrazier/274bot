@@ -100,7 +100,15 @@ pub(crate) fn take_manual_walk_ownership(
         .get_mut(name)
         .expect("the slot intent counter was inserted");
     bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
-    if !eligible || !(bot.script_walk_armed() || live_family) {
+    // Retained request metadata also deduplicates completed walks; it is
+    // not evidence of active work. Route-less families keep their own owner.
+    let active_walk = bot.route.is_some()
+        || bot.route_worker.is_some()
+        || bot.pending_route.is_some()
+        || bot.bank_fetch.is_some()
+        || bot.carried_walk.is_some()
+        || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    if !eligible || !(active_walk || live_family) {
         return false;
     }
     bot.cancel_for_manual_input();

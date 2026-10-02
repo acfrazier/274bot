@@ -583,21 +583,21 @@ immediately after the production Resume call and requires exactly one
 correlated `UserInput` receipt for the carried request. These tests reject
 missing LIVE configuration rather than silently passing.
 
-Prepare a disposable `HOME` and a writable copy of a decoded R289 cache
-snapshot. `BOT_MANUAL_CLICK_CACHE_SOURCE` must point to that read-only source
-snapshot, not to an operator-writable application directory. The tests verify
-the throwaway-HOME marker and that `TMPDIR` is inside it before opening a
-vault or touching the cache. Run from the repository root with the local
+Supply a disposable `HOME` (you own throwaway isolation) holding a writable
+copy of a decoded R289 cache snapshot at `$HOME/.274bot/unpack-289`.
+`BOT_MANUAL_CLICK_CACHE_SOURCE` must point to a read-only source snapshot,
+not to an operator-writable application directory. The tests require that
+copied cache, plus the evidence, engine and nav-pack paths below, before
+opening a vault. Run from the repository root with the local
 R289 engine and an already-built R289 nav pack:
 
 ```bash
 set -euo pipefail
-EVIDENCE=/Volumes/dev-scratch/274bot-evidence/MANUAL-CLICK-B-2
-mkdir -p "$EVIDENCE"
-LIVE_HOME="$(mktemp -d "$EVIDENCE/manual-click-home.XXXXXX")"
+: "${MANUAL_LIVE_EVIDENCE:?set to a writable evidence directory outside the source tree}"
+mkdir -p "$MANUAL_LIVE_EVIDENCE"
+LIVE_HOME="$(mktemp -d)"
 trap 'rm -rf "$LIVE_HOME"' EXIT
 mkdir -p "$LIVE_HOME/.274bot/unpack-289" "$LIVE_HOME/tmp"
-printf 'MANUAL-CLICK-B-2\n' > "$LIVE_HOME/.manual-click-b-throwaway-home"
 : "${BOT_MANUAL_CLICK_CACHE_SOURCE:?set this to a read-only decoded R289 cache snapshot}"
 cp -R "$BOT_MANUAL_CLICK_CACHE_SOURCE"/. "$LIVE_HOME/.274bot/unpack-289/"
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
@@ -605,12 +605,12 @@ RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 export CARGO_HOME RUSTUP_HOME
 export TMPDIR="$LIVE_HOME/tmp"
 export LIVE=1
-export MANUAL_LIVE_EVIDENCE="$EVIDENCE"
+export MANUAL_LIVE_EVIDENCE
 export WORLD_ENGINE_DIR="${WORLD_ENGINE_DIR:?set to the local R289 engine directory}"
 export WORLD_NAV_PACK="${WORLD_NAV_PACK:?set to the built R289 nav pack}"
 export BOT_NAV_BUILD=skip
 export BOT_CPU=1
-export BOT_LIVE_NAME_PREFIX=mc
+export BOT_LIVE_NAME_PREFIX="${BOT_LIVE_NAME_PREFIX:-mc}"
 
 HOME="$LIVE_HOME" cargo test -p tui --lib bin::manual_click_live_tests::live_manual_click_tui_120x40 -- --ignored --exact --nocapture --test-threads=1
 HOME="$LIVE_HOME" cargo test -p tui --lib bin::manual_click_live_tests::live_manual_click_tui_80x24 -- --ignored --exact --nocapture --test-threads=1

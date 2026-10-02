@@ -1892,7 +1892,10 @@ impl NavBot {
     pub(crate) fn cancel_for_manual_input(&mut self) {
         let current = self
             .requested_route
-            .filter(|_| self.walk_request_id != 0)
+            // A live outer family may outlast an already-settled route leg.
+            .filter(|_| {
+                self.walk_request_id != 0 && self.walk_outcome_request_id != self.walk_request_id
+            })
             .map(|(to, radius, teleports, _, _, _)| {
                 (
                     self.walk_request_id,
