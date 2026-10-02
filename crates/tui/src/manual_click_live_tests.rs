@@ -174,6 +174,7 @@ fn walk_source(destination: Tile) -> String {
     format!(
         r#"import {{ Traversal }} from '../../api/walking/Traversal.js';
         export default class ManualClickProof extends LoopingBot {{
+            recoveryAnchor() {{ return {{ x: {}, z: {}, level: {} }}; }}
             async loop() {{
                 if (this.started) return;
                 this.started = true;
@@ -184,11 +185,16 @@ fn walk_source(destination: Tile) -> String {
                 globalThis.__manual_terminal_count++;
             }}
         }}"#,
-        destination.x, destination.z, destination.level
+        destination.x,
+        destination.z,
+        destination.level,
+        destination.x,
+        destination.z,
+        destination.level
     )
 }
 
-fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
+fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> Result<(), String> {
     let inputs = live_inputs()?;
     prime_local_cache(&inputs.cache)?;
     let profile = host_play::ProfileOptions {
@@ -217,11 +223,13 @@ fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
     session.options.mainland = true;
     session.persist_ui = false;
     session.unlock_at(&vault_path, &passphrase)?;
+    session.set_pause_script_on_manual_walk_abort(pause_owner);
     if !session.load_and_login(&name) {
         return Err(format!("TUI load/login failed: {:?}", session.error));
     }
     session.focus(&name);
     let mut app = TuiApp::new("manual-click CPU live");
+    app.pause_script_on_manual_walk_abort = pause_owner;
     let deadline = Instant::now() + LIVE_WAIT;
     loop {
         session.pump(&mut app);
@@ -288,11 +296,48 @@ fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
     let armed_here = app.here.ok_or("TUI armed tile is unavailable")?;
     let stamp = stamp();
     let dir = inputs.evidence.join(format!(
-        "manual-click-b_tui-{cols}x{rows}_{}_{}",
+        "manual-click-c_tui-{cols}x{rows}-pause-{pause_owner}-recovery-{recovery}_{}_{}",
         name, stamp
     ));
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     capture(&mut app, cols, rows, &dir, &stamp, "01-armed", &before)?;
+
+    if recovery {
+        let deadline = Instant::now() + TERMINAL_WAIT;
+        loop {
+            let here = app.here.ok_or("TUI tile during recovery")?;
+            session
+                .core
+                .play()
+                .ok_or("Play disappeared")?
+                .manual_click_live_age_gameplay(&name, here)?;
+            session.pump(&mut app);
+            let proof = session
+                .core
+                .play()
+                .ok_or("Play disappeared")?
+                .manual_click_live_probe(&name);
+            if proof["script"]["recovering_anchor"].is_array()
+                && proof["nav"]["route"] == true
+                && proof["nav"]["request_id"] == 0
+            {
+                capture(
+                    &mut app,
+                    cols,
+                    rows,
+                    &dir,
+                    &stamp,
+                    "02-watchdog-recovery",
+                    &proof,
+                )?;
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("real recovery arm deadline: {proof}"));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 
     app.show_screen(crate::Screen::Overview);
     let open_manual = app.on_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE));
@@ -304,6 +349,40 @@ fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
         ));
     }
     dispatch(&mut session, &mut app, step);
+    if pause_owner {
+        let deadline = Instant::now() + TERMINAL_WAIT;
+        loop {
+            session.pump(&mut app);
+            let proof = session
+                .core
+                .play()
+                .ok_or("Play disappeared")?
+                .manual_click_live_probe(&name);
+            if proof["script"]["run_state"] == "Paused" && proof["nav"]["reason"] == "UserInput" {
+                assert_correlated_user_input(&before, &proof);
+                assert!(proof["script"]["recovering_anchor"].is_null());
+                capture(
+                    &mut app,
+                    cols,
+                    rows,
+                    &dir,
+                    &stamp,
+                    "03-takeover-paused",
+                    &proof,
+                )?;
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("owner Pause deadline: {proof}"));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        session
+            .core
+            .play()
+            .ok_or("Play disappeared")?
+            .script_resume(&name);
+    }
 
     let deadline = Instant::now() + TERMINAL_WAIT;
     let after = loop {
@@ -339,10 +418,58 @@ fn run_manual_click(cols: u16, rows: u16) -> Result<(), String> {
         "stale follow changed after takeover"
     );
     assert_eq!(settled["script"]["terminal_count"], 1);
+    assert_eq!(settled["script"]["run_state"], "Running");
+    assert_eq!(
+        settled["script"]["runtime_generation"],
+        before["script"]["runtime_generation"]
+    );
+    assert_eq!(settled["script"]["rearm_pending"], false);
+    assert!(settled["script"]["recovering_anchor"].is_null());
     if app.here == Some(armed_here) {
         return Err("manual TUI step did not change the observed player tile".into());
     }
     capture(&mut app, cols, rows, &dir, &stamp, "03-settled", &settled)?;
+    let close_manual = app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    dispatch(&mut session, &mut app, close_manual);
+    let open_settings = app.on_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+    dispatch(&mut session, &mut app, open_settings);
+    assert!(
+        app.settings_state.open,
+        "the real Overview settings key opens the popup"
+    );
+    for _ in 0..6 {
+        app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    }
+    assert_eq!(
+        app.settings_state.row, 6,
+        "the added pause preference row is reachable"
+    );
+    capture(
+        &mut app,
+        cols,
+        rows,
+        &dir,
+        &stamp,
+        "04-settings-pause-row",
+        &settled,
+    )?;
+    let prior = app.pause_script_on_manual_walk_abort;
+    let toggle = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    dispatch(&mut session, &mut app, toggle);
+    session.pump(&mut app);
+    assert_eq!(app.pause_script_on_manual_walk_abort, !prior);
+    capture(
+        &mut app,
+        cols,
+        rows,
+        &dir,
+        &stamp,
+        "05-settings-toggle",
+        &settled,
+    )?;
+    let restore = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    dispatch(&mut session, &mut app, restore);
+    session.pump(&mut app);
     println!(
         "PASS TUI {cols}x{rows} account={name} before={before} after={after} settled={settled} initial_here={here:?} armed_here={armed_here:?} final_here={:?}",
         app.here
@@ -375,7 +502,6 @@ fn assert_correlated_user_input(before: &serde_json::Value, after: &serde_json::
             .map(|seq| seq + 1)
     );
     assert_eq!(after["nav"]["blocked"], false);
-    assert_eq!(after["script"]["run_state"], "Running");
     for field in [
         "armed",
         "route",
@@ -440,11 +566,23 @@ fn capture(
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_120x40() {
-    run_manual_click(120, 40).unwrap();
+    run_manual_click(120, 40, false, false).unwrap();
 }
 
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_80x24() {
-    run_manual_click(80, 24).unwrap();
+    run_manual_click(80, 24, false, false).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
+fn live_manual_click_tui_recovery_pause_resume_120x40() {
+    run_manual_click(120, 40, true, true).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
+fn live_manual_click_tui_recovery_pause_resume_80x24() {
+    run_manual_click(80, 24, true, true).unwrap();
 }

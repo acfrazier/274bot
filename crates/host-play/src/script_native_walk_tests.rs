@@ -744,6 +744,7 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     rig.observe(2);
     assert_eq!(rig.end(), Some(Ok(WalkEnd::UserInput)));
@@ -765,6 +766,125 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
         "after a manual takeover the next native walk's NoPath must reach its owner"
     );
     assert_eq!(ends[1], Ok(WalkEnd::Failed));
+}
+
+#[test]
+fn review_native_recovery_click_then_nopath_delivers_terminal() {
+    let mut rig = two_walk_rig();
+    let first_native = rig.navs.lock().unwrap()["alice"].walk_request_id;
+    super::apply_watchdog_nav_action(
+        script::WatchdogAction::ArmWalk {
+            x: 8,
+            z: 0,
+            level: 0,
+        },
+        &mut rig.driver,
+        Some(&rig.snapshot),
+        Some((0, 0, 0)),
+        &rig.navs,
+        &rig.world,
+        Some(WorldState::empty()),
+        "alice",
+    );
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        eprintln!(
+            "manual-click recovery probe: native_request={first_native} \
+             walk_request_id={} native_walk={} carried_walk={} live_refusal_id={}",
+            bot.walk_request_id,
+            bot.native_walk.is_some(),
+            bot.carried_walk.is_some(),
+            bot.walk_live_refusal_id,
+        );
+    }
+    rig.observe(2);
+    assert_eq!(
+        rig.end(),
+        Some(Ok(WalkEnd::Cancelled)),
+        "replacing the native follow ends its first owner"
+    );
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        2,
+        false,
+    ));
+    {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        eprintln!(
+            "manual-click after recovery click: outcome_request_id={} reason={:?} \
+             live_refusal_id={} native_walk={} carried_walk={}",
+            bot.walk_outcome_request_id,
+            bot.walk_outcome_cancel_reason,
+            bot.walk_live_refusal_id,
+            bot.native_walk.is_some(),
+            bot.carried_walk.is_some(),
+        );
+    }
+    let ends = drive_second_walk(&mut rig, 3);
+    eprintln!("manual-click native recovery treatment: ends={ends:?}");
+    assert_eq!(
+        ends.len(),
+        2,
+        "after native recovery identity and click, the next native NoPath reaches its owner"
+    );
+    assert_eq!(ends[1], Ok(WalkEnd::Failed));
+}
+
+#[test]
+fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        2,
+        false,
+    ));
+    assert!(rig.navs.lock().unwrap()["alice"].manual_walk_cancelled_detail);
+
+    let arm = super::ScriptWalkArm {
+        here: Some((0, 0, 0)),
+        world: rig.world.clone(),
+        navs: Arc::clone(&rig.navs),
+        name: "alice".into(),
+        state: Some(WorldState::empty()),
+        bank: Vec::new(),
+    };
+    let completed = arm
+        .queue_route_in_snapshot_synced(
+            &rig.snapshot,
+            8,
+            0,
+            0,
+            nav::router::FindOptions::default(),
+            0,
+            true,
+            99,
+            None,
+        )
+        .expect("the next walk route arms");
+    assert!(
+        !rig.navs.lock().unwrap()["alice"].manual_walk_cancelled_detail,
+        "the detail clears on the next route arm"
+    );
+    assert_eq!(
+        rig.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
+        script::isolate_fb::WalkCancelReason::UserInput,
+        "the previously published receipt remains intact"
+    );
+    completed
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the new route worker completes");
 }
 
 #[test]
@@ -852,11 +972,13 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     assert_eq!(
         play.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
         script::isolate_fb::WalkCancelReason::UserInput
     );
+    assert!(play.script_walk_cancelled_by_user("alice"));
 
     play.script_stop("alice");
     let navs = play.navs.lock().unwrap();
@@ -868,6 +990,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     assert_eq!(navs["alice"].walk_outcome_request_id, 0);
     assert_eq!(navs["alice"].walk_live_refusal_id, 0);
     drop(navs);
+    assert!(!play.script_walk_cancelled_by_user("alice"));
 
     play.script_start_load(
         "alice",
@@ -946,6 +1069,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
         frame,
         true,
         1,
+        false,
     ));
     assert!(
         !rig.walk_armed(),
@@ -963,7 +1087,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
     assert_eq!(
         rig.slot().lock().unwrap().state(),
         script::RunState::Running,
-        "slice B does not force the slice C pause policy"
+        "OFF cancels without forcing the owning script to pause"
     );
     let mut bots = rig.navs.lock().unwrap();
     let bot = bots.get_mut("alice").unwrap();
@@ -993,6 +1117,42 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
 }
 
 #[test]
+fn manual_config_on_native_pause_revokes_action_resume_makes_fresh_decision() {
+    let mut rig = two_walk_rig();
+    let original = rig.navs.lock().unwrap()["alice"].walk_request_id;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert!(!rig.slot().lock().unwrap().has_native_actions());
+    assert!(rig.navs.lock().unwrap()["alice"].carried_walk.is_none());
+    rig.observe(2);
+    rig.step();
+    assert_eq!(rig.driver.walked, None);
+    assert_eq!(rig.shared.lock().begun, 1, "no decision while Paused");
+    rig.slot().lock().unwrap().resume();
+    let ends = drive_second_walk(&mut rig, 3);
+    assert_eq!(ends.len(), 2);
+    assert_eq!(
+        ends[1],
+        Ok(WalkEnd::Failed),
+        "the explicit Resume permits a fresh decision"
+    );
+    let shared = rig.shared.lock();
+    let next = shared.results[1].as_ref().unwrap();
+    assert_ne!(
+        next.request_id, original,
+        "the next walk is not replay of the cancelled request"
+    );
+}
+
+#[test]
 fn held_manual_click_still_cancels_and_other_slot_survives() {
     let mut rig = open_rig(false);
     rig.observe(1);
@@ -1013,6 +1173,7 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
         manual_frame(true),
         true,
         1,
+        false,
     ));
     assert!(!rig.walk_armed());
     assert!(rig.navs.lock().unwrap()["bob"].script_walk_armed());
@@ -1026,6 +1187,7 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
             manual_frame(true),
             true,
             2,
+            false,
         ),
         "an already ended operation cannot produce a second terminal"
     );
@@ -1070,6 +1232,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
         manual_frame(false),
         true,
         2,
+        false,
     );
     {
         let navs = rig.navs.lock().unwrap();
@@ -1123,6 +1286,7 @@ fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let bots = rig.navs.lock().unwrap();
     assert_eq!(bots["alice"].walk_outcome_seq, old_seq);
@@ -1159,6 +1323,7 @@ fn reconnect_gated_owner_is_not_taken_over_before_its_ready_observation() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let bots = rig.navs.lock().unwrap();
     assert_eq!(
@@ -1190,6 +1355,7 @@ fn takeover_during_pending_worker_cannot_reinstall_follow() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     rig.navs
@@ -1272,6 +1438,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
         manual_frame(false),
         true,
         1,
+        false,
     ));
     let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     let original = rig.navs.lock().unwrap()["alice"].walk_outcome_request_id;

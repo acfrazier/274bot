@@ -439,13 +439,40 @@ This does not relax the requested radius.
 
 Manual movement takes ownership before frontend or script follow. A matching
 native walk completes once with the normal `WalkEnd::UserInput` receipt
-(`blocked=None`), ahead of arrival, deadline and evidence checks. It displays
-“cancelled by user input”; it is not an action error. Cancellation invalidates
-the old route generation and clears pending route/bank work and cancelled carry.
+(`blocked=None`), ahead of arrival, deadline and evidence checks. The slot
+detail says “cancelled by user input” (not an action error) and clears when a
+later walk is armed or another walk outcome is published. Cancellation
+invalidates the old route generation and clears pending route/bank work and
+cancelled carry.
 Requests queued from an older observed walk-outcome sequence cannot restart that
 owner, and live route-less walking composers stop through the shared intent
 sequence. Already operator-paused or reconnect-carried script work keeps its
 existing Resume behavior.
+
+The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
+displayed as “Pause script on manual movement,” defaults to ON. It gates only
+the pause of the script that owns the cancelled walk; it never gates intent
+detection, cancellation, or the posted outcome. With it OFF, cancellation
+still occurs and scripts remain able to observe their normal end state,
+including compat `false` and the v2 `user-input` reason. A native script may
+make a new decision after an explicit Resume, but the cancelled request, host
+carry, queued pre-takeover walking work, and watchdog recovery are not replayed.
+For compat walks, watchdog-owned replacement routes retain the original
+request, key and generation for this terminal; their internal zero id does not
+replace the caller's receipt. Native-owned recovery ends its typed walk to its
+owner instead of carrying a receipt-only compat identity. Takeover also
+restamps gameplay progress, so leaving pause OFF does not immediately trigger
+a stale WedgeWalk recovery.
+
+The detector classifies movement intent, not successful displacement. Accepted
+conservative positives include a world-menu Examine/Cancel selection and
+unwalkable or same-path clicks, even when no movement follows. Inventory,
+chat, main-modal widgets, and unrelated keyboard input are excluded. The
+documented residue remains: a rare pointer jump from a hovered world-menu
+action to side chrome can invoke the last-drawn default action without passing
+the world-pointer classifier; spellbook/jewellery teleports and dialogue travel
+are also outside this takeover rule, and standalone client-window input is not
+claimed.
 
 Quester treats a refused native walk as the owning step's terminal. A
 `Failed`, `Blocked`, or `Refused` walk receipt parks the step as `Blocked`;
@@ -621,11 +648,24 @@ a present invalid origin plane uses `InvalidCoordinates`.
 ## Manual-click LIVE regression harness
 
 The ignored TUI tests exercise the production `TuiApp::on_key` → `dispatch`
-path at both supported terminal layouts. The panel tests inject through the
-production `Session::capture_tx`; the F2 regression pauses an armed compat
-walk, keeps pumping until the paused manual click is observed, then resumes
-and verifies that the carry completes. The panel fixture chooses a pure walk
-leg of at most 48 tiles so nearby destinations with long castle detours cannot
+path at 120×40 and 80×24, including the reachable persisted settings row.
+The panel tests inject through production `Session::capture_tx`, preserving
+the client's normal input path and CPU game-pane capture. The matrix covers
+pause OFF and ON, watchdog-owned recovery followed by manual takeover and
+Resume, a v2 cancellation consumer, group-member isolation, and route-less
+resilient walking with pause OFF and with pause ON followed by Resume. Fresh
+NPC and loc trials use the client's projected actor
+bounds and actual opened world-menu rows, not fabricated picks or stale hover
+rows. World-menu Cancel and Examine rows conservatively cancel too. Harmless
+tab and right-click controls must not cancel. The group trial records a
+no-click control before takeover and requires the companion's active arm,
+generation, destination and aim to remain unchanged, with no cancellation
+receipt; this isolation check does not infer companion displacement.
+
+The F2 regression separately pauses an armed compat walk, keeps pumping
+until the paused manual click is observed, then resumes and verifies that
+the uncancelled carry completes. The panel fixture chooses a pure walk leg
+of at most 48 tiles so nearby destinations with long castle detours cannot
 consume the unchanged 60-second script deadline. Its second walk clicks
 immediately after the production Resume call and requires exactly one
 correlated `UserInput` receipt for the carried request. These tests reject
@@ -660,10 +700,8 @@ export BOT_NAV_BUILD=skip
 export BOT_CPU=1
 export BOT_LIVE_NAME_PREFIX="${BOT_LIVE_NAME_PREFIX:-mc}"
 
-HOME="$LIVE_HOME" cargo test -p tui --lib bin::manual_click_live_tests::live_manual_click_tui_120x40 -- --ignored --exact --nocapture --test-threads=1
-HOME="$LIVE_HOME" cargo test -p tui --lib bin::manual_click_live_tests::live_manual_click_tui_80x24 -- --ignored --exact --nocapture --test-threads=1
-HOME="$LIVE_HOME" cargo test -p panel --lib manual_click_live_tests::live_manual_click_panel_cpu -- --ignored --exact --nocapture --test-threads=1
-HOME="$LIVE_HOME" cargo test -p panel --lib manual_click_live_tests::live_pause_manual_click_resume_carry -- --ignored --exact --nocapture --test-threads=1
+HOME="$LIVE_HOME" cargo test -p tui --lib manual_click_live_tests -- --ignored --nocapture --test-threads=1
+HOME="$LIVE_HOME" cargo test -p panel --lib manual_click_live_tests -- --ignored --nocapture --test-threads=1
 ```
 
 Each case writes a directory under `MANUAL_LIVE_EVIDENCE` containing the
@@ -671,6 +709,14 @@ surface capture (`.txt` for TUI, raw CPU `.argb` for panel) and a matching
 JSON receipt with the host probe state. The TUI receipt also stores the
 rendered cell buffer. Keep the evidence outside the source tree; remove the
 throwaway HOME only after preserving the captures.
+
+Movement-packet proof is separate from the live takeover receipts. Run
+`cargo test -p client --test ground_input_composed cpu_ground_input_composed -- --nocapture`
+for the CPU draw → human down → deferred terrain pick → `MOVE_GAMECLICK`
+path, including menu selection and blocked terrain; run
+`cargo test -p client --test walk -- --nocapture` for minimap packets and
+open-world-menu dismissal followed by a minimap walk. The panel harness
+captures the live CPU game pane, not native window chrome.
 
 ## Live tests
 

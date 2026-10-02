@@ -565,6 +565,82 @@ fn tsc_gather_quest_sample_type_checks() {
     std::fs::remove_dir_all(&dir).expect("remove gather-quest sample dir");
 }
 
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_manual_walk_consumer_uses_correlated_outcome_reason() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!("host-js-walk-consumer-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear walk consumer dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create walk consumer dir");
+    std::fs::copy(host_js_path(), dir.join("walk-api.d.ts"))
+        .expect("copy generated host declarations");
+    std::fs::write(dir.join("consumer.ts"), MANUAL_WALK_CONSUMER)
+        .expect("write manual walk consumer");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(dir.join("consumer.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc manual walk consumer failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove walk consumer dir");
+    assert!(
+        output.status.success(),
+        "manual walk consumer failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// A real NativeApi v2 consumer: only a new sequence with the matching request,
+/// generation and destination key may be interpreted as this walk's terminal.
+const MANUAL_WALK_CONSUMER: &str = r#"
+import type { NativeApi, NativeSnapshot } from "./walk-api";
+
+declare const api: NativeApi;
+
+const requestId = 57;
+const key = { x: 2820, z: 3556, level: 0, radius: 1, allow_teleports: false };
+const before = api.snapshot;
+api.request({ op: "walk-near", ...key, request_id: requestId });
+
+function readWalkOutcome(snapshot: NativeSnapshot): boolean | null {
+  const matches =
+    snapshot.walk_outcome_seq > before.walk_outcome_seq &&
+    snapshot.walk_outcome_generation !== before.walk_outcome_generation &&
+    snapshot.walk_outcome_request_id === requestId &&
+    snapshot.walk_outcome_x === key.x &&
+    snapshot.walk_outcome_z === key.z &&
+    snapshot.walk_outcome_level === key.level &&
+    snapshot.walk_outcome_radius === key.radius &&
+    snapshot.walk_outcome_allow_teleports === key.allow_teleports;
+  if (!matches) return null;
+
+  const reason: "none" | "user-input" = snapshot.walk_outcome_cancel_reason;
+  const intentSequence: number = snapshot.user_move_intent_seq;
+  if (reason === "user-input") {
+    const failed: boolean = snapshot.walk_outcome_failed;
+    void [failed, intentSequence];
+    return false;
+  }
+  return !snapshot.walk_outcome_failed;
+}
+
+void readWalkOutcome;
+"#;
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]
