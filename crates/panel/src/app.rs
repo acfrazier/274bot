@@ -2908,8 +2908,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
             let mut nav = session.ui.nav.clone();
-            let previous_pause_script_on_manual_walk_abort =
-                nav.pause_script_on_manual_walk_abort;
+            let previous_pause_script_on_manual_walk_abort = nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
             ui.text_colored(ACCENT, "Routing");
             if ui.checkbox("allow teleports", &mut nav.allow_teleports) {

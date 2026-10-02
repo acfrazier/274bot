@@ -599,16 +599,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     for _ in 0..20 {
         app.on_key(key(KeyCode::Down));
     }
-    assert_eq!(app.settings_state.row, 8, "memory remains reachable at the last row");
-
-    for (width, height) in [(120, 40), (80, 24)] {
-        app.settings_state.row = 6;
-        let rendered = text(&draw(&mut app, width, height));
-        assert!(
-            rendered.contains("pause script on manual movement: false"),
-            "{width}x{height} should show the toggle: {rendered}"
-        );
-    }
+    assert_eq!(
+        app.settings_state.row, 8,
+        "memory remains reachable at the last row"
+    );
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out

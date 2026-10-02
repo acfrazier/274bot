@@ -3083,9 +3083,7 @@ impl Session {
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
         self.core
-            .set_pause_script_on_manual_walk_abort(
-                self.ui.nav.pause_script_on_manual_walk_abort,
-            );
+            .set_pause_script_on_manual_walk_abort(self.ui.nav.pause_script_on_manual_walk_abort);
         self.core.advance_removals(Instant::now());
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;

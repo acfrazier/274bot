@@ -14,9 +14,7 @@ impl NavPreference {
     const fn key_and_default(self) -> (&'static str, bool) {
         match self {
             Self::ShowSpecialAreas => ("show_special_areas", false),
-            Self::PauseScriptOnManualWalkAbort => {
-                ("pause_script_on_manual_walk_abort", true)
-            }
+            Self::PauseScriptOnManualWalkAbort => ("pause_script_on_manual_walk_abort", true),
         }
     }
 }
@@ -72,12 +70,9 @@ mod tests {
         .unwrap();
 
         assert!(!nav_preference_at(&path, NavPreference::ShowSpecialAreas, None).unwrap());
-        assert!(nav_preference_at(
-            &path,
-            NavPreference::PauseScriptOnManualWalkAbort,
-            None
-        )
-        .unwrap());
+        assert!(
+            nav_preference_at(&path, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
+        );
 
         nav_preference_at(&path, NavPreference::ShowSpecialAreas, Some(true)).unwrap();
         nav_preference_at(
@@ -87,7 +82,8 @@ mod tests {
         )
         .unwrap();
 
-        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["last_focus"], "alice");
         assert_eq!(saved["capture"], false);
         assert_eq!(saved["nav"]["custom"]["keep"], 7);
@@ -96,12 +92,9 @@ mod tests {
 
         let missing = temp_path("legacy");
         std::fs::write(&missing, r#"{"last_focus":"bob","nav":{}}"#).unwrap();
-        assert!(nav_preference_at(
-            &missing,
-            NavPreference::PauseScriptOnManualWalkAbort,
-            None
-        )
-        .unwrap());
+        assert!(
+            nav_preference_at(&missing, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
+        );
         assert!(!nav_preference_at(&missing, NavPreference::ShowSpecialAreas, None).unwrap());
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
         std::fs::remove_dir_all(missing.parent().unwrap()).unwrap();
@@ -109,16 +102,18 @@ mod tests {
 
     #[test]
     fn failed_nav_preference_write_is_returned_to_the_frontend() {
-        let root_file = temp_path("missing-parent");
+        let root_file = temp_path("blocked-parent");
         let root = root_file.parent().unwrap().to_path_buf();
-        let path = root.join("missing").join("panel-ui.json");
-        let error = nav_preference_at(
+        let blocked = root.join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        let path = blocked.join("panel-ui.json");
+        nav_preference_at(
             &path,
             NavPreference::PauseScriptOnManualWalkAbort,
             Some(false),
         )
         .expect_err("the preference writer must report an inaccessible destination");
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"not a directory");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

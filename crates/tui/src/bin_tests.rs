@@ -2532,8 +2532,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     app.pause_script_on_manual_walk_abort = true;
     app.pause_script_on_manual_walk_abort_dirty = true;
     session.pump(&mut app);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(prefs["capture"], false);
     assert_eq!(prefs["nav"]["show_special_areas"], true);
     assert_eq!(prefs["nav"]["pause_script_on_manual_walk_abort"], true);

@@ -585,7 +585,6 @@ impl TuiApp {
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort);
         pane.memory = self.settings_memory;
         let outcome = pane.on_key(key);
-        drop(pane);
         match outcome {
             SettingsKey::Changed => {
                 self.settings_dirty = true;

@@ -234,8 +234,7 @@ mod tests {
         assert!(!effective(&saved, true).pause_script_on_manual_walk_abort);
         for choice in [None, Some(true), Some(false)] {
             assert!(
-                !super::apply_paint_override(&saved, choice)
-                    .pause_script_on_manual_walk_abort,
+                !super::apply_paint_override(&saved, choice).pause_script_on_manual_walk_abort,
                 "paint choice {choice:?} must not replace the saved pause preference"
             );
         }
