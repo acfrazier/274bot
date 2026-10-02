@@ -648,9 +648,6 @@ impl<F: Fn(WorldTile) -> Option<i32>> ArrivalProbe for WindowArrivalProbe<'_, F>
         let epoch = scratch.epoch;
         let budget = options.max_steps.unwrap_or(400) as usize;
         scratch.queue.clear();
-        scratch
-            .queue
-            .reserve((budget.saturating_mul(8) + 1).min(self.side * self.side));
         scratch.queue.push(start);
         scratch.marks[start] = epoch;
         let target_x = destination.x - self.base.x;
@@ -745,6 +742,15 @@ impl ArrivalStepCache<'_> {
         let page = (x.div_euclid(page_side), z.div_euclid(page_side));
         let count = self.page_origins.len();
         let slot = *self.pages.entry(page).or_insert_with(|| {
+            if count == 0 {
+                // Reserve the call's paged allowance once, while keeping page
+                // contents lazy. Dense-only calls allocate no page buffers.
+                let paged_cells = self.steps.capacity() - self.flags.len();
+                self.page_origins
+                    .reserve_exact(paged_cells / Self::PAGE_CELLS);
+                self.page_flags.reserve_exact(paged_cells);
+                self.page_neighbors.reserve_exact(paged_cells);
+            }
             self.page_origins
                 .push((page.0 * page_side, page.1 * page_side));
             self.page_flags.resize((count + 1) * Self::PAGE_CELLS, None);
@@ -1053,6 +1059,7 @@ fn arrival_outside_distances(
     let mut outside = vec![u32::MAX; cells];
     let mut contour = vec![u32::MAX; contour_len];
     let mut queue = Vec::new();
+    let flags = |x: i32, z: i32| cache.flags[x as usize * side + z as usize];
     let contour_index = |x: i32, z: i32| {
         if x == -1 && z < side as i32 {
             (z + 1) as usize
@@ -1148,10 +1155,17 @@ fn arrival_outside_distances(
             // vertices have already crossed the contour.
             if !seeded {
                 let predecessor = index.wrapping_add_signed(offsets[bit]);
-                if outside[predecessor] == u32::MAX
-                    && cache.walkable(predecessor)
-                    && cache.steps[predecessor] & (1 << inverse[bit]) != 0
-                {
+                if outside[predecessor] != u32::MAX || !cache.walkable(predecessor) {
+                    continue;
+                }
+                // Boundary predecessors have no prepared dense-window mask.
+                // Read their directed edge just as the inside-only BFS does.
+                let allowed = if cache.prepared(predecessor) {
+                    cache.steps[predecessor] & (1 << inverse[bit]) != 0
+                } else {
+                    can_step_local(&flags, x + dx, z + dz, -dx, -dz)
+                };
+                if allowed {
                     outside[predecessor] = next_depth;
                     queue.push(predecessor);
                 }
@@ -1296,9 +1310,11 @@ struct ArrivalLayers {
 }
 
 impl ArrivalLayers {
-    fn new(cells: usize) -> Self {
+    fn new(cells: usize, capacity: usize) -> Self {
+        let mut states = Vec::with_capacity(capacity);
+        states.resize(cells, ArrivalLayerCell::default());
         Self {
-            cells: vec![ArrivalLayerCell::default(); cells],
+            cells: states,
             touched: Vec::with_capacity(cells),
             queue: Vec::with_capacity(cells),
             next_queue: Vec::with_capacity(cells),
@@ -1609,9 +1625,20 @@ pub fn retain_arrival_candidates(
     }
     let goals = &goals[..goal_len];
     let budget = (radius as u32 * 2 + 1).pow(2);
+    // A landmark can explore twice the dequeue budget and load eight
+    // neighbors per discovery. Reserve that allowance for paged scratch,
+    // rounded to complete pages, rather than reallocating every new page.
+    // Distinct roots may grow past it; the cache remains dynamically extensible.
+    let paged_cells = (budget as usize * 16 + 1).div_ceil(ArrivalStepCache::PAGE_CELLS)
+        * ArrivalStepCache::PAGE_CELLS;
+    let scratch_cells = cells + paged_cells;
+    // Use the zeroed allocation path without eagerly touching the allowance.
+    // Only the dense window is live until pages are populated.
+    let mut steps = vec![0; scratch_cells];
+    steps.truncate(cells);
     let mut cache = ArrivalStepCache {
         flags: &cached,
-        steps: vec![0; cells],
+        steps,
         side,
         base: WorldTile {
             x: base_x,
@@ -1787,13 +1814,20 @@ pub fn retain_arrival_candidates(
                     .map(|(_, &(_, start))| start)
                     .expect("nonempty component group")
             });
-        let landmark = landmark.get_or_insert_with(|| ArrivalLandmark {
-            depth: vec![u32::MAX; cells],
-            reversible: vec![false; cells],
-            queue: Vec::with_capacity(budget as usize + 1),
-            goal_reachable: Vec::new(),
-            goal_queue: Vec::new(),
-            goal_lower: 0,
+        let landmark = landmark.get_or_insert_with(|| {
+            let capacity = cache.steps.capacity();
+            let mut depth = Vec::with_capacity(capacity);
+            depth.resize(cache.steps.len(), u32::MAX);
+            let mut reversible = Vec::with_capacity(capacity);
+            reversible.resize(cache.steps.len(), false);
+            ArrivalLandmark {
+                depth,
+                reversible,
+                queue: Vec::with_capacity(budget as usize * 2 + 1),
+                goal_reachable: Vec::with_capacity(capacity),
+                goal_queue: Vec::with_capacity(budget as usize * 2 + 1),
+                goal_lower: 0,
+            }
         });
         let bounds = landmark.prepare(root, budget, goals, &mut cache, depth[root] == u32::MAX);
         let mut roots = [root; 64];
@@ -1884,7 +1918,9 @@ pub fn retain_arrival_candidates(
                     }
                 }
                 let (accepted, undecided) = layers
-                    .get_or_insert_with(|| ArrivalLayers::new(cache.steps.len()))
+                    .get_or_insert_with(|| {
+                        ArrivalLayers::new(cache.steps.len(), cache.steps.capacity())
+                    })
                     .classify(
                         &starts[..chunk.len()],
                         goals,
@@ -1903,6 +1939,19 @@ pub fn retain_arrival_candidates(
         }
         group = end;
     }
+    let scratch = WindowReachScratch {
+        marks: if replay.is_empty() {
+            Vec::new()
+        } else {
+            Vec::with_capacity(cache.steps.capacity())
+        },
+        queue: if replay.is_empty() {
+            Vec::new()
+        } else {
+            Vec::with_capacity(budget as usize * 8 + 1)
+        },
+        epoch: 0,
+    };
     let window_probe = WindowArrivalProbe {
         fallback: &probe,
         cache: std::cell::RefCell::new(cache),
@@ -1913,11 +1962,7 @@ pub fn retain_arrival_candidates(
             level: destination.level,
         },
         side,
-        scratch: std::cell::RefCell::new(WindowReachScratch {
-            marks: Vec::new(),
-            queue: Vec::new(),
-            epoch: 0,
-        }),
+        scratch: std::cell::RefCell::new(scratch),
     };
     for candidate in replay {
         keep[candidate] = is_arrived(candidates[candidate], destination, radius, || &window_probe);
