@@ -180,7 +180,6 @@ impl Clear {
             Step::Done(PrayerDone::cleared(report.clicked, report.timed_out))
         }
     }
-
 }
 
 /// One `set` or `clear`; the row is the whole operation's state.
@@ -204,7 +203,7 @@ impl Family for Prayer {
             return Begin::Refuse("busy".into());
         }
         let data = crate::supply_v2::selected_data();
-        let obs = observed::with(|scene| prayer_observation(scene));
+        let obs = observed::with(prayer_observation);
         match args.op {
             Op::Set => begin_set(data.as_deref(), &args, &obs, cx),
             Op::Clear => begin_clear(data.as_deref(), &obs, cx),
@@ -213,7 +212,7 @@ impl Family for Prayer {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<PrayerDone> {
         let data = crate::supply_v2::selected_data();
-        let obs = observed::with(|scene| prayer_observation(scene));
+        let obs = observed::with(prayer_observation);
         match self {
             Self::Toggle(toggle) => toggle.step(&obs, cx),
             Self::Clear(clear) => clear.step(data.as_deref(), &obs, cx),
@@ -290,7 +289,7 @@ fn query(data: Option<&SelectedGameData>, obs: &PrayerObservation, input: &Value
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    let obs = observed::with(|scene| prayer_observation(scene));
+    let obs = observed::with(prayer_observation);
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "points" | "max" | "full" | "known" | "available" | "active" => query(data, &obs, input),
         _ => json!({ "ok": false, "error": "unknown-op" }),
@@ -345,24 +344,6 @@ mod tests {
     fn set_protect(value: i32) {
         let (varp, level, _) = protect_identity();
         set_obs(level, level, varp, value);
-    }
-
-    fn preceding_prayer_identity() -> (i32, i32) {
-        let data = crate::supply_v2::selected_data().expect("selected data configured");
-        let (protect_varp, _, _) = protect_identity();
-        let rows = data.prayers();
-        let protect_index = rows
-            .iter()
-            .position(|prayer| prayer.varp == protect_varp)
-            .expect("Protect from Melee row index");
-        let previous = rows
-            .get(
-                protect_index
-                    .checked_sub(1)
-                    .expect("Protect from Melee has a preceding prayer row"),
-            )
-            .expect("preceding selected prayer row");
-        (previous.varp, previous.button_com)
     }
 
     /// Stand in for a post carrying the prayer stat and one more overlay
@@ -635,5 +616,4 @@ mod tests {
         assert!(drain().is_empty(), "an aborted row never clicks again");
         assert!(!machine::live("prayer"));
     }
-
 }

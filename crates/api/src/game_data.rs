@@ -2206,10 +2206,35 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, S
         ClientRevision::R274 => (&DATA_274, REVISION_274),
         ClientRevision::R289 => (&DATA_289, REVISION_289),
     };
-    match cell.get_or_init(|| SelectedGameData::decode(GzDecoder::new(bytes), revision)) {
+    match cell.get_or_init(|| {
+        let data = SelectedGameData::decode(GzDecoder::new(bytes), revision)?;
+        validate_prayer_layout(&data, revision)?;
+        Ok(data)
+    }) {
         Ok(data) => Ok(Arc::clone(data)),
         Err(error) => Err(error.clone()),
     }
+}
+fn validate_prayer_layout(data: &SelectedGameData, revision: ClientRevision) -> Result<(), String> {
+    if data.prayers.len() > crate::prayer::PRAYER_COUNT {
+        return Err(format!(
+            "generated game data prayer layout mismatch for revision {}: {} rows exceed the supported count {}",
+            revision.as_i32(),
+            data.prayers.len(),
+            crate::prayer::PRAYER_COUNT,
+        ));
+    }
+    for (index, prayer) in data.prayers.iter().enumerate() {
+        let expected = crate::prayer::PRAYER_VARP0 + index as i32;
+        if prayer.varp != expected {
+            return Err(format!(
+                "generated game data prayer layout mismatch for revision {}: row {index} has varp {}, expected {expected}",
+                revision.as_i32(),
+                prayer.varp,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn accepts_cache_id(data: &SelectedGameData, cache_id: &str) -> bool {
