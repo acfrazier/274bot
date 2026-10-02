@@ -485,7 +485,9 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
                     0
                 },
         );
-        let to = e.landing_from(e.at);
+        let to = e
+            .landing_from(e.at)
+            .expect("transport landing overflows from its packed anchor");
         for v in [
             e.at.x, e.at.z, e.at.level, to.x, to.z, to.level, e.loc_id, e.option, e.ticks,
         ] {
