@@ -1430,6 +1430,11 @@ fn is_arrived_bounds_exact_and_solid_reach_by_the_requested_region() {
         let collision = CollisionArrivalProbe::new(|tile| query.collision_at(tile));
         assert_eq!(is_arrived(me, target, radius, || &view), expected);
         assert_eq!(is_arrived(me, target, radius, || &collision), expected);
+        let mut candidates = vec![me];
+        retain_arrival_candidates(&mut candidates, target, radius, |tile| {
+            query.collision_at(tile)
+        });
+        assert_eq!(candidates, if expected { vec![me] } else { Vec::new() });
     };
     check(&scene, 12, false);
     check(&scene, 13, true);
@@ -1442,6 +1447,76 @@ fn is_arrived_bounds_exact_and_solid_reach_by_the_requested_region() {
     scene.collision_flags[2 * 104 + 10] |=
         CollisionFlag::W_N | CollisionFlag::W_E | CollisionFlag::W_S | CollisionFlag::W_W;
     check(&scene, 13, false);
+}
+
+#[test]
+fn batched_arrival_preserves_directed_steps_and_rank_cutoffs() {
+    let mut state = 0x274_02_u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for case in 0..24 {
+        let mut scene = SceneView {
+            available: true,
+            base_x: 100,
+            base_z: 100,
+            level: 0,
+            width: 12,
+            height: 12,
+            collision_flags: vec![0; 144],
+        };
+        for flags in &mut scene.collision_flags {
+            let word = random();
+            for (bit, wall) in [
+                CollisionFlag::W_N,
+                CollisionFlag::W_E,
+                CollisionFlag::W_S,
+                CollisionFlag::W_W,
+                CollisionFlag::SQ_BLOCKED,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if word & (1 << bit) != 0 {
+                    *flags |= wall;
+                }
+            }
+        }
+        // Intentionally do not mirror walls onto their neighbours.
+        let target = WorldTile {
+            x: 100 + (random() % 12) as i32,
+            z: 100 + (random() % 12) as i32,
+            level: 0,
+        };
+        let query = SceneQuery::new(&scene, None);
+        let probe = CollisionArrivalProbe::new(|tile| query.collision_at(tile));
+        for radius in [1, 4, 12] {
+            let all: Vec<_> = (0..12)
+                .flat_map(|x| {
+                    (0..12).map(move |z| WorldTile {
+                        x: 100 + x,
+                        z: 100 + z,
+                        level: 0,
+                    })
+                })
+                .filter(|&tile| query.walkable(tile))
+                .collect();
+            let expected: Vec<_> = all
+                .iter()
+                .copied()
+                .filter(|&tile| is_arrived(tile, target, radius, || &probe))
+                .collect();
+            let mut actual = all;
+            retain_arrival_candidates(&mut actual, target, radius, |tile| query.collision_at(tile));
+            assert_eq!(
+                actual, expected,
+                "directed map={case}, target={target:?}, r={radius}"
+            );
+        }
+    }
 }
 
 #[test]

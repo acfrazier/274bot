@@ -1021,7 +1021,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let started = debug.then(Instant::now);
-                let outcome = request.calculate();
+                let (outcome, targets) = request.calculate();
                 if debug {
                     let elapsed_ms = started.unwrap().elapsed().as_millis();
                     log_walk_arm(&name, || {
@@ -1035,7 +1035,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let blocked = request
-                    .blocking_zones(&outcome)
+                    .blocking_zones(&outcome, &targets)
                     .filter(|keys| !keys.is_empty());
                 let route_detail = blocked
                     .as_ref()
@@ -1066,7 +1066,7 @@ impl ScriptWalkArm {
                         compat_zone_no_route_line(table, keys)
                     );
                 }
-                let native_failure = request.native_failure(&outcome, blocked.as_deref());
+                let native_failure = request.native_failure(&outcome, blocked.as_deref(), &targets);
                 let native_refused =
                     native_failure == Some(script::native::WalkEnd::Refused);
                 let mut all = navs.lock().unwrap();
@@ -1210,13 +1210,12 @@ pub(crate) fn approach_tiles(
     }
     if !estimate {
         let collision = &world.collision;
-        let probe = api::query::CollisionArrivalProbe::new(|tile: WorldTile| {
+        api::query::retain_arrival_candidates(&mut tiles, to, r, |tile: WorldTile| {
             let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
             let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
             ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
                 .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
         });
-        tiles.retain(|&tile| api::query::is_arrived(tile, to, radius, || &probe));
     }
     tiles.sort_by_key(|t| {
         (
@@ -1248,7 +1247,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
-    fn diagnostic_targets(&self) -> Vec<WorldTile> {
+    fn targets(&self) -> Vec<WorldTile> {
         if self.radius <= 0 {
             vec![self.to]
         } else if let Some(stands) = self.live_candidates.as_ref() {
@@ -1269,15 +1268,18 @@ impl ScriptRouteRequest {
             .as_deref()
             .map_or(&[][..], |exclusions| exclusions.avoid.as_slice())
     }
-    fn blocking_zones(&self, outcome: &RouteOutcome) -> Option<Vec<ZoneKey>> {
+    fn blocking_zones(
+        &self,
+        outcome: &RouteOutcome,
+        targets: &[WorldTile],
+    ) -> Option<Vec<ZoneKey>> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let targets = self.diagnostic_targets();
         let bank_targets = if self.radius <= 0 {
-            targets.as_slice()
+            targets
         } else {
             self.live_candidates
                 .as_ref()
@@ -1298,7 +1300,7 @@ impl ScriptRouteRequest {
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1381,6 +1383,7 @@ impl ScriptRouteRequest {
         &self,
         outcome: &RouteOutcome,
         blocked: Option<&[ZoneKey]>,
+        targets: &[WorldTile],
     ) -> Option<script::native::WalkEnd> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
@@ -1390,13 +1393,12 @@ impl ScriptRouteRequest {
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let targets = self.diagnostic_targets();
         Some(
             match nav::router::find_unresolved_quest_gates(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1621,7 +1623,12 @@ impl ScriptRouteRequest {
         RouteOutcome::NoPath
     }
 
-    pub(crate) fn calculate(&self) -> RouteOutcome {
+    pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
+        let targets = self.targets();
+        (self.calculate_targets(&targets), targets)
+    }
+
+    fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         if self.radius <= 0 {
@@ -1641,13 +1648,6 @@ impl ScriptRouteRequest {
         if let Some(stands) = self.live_candidates.as_ref() {
             return self.calculate_solid(stands.as_slice(), &[], state);
         }
-        let generated = approach_tiles(
-            &self.world,
-            self.from,
-            self.to,
-            self.radius,
-            self.loc_id.is_some(),
-        );
         if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
             let mut stands = [self.to; 4];
             let mut len = 0;
@@ -1666,9 +1666,9 @@ impl ScriptRouteRequest {
                 stands[len] = stand;
                 len += 1;
             }
-            return self.calculate_solid(&stands[..len], &generated, state);
+            return self.calculate_solid(&stands[..len], targets, state);
         }
-        self.calculate_in_order(&generated, state, "approach estimate")
+        self.calculate_in_order(targets, state, "approach estimate")
     }
 }
 impl NavBot {
