@@ -391,10 +391,16 @@ impl Play {
         Ok(())
     }
 
-    /// Hold all new Starts for the lifetime of the returned confirmation token.
+    /// Hold all new Starts for the lifetime of the returned token. Overlapping
+    /// confirmations and accepted native copies share it, so replacing a
+    /// prompt cannot bypass a copy whose durable write is still in flight.
     pub fn hold_script_starts(&self, reason: String) -> Arc<String> {
+        let mut hold = self.script_start_hold.lock().unwrap();
+        if let Some(token) = hold.upgrade() {
+            return token;
+        }
         let token = Arc::new(reason);
-        *self.script_start_hold.lock().unwrap() = Arc::downgrade(&token);
+        *hold = Arc::downgrade(&token);
         token
     }
 

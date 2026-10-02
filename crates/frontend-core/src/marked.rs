@@ -346,7 +346,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     card: &script::ScriptSel,
 ) -> Result<&'a SyncScope, String> {
     const LABEL: &str = "Apply to marked";
-    scripts.cancel_settings_sync();
+    scripts.clear_prepared_settings_sync();
     if selection.is_empty() {
         return Err(format!("{LABEL}: mark fleet rows first"));
     }
@@ -384,7 +384,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
         })
     });
     if let Some(refusal) = refusal {
-        scripts.cancel_settings_sync();
+        scripts.clear_prepared_settings_sync();
         return Err(refusal);
     }
     scripts

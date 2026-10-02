@@ -180,6 +180,8 @@ struct PendingWrite {
     label: &'static str,
     mirror: ArmMirror,
     member: String,
+    copy_start_hold: Option<native_settings::NativeCopyHold>,
+    copy_abandoned: bool,
 }
 
 /// What the Music/SFX (memory-mode) toggle shows for one slot: the detail
@@ -204,6 +206,7 @@ impl MemoryNotice {
 }
 
 mod native_settings;
+pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
 
 pub struct OperatorSession<Io> {
@@ -1814,6 +1817,8 @@ impl<Io> OperatorSession<Io> {
                 label,
                 mirror,
                 member,
+                copy_start_hold: None,
+                copy_abandoned: false,
             },
         );
         if let Some(writer) = self.writer.as_mut() {
@@ -1933,6 +1938,7 @@ impl<Io> OperatorSession<Io> {
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::try_take) {
             self.settle_write(written);
         }
+        self.release_abandoned_copy_writes();
     }
 
     fn settle_write(&mut self, written: Written) {
@@ -1955,6 +1961,18 @@ impl<Io> OperatorSession<Io> {
                 // A newer write is still queued: track what is durable now.
                 held.clone_from(&durable);
             }
+        }
+        if pending.copy_abandoned {
+            // The copy wait already failed. Still reconcile a late writer's
+            // durable result, but do not deliver or announce a second result.
+            if written.result.is_err() {
+                if let Some(vault) = self.vault.as_mut() {
+                    for (name, durable) in newest {
+                        vault.restore(&name, durable);
+                    }
+                }
+            }
+            return;
         }
         let member = pending.member;
         let settings = matches!(
