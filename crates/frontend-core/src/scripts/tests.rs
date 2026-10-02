@@ -283,6 +283,78 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
 }
 
+/// Operator 2026-10-02: Thiever settings on Test, Apply while Test2 has no
+/// assignment (used to skip with "no assignment"), then Start while a copy
+/// confirm is still pending. Apply now assigns the unassigned member and
+/// copies the bag; Start is blocked until Apply or Cancel.
+#[test]
+fn apply_to_all_assigns_unassigned_and_start_waits_for_pending_copy() {
+    let mut f = fixture("sync-unassigned-start", &["alice", "bob"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    f.set("alice", &thiever, "target", json!("Knight of Ardougne"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    f.prepare("alice", &thiever);
+    let scope = f.scripts.prepared_settings_sync().unwrap();
+    assert_eq!(scope.targets, ["bob"], "unassigned bob is a copy target");
+    assert!(scope.skipped.is_empty());
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        Scripts::assignment(&f.core, "bob").unwrap().key(),
+        thiever.identity_key()
+    );
+    assert_eq!(
+        f.saved_bag("bob", &thiever.identity_key()),
+        Some(bag(&[("target", json!("Knight of Ardougne"))]))
+    );
+
+    f.set("alice", &thiever, "target", json!("Paladin"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    f.prepare("alice", &thiever);
+    assert!(f.scripts.prepared_settings_sync().is_some());
+
+    let mut selected = MarkedSelection::default();
+    selected.mark_all([ProfileIdentity::uid(1), ProfileIdentity::uid(2)]);
+    let card_sel = script::ScriptSel::Loaded(thiever.source, thiever.identity_id());
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    let blocked = f.scripts.last_bulk_report().unwrap();
+    assert!(
+        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
+        "{blocked}"
+    );
+    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    f.settle();
+    f.wait_state("alice", script::RunState::Running);
+    f.wait_state("bob", script::RunState::Running);
+    assert_eq!(
+        f.saved_bag("bob", &thiever.identity_key()),
+        Some(bag(&[("target", json!("Paladin"))]))
+    );
+}
+
 /// Apply to all shares the prepare path: freezing it for a newly assigned
 /// card (no per-card key in the source profile yet) writes nothing, and the
 /// bag it freezes is the migrated legacy overrides.

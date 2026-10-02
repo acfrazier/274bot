@@ -264,6 +264,15 @@ impl FleetRow {
                 .is_some_and(|op| matches!(op.outcome, Outcome::Failed(_)))
     }
 
+    /// World number (when on a public world) and login phase. This is not
+    /// [`Self::brief`]: a logged-in bot with no script is `ready`, not `idle`.
+    pub fn write_world_login(&self, out: &mut String) {
+        if let Some(world) = self.world {
+            let _ = write!(out, "w{world} ");
+        }
+        out.push_str(self.phase.label());
+    }
+
     fn write_brief(&mut self) {
         self.brief.clear();
         if self.script == RunState::Idle {

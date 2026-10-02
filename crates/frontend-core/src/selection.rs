@@ -12,6 +12,10 @@ use std::path::Path;
 use crate::scripts::Scripts;
 use crate::session::OperatorSession;
 
+/// Shown next to a marked-bots control when nothing is marked, so a
+/// first-time operator can find the Fleet marks.
+pub const EMPTY_MARKS_HINT: &str = "Marks are made in the Fleet window.";
+
 /// Stable identity used by front-end selection state.
 ///
 /// Vault profile UIDs are signed because the host handshake stores them as an
@@ -176,6 +180,9 @@ pub fn start_marked<Io>(
     card: Option<&script::ScriptSel>,
     catalog_root: Option<&Path>,
 ) {
+    if scripts.block_start_if_copy_pending("Start selected") {
+        return;
+    }
     scripts.open_tally("Start selected");
     let profiles = profile_rows(core);
     for identity in selection.iter() {

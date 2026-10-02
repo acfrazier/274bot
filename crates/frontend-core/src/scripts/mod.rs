@@ -977,6 +977,9 @@ impl Scripts {
             self.show("Start all: no wall members");
             return;
         }
+        if self.block_start_if_copy_pending("Start all") {
+            return;
+        }
         if let Some(root) = catalog_root {
             self.admit_catalog = Some(root.to_path_buf());
         }
@@ -1085,6 +1088,22 @@ impl Scripts {
     /// report when that came later.
     pub fn last_bulk_report(&self) -> Option<&str> {
         self.last_bulk_report.as_deref()
+    }
+
+    /// Start must not run while a settings copy is waiting for Apply or
+    /// Cancel: the frozen bags have not been written yet. Publishes the
+    /// block as the bulk report and returns true when Start must stop.
+    pub fn block_start_if_copy_pending(&mut self, label: &str) -> bool {
+        let Some(scope) = self.prepared_settings_sync() else {
+            return false;
+        };
+        let report = format!(
+            "{label}: blocked, a settings copy from {} is waiting for Apply or Cancel",
+            scope.source
+        );
+        self.last_bulk_report = Some(report.clone());
+        self.show(report);
+        true
     }
 
     // ---- per-frame settlement ------------------------------------------

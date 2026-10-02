@@ -622,8 +622,8 @@ fn dpi_layout_draw_list_keeps_text_rows_and_rail_items_pixel_aligned() {
     let reference = draw_dpi_layout_frame(1.0);
     assert_eq!(
         reference.rail_item_bounds.len(),
-        4,
-        "status, name, fold, remove"
+        5,
+        "status, mark, name, fold, remove"
     );
     for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
         let frame = if scale == 1.0 {
@@ -703,7 +703,7 @@ fn dpi_layout_draw_list_keeps_text_rows_and_rail_items_pixel_aligned() {
                 reference.rail_item_bounds
             );
         }
-        assert_eq!(frame.rail_item_bounds.len(), 4);
+        assert_eq!(frame.rail_item_bounds.len(), 5);
         for (item, baseline) in frame
             .rail_item_bounds
             .iter()
