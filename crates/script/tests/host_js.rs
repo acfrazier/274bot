@@ -488,6 +488,159 @@ for (const quest of ['cook', 'sheep', 'runemysteries', 'romeojuliet']) {
 void api.questProgress('cook');
 "#;
 
+/// Sample gate (pinned TypeScript 5.8.3): the authoritative
+/// `examples/gather_quest_v2.ts` must type-check with and without `--strict`.
+/// Its checked-in `.js` counterpart must match the compiler's emitted output.
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_gather_quest_sample_type_checks() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!(
+        "host-js-gather-quest-sample-{}",
+        std::process::id()
+    ));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear gather-quest sample dir");
+    }
+    // Preserve the sample's relative `../host-js/index.d.ts` import.
+    let host_js = dir.join("host-js");
+    let examples = dir.join("examples");
+    std::fs::create_dir_all(&host_js).expect("create sample host-js dir");
+    std::fs::create_dir_all(&examples).expect("create sample examples dir");
+    std::fs::write(host_js.join("index.d.ts"), render_host_js_dts())
+        .expect("write sample declarations");
+    std::fs::write(
+        examples.join("gather_quest_v2.ts"),
+        include_str!("../examples/gather_quest_v2.ts"),
+    )
+    .expect("write gather-quest sample");
+    let common_flags = [
+        "--target",
+        "ES2022",
+        "--module",
+        "ESNext",
+        "--moduleResolution",
+        "Bundler",
+        "--skipLibCheck",
+        "false",
+    ];
+    let sample = examples.join("gather_quest_v2.ts");
+    let strict_output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args(common_flags)
+        .args(["--noEmit", "--strict"])
+        .arg(&sample)
+        .output()
+        .unwrap_or_else(|e| panic!("strict tsc gather-quest sample failed to spawn: {e}"));
+    assert!(
+        strict_output.status.success(),
+        "strict gather-quest compile failed:\n{}\n{}",
+        String::from_utf8_lossy(&strict_output.stdout),
+        String::from_utf8_lossy(&strict_output.stderr)
+    );
+
+    let emit_dir = dir.join("emit");
+    let emitted_output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args(common_flags)
+        .arg("--outDir")
+        .arg(&emit_dir)
+        .arg(&sample)
+        .output()
+        .unwrap_or_else(|e| panic!("tsc gather-quest sample emit failed to spawn: {e}"));
+    assert!(
+        emitted_output.status.success(),
+        "gather-quest emit failed:\n{}\n{}",
+        String::from_utf8_lossy(&emitted_output.stdout),
+        String::from_utf8_lossy(&emitted_output.stderr)
+    );
+    let emitted = std::fs::read(emit_dir.join("gather_quest_v2.js"))
+        .expect("read emitted gather-quest JavaScript");
+    assert_eq!(
+        emitted.as_slice(),
+        include_bytes!("../examples/gather_quest_v2.js"),
+        "checked-in gather_quest_v2.js must match the pinned TypeScript emit"
+    );
+    std::fs::remove_dir_all(&dir).expect("remove gather-quest sample dir");
+}
+
+#[test]
+#[ignore = "requires npx and TypeScript 5.8.3"]
+fn tsc_manual_walk_consumer_uses_correlated_outcome_reason() {
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join(format!("host-js-walk-consumer-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).expect("clear walk consumer dir");
+    }
+    std::fs::create_dir_all(&dir).expect("create walk consumer dir");
+    std::fs::copy(host_js_path(), dir.join("walk-api.d.ts"))
+        .expect("copy generated host declarations");
+    std::fs::write(dir.join("consumer.ts"), MANUAL_WALK_CONSUMER)
+        .expect("write manual walk consumer");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--noEmit",
+            "--strict",
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+        ])
+        .arg(dir.join("consumer.ts"))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc manual walk consumer failed to spawn: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    std::fs::remove_dir_all(&dir).expect("remove walk consumer dir");
+    assert!(
+        output.status.success(),
+        "manual walk consumer failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// A real NativeApi v2 consumer: only a new sequence with the matching request,
+/// generation and destination key may be interpreted as this walk's terminal.
+const MANUAL_WALK_CONSUMER: &str = r#"
+import type { NativeApi, NativeSnapshot } from "./walk-api";
+
+declare const api: NativeApi;
+
+const requestId = 57;
+const key = { x: 2820, z: 3556, level: 0, radius: 1, allow_teleports: false };
+const before = api.snapshot;
+api.request({ op: "walk-near", ...key, request_id: requestId });
+
+function readWalkOutcome(snapshot: NativeSnapshot): boolean | null {
+  const matches =
+    snapshot.walk_outcome_seq > before.walk_outcome_seq &&
+    snapshot.walk_outcome_generation !== before.walk_outcome_generation &&
+    snapshot.walk_outcome_request_id === requestId &&
+    snapshot.walk_outcome_x === key.x &&
+    snapshot.walk_outcome_z === key.z &&
+    snapshot.walk_outcome_level === key.level &&
+    snapshot.walk_outcome_radius === key.radius &&
+    snapshot.walk_outcome_allow_teleports === key.allow_teleports;
+  if (!matches) return null;
+
+  const reason: "none" | "user-input" = snapshot.walk_outcome_cancel_reason;
+  const intentSequence: number = snapshot.user_move_intent_seq;
+  if (reason === "user-input") {
+    const failed: boolean = snapshot.walk_outcome_failed;
+    void [failed, intentSequence];
+    return false;
+  }
+  return !snapshot.walk_outcome_failed;
+}
+
+void readWalkOutcome;
+"#;
 /// Writes `host-js/index.d.ts` from the host verb tables.
 #[test]
 #[ignore]

@@ -1047,3 +1047,90 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn v2_consumer_correlates_user_input_and_retains_it_across_omitted_deltas() {
+    let source = r#"
+export const apiVersion = 2;
+export function tick(api) {
+    if (!globalThis.__started) {
+        globalThis.__started = true;
+        api.request({ op: 'walk-near', x: 2820, z: 3556, level: 0, radius: 1, request_id: 777 });
+    }
+    const s = api.snapshot;
+    if (s.walk_outcome_request_id === 777 && s.walk_outcome_seq > 0
+        && s.walk_outcome_generation === 13 && s.walk_outcome_x === 2820
+        && s.walk_outcome_z === 3556 && s.walk_outcome_level === 0
+        && s.walk_outcome_radius === 1 && !s.walk_outcome_allow_teleports) {
+        globalThis.__cancelled = s.walk_outcome_cancel_reason === 'user-input'
+            && s.walk_outcome_failed && s.user_move_intent_seq === 7;
+        if (globalThis.__cancelled && !globalThis.__next) {
+            globalThis.__next = true;
+            api.request({ op: 'walk-near', x: 2828, z: 3555, level: 0, radius: 1, request_id: 778 });
+        }
+    }
+    if (s.walk_outcome_request_id === 778 && s.walk_outcome_seq === 3
+        && s.walk_outcome_cancel_reason === 'none' && !s.walk_outcome_failed) {
+        globalThis.__arrived = true;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let (initial, fingerprint) = encode_snapshot_delta_with_native(
+        None,
+        &base_snapshot(1, far()),
+        NativeFactsInput::default(),
+        false,
+    );
+    iso.post_snapshot(initial);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let mut input = base_snapshot(2, far());
+    input.user_move_intent_seq = 7;
+    input.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+    let (unrelated, fingerprint) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &input,
+        fail_native(1, 13, 779, 2820, 3556, 1),
+        false,
+    );
+    iso.post_snapshot(unrelated);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("globalThis.__cancelled ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+    input.tick = 3;
+    let outcome = fail_native(2, 13, 777, 2820, 3556, 1);
+    let (cancelled, fingerprint) =
+        encode_snapshot_delta_with_native(Some(&fingerprint), &input, outcome, false);
+    iso.post_snapshot(cancelled);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("globalThis.__cancelled ?? null").unwrap(), true);
+    input.tick = 4;
+    let (omitted, fingerprint) =
+        encode_snapshot_delta_with_native(Some(&fingerprint), &input, outcome, false);
+    iso.post_snapshot(omitted);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__cancelled").unwrap(), true);
+    input.tick = 5;
+    input.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+    let (arrived, _) = encode_snapshot_delta_with_native(
+        Some(&fingerprint),
+        &input,
+        NativeFactsInput {
+            walk_outcome_seq: 3,
+            walk_outcome_generation: 14,
+            walk_outcome_request_id: 778,
+            walk_outcome_x: 2828,
+            walk_outcome_z: 3555,
+            walk_outcome_radius: 1,
+            ..NativeFactsInput::default()
+        },
+        false,
+    );
+    iso.post_snapshot(arrived);
+    iso.on_game_tick(5);
+    assert_eq!(iso.probe("globalThis.__arrived ?? null").unwrap(), true);
+    iso.join();
+}

@@ -151,6 +151,8 @@ pub(crate) struct NavBot {
     /// ([`nav::traveller::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
     pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
+    pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
     pub(crate) user_move_intent_seq: u64,
     /// Requests based on an older outcome cannot reclaim movement ownership.
@@ -165,18 +167,17 @@ pub(crate) struct NavBot {
     /// The game requests this slot's script sent, as dispatched here. Host
     /// data the catalog hunt watch reads; not an isolate wire.
     pub(crate) acts: crate::catalog_core::ScriptActLedger,
-    /// The script walk a reconnect or an operator Pause interrupted, re-sent
-    /// on the first dispatch after the relog or Resume ([`hold_script_nav`],
-    /// [`take_carried_walk`]).
-    /// Boxed only while held; idle slots do not retain the full wire payload.
+    /// A held script walk, or receipt-only identity while the watchdog replaces
+    /// its route. Only a held walk is eligible for automatic carry dispatch.
+    /// Boxed only while held or recovering; idle slots retain no wire payload.
     pub(crate) carried_walk: Option<Box<CarriedWalk>>,
 }
 
-/// A script walk held across a reconnect or an operator Pause.
+/// A held script walk or its identity across a watchdog-owned replacement.
 pub(crate) struct CarriedWalk {
-    /// The script run it belongs to (`SlotScript::runtime_generation`): a
-    /// Stop, Start or watchdog restart since the reconnect drops it.
-    runtime_generation: u64,
+    /// `Some(run)` may be re-sent across Pause/reconnect. `None` is receipt-only
+    /// recovery identity: it must never dispatch as carry after recovery.
+    runtime_generation: Option<u64>,
     /// Route generation before `hold_script_nav` ends the session's follow.
     route_generation: u64,
     request: script::shim::InteractReq,
@@ -914,6 +915,7 @@ impl ScriptWalkArm {
                 opts.essence = Some(ess);
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
+            bot.manual_walk_cancelled_detail = false;
             bot.walk_request_id = request_id;
             // A geometry refresh keeps the same live action and correlation;
             // only a genuinely replacing request cancels the previous owner.
@@ -1030,7 +1032,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let started = debug.then(Instant::now);
-                let outcome = request.calculate();
+                let (outcome, targets) = request.calculate();
                 if debug {
                     let elapsed_ms = started.unwrap().elapsed().as_millis();
                     log_walk_arm(&name, || {
@@ -1044,7 +1046,7 @@ impl ScriptWalkArm {
                     });
                 }
                 let blocked = request
-                    .blocking_zones(&outcome)
+                    .blocking_zones(&outcome, &targets)
                     .filter(|keys| !keys.is_empty());
                 let route_detail = blocked
                     .as_ref()
@@ -1075,7 +1077,7 @@ impl ScriptWalkArm {
                         compat_zone_no_route_line(table, keys)
                     );
                 }
-                let native_failure = request.native_failure(&outcome, blocked.as_deref());
+                let native_failure = request.native_failure(&outcome, blocked.as_deref(), &targets);
                 let native_refused =
                     native_failure == Some(script::native::WalkEnd::Refused);
                 let mut all = navs.lock().unwrap();
@@ -1217,25 +1219,14 @@ pub(crate) fn approach_tiles(
             }
         }
     }
-    if r > 0 && !estimate {
-        if world.collision.standable(to) {
-            let connected = nav::router::local_step_component(&world.collision, to, r);
-            tiles.retain(|tile| connected.contains(tile));
-        } else {
-            let mut connected = std::collections::HashSet::new();
-            for seed in api::query::arrival_stands(
-                to,
-                |stand| world.collision.standable(stand),
-                |stand| Some(world.collision.walkable_word(stand.x, stand.z, stand.level) as i32),
-            ) {
-                connected.extend(nav::router::local_step_component(
-                    &world.collision,
-                    seed,
-                    r + 1,
-                ));
-            }
-            tiles.retain(|tile| connected.contains(tile));
-        }
+    if !estimate {
+        let collision = &world.collision;
+        api::query::retain_arrival_candidates(&mut tiles, to, r, |tile: WorldTile| {
+            let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+            let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+            ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+                .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+        });
     }
     tiles.sort_by_key(|t| {
         (
@@ -1267,7 +1258,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
-    fn diagnostic_targets(&self) -> Vec<WorldTile> {
+    fn targets(&self) -> Vec<WorldTile> {
         if self.radius <= 0 {
             vec![self.to]
         } else if let Some(stands) = self.live_candidates.as_ref() {
@@ -1288,15 +1279,18 @@ impl ScriptRouteRequest {
             .as_deref()
             .map_or(&[][..], |exclusions| exclusions.avoid.as_slice())
     }
-    fn blocking_zones(&self, outcome: &RouteOutcome) -> Option<Vec<ZoneKey>> {
+    fn blocking_zones(
+        &self,
+        outcome: &RouteOutcome,
+        targets: &[WorldTile],
+    ) -> Option<Vec<ZoneKey>> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let targets = self.diagnostic_targets();
         let bank_targets = if self.radius <= 0 {
-            targets.as_slice()
+            targets
         } else {
             self.live_candidates
                 .as_ref()
@@ -1317,7 +1311,7 @@ impl ScriptRouteRequest {
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1400,6 +1394,7 @@ impl ScriptRouteRequest {
         &self,
         outcome: &RouteOutcome,
         blocked: Option<&[ZoneKey]>,
+        targets: &[WorldTile],
     ) -> Option<script::native::WalkEnd> {
         if !matches!(outcome, RouteOutcome::NoPath) {
             return None;
@@ -1409,13 +1404,12 @@ impl ScriptRouteRequest {
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let targets = self.diagnostic_targets();
         Some(
             match nav::router::find_unresolved_quest_gates(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
-                &targets,
+                targets,
                 self.opts,
                 state,
                 self.avoid(),
@@ -1640,7 +1634,12 @@ impl ScriptRouteRequest {
         RouteOutcome::NoPath
     }
 
-    pub(crate) fn calculate(&self) -> RouteOutcome {
+    pub(crate) fn calculate(&self) -> (RouteOutcome, Vec<WorldTile>) {
+        let targets = self.targets();
+        (self.calculate_targets(&targets), targets)
+    }
+
+    fn calculate_targets(&self, targets: &[WorldTile]) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
         if self.radius <= 0 {
@@ -1660,13 +1659,6 @@ impl ScriptRouteRequest {
         if let Some(stands) = self.live_candidates.as_ref() {
             return self.calculate_solid(stands.as_slice(), &[], state);
         }
-        let generated = approach_tiles(
-            &self.world,
-            self.from,
-            self.to,
-            self.radius,
-            self.loc_id.is_some(),
-        );
         if self.loc_id.is_none() && !self.world.collision.standable(self.to) {
             let mut stands = [self.to; 4];
             let mut len = 0;
@@ -1685,13 +1677,14 @@ impl ScriptRouteRequest {
                 stands[len] = stand;
                 len += 1;
             }
-            return self.calculate_solid(&stands[..len], &generated, state);
+            return self.calculate_solid(&stands[..len], targets, state);
         }
-        self.calculate_in_order(&generated, state, "approach estimate")
+        self.calculate_in_order(targets, state, "approach estimate")
     }
 }
 impl NavBot {
     fn bump_walk_outcome_seq(&mut self) {
+        self.manual_walk_cancelled_detail = false;
         self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
         if self.walk_outcome_seq == 0 {
             self.walk_outcome_seq = 1;
@@ -1976,6 +1969,7 @@ impl NavBot {
             // isolate-only guard has no compiled-slot release path.
             self.walk_live_refusal_id = if native_owner { 0 } else { request_id };
         }
+        self.manual_walk_cancelled_detail = true;
     }
 
     /// Whether a script walk is armed, in flight or following.
@@ -2096,6 +2090,51 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
     }
 }
 
+/// Keep the pending script receipt identity when watchdog nav replaces its route.
+/// This reuses the rare carry allocation but never grants recovery a resend.
+///
+/// The reconstructed request payload is only a receipt placeholder: it does
+/// not retain the original walk mode or exclusions and must never be replayed.
+pub(super) fn preserve_recovery_walk_identity(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
+    let mut bots = navs.lock().unwrap();
+    let Some(bot) = bots.get_mut(name) else {
+        return;
+    };
+    if bot.native_walk.is_some() {
+        return;
+    }
+    if bot.carried_walk.is_some()
+        || bot.walk_request_id == 0
+        || bot.walk_outcome_request_id == bot.walk_request_id
+    {
+        return;
+    }
+    let Some((to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _)) =
+        bot.requested_route
+    else {
+        return;
+    };
+    bot.carried_walk = Some(Box::new(CarriedWalk {
+        runtime_generation: None,
+        route_generation: bot.route_generation,
+        request: script::shim::InteractReq::WalkNear {
+            x: to.x,
+            z: to.z,
+            level: to.level,
+            radius,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            request_id: bot.walk_request_id,
+            avoid: Vec::new(),
+            cross: Vec::new(),
+        },
+    }));
+}
+
 /// A reconnect the slot relogs through with its Load script's work held
 /// (`SlotScript::reconnect_session_work`). The connection's route follow
 /// ends as in [`reset_script_nav`]; what the held script still waits on
@@ -2128,7 +2167,7 @@ pub(crate) fn hold_script_nav(
         if let (Some(runtime_generation), true, true) = (carry, picking, !armed) {
             // A nearest-bank walk still choosing its bank: re-ask for it.
             nav.carried_walk = Some(Box::new(CarriedWalk {
-                runtime_generation,
+                runtime_generation: Some(runtime_generation),
                 route_generation,
                 request: script::shim::InteractReq::WalkNearestBank,
             }));
@@ -2177,7 +2216,7 @@ pub(crate) fn hold_script_nav(
                 }
             };
             nav.carried_walk = Some(Box::new(CarriedWalk {
-                runtime_generation,
+                runtime_generation: Some(runtime_generation),
                 route_generation,
                 request,
             }));
@@ -2194,7 +2233,7 @@ pub(crate) fn take_carried_walk(
     runtime_generation: u64,
 ) -> Option<script::shim::InteractReq> {
     let carried = navs.lock().unwrap().get_mut(name)?.carried_walk.take()?;
-    (carried.runtime_generation == runtime_generation).then_some(carried.request)
+    (carried.runtime_generation == Some(runtime_generation)).then_some(carried.request)
 }
 
 fn end_route_follow(nav: &mut NavBot) {

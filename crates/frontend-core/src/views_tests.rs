@@ -261,12 +261,26 @@ fn repeat_logout_guard_reason_is_visible_in_slot_status() {
     };
     let mut text = String::new();
 
-    write_state(&mut text, &row, Some(&status));
+    write_state(&mut text, &row, Some(&status), false);
 
     assert_eq!(
         text,
         "logged out (repeat guard: 3 unexpected logouts in 600s; Log in to retry)"
     );
+}
+
+#[test]
+fn manual_walk_cancellation_status_replaces_the_scene_detail() {
+    let row = FleetRow::fixture("alice", Phase::Ready, None, None);
+    let status = SlotStatus {
+        scene_state: 2,
+        ..SlotStatus::default()
+    };
+    let mut text = String::new();
+
+    write_state(&mut text, &row, Some(&status), true);
+
+    assert_eq!(text, "cancelled by user input");
 }
 
 /// Turning Auto login off while a failed login waits for its retry parks

@@ -771,6 +771,9 @@ pub(super) fn catalog_unloadable(
                 "dim: JiveKQ is unavailable: four-player qualification incomplete in 0.1.9".into(),
             );
         }
+        if name == "AIOQuester" {
+            return Some("dim: AIOQuester is replaced by the native Quester card".into());
+        }
         if is_catalog_dim(name) {
             return Some(format!("dim: {name}"));
         }

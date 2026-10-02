@@ -212,6 +212,26 @@ fn replacement_path(p: &Path) -> PathBuf {
 }
 
 pub fn save_at(p: &Path, state: &PanelUiState) {
+    let _ = save_at_checked(p, state);
+}
+
+/// Persist panel preferences and return write failures to the caller that
+/// needs to display an inline notice.
+pub fn save_checked(state: &PanelUiState) -> std::io::Result<()> {
+    #[cfg(test)]
+    {
+        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
+        Ok(())
+    }
+    #[cfg(not(test))]
+    {
+        save_at_checked(&path(), state)
+    }
+}
+
+/// Persist preferences at an explicit path, preserving corrupt-file
+/// protections while returning failures to the caller.
+pub fn save_at_checked(p: &Path, state: &PanelUiState) -> std::io::Result<()> {
     let data = match serde_json::to_vec_pretty(state) {
         Ok(data) => data,
         Err(error) => {
@@ -219,31 +239,36 @@ pub fn save_at(p: &Path, state: &PanelUiState) {
                 Level::Error,
                 format!("refused to save panel preferences {}: {error}", p.display()),
             );
-            return;
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
         }
     };
     match std::fs::read(p) {
         Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => {
             let sibling = replacement_path(p);
             match vault::write_private_file(&sibling, &data) {
-                Ok(()) => prefs_log(
-                    Level::Warn,
-                    format!(
-                        "preserved invalid panel preferences {}; wrote current preferences to {}",
-                        p.display(),
-                        sibling.display()
-                    ),
-                ),
-                Err(error) => prefs_log(
-                    Level::Error,
-                    format!(
-                        "preserved invalid panel preferences {} but refused replacement {}: {error}",
-                        p.display(),
-                        sibling.display()
-                    ),
-                ),
+                Ok(()) => {
+                    prefs_log(
+                        Level::Warn,
+                        format!(
+                            "preserved invalid panel preferences {}; wrote current preferences to {}",
+                            p.display(),
+                            sibling.display()
+                        ),
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    prefs_log(
+                        Level::Error,
+                        format!(
+                            "preserved invalid panel preferences {} but refused replacement {}: {error}",
+                            p.display(),
+                            sibling.display()
+                        ),
+                    );
+                    return Err(error);
+                }
             }
-            return;
         }
         Ok(_) => {}
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
@@ -251,15 +276,19 @@ pub fn save_at(p: &Path, state: &PanelUiState) {
                 Level::Error,
                 format!("refused to save panel preferences {}: {error}", p.display()),
             );
-            return;
+            return Err(error);
         }
         Err(_) => {}
     }
-    if let Err(error) = vault::write_private_file(p, &data) {
-        prefs_log(
-            Level::Error,
-            format!("refused to save panel preferences {}: {error}", p.display()),
-        );
+    match vault::write_private_file(p, &data) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            prefs_log(
+                Level::Error,
+                format!("refused to save panel preferences {}: {error}", p.display()),
+            );
+            Err(error)
+        }
     }
 }
 
@@ -347,8 +376,56 @@ mod tests {
             !back.nav.allow_bank_fetch,
             "missing allow_bank_fetch defaults false"
         );
+        assert!(
+            back.nav.pause_script_on_manual_walk_abort,
+            "missing manual-walk pause key defaults on"
+        );
         assert!(back.nav.show_nav_path, "present fields keep their values");
         assert_eq!(back.nav.color_path, "#AABBCC");
+    }
+
+    #[test]
+    fn panel_and_tui_nav_writes_round_trip_without_clobbering_each_other() {
+        let dir = TestDir::new("ui-nav-cross-surface");
+        let path = dir.join("panel-ui.json");
+        let state = PanelUiState {
+            last_focus: Some("alice".into()),
+            capture: false,
+            nav: NavSettings {
+                pause_script_on_manual_walk_abort: false,
+                ..NavSettings::default()
+            },
+            ..PanelUiState::default()
+        };
+        save_at(&path, &state);
+
+        frontend_core::nav_preference_at(
+            &path,
+            frontend_core::NavPreference::ShowSpecialAreas,
+            Some(true),
+        )
+        .unwrap();
+        let loaded = load_at(&path);
+        assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
+        assert!(!loaded.capture);
+        assert!(
+            !loaded.nav.pause_script_on_manual_walk_abort,
+            "TUI's nested nav write preserves the panel's saved pause toggle"
+        );
+        assert!(loaded.nav.show_special_areas);
+
+        frontend_core::nav_preference_at(
+            &path,
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            Some(true),
+        )
+        .unwrap();
+        let loaded = load_at(&path);
+        assert!(loaded.nav.pause_script_on_manual_walk_abort);
+        assert!(
+            loaded.nav.show_special_areas,
+            "panel's typed save preserves TUI's special-area preference"
+        );
     }
 
     #[test]

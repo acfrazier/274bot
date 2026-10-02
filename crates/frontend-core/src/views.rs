@@ -625,7 +625,10 @@ impl Views {
             }
         }
         let status = find_status(input.statuses, selected, &mut detail_state.hint);
-        changed |= update_detail(detail, status, input.card, scratch);
+        let manual_walk_cancelled = input
+            .play
+            .is_some_and(|play| play.script_walk_cancelled_by_user(selected));
+        changed |= update_detail(detail, status, manual_walk_cancelled, input.card, scratch);
         let native = input
             .play
             .and_then(|play| play.script_native_status(selected));
@@ -831,12 +834,13 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool)
 fn update_detail(
     detail: &mut SlotDetail,
     status: Option<&SlotStatus>,
+    manual_walk_cancelled: bool,
     card: Option<&str>,
     scratch: &mut String,
 ) -> bool {
     let mut changed = false;
     scratch.clear();
-    write_state(scratch, &detail.row, status);
+    write_state(scratch, &detail.row, status, manual_walk_cancelled);
     changed |= swap_if_different(&mut detail.state, scratch);
     let since = status.and_then(|s| elapsed_from(detail.row.phase, s));
     let (player, tile, ready_tile, modal) = match status {
@@ -874,7 +878,12 @@ fn update_detail(
     changed
 }
 
-fn write_state(out: &mut String, row: &FleetRow, status: Option<&SlotStatus>) {
+fn write_state(
+    out: &mut String,
+    row: &FleetRow,
+    status: Option<&SlotStatus>,
+    manual_walk_cancelled: bool,
+) {
     let error = row.error.as_deref();
     match (row.phase, status) {
         (Phase::Offline, _) | (_, None) => out.push_str("offline"),
@@ -884,6 +893,9 @@ fn write_state(out: &mut String, row: &FleetRow, status: Option<&SlotStatus>) {
             }
             None => out.push_str("failed"),
         },
+        (Phase::Ready, Some(_)) if manual_walk_cancelled => {
+            out.push_str("cancelled by user input");
+        }
         (Phase::Ready, Some(s)) => {
             let _ = write!(out, "ingame scene {}", s.scene_state);
         }
