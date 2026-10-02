@@ -410,6 +410,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
+        HostEffect::BankPick(_) => panic!("open door recovery must walk, not select a bank"),
     }
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -597,6 +598,7 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
+        HostEffect::BankPick(_) => panic!("door must be approached before Open, not select a bank"),
     }
 }
 
