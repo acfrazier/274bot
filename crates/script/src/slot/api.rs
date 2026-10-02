@@ -21,6 +21,11 @@ pub(super) struct ApiSeat {
     dropped_rows: usize,
     reported_drops: usize,
     dropped_owner: Option<DropOwner>,
+    #[cfg(feature = "test-hooks")]
+    journal_evidence: Option<(
+        api::quest_progress::EvidenceStamp,
+        api::quest_progress::EvidenceStamp,
+    )>,
 }
 
 #[derive(Default)]
@@ -126,6 +131,37 @@ impl SlotScript {
         self.api
             .as_ref()
             .is_some_and(|seat| seat.gather.token().is_some() || seat.progress.token().is_some())
+    }
+
+    /// Read-only receipt seam for the ignored public Script API live cells.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn api_live_test_probe(&mut self) -> serde_json::Value {
+        let stamp = |value: api::quest_progress::EvidenceStamp| {
+            serde_json::json!({
+                "run": value.run.run,
+                "session": value.run.session,
+                "tick": value.tick,
+                "sequence": value.sequence,
+            })
+        };
+        let journal = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.journal_evidence)
+            .map(|(acquired, closed)| {
+                serde_json::json!({
+                    "acquired": stamp(acquired),
+                    "closed": stamp(closed),
+                })
+            });
+        serde_json::json!({
+            "seat_present": self.api.is_some(),
+            "foreground": self.api_owns_foreground(),
+            "journal": journal,
+            "paint_hidden": self.journal_paint_hidden(Instant::now()),
+            "gather": self.probe("globalThis.__rs_api?.snapshot.gather ?? null").ok(),
+        })
     }
 
     pub(super) fn api_status(&self) -> Option<Arc<ScriptStatus>> {
