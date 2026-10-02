@@ -704,6 +704,29 @@ impl FollowRun {
             // one Chebyshev off the loc-baked dest when the hop is taken
             // from an adjacent stand. Host WalkNear uses close_enough 0.
             arrived(edge.to, CELLAR_ARRIVE_RADIUS.max(close_enough))
+        } else if matches!(edge.kind, TransportKind::Ladder | TransportKind::Stairs)
+            && (edge.to.x != edge.at.x || edge.to.z != edge.at.z)
+        {
+            // A fixed horizontal movecoord preserves the player's takeoff
+            // displacement from the loc. Prove that exact translated tile,
+            // not a wider radius round a possibly blocked loc-baked anchor.
+            // Absolute ladder scripts still prove their existing `edge.to`.
+            let sent = hop.sent_tile.unwrap_or(edge.at);
+            let translated = WorldTile {
+                x: sent.x + edge.to.x - edge.at.x,
+                z: sent.z + edge.to.z - edge.at.z,
+                level: edge.to.level,
+            };
+            let landings = [edge.to, translated];
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile().is_some_and(|here| {
+                    landings.iter().enumerate().any(|(index, tile)| {
+                        here.level == tile.level
+                            && (index == 0 || here != sent)
+                            && (here.x - tile.x).abs().max((here.z - tile.z).abs()) <= close_enough
+                    })
+                })
+            })
         } else {
             arrived(edge.to, close_enough)
         };

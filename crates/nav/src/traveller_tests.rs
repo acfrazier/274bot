@@ -7400,6 +7400,89 @@ fn level_change_transport_requires_proximity_to_to() {
     ));
 }
 
+#[test]
+fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
+    let mut c = scene_client();
+    let snap = snap_at(&mut c, 11, 33);
+    let anchor = WorldTile {
+        x: 3202,
+        z: 3204,
+        level: 0,
+    };
+    let baked_to = WorldTile {
+        x: 3212,
+        z: 3234,
+        level: 0,
+    };
+    let landing = WorldTile {
+        x: 3210,
+        z: 3233,
+        level: 0,
+    };
+    let edge = TransportEdge {
+        kind: TransportKind::Ladder,
+        at: anchor,
+        to: baked_to,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    let mut run = FollowRun::start(
+        Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: landing,
+            ticks: 2.0,
+        },
+        &options,
+    );
+    let leg = run.legs.pop_front().unwrap();
+    run.transport = Some(TransportHop {
+        leg,
+        to: baked_to,
+        arrival_footprint: None,
+        ticks_waited: 0,
+        sent_tile: Some(WorldTile {
+            x: 3200,
+            z: 3203,
+            level: 0,
+        }),
+        tries: 0,
+        troll: false,
+        npc_index: None,
+        npc_recovery: super::NpcRecovery::default(),
+        open_sent_tick: None,
+        chat_seq: 0,
+        dialog_page: None,
+        approach: None,
+    });
+    let mut rec = FollowRec::default();
+    let mut no_session = None;
+    // A tile beside either predicted landing is not an arrival at radius 0.
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::Watching
+    ));
+    let snap = snap_at(&mut c, 10, 33);
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::LegDone
+    ));
+}
+
 /// Recording driver: captures the last walk target and counts OP_LOC1
 /// interactions. `route` stands in for the local player tile so
 /// `api::walk` finds a route origin. `reject_far` mirrors the live

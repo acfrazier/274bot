@@ -5,8 +5,9 @@
 //! essence-mine wizard and Elkoy's Tree Gnome Village maze escort NPC
 //! hops, and magic teleports as directed transport edges built from the
 //! Server's own content — `scripts/{doors, ladders+stairs, interface_boat,
-//! skill_magic, skill_agility}` and the Ardougne wilderness_lever pair,
-//! `pack/loc.pack`, and the `maps/*.jm2` loc placements — instead of a
+//! skill_magic, skill_agility}`, direct climb ops across area/quest scripts,
+//! the Ardougne wilderness_lever pair, `pack/loc.pack`, and the `maps/*.jm2`
+//! loc placements — instead of a
 //! hand-authored table.
 //!
 //! The ladder/stairs parsing is a port of m8aq `api/nav/transports.ts`
@@ -459,6 +460,14 @@ fn derive_transports_with_audit(
         &gates,
         &mut audit,
     );
+    scripted_climb_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
     teleport_edges(content_root, &mut graph, &mut skipped);
     // After every producer: the members gate each edge's source handler
     // declares, read once for every kind.
@@ -540,7 +549,6 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
 // ---------------------------------------------------------------------------
 
 const SKIP_NO_RULE: &str = "no rule for this placement (script reports it unhandled)";
-const SKIP_PLAYER_RELATIVE: &str = "player-relative destination with a horizontal shift";
 const SKIP_DIALOG: &str = "destination is behind a dialog";
 const SKIP_HANDOFF: &str = "destination handed to another script";
 const SKIP_RANDOM: &str = "destination is randomised";
