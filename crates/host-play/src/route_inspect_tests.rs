@@ -34,6 +34,7 @@ fn edge(
 ) -> TransportEdge {
     TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id,

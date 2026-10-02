@@ -136,6 +136,9 @@ impl ObjNames {
 #[derive(Default)]
 pub struct LocDefs {
     locs: Vec<Option<LocDefView>>,
+    op_slot_offsets: Vec<usize>,
+    op_slot_lengths: Vec<usize>,
+    op_slots: Vec<usize>,
 }
 
 impl LocDefs {
@@ -143,13 +146,35 @@ impl LocDefs {
     /// and indexed directly like [`ObjNames::from_objs`].
     pub fn from_locs(locs: &[LocType]) -> Self {
         let max_id = locs.iter().map(|l| l.id).max().unwrap_or(-1);
-        let mut views = vec![None; (max_id + 1).max(0) as usize];
+        let len = (max_id + 1).max(0) as usize;
+        let mut views = vec![None; len];
+        let mut op_slot_offsets = vec![usize::MAX; len];
+        let mut op_slot_lengths = vec![0; len];
+        let op_slot_count = locs.iter().map(|loc| loc.op.len()).sum();
+        let mut op_slots = Vec::with_capacity(op_slot_count);
         for l in locs {
             if l.id >= 0 && (l.id as usize) < views.len() {
-                views[l.id as usize] = Some(LocDefView::from_loc(l));
+                let id = l.id as usize;
+                views[id] = Some(LocDefView::from_loc(l));
+                op_slot_offsets[id] = op_slots.len();
+                op_slot_lengths[id] = l.op.len();
+                let mut op_index = 0;
+                for op in &l.op {
+                    if op.is_some() {
+                        op_slots.push(op_index);
+                        op_index += 1;
+                    } else {
+                        op_slots.push(usize::MAX);
+                    }
+                }
             }
         }
-        Self { locs: views }
+        Self {
+            locs: views,
+            op_slot_offsets,
+            op_slot_lengths,
+            op_slots,
+        }
     }
 
     /// The loc definition view for loc `id`, `None` when the id is
@@ -159,5 +184,18 @@ impl LocDefs {
             return None;
         }
         self.locs.get(id as usize).and_then(|l| l.as_ref())
+    }
+
+    /// The operation at 1-based cache option `option`, preserving empty slots.
+    pub fn op_at(&self, id: i32, option: i32) -> Option<&str> {
+        let id = usize::try_from(id).ok()?;
+        let option = usize::try_from(option.checked_sub(1)?).ok()?;
+        let loc = self.locs.get(id)?.as_ref()?;
+        if option >= *self.op_slot_lengths.get(id)? {
+            return None;
+        }
+        let start = *self.op_slot_offsets.get(id)?;
+        let op_index = *self.op_slots.get(start.checked_add(option)?)?;
+        loc.ops.get(op_index).map(String::as_str)
     }
 }

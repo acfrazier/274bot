@@ -183,6 +183,7 @@ impl NavWorld {
             let i = graph.edges.len();
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: WorldTile {
                     x: d.from.x,
                     z: d.from.z,

@@ -59,6 +59,7 @@ pub(super) fn shortcut_edges(
                 }
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::AgilityShortcut,
+                    player_delta: None,
                     at,
                     to,
                     loc_id: id,
@@ -251,6 +252,7 @@ pub(super) fn emit_island_rope_leaf(
     };
     graph.edges.push(TransportEdge {
         kind: TransportKind::AgilityShortcut,
+        player_delta: None,
         at: start,
         to: end,
         loc_id: id,

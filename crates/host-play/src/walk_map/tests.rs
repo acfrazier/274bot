@@ -181,6 +181,7 @@ fn context() -> MapContext {
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id: 100,
@@ -621,6 +622,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
     let mut graph = TransportGraph::default();
     graph.edges.push(TransportEdge {
         kind: TransportKind::Boat,
+        player_delta: None,
         at: from,
         to,
         loc_id: 657,

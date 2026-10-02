@@ -1728,6 +1728,7 @@ mod bank_fetch_fixtures {
         }
         let edge = TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at: WorldTile {
                 x: 1,
                 z: 2,
@@ -2365,6 +2366,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Boat,
+        player_delta: None,
         at,
         to: destination,
         loc_id: 378,

@@ -43,18 +43,18 @@ handler, or any label, choice or queue it may continue into, reads
 fails if a members-only edge's leading path does not refuse F2P, unless its
 handler carries a listed members arm (the glider, Zanaris and spirit-tree
 gates).
-Only bundled packs are rebaked automatically: an external v13 pack
-(`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the membership gates it was
-baked with, so rebake one made by an earlier 274bot.
+Only bundled packs are rebaked automatically: an external pack
+(`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the content and membership gates
+it was baked with. Rebake it after content changes or a format upgrade.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **13** (v13
+the derived `TransportGraph`. Magic `b"274V"`, version byte **14** (v14
 retains v11's selected quest-family binding — its `quest_facts_sha256` and
 `quest_extractor_schema` — and typed per-edge quest-stage gates; it keeps the
 content-derived bank-stand table after the edges, per-edge `members_req`, a
 per-edge wilderness teleport cap, and wilderness-level formula after the
-banks, and the content-derived zone table; v13 adds approach geometry after
+banks, the content-derived zone table, and v13's approach geometry after
 each edge's quest gates). Geometry is tag `0` for absent or tag `1` followed
 by `width:u8`, `length:u8`, and `blocked_sides:u8` (a rotated four-bit mask).
 Only footprint-backed Ladder/Stairs/AgilityShortcut/SpiritTree edges use it;
@@ -62,13 +62,18 @@ Door, NPC and teleport admission is unchanged. Zone data includes stable
 kind identities/labels, NPC and hazard rows, curated groups, carves, and
 shaped masks. A shape row stores a zone index u16, north extent u8, and
 row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v13 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v14 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
-`decode` accepts version 13 only — v12 and older are `BadVersion` and must be
+v14 uses bit `0x80` in the existing edge-kind byte for player-relative
+Ladder/Stairs landings, adding no bytes to an edge. The remaining kind value
+and all other fields retain their layout. A flagged edge stores the canonical
+loc-anchor-derived `to`; decoding recovers `player_delta = to - at`.
+The flag is invalid on other kinds. Absolute landings do not set it.
+`decode` accepts version 14 only — v13 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
@@ -252,6 +257,15 @@ jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
 
+Direct ladder/stair ops are also scanned across area and quest scripts.
+Unconditional `p_telejump`, `p_teleport`, and the canonical `climb_ladder`
+helper can derive fixed `movecoord(coord, dx, dlevel, dz)` landings, including
+horizontal offsets such as the Mage Arena bank cellar. Presentation and
+literal delays are allowed; branches, dialogs, queues, dynamic destinations,
+and additional gameplay side effects are not flattened into ungated edges.
+Existing specialized edges retain their requirements and measured prices.
+New direct climbs price literal script/helper delays plus the interaction.
+
 Footprint-backed loc transports use the same face/wall predicate as live
 `api::query::loc_approach` interactions. Their rotated rectangle and blocked
 approach sides are held in `TransportGraph::approaches`, aligned with ordinary
@@ -277,7 +291,7 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v13 pack retains the v12
+it adds no door-specific wire fields. The v14 pack retains the v12
 zone table described above. Generator and producer-source digests invalidate
 staged bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
 navpois bindings. Explicit custom packs baked with the previous generator need
@@ -369,12 +383,22 @@ Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.
 
-Vertical same-coordinate Ladder/Stairs hops retain the footprint of the
-observed loc actually clicked. Arrival is on the destination plane within
+Absolute vertical same-coordinate Ladder/Stairs hops retain the footprint of
+the observed loc actually clicked. Arrival is on the destination plane within
 that footprint expanded by the hop's one-tile landing tolerance, rather
 than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
-distant tile, or the old plane. Other transport arrival rules are unchanged.
+distant tile, or the old plane.
+
+Content-derived player-relative Ladder/Stairs edges carry
+`player_delta: Option<WorldTile>`. Forward routing translates the actual
+admissible takeoff tile by that delta; backward reachability proves the same
+takeoff-to-landing relation, not the loc anchor's nominal landing. A route
+leg's `edge.to` is its planned landing, while `player_delta` is retained for
+live settlement. The follower translates the exact tile from which it sent
+the op and uses the caller's unchanged `close_enough`; reaching an unrelated
+nominal/planned landing is not arrival. Absolute horizontal edges continue
+to settle at their absolute `to`. No arrival tolerance is enlarged.
 
 Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
 centered on the requested tile, even when a loc or decoration occupies it.
