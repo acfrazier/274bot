@@ -71,6 +71,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             evidence,
+            observed_walk_outcome_seq: 0,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(reach),
             retained: &mut retained,
@@ -154,7 +155,7 @@ fn loc(id: i32, name: &str, op: &str) -> LocView {
         force_approach: 0,
     }
 }
-fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
+pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
     api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
             index: 0,
@@ -183,6 +184,37 @@ fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
         energy: 100,
         weight: 0,
     }
+}
+pub(crate) fn post_user_input_walk_receipt(
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+) -> u64 {
+    let (request_id, run) = {
+        let ledger = ledger.as_ref().expect("walk request must be queued");
+        let action = ledger
+            .outbox
+            .iter()
+            .rev()
+            .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+            .expect("walk request must be queued");
+        (action.request_id.get(), action.run())
+    };
+    ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run,
+            tick,
+            sequence: tick,
+        },
+        end: crate::native::WalkEnd::UserInput,
+        blocked: None,
+        detail: None,
+    });
+    request_id
+}
+
+fn assert_manual_movement(result: Poll<Result<StepOutcome, ActionError>>) {
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
 }
 fn wall_door_reach_view() -> api::query::ReachQueryView {
     let mut reachable = vec![0u32];
@@ -3069,4 +3101,75 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             "resume the same conversation once the observed barrier is traversable"
         );
     });
+}
+
+#[test]
+fn talk_walk_user_input_blocks_before_dialogue_interaction() {
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = TalkRun {
+        id: 42,
+        npc: Arc::from("test npc"),
+        tile: Some(tile(3200, 3200)),
+        leash: 1,
+        prefer: Arc::from([]),
+        choose: None,
+        walk: None,
+        dialogue: None,
+        started: false,
+    };
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    post_user_input_walk_receipt(&mut ledger, 2);
+    assert_manual_movement(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    }));
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
+}
+
+#[test]
+fn use_on_walk_user_input_blocks_before_interaction() {
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = UseOnRun {
+        item: Arc::from("test item"),
+        item_id: 1,
+        target_id: 2,
+        product: None,
+        until: None,
+        no_product: None,
+        kind: Arc::from("loc"),
+        target_name: Some(Arc::from("test target")),
+        tile: Some(tile(3200, 3200)),
+        radius: 1,
+        deadline: None,
+        settle_duration: Duration::from_secs(20),
+        walk: None,
+        interaction: None,
+        accepted: false,
+        round_before: None,
+        chat_since: 0,
+    };
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    run.deadline = Some(Duration::ZERO);
+    post_user_input_walk_receipt(&mut ledger, 2);
+    assert_manual_movement(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    }));
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
 }

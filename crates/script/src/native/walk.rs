@@ -80,6 +80,12 @@ impl NativeMachine for Walk {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(receipt) = cx
+            .walk_receipt(self.request_id)
+            .filter(|receipt| receipt.end == WalkEnd::UserInput)
+        {
+            return Poll::Ready(Ok(receipt.clone()));
+        }
         if cx.active_now() >= self.deadline {
             cx.cancel_request(self.request_id);
             return Poll::Ready(Ok(WalkReceipt {
@@ -144,5 +150,64 @@ impl NativeMachine for Walk {
 
     fn cancel(&mut self) {
         self.wait.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quester::families::tests::{local_player, post_user_input_walk_receipt, with_tick};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::RunKey;
+    use api::snapshot::{GameSnapshot, WorldTile};
+
+    #[test]
+    fn user_input_receipt_precedes_arrival_deadline_and_required_evidence() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut initial = GameSnapshot::new();
+        initial.seed_ingame(2);
+        let mut at_target = GameSnapshot::new();
+        at_target.seed_ingame(2);
+        at_target.seed_local_player(local_player(target));
+
+        let mut ledger = None;
+        let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        target,
+                        1,
+                        None,
+                        EvidenceStamp {
+                            run,
+                            tick: 1002,
+                            sequence: 1002,
+                        },
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let request_id = post_user_input_walk_receipt(&mut ledger, 1001);
+        let result = with_tick(&at_target, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("correlated user input must finish the walk: {result:?}");
+        };
+        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(receipt.end, WalkEnd::UserInput);
+        assert!(receipt.blocked.is_none());
+        assert!(receipt.detail.is_none());
     }
 }

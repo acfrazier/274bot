@@ -10,6 +10,90 @@ pub mod rs_2b_0t {
 pub mod isolate {
 
 
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_WALK_CANCEL_REASON: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_WALK_CANCEL_REASON: u8 = 1;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_WALK_CANCEL_REASON: [WalkCancelReason; 2] = [
+  WalkCancelReason::None,
+  WalkCancelReason::UserInput,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct WalkCancelReason(pub u8);
+#[allow(non_upper_case_globals)]
+impl WalkCancelReason {
+  pub const None: Self = Self(0);
+  pub const UserInput: Self = Self(1);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 1;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::UserInput,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::UserInput => Some("UserInput"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for WalkCancelReason {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for WalkCancelReason {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for WalkCancelReason {
+    type Output = WalkCancelReason;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for WalkCancelReason {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for WalkCancelReason {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for WalkCancelReason {}
 pub enum TileOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -5173,6 +5257,8 @@ impl<'a> Snapshot<'a> {
   pub const VT_API_GATHER: ::flatbuffers::VOffsetT = 270;
   pub const VT_API_GATHER_OUTCOME: ::flatbuffers::VOffsetT = 272;
   pub const VT_API_PROGRESS: ::flatbuffers::VOffsetT = 274;
+  pub const VT_USER_MOVE_INTENT_SEQ: ::flatbuffers::VOffsetT = 276;
+  pub const VT_WALK_OUTCOME_CANCEL_REASON: ::flatbuffers::VOffsetT = 278;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5184,6 +5270,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    builder.add_user_move_intent_seq(args.user_move_intent_seq);
     builder.add_bank_snapshot_generation(args.bank_snapshot_generation);
     builder.add_bank_selection_generation(args.bank_selection_generation);
     builder.add_bank_selection_request_id(args.bank_selection_request_id);
@@ -5288,6 +5375,7 @@ impl<'a> Snapshot<'a> {
     builder.add_inv_size(args.inv_size);
     if let Some(x) = args.inv { builder.add_inv(x); }
     if let Some(x) = args.here { builder.add_here(x); }
+    builder.add_walk_outcome_cancel_reason(args.walk_outcome_cancel_reason);
     builder.add_walk_outcome_blocked(args.walk_outcome_blocked);
     builder.add_bank_selection_kind(args.bank_selection_kind);
     builder.add_route_inspect_prev_bank_planned(args.route_inspect_prev_bank_planned);
@@ -6277,6 +6365,20 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ApiProgress>>(Snapshot::VT_API_PROGRESS, None)}
   }
+  #[inline]
+  pub fn user_move_intent_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_USER_MOVE_INTENT_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn walk_outcome_cancel_reason(&self) -> WalkCancelReason {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<WalkCancelReason>(Snapshot::VT_WALK_OUTCOME_CANCEL_REASON, Some(WalkCancelReason::None)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6421,6 +6523,8 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiGather>>("api_gather", Self::VT_API_GATHER, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiGatherOutcome>>("api_gather_outcome", Self::VT_API_GATHER_OUTCOME, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiProgress>>("api_progress", Self::VT_API_PROGRESS, false)?
+     .visit_field::<u64>("user_move_intent_seq", Self::VT_USER_MOVE_INTENT_SEQ, false)?
+     .visit_field::<WalkCancelReason>("walk_outcome_cancel_reason", Self::VT_WALK_OUTCOME_CANCEL_REASON, false)?
      .finish();
     Ok(())
   }
@@ -6562,6 +6666,8 @@ pub struct SnapshotArgs<'a> {
     pub api_gather: Option<::flatbuffers::WIPOffset<ApiGather<'a>>>,
     pub api_gather_outcome: Option<::flatbuffers::WIPOffset<ApiGatherOutcome<'a>>>,
     pub api_progress: Option<::flatbuffers::WIPOffset<ApiProgress<'a>>>,
+    pub user_move_intent_seq: u64,
+    pub walk_outcome_cancel_reason: WalkCancelReason,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6703,6 +6809,8 @@ impl<'a> Default for SnapshotArgs<'a> {
       api_gather: None,
       api_gather_outcome: None,
       api_progress: None,
+      user_move_intent_seq: 0,
+      walk_outcome_cancel_reason: WalkCancelReason::None,
     }
   }
 }
@@ -7257,6 +7365,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ApiProgress>>(Snapshot::VT_API_PROGRESS, api_progress);
   }
   #[inline]
+  pub fn add_user_move_intent_seq(&mut self, user_move_intent_seq: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_USER_MOVE_INTENT_SEQ, user_move_intent_seq, 0);
+  }
+  #[inline]
+  pub fn add_walk_outcome_cancel_reason(&mut self, walk_outcome_cancel_reason: WalkCancelReason) {
+    self.fbb_.push_slot::<WalkCancelReason>(Snapshot::VT_WALK_OUTCOME_CANCEL_REASON, walk_outcome_cancel_reason, WalkCancelReason::None);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7410,6 +7526,8 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("api_gather", &self.api_gather());
       ds.field("api_gather_outcome", &self.api_gather_outcome());
       ds.field("api_progress", &self.api_progress());
+      ds.field("user_move_intent_seq", &self.user_move_intent_seq());
+      ds.field("walk_outcome_cancel_reason", &self.walk_outcome_cancel_reason());
       ds.finish()
   }
 }

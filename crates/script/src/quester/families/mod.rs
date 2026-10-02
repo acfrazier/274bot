@@ -21,6 +21,17 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+pub(super) const MANUAL_MOVEMENT_MESSAGE: &str = "cancelled by user input";
+
+pub(super) fn manual_movement_message() -> Arc<str> {
+    static REASON: std::sync::LazyLock<Arc<str>> =
+        std::sync::LazyLock::new(|| Arc::from(MANUAL_MOVEMENT_MESSAGE));
+    Arc::clone(&REASON)
+}
+
+fn manual_movement_error() -> ActionError {
+    ActionError::UserInput
+}
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
     &[
@@ -988,6 +999,10 @@ impl StepRun for WalkRun {
         match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(WalkReceipt {
+                end: WalkEnd::UserInput,
+                ..
+            })) => Poll::Ready(Err(manual_movement_error())),
+            Poll::Ready(Ok(WalkReceipt {
                 end: WalkEnd::Arrived,
                 evidence,
                 ..
@@ -1106,6 +1121,10 @@ impl StepRun for TalkRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(WalkReceipt {
+                    end: WalkEnd::UserInput,
+                    ..
+                })) => return Poll::Ready(Err(manual_movement_error())),
                 Poll::Ready(Ok(_)) => self.walk = None,
             }
         }
@@ -1635,15 +1654,23 @@ struct UseOnRun {
 }
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d) {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
-        }
+        let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Ready(Ok(WalkReceipt {
+                    end: WalkEnd::UserInput,
+                    ..
+                })) => return Poll::Ready(Err(manual_movement_error())),
+                _ if timed_out => {
+                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
+                }
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(_)) => self.walk = None,
             }
+        }
+        if timed_out {
+            return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
         }
         if self.interaction.is_none() {
             if let Some((id, qty)) = self.until {

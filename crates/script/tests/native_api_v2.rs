@@ -111,6 +111,8 @@ fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
@@ -1645,6 +1647,8 @@ fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
     iso.post_snapshot(encode_snapshot_with_native(&input, facts));
@@ -1742,6 +1746,8 @@ export function tick(api) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));
     iso.on_game_tick(1);
@@ -1861,6 +1867,8 @@ export function tick(api) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = 5;
     iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));
