@@ -61,7 +61,7 @@ export async function tick(api: NativeApi): Promise<void> {
         if (phase === 'gathering' && live?.status && live.status.dropped >= logs) {
             const stopped = api.gather.stop();
             api.log('gather stop: ' + JSON.stringify(stopped));
-            if (!stopped.ok) {
+            if ('error' in stopped) {
                 phase = 'done';
                 api.stop(`gather stop: ${stopped.error}`);
                 return;
@@ -74,7 +74,7 @@ export async function tick(api: NativeApi): Promise<void> {
         phase = 'done';
         const paths = api.questPaths();
         api.log('quest paths: ' + JSON.stringify(paths));
-        if (!paths.ok) {
+        if ('error' in paths) {
             api.stop(`quest paths: ${paths.error}`);
             return;
         }
