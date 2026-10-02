@@ -177,6 +177,10 @@ slot is free; Power mode can still take a supply-only trip. `bank` defaults to
 `Nearest` and also offers named banks present in the selected cache;
 `useMageBank` and `useZanarisBank` add those special banks to the preference.
 The unsupported `Closest` mode is not offered.
+Ordinary banks use packed stand access. Declared teller banks use the same
+live NPC/dialogue opener as `Bank.openNpcAccess`, including multi-page chat;
+an open modal without a loaded item table is not a successful native open.
+A bank without packed stand or declared NPC access fails closed with its name.
 
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank

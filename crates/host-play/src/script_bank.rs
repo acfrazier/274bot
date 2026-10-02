@@ -377,8 +377,22 @@ fn native_bank_access(
                 },
             ));
         }
+        if let Some(npc) = definition.npc {
+            // Declared teller access uses the shared live NPC opener. This is
+            // an approach anchor, not fabricated packed stand geometry.
+            return Some((
+                bank.tile,
+                BankStandAccess {
+                    bank,
+                    stand_tile: definition.tile,
+                    kind: NativeAccessKind::Teller,
+                    stand_op: 0,
+                    name: Some(Arc::from(npc.name)),
+                    choose: definition.choose.map(Arc::from),
+                },
+            ));
+        }
     }
-    let definition_npc = bank.definition.and_then(|definition| definition.npc);
     let stand = world
         .banks()
         .iter()
@@ -390,16 +404,9 @@ fn native_bank_access(
                     <= SAME_BANK
         })
         .min_by_key(|stand| {
-            let kind_order = match (&stand.access, definition_npc) {
-                (nav::pack::BankAccess::Npc { name, .. }, Some(wanted))
-                    if name.eq_ignore_ascii_case(wanted.name) =>
-                {
-                    0
-                }
-                (nav::pack::BankAccess::Booth { .. }, Some(_)) => 1,
-                (nav::pack::BankAccess::Npc { .. }, Some(_)) => 2,
-                (nav::pack::BankAccess::Booth { .. }, None) => 0,
-                (nav::pack::BankAccess::Npc { .. }, None) => 1,
+            let kind_order = match &stand.access {
+                nav::pack::BankAccess::Booth { .. } => 0,
+                nav::pack::BankAccess::Npc { .. } => 1,
             };
             (
                 kind_order,
