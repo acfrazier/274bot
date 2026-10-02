@@ -304,6 +304,8 @@ impl SyncReport {
 #[derive(Default)]
 pub(super) struct SyncState {
     prepared: Option<SyncScope>,
+    /// Host dispatch observes this token while the confirmation is unresolved.
+    start_hold: Option<Arc<String>>,
     /// The newest applied sync, shown to the operator.
     last: Option<SyncReport>,
     /// Older syncs with member writes still in flight. Each settles its own
@@ -323,6 +325,7 @@ impl SyncState {
             .is_some_and(|scope| scope.source == profile && scope.card == card)
         {
             self.prepared = None;
+            self.start_hold = None;
         }
     }
 
@@ -427,6 +430,11 @@ impl Scripts {
         card_path: &Path,
     ) -> &SyncScope {
         let card = script::card_identity_key(card_source, card_path, card_name);
+        self.sync.start_hold = core.play().map(|play| {
+            play.hold_script_starts(format!(
+                "waiting for settings copy confirmation from {source}; waiting for Apply or Cancel"
+            ))
+        });
         let overrides = self.peek_profile_overrides(core, source, &card, card_name);
         let mut targets = Vec::new();
         let mut skipped = Vec::new();
@@ -468,7 +476,7 @@ impl Scripts {
         id: script::CompiledId,
         field: Option<&str>,
     ) -> Result<&SyncScope, String> {
-        self.sync.prepared = None;
+        self.cancel_settings_sync();
         let descriptor = script::compiled_card(id).ok_or("compiled card unavailable")?;
         let mut excluded_fields: Vec<String> = descriptor
             .per_account_settings
@@ -510,6 +518,11 @@ impl Scripts {
             .collect();
         let mut prompt = format!("Copy {} parameters from {source} to {} same-card member(s); {} other member(s) skipped.", descriptor.name, targets.len(), skipped.len());
         append_preserved(&mut prompt, &excluded);
+        self.sync.start_hold = core.play().map(|play| {
+            play.hold_script_starts(format!(
+                "waiting for settings copy confirmation from {source}; waiting for Apply or Cancel"
+            ))
+        });
         Ok(self.sync.prepared.insert(SyncScope {
             source: source.into(),
             card,
@@ -541,6 +554,7 @@ impl Scripts {
 
     pub fn cancel_settings_sync(&mut self) {
         self.sync.prepared = None;
+        self.sync.start_hold = None;
     }
 
     pub fn last_settings_sync(&self) -> Option<&SyncReport> {
@@ -563,6 +577,7 @@ impl Scripts {
             .prepared
             .take()
             .ok_or_else(|| "Apply to all: nothing prepared".to_string())?;
+        let _start_hold = self.sync.start_hold.take();
         let SyncScope {
             source,
             card,

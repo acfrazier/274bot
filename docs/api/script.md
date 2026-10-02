@@ -313,9 +313,11 @@ including late worker results and stale UI deliveries.
 
 Only native parameter edits compose over an unvalidated draft; assignments,
 Start-Ready commits and Loaded-card edits use the durable-staged profile.
-A valid preparation rebases only its own card's settings onto that latest row;
-unrelated writes do not supersede it. A newer settings edit for the same card
-or profile removal does supersede it.
+A valid preparation rebases its own card's settings onto that latest row;
+an accepted marked copy that assigns an unassigned bot carries that assignment
+in the same transaction. Settings-only edits do not replace a concurrent
+assignment. Unrelated writes do not supersede preparation; a newer settings
+edit for the same card or profile removal does supersede it.
 Profile-form credentials and partner fields persist independently of native
 preparation. Their live bag prepares only after a successful save; Stop or a
 replacement Start makes delivery Stale without cancelling that save.
@@ -344,6 +346,16 @@ Refresh catalog and the MultiBox bulk script controls described below.
 | **Start / Pause / Resume / Stop** | Focused profile only. Per-bot Stop also cancels a Start that is still waiting. |
 | **Start all / Start on marked / Stop all** | Bulk script controls (panel MultiBox rail; TUI Script tab `T` / `E`). Separate from **Login all / Logout all**. Start all and Start on marked bots (one shared command for panel and TUI) skip already running/paused/stopping members and start the rest one after another over the next frames, not all in one frame. One running report covers every Start click while any of its bots still waits or is still setting up: it counts each bot once as `started`, `queued`, `skipped` or `failed`, lists failures before skips, and updates as waiting bots start or are refused. A second click in that time joins the same report instead of replacing it. Every skipped or failed bot also gets a line in its own log. Waiting rows show `queued k/n`. Marked Start with a heading card starts that card on every marked row. Stop on marked rows reports waiting bots as `cancelled`. Stop all stops running and paused across wall members and live slots **and cancels waiting Starts**. A member removed, re-assigned, or operator-logged-out while waiting does not start stale work. |
 | **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
+
+While a settings-copy confirmation waits for **Apply** or **Cancel**, all new
+script Starts share one host dispatch hold, including focused and per-profile
+Starts, bulk Starts, restarts and scenario `StartScript`. Direct Starts report
+the affected bot and the waiting-copy reason. Already queued Starts keep their
+FIFO places rather than failing or disappearing, and scenario Starts stay
+pending without failing their witness. Applying or cancelling releases the
+hold; queued operator Starts then read the resolved settings. Marked Apply can
+assign an unassigned marked bot, but that assignment and its accepted settings
+commit together only after native preparation succeeds.
 
 Script paint (`ScriptPaint`) draws over the Game chatbox in the panel and
 replaces the chat pane in the TUI (`p` toggles back to the game ring).

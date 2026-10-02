@@ -1498,9 +1498,7 @@ impl<Io> OperatorSession<Io> {
             .ok_or_else(|| script::StartLoadError::Refused("no play".into()))?;
         let compiled = matches!(start, ScriptStart::Compiled { .. });
         match start {
-            ScriptStart::Compiled { id, bag } => play
-                .script_start(name, id, bag)
-                .map_err(script::StartLoadError::Refused)?,
+            ScriptStart::Compiled { id, bag } => play.script_start_typed(name, id, bag)?,
             ScriptStart::Load {
                 js,
                 shape,

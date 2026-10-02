@@ -200,9 +200,6 @@ pub fn assign_and_restart_marked<Io>(
     card: &script::ScriptSel,
     catalog_root: Option<&Path>,
 ) {
-    if scripts.block_start_if_copy_pending("Assign & restart") {
-        return;
-    }
     scripts.open_tally("Assign & restart");
     let Resolved { names, gone } = resolve(selection, core);
     for profile in &gone {

@@ -180,9 +180,6 @@ pub fn start_marked<Io>(
     card: Option<&script::ScriptSel>,
     catalog_root: Option<&Path>,
 ) {
-    if scripts.block_start_if_copy_pending("Start selected") {
-        return;
-    }
     scripts.open_tally("Start selected");
     let profiles = profile_rows(core);
     for identity in selection.iter() {

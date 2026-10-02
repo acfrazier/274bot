@@ -530,7 +530,10 @@ impl JsLibrary {
                 self.record_failure(failure);
                 Err(diagnostic)
             }
-            Err(crate::StartLoadError::Refused(diagnostic)) => Err(diagnostic),
+            Err(
+                crate::StartLoadError::Waiting(diagnostic)
+                | crate::StartLoadError::Refused(diagnostic),
+            ) => Err(diagnostic),
         }
     }
 
