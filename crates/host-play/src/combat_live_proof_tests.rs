@@ -65,6 +65,8 @@ const WALK_OUT: WorldTile = WorldTile {
     z: 3243,
     level: 0,
 };
+/// Fixture walk-out settle radius in `combat_unattackable.json`.
+const WALK_OUT_RADIUS: i32 = 2;
 const BRONZE_SCIMITAR_ID: i32 = 1321;
 const RUNE_SCIMITAR_ID: i32 = 1333;
 const LOBSTER_ID: i32 = 379;
@@ -1160,7 +1162,7 @@ fn m4_ready(capture: &CombatCapture) -> bool {
         && no_tree_attack
         && m4_conditional_eat_ok(capture, report)
         && caller_walked_out(capture)
-        && final_tile(capture).is_some_and(|tile| tile == WALK_OUT)
+        && final_tile(capture).is_some_and(arrived_at_walk_out)
         && single_action_per_native_tick(capture)
         && native_interactions_wire_valid(capture)
         && batch_plan_contract(capture, &plans)
@@ -2410,6 +2412,11 @@ fn caller_walked_out(capture: &CombatCapture) -> bool {
     })
 }
 
+fn arrived_at_walk_out(tile: WorldTile) -> bool {
+    tile.level == WALK_OUT.level
+        && (tile.x - WALK_OUT.x).abs().max((tile.z - WALK_OUT.z).abs()) <= WALK_OUT_RADIUS
+}
+
 fn final_tile(capture: &CombatCapture) -> Option<WorldTile> {
     let tile = capture.frames.last()?.get("tile")?;
     Some(WorldTile {
@@ -2889,6 +2896,17 @@ fn m4_walk_out_oracle_reads_the_captured_walk_target_object() {
         "request": { "target": { "x": 3093, "z": 3243, "level": 0 }, "radius": 2 }
     }));
     assert!(caller_walked_out(&capture));
+    assert!(arrived_at_walk_out(WorldTile {
+        x: 3092,
+        z: 3245,
+        level: 0,
+    }));
+    assert!(arrived_at_walk_out(WALK_OUT));
+    assert!(!arrived_at_walk_out(WorldTile {
+        x: 3109,
+        z: 3346,
+        level: 0,
+    }));
 }
 
 #[test]
