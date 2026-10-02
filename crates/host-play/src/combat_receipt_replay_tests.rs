@@ -248,6 +248,44 @@ fn replay_all_retained_combat_receipts() {
                 }
                 leaves["combo"] = combo;
             }
+            Case::M4 => {
+                if let Some(report) = report_with_end(&c, "Aborted(Unattackable)") {
+                    leaves["conditional_eat"] = m4_conditional_eat_receipt(&c, report);
+                    if ready {
+                        // The Start-window correction must not exempt real
+                        // loaded low HP before the abort from its required Eat.
+                        let mut mutant = value.clone();
+                        let mut frame = value["start_baseline"].clone();
+                        let end = integer(report, "combat_evidence_tick").unwrap();
+                        frame["tick"] = json!(end - 1);
+                        frame["host_tick"] = json!(end - 1);
+                        let hp = frame["stats"]
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|stat| stat["name"] == "hitpoints")
+                            .unwrap();
+                        hp["effective"] = json!(7);
+                        assert!(hp["base"].as_i64().unwrap() > 0);
+                        mutant["frames"].as_array_mut().unwrap().insert(0, frame);
+                        mutant["actions"]
+                            .as_array_mut()
+                            .unwrap()
+                            .retain(|row| !is_eat(row));
+                        assert!(!case_ready(case, &capture(&mutant)));
+                        assert!(!m4_conditional_eat_ok(&capture(&mutant), report));
+                        let root = Path::new(&output).parent().unwrap().join("mutations");
+                        std::fs::create_dir_all(&root).unwrap();
+                        let mutant_path = root.join(format!(
+                            "{}.loaded-low-hp-without-eat.json",
+                            path.file_name().unwrap().to_string_lossy()
+                        ));
+                        std::fs::write(&mutant_path, serde_json::to_vec_pretty(&mutant).unwrap())
+                            .unwrap();
+                        leaves["loaded_low_hp_without_eat_mutant_rejected"] = json!(mutant_path);
+                    }
+                }
+            }
             Case::M5 => {
                 if let Some(injection) = c
                     .random_events

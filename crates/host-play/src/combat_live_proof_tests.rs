@@ -2646,11 +2646,23 @@ fn m4_first_tree_hit_tick(capture: &CombatCapture) -> Option<i64> {
 
 fn m4_conditional_eat_receipt(capture: &CombatCapture, report: &Value) -> Value {
     let ready_tick = integer(report, "combat_evidence_tick");
+    // The measured window begins at native Start, not login. An unloaded
+    // pre-Start stat row (base HP 0) is not the cell's conditional eat input.
+    let start_tick = capture.start_baseline.as_ref().and_then(|baseline| {
+        baseline["snapshot_tick"]
+            .as_u64()
+            .or_else(|| baseline["tick"].as_u64())
+    });
     let low_hp_frames = capture
         .frames
         .iter()
         .filter(|frame| {
-            stat_effective(frame, "hitpoints").is_some_and(|hp| hp <= 7)
+            frame["ingame"] == true
+                && matches!(stat_pair(frame, "hitpoints"), Some((base, hp)) if base > 0 && hp <= 7)
+                && frame["snapshot_tick"]
+                    .as_u64()
+                    .zip(start_tick)
+                    .is_some_and(|(tick, start)| tick >= start)
                 && ready_tick
                     .is_some_and(|end| frame["tick"].as_i64().is_some_and(|tick| tick < end))
         })
