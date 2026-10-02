@@ -2888,8 +2888,9 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
 }
 
 /// Nav config window: Routing, Display, Path paint (only while the path
-/// is shown), and Debug groups. Every toggle or colour writes
-/// `session.ui.nav` + `ui_state::save`. FirstUseEver docks as a 274bot
+/// is shown), and Debug groups. Preference edits write `session.ui.nav`
+/// through the checked shared-preferences writer; the pause toggle also
+/// updates the host policy immediately. FirstUseEver docks as a 274bot
 /// panel tab; undock to float.
 fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.nav_settings_open {
@@ -2907,8 +2908,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
             let mut nav = session.ui.nav.clone();
+            let previous_pause_script_on_manual_walk_abort = nav.pause_script_on_manual_walk_abort;
             let mut changed = false;
-
             ui.text_colored(ACCENT, "Routing");
             if ui.checkbox("allow teleports", &mut nav.allow_teleports) {
                 changed = true;
@@ -2917,6 +2918,13 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 changed = true;
             }
             if ui.checkbox("allow bank fetch", &mut nav.allow_bank_fetch) {
+                changed = true;
+            }
+
+            if ui.checkbox(
+                "Pause script on manual movement",
+                &mut nav.pause_script_on_manual_walk_abort,
+            ) {
                 changed = true;
             }
 
@@ -2976,7 +2984,27 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             if changed {
                 session.ui.nav = nav;
-                crate::ui_state::save(&session.ui);
+                if previous_pause_script_on_manual_walk_abort
+                    != session.ui.nav.pause_script_on_manual_walk_abort
+                {
+                    session.core.set_pause_script_on_manual_walk_abort(
+                        session.ui.nav.pause_script_on_manual_walk_abort,
+                    );
+                }
+                match crate::ui_state::save_checked(&session.ui) {
+                    Ok(()) => {
+                        if session
+                            .error
+                            .as_deref()
+                            .is_some_and(|error| error.starts_with("Nav config: "))
+                        {
+                            session.error = None;
+                        }
+                    }
+                    Err(error) => {
+                        session.error = Some(format!("Nav config: {error}"));
+                    }
+                }
             }
         });
     session.nav_settings_open = open;

@@ -426,6 +426,7 @@ impl Play {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
+            pause_script_on_manual_walk_abort: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             world,
             wakes: HashMap::new(),
         }

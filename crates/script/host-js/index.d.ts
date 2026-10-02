@@ -377,6 +377,8 @@ export interface NativeSnapshot {
   withdraw_load_result: boolean;
   bank_op_result_seq: number;
   bank_op_result: boolean;
+  /** Monotonic slot-local qualifying movement intent; independent of whether a walk outcome exists. */
+  user_move_intent_seq: number;
   walk_outcome_seq: number;
   walk_outcome_generation: number;
   walk_outcome_failed: boolean;
@@ -386,6 +388,8 @@ export interface NativeSnapshot {
   walk_outcome_radius: number;
   walk_outcome_allow_teleports: boolean;
   walk_outcome_request_id: number;
+  /** Cancellation reason for the latest correlated walk outcome; reset with its next outcome. */
+  walk_outcome_cancel_reason: 'none' | 'user-input';
   /** Latest select-only completion; fallback is not a reachability proof. */
   bank_selection: { request_id: number; generation: number; kind: 'near' | 'reachable' | 'fallback' | 'none'; bank: BankLocation | null } | null;
   route_inspect_seq: number;

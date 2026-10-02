@@ -77,6 +77,7 @@ pub(crate) fn take_manual_walk_ownership(
     frame: crate::SlotFrameInput,
     client_active: bool,
     tick: u64,
+    pause_owner: bool,
 ) -> bool {
     let count = frame.manual_move_count();
     if count == 0 {
@@ -112,8 +113,7 @@ pub(crate) fn take_manual_walk_ownership(
         return false;
     }
     bot.cancel_for_manual_input();
-    // Watchdog ownership must end before slice C's configured Pause entry;
-    // otherwise Pause defers it and Resume silently re-arms the old anchor.
+    // End watchdog ownership before the ordinary Pause entry can defer it.
     if let Some(slot) = slot.as_mut() {
         slot.note_manual_walk_takeover(bot.user_move_intent_seq, tick);
         let _ = slot.abort_owned_recovery();
@@ -129,6 +129,12 @@ pub(crate) fn take_manual_walk_ownership(
         frame.manual_move_intent,
         frame.manual_steps,
     );
+    drop(all);
+    if pause_owner {
+        if let Some(slot) = slot.as_mut() {
+            pause_script(slot, navs, name);
+        }
+    }
     true
 }
 
@@ -219,7 +225,7 @@ pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, nam
 }
 
 #[allow(clippy::too_many_arguments)] // watchdog nav action packs driver/snapshot/nav handles
-pub(super) fn apply_watchdog_nav_action(
+pub(crate) fn apply_watchdog_nav_action(
     action: script::WatchdogAction,
     _driver: &mut dyn Driver,
     snapshot: Option<&GameSnapshot>,
@@ -235,6 +241,7 @@ pub(super) fn apply_watchdog_nav_action(
             let Some(snapshot) = snapshot else {
                 return;
             };
+            super::script_nav::preserve_recovery_walk_identity(navs, name);
             let arm = ScriptWalkArm {
                 here,
                 world: world.clone(),

@@ -3332,6 +3332,55 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
 }
 
 #[test]
+fn refused_talk_approach_blocks_without_requeueing_the_walk() {
+    for end in [WalkEnd::Failed, WalkEnd::Blocked, WalkEnd::Refused] {
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 2632,
+            z: 3222,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let mut run = TalkRun {
+            id: 42,
+            npc: Arc::from("test npc"),
+            tile: Some(WorldTile {
+                x: 3103,
+                z: 3163,
+                level: 2,
+            }),
+            leash: 6,
+            prefer: Arc::from([]),
+            choose: None,
+            walk: None,
+            dialogue: None,
+            started: false,
+        };
+        assert!(with_tick(&snapshot, &mut ledger, 40, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let request_id = post_user_input_walk_receipt(&mut ledger, 66);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = end.clone();
+        let result = with_tick(&snapshot, &mut ledger, 66, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))),
+            "the owner must see the refused {end:?} approach, not another pending walk"
+        );
+        let requests: Vec<_> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .map(|action| action.request_id.get())
+            .collect();
+        assert_eq!(requests, vec![request_id], "no second walk or dialogue");
+    }
+}
+
+#[test]
 fn use_on_walk_user_input_blocks_before_interaction() {
     let snapshot = ready();
     let mut ledger = None;
