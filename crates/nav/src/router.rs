@@ -37,7 +37,7 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::quest_gates::QuestFamilyMismatch;
-use crate::transport::{TransportEdge, TransportGraph};
+use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 
 use crate::world_state::WorldState;
 use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
@@ -1983,6 +1983,32 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
     }
 }
 
+/// Slashable webs declare both knife `oplocu` and worn-blade `oploc1` edges.
+/// When both pass the live state, mirror `slash_checker` by suppressing the
+/// knife choice in routing, independent of pack edge order.
+fn prefer_worn_slash_for_web(
+    graph: &TransportGraph,
+    edge: &TransportEdge,
+    state: &WorldState,
+    relax: Relax,
+) -> bool {
+    if relax != Relax::Strict
+        || !edge.is_slashable_web()
+        || edge.option != 0
+        || edge.item_req.is_empty()
+    {
+        return false;
+    }
+    graph.at.get(&edge.at).is_some_and(|indices| {
+        select_web_action(
+            indices.iter().map(|&index| &graph.edges[index]),
+            edge,
+            |candidate| edge_allowed(state, candidate, relax),
+        )
+        .is_some_and(|selected| selected.option == 1)
+    })
+}
+
 /// The outcome and peak scratch of one search's backward proof.
 #[derive(Clone, Copy, Default)]
 struct ReverseReport {
@@ -2491,6 +2517,9 @@ fn search_kernel(
                             continue;
                         }
                         if !edge_allowed(state, edge, relax) {
+                            continue;
+                        }
+                        if prefer_worn_slash_for_web(graph, edge, state, relax) {
                             continue;
                         }
                         let Some(to) = edge.landing_from(cur) else {

@@ -537,6 +537,75 @@ fn router_uses_transport_across_a_wall() {
 }
 
 #[test]
+fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available() {
+    let collision = walled_5x5_gap(2);
+    let at = tile(1, 2, 0);
+    let to = tile(2, 2, 0);
+    let edge = |option, item_req, worn_req| TransportEdge {
+        kind: TransportKind::Door,
+        at,
+        to,
+        loc_id: 733,
+        option,
+        ticks: 2,
+        dir: Some(crate::transport::DoorDir::E),
+        open_loc_id: Some(734),
+        skill_req: vec![],
+        item_req,
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req,
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+        player_delta: None,
+    };
+    // Pack order deliberately matches the extractor: oplocu first, Slash
+    // second. Planning must follow slash_checker when a blade is worn rather
+    // than letting a graph-order tie send the less-preferred knife action.
+    let mut graph = TransportGraph::default();
+    graph.edges.push(edge(0, vec![(946, 1)], vec![]));
+    graph.edges.push(edge(1, vec![], vec![1277, 1321]));
+    graph.at.insert(at, vec![0, 1]);
+    let from = tile(0, 2, 0);
+    let dest = tile(4, 2, 0);
+    let find_web_option = |state: &WorldState| {
+        find_with(
+            &collision,
+            &graph,
+            from,
+            dest,
+            FindOptions::default(),
+            state,
+        )
+        .unwrap()
+        .legs
+        .into_iter()
+        .find_map(|leg| match leg {
+            Leg::Transport { edge } if edge.loc_id == 733 => Some(edge.option),
+            _ => None,
+        })
+        .expect("wall crossing uses the modeled web transport")
+    };
+
+    let mut knife_only = WorldState::empty();
+    knife_only.inv.insert(946, 1);
+    assert_eq!(
+        find_web_option(&knife_only),
+        0,
+        "use the carried knife if no slash blade is worn"
+    );
+
+    let mut knife_and_blade = knife_only;
+    knife_and_blade.worn.insert(1277);
+    assert_eq!(
+        find_web_option(&knife_and_blade),
+        1,
+        "worn slash weapon selects oploc1 even while a knife is carried"
+    );
+}
+
+#[test]
 fn find_prefers_a_cheap_walk_over_a_costly_transport() {
     let wc = bake(5, 5, &[]);
     let g = door(tile(0, 0, 0), tile(4, 4, 0), 1000);
