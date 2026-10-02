@@ -182,6 +182,18 @@ pub fn distance_from(loc: &LocView, from: WorldTile) -> Option<u32> {
     Some(from.x.abs_diff(nearest_x).max(from.z.abs_diff(nearest_z)))
 }
 
+/// Whether an identified loc is absent from an observed, ready scene.
+/// Off-scene and rebuilding targets are unknown, not gone.
+pub fn target_gone(snapshot: &GameSnapshot, to: WorldTile, loc_id: i32) -> bool {
+    snapshot.ingame()
+        && snapshot.scene_state() == 2
+        && super::SceneQuery::new(snapshot.scene(), None).contains(to)
+        && !snapshot
+            .locs()
+            .iter()
+            .any(|loc| loc.tile == to && loc.id == loc_id)
+}
+
 /// Live footprint arrival for an explicitly identified loc radius walk.
 /// Off-scene or unknown footprints return `None`, not interaction proof.
 /// The full rotated rectangle, force-approach sides and live wall flags

@@ -381,6 +381,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
     let endpoint_arrival = armed.zip(endpoint).and_then(|((to, radius, ..), from)| {
         loc_id.and_then(|id| api::query::loc_approach::arrived_at(snapshot, from, to, radius, id))
     });
+    let target_gone = endpoint_arrival.is_none()
+        && armed
+            .zip(loc_id)
+            .is_some_and(|((to, ..), id)| api::query::loc_approach::target_gone(snapshot, to, id));
     let live_geometry = (
         loc_id.is_some()
             && armed.is_some_and(|(to, ..)| {
@@ -388,24 +392,26 @@ pub(crate) fn step_nav_bot<D: Driver>(
             }),
         endpoint_arrival.is_some(),
     );
-    let estimated_endpoint = loc_id.is_some() && endpoint_arrival.is_none();
+    let estimated_endpoint = loc_id.is_some() && endpoint_arrival.is_none() && !target_gone;
     let arrived = here
         .zip(armed)
         .is_some_and(|((x, z, level), (to, radius, ..))| {
             let from = WorldTile { x, z, level };
             match loc_id {
-                Some(id) => {
+                Some(id) if !target_gone => {
                     api::query::loc_approach::arrived_at(snapshot, from, to, radius, id)
                         == Some(true)
                 }
-                None => api::query::is_arrived(from, to, radius, reach),
+                _ => api::query::is_arrived(from, to, radius, reach),
             }
         });
-    // An unchanged estimate is never a reason to restart its worker. Only
-    // newly observable target/footprint inputs replace the owned route.
+    // Refresh newly observable geometry, or a vanished footprint whose old
+    // stand no longer satisfies tile arrival. An unchanged estimate never
+    // restarts its worker.
     let invalid_endpoint = !arrived
         && ((live_geometry.0 && !estimated_geometry.0)
-            || (live_geometry.1 && !estimated_geometry.1));
+            || (live_geometry.1 && !estimated_geometry.1)
+            || (target_gone && estimated_geometry.1));
     let (refresh, suppress_follow) = if invalid_endpoint {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
