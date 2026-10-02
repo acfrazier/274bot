@@ -39,6 +39,8 @@ const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 #[cfg(feature = "load")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartLoadError {
+    /// The caller must retain this Start until an operator hold is resolved.
+    Waiting(String),
     Refused(String),
     RuntimeLoad(String),
 }
@@ -47,7 +49,9 @@ pub enum StartLoadError {
 impl std::fmt::Display for StartLoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Refused(message) | Self::RuntimeLoad(message) => f.write_str(message),
+            Self::Waiting(message) | Self::Refused(message) | Self::RuntimeLoad(message) => {
+                f.write_str(message)
+            }
         }
     }
 }

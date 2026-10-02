@@ -799,6 +799,7 @@ impl Scripts {
         let (level, verb, reason) = match tally.outcome(profile) {
             Some(Outcome::Skipped(reason)) => (Level::Info, "skipped", reason),
             Some(Outcome::Failed(reason)) => (Level::Error, "failed", reason),
+            Some(Outcome::Held(reason)) => (Level::Info, "queued", reason),
             _ => return,
         };
         let label = tally.label();
@@ -825,14 +826,14 @@ impl Scripts {
         profile: &str,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
-        self.refuse_start_if_copy_pending("Start")?;
         if script_active(core, profile) {
             return Ok(());
         }
         let sel = Self::assignment(core, profile)
             .and_then(|a| sel_from_assignment(&a))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, false)
+        self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
+            .map_err(|error| error.to_string())
     }
 
     /// Operator Start on `profile`: its pending Browse selection, else the
@@ -846,7 +847,6 @@ impl Scripts {
         heading: Option<&script::ScriptSel>,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
-        self.refuse_start_if_copy_pending("Start")?;
         if script_active(core, profile) {
             return Err("script already active: stop it first".into());
         }
@@ -857,28 +857,34 @@ impl Scripts {
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| "no assignment".to_string())?;
-        self.start_sel(core, profile, sel, catalog_root, StartKind::Start, false)
+        self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
+            .map_err(|error| error.to_string())
     }
 
     fn start_sel<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        sel: script::ScriptSel,
+        sel: &script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<(), String> {
-        let from_queue = self.admit.leave(profile).is_some();
-        let tallied = tallied || from_queue;
+    ) -> Result<(), script::StartLoadError> {
         if core.play().is_none() {
-            self.credit_queue_outcome(from_queue, profile, Err("no play"));
-            return Err("no play".into());
+            return Err(script::StartLoadError::Refused("no play".into()));
         }
+        let tallied = tallied || self.admit.contains(profile);
         let result = self.dispatch_start(core, profile, sel, catalog_root, kind, tallied);
+        if matches!(&result, Err(script::StartLoadError::Waiting(_))) {
+            if let Err(error) = &result {
+                self.show(error.to_string());
+            }
+            return result;
+        }
+        let from_queue = self.admit.leave(profile).is_some();
         match &result {
             Ok(()) => self.credit_queue_outcome(from_queue, profile, Ok(())),
-            Err(error) => self.credit_queue_outcome(from_queue, profile, Err(error.as_str())),
+            Err(error) => self.credit_queue_outcome(from_queue, profile, Err(&error.to_string())),
         }
         result
     }
@@ -887,20 +893,21 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        sel: script::ScriptSel,
+        sel: &script::ScriptSel,
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), script::StartLoadError> {
         match sel {
             script::ScriptSel::Compiled(id) => {
-                let bag = self.compiled_bag(core, profile, id)?;
-                core.start_script(profile, ScriptStart::Compiled { id, bag }, None)
-                    .map_err(|e| e.to_string())?;
+                let bag = self
+                    .compiled_bag(core, profile, *id)
+                    .map_err(script::StartLoadError::Refused)?;
+                core.start_script(profile, ScriptStart::Compiled { id: *id, bag }, None)?;
                 self.starts.insert(
                     profile.to_string(),
                     PendingStart {
-                        card: PendingCard::Compiled(id),
+                        card: PendingCard::Compiled(*id),
                         kind,
                         tallied,
                     },
@@ -910,26 +917,30 @@ impl Scripts {
             script::ScriptSel::Loaded(source, lookup) => {
                 // A saved catalog assignment restored at launch names a card
                 // before any Browse/Load has filled the catalog.
-                if source == script::ScriptSource::Catalog {
+                if *source == script::ScriptSource::Catalog {
                     self.fill_catalog_once(catalog_root);
                 }
-                let card = self.js.get(source, &lookup).ok_or_else(|| match source {
-                    script::ScriptSource::File => format!("missing file: {lookup}"),
-                    _ => format!("unavailable: {lookup}"),
+                let card = self.js.get(*source, lookup).ok_or_else(|| {
+                    script::StartLoadError::Refused(match source {
+                        script::ScriptSource::File => format!("missing file: {lookup}"),
+                        _ => format!("unavailable: {lookup}"),
+                    })
                 })?;
                 if let Some(reason) = &card.unloadable {
-                    return Err(format!("unloadable import: {reason}"));
+                    return Err(script::StartLoadError::Refused(format!(
+                        "unloadable import: {reason}"
+                    )));
                 }
-                self.js.ensure_js(source, &lookup)?;
-                let card = self
-                    .js
-                    .get(source, &lookup)
-                    .cloned()
-                    .ok_or_else(|| format!("no loaded script: {lookup}"))?;
+                self.js
+                    .ensure_js(*source, lookup)
+                    .map_err(script::StartLoadError::Refused)?;
+                let card = self.js.get(*source, lookup).cloned().ok_or_else(|| {
+                    script::StartLoadError::Refused(format!("no loaded script: {lookup}"))
+                })?;
                 let bag = self.merged_profile_bag(
                     core,
                     profile,
-                    source,
+                    *source,
                     &card.name,
                     &card.path,
                     &card.settings_schema,
@@ -945,7 +956,8 @@ impl Scripts {
                         shape: None,
                         api_family: Some(card.api_family.as_str().into()),
                     },
-                )?;
+                )
+                .map_err(script::StartLoadError::Refused)?;
                 let start = ScriptStart::Load {
                     js: card.js.clone(),
                     shape: card.shape,
@@ -953,7 +965,13 @@ impl Scripts {
                     siblings,
                 };
                 if let Err(e) = core.start_script(profile, start, Some(card.identity_key())) {
-                    return self.js.record_start_result(&card, Err(e));
+                    if matches!(e, script::StartLoadError::Waiting(_)) {
+                        return Err(e);
+                    }
+                    return self
+                        .js
+                        .record_start_result(&card, Err(e))
+                        .map_err(script::StartLoadError::Refused);
                 }
                 self.starts.insert(
                     profile.to_string(),
@@ -977,9 +995,6 @@ impl Scripts {
         let members = core.members().to_vec();
         if members.is_empty() {
             self.show("Start all: no wall members");
-            return;
-        }
-        if self.block_start_if_copy_pending("Start all") {
             return;
         }
         if let Some(root) = catalog_root {
@@ -1090,30 +1105,6 @@ impl Scripts {
     /// report when that came later.
     pub fn last_bulk_report(&self) -> Option<&str> {
         self.last_bulk_report.as_deref()
-    }
-
-    /// Start must not run while a settings copy is waiting for Apply or
-    /// Cancel: the frozen bags have not been written yet. Publishes the
-    /// block as the bulk report and returns true when Start must stop.
-    pub fn block_start_if_copy_pending(&mut self, label: &str) -> bool {
-        self.refuse_start_if_copy_pending(label).is_err()
-    }
-
-    fn copy_pending_block(&self, label: &str) -> Option<String> {
-        let scope = self.prepared_settings_sync()?;
-        Some(format!(
-            "{label}: blocked, a settings copy from {} is waiting for Apply or Cancel",
-            scope.source
-        ))
-    }
-
-    fn refuse_start_if_copy_pending(&mut self, label: &str) -> Result<(), String> {
-        let Some(report) = self.copy_pending_block(label) else {
-            return Ok(());
-        };
-        self.last_bulk_report = Some(report.clone());
-        self.show(report.clone());
-        Err(report)
     }
 
     // ---- per-frame settlement ------------------------------------------
@@ -1298,13 +1289,19 @@ impl Scripts {
         match self.start_sel(
             core,
             &entry.profile,
-            entry.sel,
+            &entry.sel,
             catalog.as_deref(),
             StartKind::Start,
             true,
         ) {
             Ok(()) => self.credit_started(&entry.profile),
-            Err(error) => self.credit_failed(&entry.profile, &error),
+            Err(script::StartLoadError::Waiting(reason)) => {
+                self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
+                self.admit.return_head(entry);
+                self.publish_bulk();
+                return true;
+            }
+            Err(error) => self.credit_failed(&entry.profile, &error.to_string()),
         }
         true
     }

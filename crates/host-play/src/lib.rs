@@ -254,6 +254,8 @@ pub struct Play {
     /// [`Play::script_start`] family. Keyed by username (the identity the
     /// status rows and arms use).
     scripts: ScriptWall,
+    /// Shared by operator and slot-thread starts; the copy scope owns its token.
+    script_start_hold: Arc<Mutex<std::sync::Weak<String>>>,
     /// Same-process, same-world BroadcastChannel broker for paired parties.
     channels: script_channels::ChannelBroker,
     /// Per-slot cheat commands the panel queued; each slot thread runs

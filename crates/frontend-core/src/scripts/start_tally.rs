@@ -14,6 +14,7 @@ const LISTED: usize = 6;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Outcome {
     Queued,
+    Held(String),
     Started,
     Skipped(String),
     Failed(String),
@@ -46,7 +47,7 @@ impl StartTally {
     pub fn waiting(&self) -> bool {
         self.bots
             .iter()
-            .any(|(_, outcome)| *outcome == Outcome::Queued)
+            .any(|(_, outcome)| matches!(outcome, Outcome::Queued | Outcome::Held(_)))
     }
 
     pub fn outcome(&self, profile: &str) -> Option<&Outcome> {
@@ -81,7 +82,7 @@ impl StartTally {
         let (mut started, mut queued, mut skipped, mut failed) = (0, 0, 0, 0);
         for (_, outcome) in &self.bots {
             match outcome {
-                Outcome::Queued => queued += 1,
+                Outcome::Queued | Outcome::Held(_) => queued += 1,
                 Outcome::Started => started += 1,
                 Outcome::Skipped(_) => skipped += 1,
                 Outcome::Failed(_) => failed += 1,
@@ -110,6 +111,12 @@ impl StartTally {
         }) {
             let _ = write!(text, "{sep}{name}: {reason}");
             sep = ", ";
+        }
+        for (_, reason) in self.reasons(|o| match o {
+            Outcome::Held(reason) => Some(reason),
+            _ => None,
+        }) {
+            let _ = write!(text, "; {reason}");
         }
         text
     }

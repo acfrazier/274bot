@@ -28,6 +28,8 @@ pub struct PendingCatalogStart {
     /// Start was accepted; retain the card so a later Stop/Start can reuse it.
     pub started: bool,
     pub settled: bool,
+    /// A temporary dispatch refusal, retained separately from setup failure.
+    pub waiting_reason: Option<String>,
     /// Fleet-only hold after the earlier stashed members started (the
     /// JiveKQ leader lets its peers prove their missing-peer bank hold).
     delay_after_peers: Option<Duration>,
@@ -54,6 +56,7 @@ impl PendingCatalogStart {
             compiled: None,
             started: false,
             settled: false,
+            waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
         }
@@ -82,8 +85,16 @@ impl PendingCatalogStart {
             compiled: Some(id),
             started: false,
             settled: false,
+            waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
+        }
+    }
+
+    fn waiting(&mut self, reason: String) {
+        if self.waiting_reason.as_ref() != Some(&reason) {
+            eprintln!("[live] Start held: {reason}");
+            self.waiting_reason = Some(reason);
         }
     }
 
@@ -185,45 +196,29 @@ pub struct StartArming {
     pub pair: Option<PairWatch>,
 }
 
-/// Freeze the already-published prepared observation immediately before the
-/// actual isolate Start call. A successful Start cannot overtake its baseline.
-pub fn start_catalog_with_core<F>(watch: &CoreWatch, slot: &str, start: F) -> Result<(), String>
-where
-    F: FnOnce() -> Result<(), String>,
-{
-    watch.begin_start(slot)?;
-    let result = start();
-    if let Err(error) = &result {
-        watch.fail_start(slot, error.clone());
-    }
-    result
-}
-
 fn start_stashed_catalog_card(
     handle: &ScriptStartHandle,
     card: &PendingCatalogStart,
-) -> Result<(), String> {
-    if let Some(id) = card.compiled {
-        return handle.start_compiled(&card.slot, id, card.bag.clone().unwrap_or_default());
-    }
-    let result = if card.loadouts.is_empty() {
-        handle.start_load(
-            &card.slot,
-            card.js.clone(),
-            card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-        )
-    } else {
-        handle.start_load_with_loadouts(
-            &card.slot,
-            card.js.clone(),
-            card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-            &card.loadouts,
-        )
+    before_start: impl FnOnce() -> Result<(), String>,
+) -> Result<(), script::StartLoadError> {
+    use crate::play_scripts::StartRequest;
+    let request = || {
+        if let Some(id) = card.compiled {
+            StartRequest::Compiled {
+                id,
+                bag: card.bag.clone().unwrap_or_default(),
+            }
+        } else {
+            StartRequest::Load {
+                source: card.js.clone(),
+                shape: card.shape,
+                bag: card.bag.clone(),
+                siblings: card.siblings.clone(),
+                loadouts: (!card.loadouts.is_empty()).then_some(card.loadouts.as_slice()),
+            }
+        }
     };
+    let result = handle.dispatch_start(&card.slot, request, before_start);
     if result.is_ok() && crate::debug_enabled() {
         let fixture_names = card
             .loadouts
@@ -281,6 +276,7 @@ pub fn fire_pending_catalog_start(
             card.started = false;
             card.settled = false;
             card.delay_started = None;
+            card.waiting_reason = None;
         }
         return StartScriptPump::Continue;
     }
@@ -308,26 +304,35 @@ pub fn fire_pending_catalog_start(
             pair.fail_start("pair core requires actual scripts on both visible slots");
             return StartScriptPump::Hold;
         }
-        match pair.barrier() {
-            StartBarrier::Wait => return StartScriptPump::Hold,
-            StartBarrier::RejectStartedWhileUnready => {
-                pair.fail_start("pair core Start while the counterpart is unready");
+        if pending.iter().all(|card| !card.started) {
+            match pair.barrier() {
+                StartBarrier::Wait => return StartScriptPump::Hold,
+                StartBarrier::RejectStartedWhileUnready => {
+                    pair.fail_start("pair core Start while the counterpart is unready");
+                    return StartScriptPump::Hold;
+                }
+                StartBarrier::StartBoth => {}
+            }
+        }
+        for index in 0..pending.len() {
+            if pending[index].started {
+                continue;
+            }
+            if let Err(error) = start_stashed_catalog_card(handle, &pending[index], || {
+                if index == 0 {
+                    pair.begin_shared_start(&pending[0].slot, &pending[1].slot)
+                } else {
+                    Ok(())
+                }
+            }) {
+                match error {
+                    script::StartLoadError::Waiting(reason) => pending[index].waiting(reason),
+                    other => pair.fail_start(other.to_string()),
+                }
                 return StartScriptPump::Hold;
             }
-            StartBarrier::StartBoth => {}
-        }
-        if pair
-            .begin_shared_start(&pending[0].slot, &pending[1].slot)
-            .is_err()
-        {
-            return StartScriptPump::Hold;
-        }
-        for card in pending.iter_mut() {
-            if let Err(error) = start_stashed_catalog_card(handle, card) {
-                pair.fail_start(error);
-                return StartScriptPump::Hold;
-            }
-            card.started = true;
+            pending[index].started = true;
+            pending[index].waiting_reason = None;
         }
         return StartScriptPump::Continue;
     }
@@ -336,15 +341,21 @@ pub fn fire_pending_catalog_start(
         if card.delaying(Instant::now()) {
             return StartScriptPump::Hold;
         }
-        if let Err(error) = start_catalog_with_core(&watch, &card.slot, || {
-            start_stashed_catalog_card(handle, card)
-        }) {
+        if let Err(error) =
+            start_stashed_catalog_card(handle, card, || watch.begin_start(&card.slot))
+        {
+            if let script::StartLoadError::Waiting(reason) = error {
+                card.waiting(reason);
+                return StartScriptPump::Hold;
+            }
+            watch.fail_start(&card.slot, error.to_string());
             if card.compiled.is_some() {
                 return StartScriptPump::CompiledFailed(format!("start failed: {error}"));
             }
             return StartScriptPump::Hold;
         }
         card.started = true;
+        card.waiting_reason = None;
     }
     StartScriptPump::Continue
 }

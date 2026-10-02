@@ -165,8 +165,68 @@ impl Fixture {
     fn run_has_bag(&self, name: &str, bag: &Map<String, Value>) -> bool {
         let play = self.core.play().unwrap();
         let identity = play.script_source_identity(name).unwrap();
+        if let Some(run) = play.script_native_run(name) {
+            let id = script::compiled_id(identity.strip_prefix("compiled:").unwrap()).unwrap();
+            let revision = play.script_native_settings_revision(name).unwrap() + 1;
+            let config = play
+                .script_prepare_config(id, revision, std::sync::Arc::new(bag.clone()))
+                .unwrap()
+                .join()
+                .unwrap()
+                .unwrap();
+            return play.script_configure_compiled(name, config, run)
+                == script::CompiledDelivery::Unchanged;
+        }
         !play.script_post_settings_fenced(name, bag, &identity, self.generation(name))
     }
+}
+
+#[test]
+fn newer_native_edit_keeps_the_copy_drafts_assignment() {
+    let mut f = native_fixture("copy-draft-assignment", &["alice", "bob"]);
+    let id = script::CompiledId("Gatherer");
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    f.scripts
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            id,
+            "targetPreference",
+            json!("Nearest"),
+        )
+        .unwrap();
+    f.core.flush_writes();
+    prepare_apply_settings_marked(
+        &mark_uids(&[2]),
+        &f.core,
+        &mut f.scripts,
+        "alice",
+        &script::ScriptSel::Compiled(id),
+    )
+    .unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    // The editor composes over the accepted copy draft before preparation
+    // settlement. Its newer same-card preparation supersedes the first one.
+    f.scripts
+        .set_compiled_setting(&mut f.core, "bob", id, "targetPreference", json!("Nearest"))
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
+    assert_eq!(
+        disk.get("bob").unwrap().settings.script_assignment,
+        Some(script::compiled_assignment(id))
+    );
+    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    assert_eq!(want["targetPreference"], "Nearest");
+    f.start_running("bob");
+    assert!(
+        f.run_has_bag("bob", &want),
+        "the composed draft's settings reach the assigned run"
+    );
 }
 
 fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
@@ -359,6 +419,164 @@ fn focused_and_profile_start_wait_for_pending_copy() {
         .unwrap();
     f.settle();
     f.wait_state("bob", script::RunState::Running);
+}
+
+#[test]
+fn queued_start_waits_for_copy_confirmation() {
+    for apply in [false, true] {
+        let mut f = fixture(&format!("queued-copy-{apply}"), &["alice", "bob", "carol"]);
+        let card = f.card("thiever.ts", "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n");
+        for name in ["alice", "bob", "carol"] {
+            f.assign(name, &card);
+        }
+        f.set("alice", &card, "target", json!("Knight of Ardougne"));
+        f.core.flush_writes();
+        f.scripts.start_all(&mut f.core, None);
+        let place = f.scripts.start_queue_place("bob").expect("Bob queued");
+        assert_eq!(f.state("bob"), script::RunState::Idle);
+        f.prepare("alice", &card);
+        for _ in 0..3 {
+            f.core.poll();
+            f.scripts.poll(&mut f.core);
+            assert_eq!(f.state("bob"), script::RunState::Idle);
+            assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+            assert_eq!(f.state("carol"), script::RunState::Idle);
+        }
+        assert!(f.scripts.prepared_settings_sync().is_some());
+        assert!(shown_bulk(&f).contains("bob:") && shown_bulk(&f).contains("settings copy"));
+        if apply {
+            f.scripts.apply_settings_sync(&mut f.core).unwrap();
+            f.core.flush_writes();
+        } else {
+            f.scripts.cancel_settings_sync();
+        }
+        f.settle();
+        for name in ["bob", "carol"] {
+            f.wait_state(name, script::RunState::Running);
+            let want = f.scripts.merged_profile_bag(
+                &mut f.core,
+                name,
+                card.source,
+                &card.name,
+                &card.path,
+                &card.settings_schema,
+            );
+            assert_eq!(
+                want["target"],
+                json!(if apply { "Knight of Ardougne" } else { "Guard" })
+            );
+            assert!(
+                f.run_has_bag(name, &want),
+                "{name} must consume the resolved bag"
+            );
+        }
+    }
+}
+
+#[test]
+fn scenario_start_script_waits_for_copy_confirmation() {
+    use host_play::live_start::{
+        fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
+    };
+    for loadouts in [false, true] {
+        let mut f = fixture(&format!("scenario-copy-{loadouts}"), &["alice", "bob"]);
+        let card = f.card("thiever.ts", "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n");
+        f.assign("alice", &card);
+        f.assign("bob", &card);
+        f.set("alice", &card, "target", json!("Knight of Ardougne"));
+        f.core.flush_writes();
+        f.prepare("alice", &card);
+        let handle = f.core.play().unwrap().script_start_handle();
+        let arming = || StartArming {
+            handle: Some(handle.clone()),
+            ..Default::default()
+        };
+        let bag = bag(&[("target", json!("Guard"))]);
+        let mut pending = vec![PendingCatalogStart::load(
+            "bob",
+            card.js.clone(),
+            card.shape,
+            Some(bag.clone()),
+            Vec::new(),
+            if loadouts {
+                vec![script::Loadout::new("fixture")]
+            } else {
+                Vec::new()
+            },
+        )];
+        for _ in 0..3 {
+            assert_eq!(
+                fire_pending_catalog_start(&mut pending, true, false, arming),
+                StartScriptPump::Hold
+            );
+            assert!(!pending[0].started);
+            assert_eq!(f.state("bob"), script::RunState::Idle);
+        }
+        assert!(pending[0].waiting_reason.as_ref().is_some_and(
+            |reason| reason.contains("bob") && reason.contains("settings copy confirmation")
+        ));
+        assert!(f.scripts.prepared_settings_sync().is_some());
+        f.scripts.cancel_settings_sync();
+        assert_eq!(
+            fire_pending_catalog_start(&mut pending, true, false, arming),
+            StartScriptPump::Continue
+        );
+        f.wait_state("bob", script::RunState::Running);
+        f.core
+            .play()
+            .unwrap()
+            .script_attach_identity("bob", card.identity_key());
+        assert!(f.run_has_bag("bob", &bag));
+    }
+}
+
+#[test]
+fn compiled_scenario_start_script_holds_without_failing_preparation() {
+    use host_play::live_start::{
+        fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
+    };
+    let mut f = native_fixture("compiled-scenario-copy", &["alice", "bob"]);
+    let id = script::CompiledId("Sherlock");
+    for name in ["alice", "bob"] {
+        start_sherlock(&mut f, name);
+        f.core.stop_script(name);
+        f.wait_state(name, script::RunState::Idle);
+    }
+    f.scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .unwrap();
+    let handle = f.core.play().unwrap().script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        ..Default::default()
+    };
+    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    let mut pending = vec![PendingCatalogStart::compiled("bob", id, want.clone())];
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Hold
+    );
+    assert!(!pending[0].started);
+    assert_eq!(f.state("bob"), script::RunState::Idle);
+    f.scripts.cancel_settings_sync();
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match fire_pending_catalog_start(&mut pending, true, false, arming) {
+            StartScriptPump::CompiledRunning => break,
+            StartScriptPump::CompiledFailed(error) => panic!("{error}"),
+            _ => assert!(
+                Instant::now() < deadline,
+                "compiled scenario did not settle"
+            ),
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(f.state("bob"), script::RunState::Running);
+    assert!(f.run_has_bag("bob", &want));
 }
 
 /// Apply to all shares the prepare path: freezing it for a newly assigned
@@ -661,7 +879,7 @@ fn start_all_and_stop_all_cover_every_member() {
         .start_sel(
             &mut f.core,
             "bob",
-            sel,
+            &sel,
             None,
             super::StartKind::Reload,
             false,
@@ -1014,7 +1232,7 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
         .start_sel(
             &mut f.core,
             name,
-            script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            &script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
             false,
@@ -1122,7 +1340,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
         .start_sel(
             &mut f.core,
             "alice",
-            script::ScriptSel::Compiled(id),
+            &script::ScriptSel::Compiled(id),
             None,
             super::StartKind::Start,
             false,
@@ -1288,7 +1506,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
                 .start_sel(
                     &mut f.core,
                     "alice",
-                    script::ScriptSel::Compiled(id),
+                    &script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
                     false,
@@ -1341,7 +1559,7 @@ fn valid_native_draft_survives_unrelated_writes() {
                 .start_sel(
                     &mut f.core,
                     "alice",
-                    script::ScriptSel::Compiled(id),
+                    &script::ScriptSel::Compiled(id),
                     None,
                     super::StartKind::Start,
                     false,
@@ -1530,7 +1748,7 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
         .start_sel(
             &mut f.core,
             "alice",
-            script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            &script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
             None,
             super::StartKind::Start,
             false,
