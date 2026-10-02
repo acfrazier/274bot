@@ -388,6 +388,13 @@ fixed step limit. Live probes read the current player's cached flood ranks;
 packed probes borrow collision data with bounded, call-local scratch. This
 adds no retained per-bot state and does not widen the Chebyshev margin or
 weaken wall checks where collision is observable.
+The planner clamps both the goal box and its reach-work radius to 104.
+It classifies packed candidates in batches, sharing directed collision steps
+and reach-rank bounds; shortest path distance alone is not the arrival rule.
+Only undecided ranks need an ordered forward probe, preserving the shared
+predicate even for asymmetric walls or paths that leave the cached window.
+Failure diagnostics reuse the same computed goal list rather than filtering
+it a second time.
 For an identified loc in scene with a known footprint, distance is measured
 to its full rotated footprint rectangle, not its south-west anchor. A legal
 stand must fit that margin and pass the shared live wall/force-approach rule.
