@@ -114,8 +114,8 @@ pub(crate) fn is_revision_fact_option_ident(ident: &str) -> bool {
             | "BOLTS"
             | "AXES"
             | "MELEE_WEAPONS"
-            | "RANGED_WEAPONS"
             | "ROCK_CRAB_RANGED_WEAPONS"
+            | "FOOD_OPTIONS"
             | "DROP_DB"
     )
 }

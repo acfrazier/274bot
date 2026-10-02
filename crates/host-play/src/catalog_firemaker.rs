@@ -34,12 +34,12 @@ pub struct FiremakerSpec {
 pub fn firemaker_spec(case: CoreCase) -> Option<FiremakerSpec> {
     match case {
         CoreCase::Firemaker => Some(FiremakerSpec {
-            log: LOGS_ID,
-            wrong: OAK_LOGS_ID,
+            log: catalog_item_id("logs"),
+            wrong: catalog_item_id("oak_logs"),
         }),
         CoreCase::FiremakerOak => Some(FiremakerSpec {
-            log: OAK_LOGS_ID,
-            wrong: LOGS_ID,
+            log: catalog_item_id("oak_logs"),
+            wrong: catalog_item_id("logs"),
         }),
         _ => None,
     }
@@ -51,7 +51,7 @@ impl FiremakerCycle {
         self.wrong_log |= now.item_id(wrong) > 0 || now.bank_item_id(wrong) > 0;
         if self.withdrawn.is_none()
             && now.item_id(log) >= 1
-            && now.item_id(TINDERBOX_ID) >= 1
+            && now.item_id(catalog_item_id("tinderbox")) >= 1
             && baseline.item_id(log) == 0
             && !fire_in_varrock_east_plot(now)
         {
@@ -72,7 +72,7 @@ impl FiremakerCycle {
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
             && now.item_id(log) == 0
-            && now.item_id(TINDERBOX_ID) >= 1
+            && now.item_id(catalog_item_id("tinderbox")) >= 1
         {
             self.deposited = Some(now.clone());
         }
