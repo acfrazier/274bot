@@ -22175,7 +22175,7 @@ fn real_v13_batched_arrival_matches_every_forward_predicate() {
         .map(|&(target, radius)| check(target, radius))
         .sum();
     assert_eq!(reviewed, 4_059, "the reviewer's complete real-pack corpus");
-    let mut state = 0x274_289_02_u64;
+    let mut state = 0x2742_8902_u64;
     let mut random = || {
         state ^= state << 13;
         state ^= state >> 7;

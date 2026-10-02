@@ -1451,7 +1451,7 @@ fn is_arrived_bounds_exact_and_solid_reach_by_the_requested_region() {
 
 #[test]
 fn batched_arrival_preserves_directed_steps_and_rank_cutoffs() {
-    let mut state = 0x274_02_u64;
+    let mut state = 0x0002_7402_u64;
     let mut random = || {
         state ^= state << 13;
         state ^= state >> 7;
