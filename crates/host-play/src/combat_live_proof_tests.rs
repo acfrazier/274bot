@@ -25,7 +25,7 @@ use vault::{Profile, ProfileSettings};
 use super::combat_proof::{self, CaptureRegistration, CombatCapture};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/COMBAT-S3A-2";
+const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/COMBAT-S3A-3";
 const IMP_START: WorldTile = WorldTile {
     x: 2632,
     z: 3222,
@@ -88,6 +88,13 @@ const M5_ITEMS: &[(&str, i32)] = &[("bronze_scimitar", 1)];
 const M6_ITEMS: &[(&str, i32)] = &[
     ("rune_scimitar", 1),
     ("lobster", 6),
+    ("tbwt_cooked_karambwan", 4),
+];
+// S3:583 permits re-staging exhausted food; 27 foods plus the weapon fit
+// the 28-slot inventory. Keep the original seed for the abort observation.
+const M6_RESERVE_ITEMS: &[(&str, i32)] = &[
+    ("rune_scimitar", 1),
+    ("lobster", 23),
     ("tbwt_cooked_karambwan", 4),
 ];
 
@@ -166,7 +173,8 @@ impl Case {
             Self::M3 => M3_ITEMS,
             Self::M4 => M4_ITEMS,
             Self::M5 => M5_ITEMS,
-            Self::M6 => M6_ITEMS,
+            Self::M6 if std::env::var_os("BOT_COMBAT_M6_ORIGINAL_FOOD").is_some() => M6_ITEMS,
+            Self::M6 => M6_RESERVE_ITEMS,
         }
     }
 
@@ -484,7 +492,7 @@ impl EvidenceWriter {
             Value::Null
         };
         let mut receipt = json!({
-            "proof": "COMBAT-S3A-1",
+            "proof": "COMBAT-S3A-3",
             "case": self.case.key(),
             "scenario": self.case.label(),
             "outcome": self.outcome,
@@ -505,6 +513,14 @@ impl EvidenceWriter {
             "maze_attack_owner_live_after": capture.maze_owner_live_after,
             "m3_timing": m3_timing,
             "m6_combo": m6_combo,
+            "warlord_first_open_hitbar": capture.frames.iter().find_map(|frame| {
+                frame["nearby_npcs"].as_array()?.iter().find(|npc| {
+                    npc["type"] == 477 && integer(npc, "total_health").is_some_and(|hp| hp > 0)
+                }).map(|npc| json!({
+                    "tick": frame["tick"], "health": npc["health"],
+                    "total_health": npc["total_health"], "index": npc["index"],
+                }))
+            }),
             "m4_conditional_eat": m4_eat,
             "m5_clear_prayers_before_next_operation": m5_clear,
             "m1_content_deadline": m1_deadline,
@@ -888,7 +904,13 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                     return Some("M2 did not seed Prayer26, lobster×6, prayer restore×2, and Super attack(4)×1".into());
                 }
             } else if stat_effective(baseline, "prayer") != Some(1)
-                || item_count(baseline, LOBSTER_ID) != if case == Case::M6 { 6 } else { 20 }
+                // Both explicitly recorded seeds are replayable; no other
+                // quantity is admitted. S3:583 authorizes the reserve seed.
+                || if case == Case::M6 {
+                    !matches!(item_count(baseline, LOBSTER_ID), 6 | 23)
+                } else {
+                    item_count(baseline, LOBSTER_ID) != 20
+                }
                 || (case == Case::M6 && item_count(baseline, COOKED_KARAMBWAN_ID) != 4)
                 || item_count(baseline, PRAYER_POTION_4_ID) != 0
                 || item_count(baseline, SUPER_ATTACK_4_ID) != 0
@@ -955,10 +977,37 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
 // This proves only the production hand-in, never natural bead acquisition.
 // wizard_mizgog.rs2:3-19,39-52 requires quest start then a second talk.
 fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
-    capture
-        .start_baseline
-        .as_ref()
-        .is_some_and(|baseline| IMP_BEADS.iter().all(|id| item_count(baseline, *id) == 1))
+    // wizard_mizgog.rs2:1-19,39-52: starting the quest and handing in
+    // beads require separate talks, with dialogue between and after them.
+    let mut talks = capture.actions.iter().enumerate().filter(|(_, action)| {
+        action["kind"] == "interaction"
+            && action["request"]["op"] == "npc"
+            && action["request"]["name"] == "Wizard Mizgog"
+            && action["request"]["action"] == "Talk-to"
+            && action_wire_valid(action)
+    });
+    let dialogue = talks
+        .next()
+        .zip(talks.next())
+        .is_some_and(|((first, _), (second, _))| {
+            let start = &capture.actions[first + 1..second];
+            let hand_in = &capture.actions[second + 1..];
+            start
+                .iter()
+                .any(|row| row["request"]["debug"] == "ContinueDialog")
+                && start
+                    .iter()
+                    .any(|row| row["request"]["debug"] == "Answer { option: 1 }")
+                && hand_in
+                    .iter()
+                    .any(|row| row["request"]["debug"] == "ContinueDialog")
+        });
+    dialogue
+        && native_interactions_wire_valid(capture)
+        && capture
+            .start_baseline
+            .as_ref()
+            .is_some_and(|baseline| IMP_BEADS.iter().all(|id| item_count(baseline, *id) == 1))
         && capture
             .statuses
             .iter()
@@ -2998,6 +3047,7 @@ fn run_case(case: Case) {
 
     let deadline = Instant::now() + case.timeout();
     let mut terminal_error = None;
+    let mut abort_observation_end = None;
     loop {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status);
@@ -3008,7 +3058,11 @@ fn run_case(case: Case) {
             writer.outcome = "FAIL".to_owned();
             break;
         }
-        if let Some(reason) = capture_snapshot.invalid_reason.clone() {
+        if let Some(reason) = capture_snapshot
+            .invalid_reason
+            .clone()
+            .filter(|_| abort_observation_end.is_none())
+        {
             terminal_error = Some(reason);
             writer.outcome = "INVALID".to_owned();
             break;
@@ -3027,11 +3081,21 @@ fn run_case(case: Case) {
             break;
         }
         if let Some(reason) = case_invalid_reason(case, &capture_snapshot) {
+            let tick = capture_snapshot
+                .frames
+                .last()
+                .and_then(|frame| integer(frame, "tick"));
+            let end = abort_observation_end.get_or_insert_with(|| tick.unwrap_or(0) + 30);
+            let observed = tick.is_some_and(|tick| tick >= *end);
             drop(capture_snapshot);
             combat_proof::mark_invalid(&account, reason.clone());
             terminal_error = Some(reason);
             writer.outcome = "INVALID".to_owned();
-            break;
+            if observed || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+            continue;
         }
         drop(capture_snapshot);
         let state = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -3063,7 +3127,10 @@ fn run_case(case: Case) {
     }
 
     let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
-    if capture_snapshot.invalid_reason.is_some() {
+    if capture_has_death(&capture_snapshot) {
+        writer.outcome = "FAIL".to_owned();
+        writer.error = Some("death observed during the measured window".into());
+    } else if capture_snapshot.invalid_reason.is_some() {
         writer.outcome = if case == Case::M6
             && capture_snapshot
                 .invalid_reason

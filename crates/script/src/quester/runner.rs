@@ -1463,56 +1463,217 @@ mod tests {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
         }));
+    }
 
-        // The terminal report must survive a failing family poll, not just an
-        // Ok StepOutcome. Otherwise a parked NoFood abort disappears from UI
-        // and proof consumers before they can distinguish it from a timeout.
-        struct AbortedStep(StepOutcome);
-        impl StepRun for AbortedStep {
-            fn poll(
-                &mut self,
-                _: &mut StepContext<'_, '_>,
-            ) -> Poll<Result<StepOutcome, ActionError>> {
-                Poll::Ready(Err(ActionError::Blocked("combat aborted".into())))
+    #[test]
+    fn no_food_abort_walks_then_parks_with_receipt_without_advancing() {
+        use crate::native::{HostEffect, WalkEnd, WalkReceipt};
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::ClientRevision;
+        use api::snapshot::{GameSnapshot, NpcView};
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
             }
-            fn cancel(&mut self, _: &mut crate::native::NativeActions) {}
-            fn in_flight_outcome(&self) -> Option<&StepOutcome> {
-                Some(&self.0)
-            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
         }
-        let aborted = CombatReport {
-            end: CombatEnd::Aborted(crate::combat::AbortReason::Unprotected(
-                crate::combat::Unprotected::NoFood,
-            )),
-            ..report
+
+        fn scene(here: api::WorldTile, npc_tile: api::WorldTile, npc_type: i32) -> GameSnapshot {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_local_player(super::super::families::tests::local_player(here));
+            snapshot.seed_npcs(vec![NpcView {
+                index: 0,
+                r#type: Some(usize::try_from(npc_type).unwrap()),
+                name: Some("Khazard warlord".into()),
+                actions: vec![Some("Attack".into())],
+                tile: npc_tile,
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 40,
+                total_health: 40,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: true,
+                level: 0,
+                size: 1,
+                network: npc_tile,
+                x: npc_tile.x,
+                z: npc_tile.z,
+                yaw: 0,
+            }]);
+            snapshot
+        }
+
+        fn chebyshev(a: api::WorldTile, b: api::WorldTile) -> i32 {
+            (a.x - b.x).abs().max((a.z - b.z).abs())
+        }
+
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let path = super::super::compile::compile_path(
+            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+            &data,
+            &quests,
+        )
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
         };
-        script.last_combat = None;
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        script.stage = Some(FactKey::new("imp:0"));
         script.needs_read = false;
         script.prayer_cleanup_pending = false;
-        script.step = Some(Box::new(AbortedStep(StepOutcome {
-            progress: None,
-            evidence: aborted.evidence,
-            receipt: Some(Arc::new(CombatReceipt {
-                report: aborted,
-                target_gone_restarts: 0,
-            })),
-        })));
-        let (_, snapshot) = fixture();
-        let cursor = (script.seq_index, script.step_index);
-        super::super::families::tests::with_tick_output(
+
+        let here = api::WorldTile {
+            x: 2458,
+            z: 3303,
+            level: 0,
+        };
+        let npc_tile = api::WorldTile {
+            x: 2457,
+            z: 3302,
+            level: 0,
+        };
+        let stand = npc_tile;
+        let warlord = data.npc_by_config("khazard_warlord").unwrap();
+        let snapshot = scene(here, npc_tile, warlord.id);
+        let mut ledger = None;
+        let mut output = Capture::default();
+        let step = super::super::families::tests::with_tick_output(
             &snapshot,
-            &mut None,
+            &mut ledger,
             24,
             &mut output,
-            |tick| assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Blocked(_))),
+            |tick| {
+                let required_after = tick.cx.evidence();
+                let mut step_cx = StepContext {
+                    tick,
+                    quests: &script.quests,
+                    progress: &[],
+                    required_after,
+                    bank: &script.bank,
+                    banks: &script.banks,
+                };
+                super::super::families::combat::tests::no_food_abort_run_for_runner(
+                    &mut step_cx,
+                    stand,
+                )
+            },
         );
-        assert!(script.step.is_none());
+        script.step = Some(step);
+        let cursor = (script.seq_index, script.step_index);
+
+        let (request_id, destination) = {
+            let action = ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+                .expect("the CombatRun must issue its abort walk");
+            let HostEffect::Walk(request) = &action.effect else {
+                unreachable!();
+            };
+            (action.request_id.get(), request.target)
+        };
+        assert_ne!(destination, stand, "the unsafe boss stand is not an exit");
+        assert!(
+            chebyshev(destination, npc_tile) > warlord.maxrange + warlord.attackrange,
+            "the abort walk must leave the warlord's spawn chase envelope"
+        );
+
+        let before_arrival = super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            25,
+            &mut output,
+            |tick| script.tick(tick).unwrap(),
+        );
+        assert!(matches!(before_arrival, ScriptFlow::Continue));
+        assert!(!script.parked, "do not park before the abort walk settles");
         assert_eq!((script.seq_index, script.step_index), cursor);
-        assert!(output.0.last().unwrap().fields.iter().any(|field| {
-            field.key == "combat_end"
-                && matches!(&field.value, StatusValue::Text(value)
-                    if value.as_ref() == "Aborted(Unprotected(NoFood))")
-        }));
+
+        let arrived = scene(destination, npc_tile, warlord.id);
+        ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run,
+                tick: 26,
+                sequence: 26,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+        });
+        assert!(matches!(
+            super::super::families::tests::with_tick_output(
+                &arrived,
+                &mut ledger,
+                26,
+                &mut output,
+                |tick| script.tick(tick).unwrap()
+            ),
+            ScriptFlow::Blocked(_)
+        ));
+        assert!(script.parked);
+        assert!(script.step.is_none());
+        assert_eq!(
+            (script.seq_index, script.step_index),
+            cursor,
+            "the failed combat step must not advance after its walk"
+        );
+        let retained = script
+            .last_combat
+            .as_ref()
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+            .expect("the runner must retain the terminal combat receipt");
+        assert_eq!(
+            retained.report.end,
+            crate::combat::CombatEnd::Aborted(crate::combat::AbortReason::Unprotected(
+                crate::combat::Unprotected::NoFood
+            ))
+        );
+        assert_eq!(retained.report.evidence.tick, 12);
+        assert_eq!(retained.report.engaged.map(|actor| actor.index), Some(0));
+        assert_eq!(retained.report.engaged_npc_type, warlord.id);
+        assert!(
+            output.0.last().unwrap().fields.iter().any(|field| {
+                field.key == "combat_end"
+                    && matches!(&field.value, StatusValue::Text(value)
+                        if value.as_ref() == "Aborted(Unprotected(NoFood))")
+            }),
+            "the original NoFood end must remain visible after the walk"
+        );
+        assert_eq!(
+            ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "the aborted CombatRun must not restart combat after walking"
+        );
     }
 
     #[test]

@@ -447,6 +447,38 @@ fn combat_test_run(
     }
 }
 
+pub(crate) fn no_food_abort_run_for_runner(
+    cx: &mut StepContext<'_, '_>,
+    stand: api::WorldTile,
+) -> Box<dyn StepRun> {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let mut run = combat_test_run(
+        Target::Npc {
+            types: Arc::from([warlord.id]),
+            pick: Pick::Nearest,
+            not_targeting_others: true,
+        },
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut aborted = report(CombatEnd::Aborted(AbortReason::Unprotected(
+        crate::combat::Unprotected::NoFood,
+    )));
+    aborted.engaged = Some(crate::combat::ActorRef {
+        kind: api::snapshot::ActorKind::Npc,
+        index: 0,
+    });
+    aborted.engaged_npc_type = warlord.id;
+
+    assert!(
+        run.on_combat_report(aborted, cx).is_pending(),
+        "a boss abort must keep the real CombatRun alive while its walk settles"
+    );
+    Box::new(run)
+}
+
 fn imp_target(data: &SelectedGameData) -> Target {
     Target::Npc {
         types: Arc::from([data.npc_by_config("imp").unwrap().id]),
@@ -551,6 +583,57 @@ fn boss_abort_blocks_but_m4_unattackable_report_completes_for_walkout() {
         receipt.report.end,
         CombatEnd::Aborted(AbortReason::Unattackable)
     );
+}
+
+#[test]
+fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut aborted = report(CombatEnd::Aborted(AbortReason::Unprotected(
+        crate::combat::Unprotected::NoFood,
+    )));
+    aborted.engaged = Some(crate::combat::ActorRef {
+        kind: api::snapshot::ActorKind::Npc,
+        index: 4,
+    });
+    aborted.engaged_npc_type = 477;
+
+    for end in [WalkEnd::UserInput, WalkEnd::Failed] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            None,
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        run.phase = Phase::WalkingOutAfterAbort;
+        run.last_report = Some(aborted);
+        run.refresh_outcome();
+        let user_input = end == WalkEnd::UserInput;
+        let result = run.on_abort_walk(WalkReceipt {
+            request_id: 7,
+            evidence: aborted.evidence,
+            end,
+            blocked: None,
+            detail: None,
+        });
+
+        if user_input {
+            assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+        } else {
+            assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
+        }
+        assert!(run.action.is_none());
+        assert_eq!(run.target_gone_restarts, 0);
+        let retained = run
+            .last_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+            .expect("walk terminal must not replace the combat receipt");
+        assert_eq!(retained.report.end, aborted.end);
+        assert_eq!(retained.report.evidence, aborted.evidence);
+        assert_eq!(retained.report.engaged, aborted.engaged);
+        assert_eq!(retained.report.engaged_npc_type, aborted.engaged_npc_type);
+    }
 }
 
 #[test]
