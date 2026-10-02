@@ -38,16 +38,20 @@ for (const [name, destructive] of [
     ['~quest', false],
     ['~quests', false],
     ['~resetquests', true],
-    ['~completequests', true],
-    ['~cq', true],
+    ['~completequests', false],
+    ['~cq', false],
     ['~rq', true],
 ] as const) {
     assert.equal(questByName.get(name)?.destructive, destructive, `${name} destructive`);
 }
 const real289Content = revisions.find((spec) => spec.revision === 289)!.content;
 const sourceRows = (relative: string) => parseDebugprocSource(fs.readFileSync(path.join(real289Content, relative), 'utf8'), relative);
-assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_maxme.rs2').find((row) => row.name === '~maxme')?.destructive, true);
-assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_other.rs2').find((row) => row.name === '~addxp')?.destructive, true);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_maxme.rs2').find((row) => row.name === '~maxme')?.destructive, false);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_other.rs2').find((row) => row.name === '~addxp')?.destructive, false);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_clearinv.rs2').find((row) => row.name === '~clearinv')?.destructive, true);
+assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_magic.rs2').find((row) => row.name === '~giverunes')?.destructive, false);
+assert.equal(sourceRows('scripts/_test/scripts/engine/debug_stat.rs2').find((row) => row.name === '~minstat')?.destructive, true);
+assert.equal(sourceRows('scripts/_test/scripts/engine/debug_stat.rs2').find((row) => row.name === '~stat_boost')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_teles.rs2').find((row) => row.name === '~east')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_serverstats.rs2').find((row) => row.name === '~lag')?.destructive, false);
 assert.equal(sourceRows('scripts/_test/scripts/cheats/cheat_help.rs2').find((row) => row.name === '~help')?.destructive, false);
@@ -57,7 +61,7 @@ const stringOnlyEffect = parseDebugprocSource(
 );
 assert.equal(stringOnlyEffect[0].destructive, false);
 const codeEffectAfterQuotedText = parseDebugprocSource(
-    '[debugproc,mutate]\n// operator\'s note\nmes("http://example.invalid/reset");\ninv_add(inv, coins, 1);',
+    '[debugproc,mutate]\n// operator\'s note\nmes("http://example.invalid/reset");\ninv_clear(inv);',
     'scripts/comment-and-string.rs2',
 );
 assert.equal(codeEffectAfterQuotedText[0].destructive, true);
@@ -67,7 +71,21 @@ const bounded = parseDebugprocSource(
     'scripts/fixture.rs2',
 );
 assert.equal(bounded.find((row) => row.name === '~inspect')?.destructive, false);
-assert.equal(assertEngineCommandDrift(handler).find((row) => row.name === 'speed')?.destructive, true);
+for (const [name, destructive] of [
+    ['minme', true],
+    ['give', false],
+    ['givebank', false],
+    ['tele', false],
+    ['setstat', false],
+    ['advancestat', false],
+    ['setvar', false],
+    ['speed', false],
+    ['reload', false],
+    ['locadd', false],
+    ['getvar', false],
+] as const) {
+    assert.equal(assertEngineCommandDrift(handler).find((row) => row.name === name)?.destructive, destructive, `${name} destructive`);
+}
 const removedProductionGate = handler.replace("cmd === 'setvarother' && Environment.node.production", "cmd === 'setvarother'");
 assert.throws(() => assertEngineCommandDrift(removedProductionGate), /production gate drift/);
 const removedNonProductionGate = handler.replace("cmd === 'givebank' && !Environment.node.production", "cmd === 'givebank'");

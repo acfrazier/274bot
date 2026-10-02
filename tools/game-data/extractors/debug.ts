@@ -71,47 +71,55 @@ const command = (
 const arg = (name: string, kind: string, optional = false): DebugArgument => ({ name, kind, optional });
 
 /**
- * The engine owns this small command vocabulary rather than content. Keep its
- * argument metadata beside the table, then compare the names with the pinned
- * handler on every generation. Debugproc names never appear here.
+ * Destructive engine commands (operator 2026-10-02): red hover and the send
+ * confirmation are reserved for commands that irreversibly remove or downgrade
+ * account state the player cannot trivially restore — clearing inventory or
+ * bank, resetting a quest or stats, lowering a stat, or deleting items.
+ * Teleports, gives, setting a stat up, spawning or adding, and info commands
+ * are not destructive. Of the engine vocabulary only `minme` always removes:
+ * it lowers every skill. The parametric setters (`setstat`, `advancestat`,
+ * `setvar`, `setvarother`) take an operator-typed value that is visible in the
+ * editor, so they are not flagged; `give*` adds, `tele*` teleports,
+ * `locadd`/`npcadd` spawn, and the rest read state, drive the world, or are
+ * production-only moderation hidden from local profiles.
  */
 export const ENGINE_DEBUG_COMMANDS: readonly DebugCommand[] = [
-    command('reload', 'Reload world scripts.', [], false, true),
-    command('rebuild', 'Rebuild world scripts.', [], false, true),
-    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')], false, true),
-    command('fly', 'Toggle fly movement.', [], false, false),
-    command('naive', 'Toggle naive movement.', [], false, false),
-    command('random', 'Trigger a random event.', [], false, false),
-    command('setvar', 'Set a player variable.', [arg('var', 'varp'), arg('value', 'int')], false, true),
-    command('setvarother', 'Set another player variable.', [arg('username', 'string'), arg('var', 'varp'), arg('value', 'int')], true, true),
+    command('reload', 'Reload world scripts.'),
+    command('rebuild', 'Rebuild world scripts.'),
+    command('speed', 'Set the world tick duration in milliseconds.', [arg('ms', 'int')]),
+    command('fly', 'Toggle fly movement.'),
+    command('naive', 'Toggle naive movement.'),
+    command('random', 'Trigger a random event.'),
+    command('setvar', 'Set a player variable.', [arg('var', 'varp'), arg('value', 'int')]),
+    command('setvarother', 'Set another player variable.', [arg('username', 'string'), arg('var', 'varp'), arg('value', 'int')], true),
     command('getvar', 'Read a player variable.', [arg('var', 'varp')]),
     command('getvarother', 'Read another player variable.', [arg('username', 'string'), arg('var', 'varp')], true),
-    command('give', 'Give an item to the player.', [arg('obj', 'obj'), arg('count', 'int', true)], false, true),
-    command('givebank', 'Put an item in the player bank.', [arg('obj', 'obj'), arg('count', 'int', true)], false, true),
-    command('giveother', 'Give an item to another player.', [arg('username', 'string'), arg('obj', 'obj'), arg('count', 'int', true)], true, true),
-    command('givecrap', 'Fill the inventory with random items.', [], false, true),
-    command('givemany', 'Give 1000 of an item to the player.', [arg('obj', 'obj')], false, true),
-    command('broadcast', 'Broadcast a message to the world.', [arg('message', 'string')], true, true),
-    command('reboot', 'Reboot the world immediately.', [], true, true),
-    command('slowreboot', 'Schedule a world reboot.', [arg('seconds', 'int')], true, true),
-    command('serverdrop', 'Disconnect the player.', [], false, true),
-    command('teleother', 'Teleport another player to you.', [arg('username', 'string')], true, true),
-    command('setstat', 'Set a player skill level.', [arg('stat', 'stat'), arg('level', 'int')], false, true),
-    command('advancestat', 'Advance a player skill level.', [arg('stat', 'stat'), arg('level', 'int')], false, true),
+    command('give', 'Give an item to the player.', [arg('obj', 'obj'), arg('count', 'int', true)]),
+    command('givebank', 'Put an item in the player bank.', [arg('obj', 'obj'), arg('count', 'int', true)]),
+    command('giveother', 'Give an item to another player.', [arg('username', 'string'), arg('obj', 'obj'), arg('count', 'int', true)], true),
+    command('givecrap', 'Fill the inventory with random items.'),
+    command('givemany', 'Give 1000 of an item to the player.', [arg('obj', 'obj')]),
+    command('broadcast', 'Broadcast a message to the world.', [arg('message', 'string')], true),
+    command('reboot', 'Reboot the world immediately.', [], true),
+    command('slowreboot', 'Schedule a world reboot.', [arg('seconds', 'int')], true),
+    command('serverdrop', 'Disconnect the player.'),
+    command('teleother', 'Teleport another player to you.', [arg('username', 'string')], true),
+    command('setstat', 'Set a player skill level.', [arg('stat', 'stat'), arg('level', 'int')]),
+    command('advancestat', 'Advance a player skill level.', [arg('stat', 'stat'), arg('level', 'int')]),
     command('minme', 'Set all player skills to their minimum.', [], false, true),
-    command('locadd', 'Spawn a location at the player.', [arg('loc', 'loc')], false, true),
-    command('npcadd', 'Spawn an NPC at the player.', [arg('npc', 'npc')], false, true),
-    command('openmain', 'Open a root interface.', [arg('interface', 'interface')], false, true),
-    command('openoverlay', 'Open a root overlay interface.', [arg('interface', 'interface')], false, true),
-    command('closeoverlay', 'Close the open overlay.', [], false, true),
-    command('snapshot', 'Write a V8 heap snapshot.', [], false, true),
-    command('getcoord', "Show the player's coordinate.", []),
-    command('tele', 'Teleport to a coordinate.', [arg('coord', 'coord')], false, true),
-    command('teleto', 'Teleport to another player.', [arg('username', 'string')], true, true),
-    command('setvis', 'Set player visibility.', [arg('level', 'int')], true, true),
-    command('ban', 'Ban another player.', [arg('username', 'string'), arg('minutes', 'int')], true, true),
-    command('mute', 'Mute another player.', [arg('username', 'string'), arg('minutes', 'int')], true, true),
-    command('kick', 'Kick another player.', [arg('username', 'string')], true, true),
+    command('locadd', 'Spawn a location at the player.', [arg('loc', 'loc')]),
+    command('npcadd', 'Spawn an NPC at the player.', [arg('npc', 'npc')]),
+    command('openmain', 'Open a root interface.', [arg('interface', 'interface')]),
+    command('openoverlay', 'Open a root overlay interface.', [arg('interface', 'interface')]),
+    command('closeoverlay', 'Close the open overlay.'),
+    command('snapshot', 'Write a V8 heap snapshot.'),
+    command('getcoord', "Show the player's coordinate."),
+    command('tele', 'Teleport to a coordinate.', [arg('coord', 'coord')]),
+    command('teleto', 'Teleport to another player.', [arg('username', 'string')], true),
+    command('setvis', 'Set player visibility.', [arg('level', 'int')], true),
+    command('ban', 'Ban another player.', [arg('username', 'string'), arg('minutes', 'int')], true),
+    command('mute', 'Mute another player.', [arg('username', 'string'), arg('minutes', 'int')], true),
+    command('kick', 'Kick another player.', [arg('username', 'string')], true),
 ];
 
 const ENGINE_COMMAND_NAMES = ENGINE_DEBUG_COMMANDS.map((row) => row.name);
@@ -171,16 +179,34 @@ export function parseDebugHelp(text: string): Map<string, HelpEntry> {
 type SourceHeader = { kind: string; name: string; index: number; close: number };
 type SourceBlock = { body: string };
 
-const CONTENT_EFFECT_WORDS: Record<string, true> = {
-    give: true,
-    drop: true,
-    reset: true,
-    complete: true,
-    kill: true,
-    damage: true,
-    poison: true,
-    maxme: true,
-};
+/**
+ * Destructive content commands (operator 2026-10-02): red hover and the send
+ * confirmation are reserved for commands that irreversibly remove or downgrade
+ * account state the player cannot trivially restore — clearing inventory or
+ * bank, resetting a quest or stats, lowering a stat, or deleting items.
+ * Teleports, gives, setting a stat up, spawning or adding, and info commands
+ * are not destructive. One rule, no per-command list: the patterns match the
+ * script ops that remove or regress, never the ones that grant or advance
+ * (`inv_add`, `stat_advance`, `stat_boost`, `stat_heal`, quest-complete queues
+ * and progress increments stay quiet). Parametric setters (`%var = $value`)
+ * stay quiet too: the typed value is visible in the editor, so the flag is
+ * reserved for commands that always remove no matter the arguments.
+ */
+const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
+    /\binv_clear\s*\(\s*(?:bank|inv|worn|\$[A-Za-z_][A-Za-z0-9_]*)\b/i,
+    /\binv_del\s*\(/i,
+    /\bstat_(?:sub|drain)\s*\(/i,
+    /\b(?:damage_player|poison_player|damage_self)\b/i,
+    /\breset_all_quests\b/i,
+    /%\w+\s*=\s*0\b/,
+    /=\s*\^[A-Za-z0-9_]*not_started\b/i,
+    /calc\s*\(\s*%[A-Za-z0-9_]+\s*-/,
+];
+
+function hasDestructiveEffect(body: string) {
+    const code = withoutSourceCommentsAndStrings(body);
+    return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(code));
+}
 
 function withoutSourceCommentsAndStrings(text: string) {
     let quote: '"' | "'" | null = null;
@@ -262,13 +288,6 @@ function followedSourceBody(body: string, blocks: ReadonlyMap<string, SourceBloc
     return collect(body, true);
 }
 
-function hasContentEffect(alias: string, body: string) {
-    const aliasWords = alias.toLowerCase().split('_');
-    if (aliasWords.some((word) => CONTENT_EFFECT_WORDS[word])) return true;
-    if (/^(?:reset|complete)quests$/i.test(alias)) return true;
-    const effectBody = withoutSourceCommentsAndStrings(body);
-    return /\b(?:inv|stat)_(?:add|clear|del|set|advance|sub|boost|drain|heal)\b|\b(?:queue|send_quest_progress|clear_pk_skull|damage_self|healenergy)\s*(?:\(|\b)|%[a-z][a-z0-9_]*\s*=|\b(?:give|drop|reset|complete|kill|damage|poison|maxme)(?:_|\b)/i.test(effectBody);
-}
 
 const HEADER_PATTERN = /^\s*\[([a-z][a-z0-9_]*)\s*,\s*([^\],\s]+)\]/i;
 
@@ -330,7 +349,7 @@ export function parseDebugprocSource(text: string, relative: string, help = new 
             category: hint?.category ?? sourceFallbackCategory(relative, alias, effectBody),
             description,
             args,
-            destructive: hasContentEffect(alias, effectBody),
+            destructive: hasDestructiveEffect(effectBody),
             production_only: false,
             source: relative,
             line: index + 1,
