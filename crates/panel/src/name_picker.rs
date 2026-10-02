@@ -11,7 +11,7 @@
 
 use api::debug_commands::DebugName;
 use api::game_data::ItemSearchHit;
-use dear_imgui_rs::Ui;
+use dear_imgui_rs::{ListClipper, Ui};
 
 /// Narrowest the picker popup may shrink to, in logical px. The old Debug
 /// popup bottomed out at 180, which is what truncated every name column.
@@ -74,19 +74,259 @@ impl NameHitRow for ItemSearchHit {
 }
 
 /// Width of `text` in physical px under the current font, for column math.
-pub fn text_width(ui: &Ui, text: &str) -> f32 {
+fn text_width(ui: &Ui, text: &str) -> f32 {
     if text.is_empty() {
         return 0.0;
     }
     ui.current_font()
         .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, text)[0]
 }
-/// Name column width for the given rows: the longest visible name, so every
-/// name fits before any alias text has to give way.
-pub fn name_column_width(ui: &Ui, hits: &[impl NameHitRow]) -> f32 {
-    hits.iter()
-        .map(|hit| text_width(ui, hit.hit_name()))
-        .fold(0.0, f32::max)
+
+#[derive(Debug, Clone, Default)]
+struct FormattedRow {
+    secondary: String,
+    secondary_width: f32,
+}
+
+/// Formatted picker strings and font measurements for one immutable result set.
+///
+/// Keep one cache with each picker and call [`invalidate`](Self::invalidate)
+/// whenever its query or source data changes.
+#[derive(Debug, Clone, Default)]
+pub struct PickerRows {
+    rows: Vec<FormattedRow>,
+    max_name_width: f32,
+    max_secondary_width: f32,
+    metric_key: Option<(f32, f32)>,
+    content_width_key: Option<(f32, f32, f32)>,
+    content_width: f32,
+    dirty: bool,
+}
+
+impl PickerRows {
+    /// Discard query/result-specific formatting while retaining vector capacity.
+    pub fn invalidate(&mut self) {
+        self.dirty = true;
+        self.content_width_key = None;
+    }
+
+    /// Make sure this result set has formatted rows and metrics for the current
+    /// font. Callers invalidate when the query or source data changes.
+    pub(crate) fn ensure(&mut self, ui: &Ui, hits: &[impl NameHitRow]) {
+        if self.dirty || self.rows.len() != hits.len() {
+            self.rows.truncate(hits.len());
+            self.rows
+                .reserve(hits.len().saturating_sub(self.rows.len()));
+            for (index, hit) in hits.iter().enumerate() {
+                if index == self.rows.len() {
+                    self.rows.push(FormattedRow::default());
+                }
+                self.rows[index].secondary = hit.hit_secondary();
+            }
+            self.dirty = false;
+            self.content_width_key = None;
+            self.measure(ui, hits);
+            return;
+        }
+
+        let key = (crate::theme::ui_scale(ui), ui.current_font_size());
+        if self.metric_key != Some(key) {
+            self.content_width_key = None;
+            self.measure(ui, hits);
+        }
+    }
+
+    fn measure(&mut self, ui: &Ui, hits: &[impl NameHitRow]) {
+        self.max_name_width = 0.0;
+        self.max_secondary_width = 0.0;
+        for (row, hit) in self.rows.iter_mut().zip(hits) {
+            self.max_name_width = self.max_name_width.max(text_width(ui, hit.hit_name()));
+            row.secondary_width = text_width(ui, &row.secondary);
+            self.max_secondary_width = self.max_secondary_width.max(row.secondary_width);
+        }
+        self.metric_key = Some((crate::theme::ui_scale(ui), ui.current_font_size()));
+    }
+
+    /// Content-fit width is cached for this result set, font and parent width.
+    pub(crate) fn content_width_for(&mut self, ui: &Ui, parent_width: f32) -> f32 {
+        let key = (
+            parent_width,
+            crate::theme::ui_scale(ui),
+            ui.current_font_size(),
+        );
+        if self.content_width_key != Some(key) {
+            self.content_width = popup_width_for(
+                ui,
+                parent_width,
+                self.max_name_width,
+                self.max_secondary_width,
+            );
+            self.content_width_key = Some(key);
+        }
+        self.content_width
+    }
+
+    fn row(&self, index: usize) -> &FormattedRow {
+        &self.rows[index]
+    }
+}
+
+/// Screen-space work area of the current parent window, excluding its chrome.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PopupWorkArea {
+    pub(crate) min: [f32; 2],
+    pub(crate) max: [f32; 2],
+}
+
+impl PopupWorkArea {
+    pub(crate) fn current(ui: &Ui) -> Self {
+        // SAFETY: called during an active Ui frame, where ImGui has a current
+        // window; the returned window remains live until this immediate read.
+        let window = unsafe { dear_imgui_rs::sys::igGetCurrentWindowRead() };
+        if window.is_null() {
+            let pos = ui.window_pos();
+            let size = ui.window_size();
+            return Self {
+                min: pos,
+                max: [pos[0] + size[0], pos[1] + size[1]],
+            };
+        }
+        // SAFETY: `window` is the non-null current window returned above.
+        let (work, clip) = unsafe { ((*window).WorkRect, (*window).InnerClipRect) };
+        Self {
+            min: [work.Min.x.max(clip.Min.x), work.Min.y.max(clip.Min.y)],
+            max: [work.Max.x.min(clip.Max.x), work.Max.y.min(clip.Max.y)],
+        }
+    }
+
+    fn extent(self, axis: usize) -> Option<f32> {
+        let extent = self.max[axis] - self.min[axis];
+        (self.min[axis].is_finite()
+            && self.max[axis].is_finite()
+            && extent.is_finite()
+            && extent > 0.0)
+            .then_some(extent)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PopupLayout {
+    pub(crate) content_width: f32,
+    pub(crate) list_height: f32,
+}
+
+/// Position and constrain the next popup to the parent's work area. The popup
+/// border and padding are removed from the available content dimensions first.
+pub(crate) fn prepare_popup(
+    ui: &Ui,
+    work_area: PopupWorkArea,
+    anchor: [[f32; 2]; 2],
+    hits: &[impl NameHitRow],
+    rows: &mut PickerRows,
+) -> PopupLayout {
+    // SAFETY: the frame owns a live style here; copy its scalar geometry
+    // immediately rather than retaining the reference.
+    let (padding, border, spacing_y) = unsafe {
+        let style = ui.style();
+        (
+            style.window_padding(),
+            style.popup_border_size(),
+            style.item_spacing()[1],
+        )
+    };
+    let chrome = [2.0 * (padding[0] + border), 2.0 * (padding[1] + border)];
+    let work_width = work_area.extent(0);
+    let work_height = work_area.extent(1);
+    let content_width_limit = work_width.map_or(0.0, |width| (width - chrome[0]).max(0.0));
+    rows.ensure(ui, hits);
+    let requested_width = rows.content_width_for(ui, content_width_limit);
+    let content_width = if work_width.is_some() {
+        requested_width.min(content_width_limit)
+    } else {
+        // Without a usable parent width, use the picker minimum, not its max.
+        requested_width.min(crate::theme::scale_px(ui, PICKER_MIN_WIDTH))
+    };
+
+    let fixed_content_height =
+        2.0 * ui.text_line_height() + 2.0 * ui.frame_height() + 5.0 * spacing_y;
+    let requested_list_height = crate::theme::scale_px(ui, PICKER_LIST_HEIGHT);
+    let list_height = work_height.map_or(requested_list_height, |height| {
+        requested_list_height.min((height - chrome[1] - fixed_content_height).max(0.0))
+    });
+
+    let max_window_width = work_width.unwrap_or(content_width + chrome[0]).max(1.0);
+    let max_window_height = work_height
+        .unwrap_or(fixed_content_height + list_height + chrome[1])
+        .max(1.0);
+    let desired_window_width = (content_width + chrome[0]).min(max_window_width);
+    let desired_window_height =
+        (fixed_content_height + list_height + chrome[1]).min(max_window_height);
+
+    let anchor_min_x = if anchor[0][0].is_finite() {
+        anchor[0][0]
+    } else {
+        work_area.min[0]
+    };
+    let anchor_min_y = if anchor[0][1].is_finite() {
+        anchor[0][1]
+    } else {
+        work_area.min[1]
+    };
+    let anchor_max_y = if anchor[1][1].is_finite() {
+        anchor[1][1]
+    } else {
+        anchor_min_y
+    };
+    let position_x = work_width.map_or(anchor_min_x, |_| {
+        let max_x = work_area.max[0] - desired_window_width;
+        if max_x >= work_area.min[0] {
+            anchor_min_x.clamp(work_area.min[0], max_x)
+        } else {
+            work_area.min[0]
+        }
+    });
+    let position_y = work_height.map_or(anchor_max_y, |_| {
+        let below = anchor_max_y;
+        let above = anchor_min_y - desired_window_height;
+        if below + desired_window_height <= work_area.max[1] {
+            below.max(work_area.min[1])
+        } else if above >= work_area.min[1] {
+            above
+        } else {
+            work_area.min[1]
+        }
+    });
+    let constrained_height = work_height.map_or(max_window_height, |height| {
+        (work_area.max[1] - position_y).max(0.0).min(height)
+    });
+
+    use dear_imgui_rs::sys;
+    // SAFETY: this function runs inside the current Dear ImGui frame, before
+    // BeginPopup consumes the next-window data; all vectors are finite.
+    unsafe {
+        sys::igSetNextWindowPos(
+            sys::ImVec2_c {
+                x: position_x,
+                y: position_y,
+            },
+            sys::ImGuiCond_Always,
+            sys::ImVec2_c { x: 0.0, y: 0.0 },
+        );
+        sys::igSetNextWindowSizeConstraints(
+            sys::ImVec2_c { x: 0.0, y: 0.0 },
+            sys::ImVec2_c {
+                x: max_window_width,
+                y: constrained_height,
+            },
+            None,
+            std::ptr::null_mut(),
+        );
+    }
+
+    PopupLayout {
+        content_width,
+        list_height,
+    }
 }
 
 /// Index of the row to highlight: the row matching the field's current value,
@@ -102,25 +342,10 @@ pub fn selected_row(hits: &[impl NameHitRow], current_value: &str) -> Option<usi
     )
 }
 
-/// Popup width from measured content, clamped to stay inside the parent.
+/// Popup content width from measured rows, clamped to the available parent
+/// work area after popup padding and border are removed.
 ///
-/// `parent_avail` is the containing panel width in the same (scaled) px as the
-/// measurements; the popup never exceeds it. Content wider than
-/// [`PICKER_MAX_WIDTH`] (or the parent) keeps the full name column and lets
-/// the row overflow into a horizontal scroll instead of truncating the name.
-pub fn popup_width(parent_avail: f32, max_name_w: f32, max_secondary_w: f32) -> f32 {
-    popup_width_in(
-        parent_avail,
-        max_name_w,
-        max_secondary_w,
-        PICKER_MIN_WIDTH,
-        PICKER_MAX_WIDTH,
-        ROW_PAD,
-        NAME_GAP,
-    )
-}
-/// [`popup_width`] scaled for the current DPI: the font measurements are
-/// physical px while the min/max/pad/gap constants are logical.
+/// Font measurements and the min/max/pad/gap constants use scaled physical px.
 pub fn popup_width_for(ui: &Ui, parent_avail: f32, max_name_w: f32, max_secondary_w: f32) -> f32 {
     use crate::theme::scale_px;
     popup_width_in(
@@ -134,8 +359,7 @@ pub fn popup_width_for(ui: &Ui, parent_avail: f32, max_name_w: f32, max_secondar
     )
 }
 
-/// Core of [`popup_width`] with explicit bounds, so tests can drive the math
-/// without an ImGui context.
+/// Core width calculation with explicit bounds, usable without an ImGui context.
 pub fn popup_width_in(
     parent_avail: f32,
     max_name_w: f32,
@@ -145,36 +369,38 @@ pub fn popup_width_in(
     pad: f32,
     gap: f32,
 ) -> f32 {
+    let fallback = min_w.min(max_w);
     let parent = if parent_avail.is_finite() && parent_avail > 0.0 {
         parent_avail
     } else {
-        max_w
+        fallback
     };
     (pad + max_name_w + gap + max_secondary_w)
         .clamp(min_w, max_w)
         .min(parent)
 }
-///
 /// The selectable spans the full row (`content_w`, at least the child's
-/// available width) so the click target and the `selected` highlight cover the
-/// name and the secondary text alike; the dimmed secondary text is pinned to
-/// the row's right edge. Returns the picked row index, if any.
-pub fn draw_hit_rows(ui: &Ui, hits: &[impl NameHitRow], selected: Option<usize>) -> Option<usize> {
+/// available width) so its click target and highlight cover the whole row.
+/// Cached strings and measurements are rebuilt only for a changed result set.
+pub fn draw_hit_rows(
+    ui: &Ui,
+    hits: &[impl NameHitRow],
+    rows: &mut PickerRows,
+    selected: Option<usize>,
+) -> Option<usize> {
+    rows.ensure(ui, hits);
     if hits.is_empty() {
         return None;
     }
-    let name_col_w = name_column_width(ui, hits);
-    let max_secondary_w = hits
-        .iter()
-        .map(|hit| text_width(ui, &hit.hit_secondary()))
-        .fold(0.0, f32::max);
     let avail = ui.content_region_avail()[0].max(1.0);
     let gap = crate::theme::scale_px(ui, NAME_GAP);
-    let content_w = (name_col_w + gap + max_secondary_w).max(avail);
+    let content_w = (rows.max_name_width + gap + rows.max_secondary_width).max(avail);
     let highlight = selected.unwrap_or(0).min(hits.len() - 1);
 
     let mut picked = None;
-    for (index, hit) in hits.iter().enumerate() {
+    for index in ListClipper::new(hits.len()).begin(ui).iter() {
+        let hit = &hits[index];
+        let cached = rows.row(index);
         let _id = ui.push_id(index);
         let row_x = ui.cursor_pos_x();
         if ui
@@ -186,51 +412,46 @@ pub fn draw_hit_rows(ui: &Ui, hits: &[impl NameHitRow], selected: Option<usize>)
             picked = Some(index);
         }
         if ui.is_item_hovered() {
-            ui.tooltip_text(format!("{}  {}", hit.hit_name(), hit.hit_secondary()));
+            ui.tooltip(|| {
+                ui.text(hit.hit_name());
+                ui.same_line();
+                ui.text(&cached.secondary);
+            });
         }
         ui.same_line();
-        let secondary = hit.hit_secondary();
-        let secondary_w = text_width(ui, &secondary);
-        ui.set_cursor_pos_x((row_x + content_w - secondary_w).max(row_x));
-        ui.text_disabled(secondary);
+        ui.set_cursor_pos_x((row_x + content_w - cached.secondary_width).max(row_x));
+        ui.text_disabled(&cached.secondary);
     }
-    #[cfg(test)]
-    record_layout(RecordedLayout {
-        avail,
-        content_w,
-        name_col_w,
-        highlight,
-        rows: hits.len(),
-    });
     picked
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RecordedLayout {
-    pub(crate) avail: f32,
-    pub(crate) content_w: f32,
-    pub(crate) name_col_w: f32,
-    pub(crate) highlight: usize,
-    pub(crate) rows: usize,
-}
-
-#[cfg(test)]
-static LAST_LAYOUT: std::sync::Mutex<Option<RecordedLayout>> = std::sync::Mutex::new(None);
-
-#[cfg(test)]
-fn record_layout(layout: RecordedLayout) {
-    *crate::test_support::lock_unpoisoned(&LAST_LAYOUT) = Some(layout);
-}
-
-#[cfg(test)]
-pub(crate) fn last_layout() -> RecordedLayout {
-    crate::test_support::lock_unpoisoned(&LAST_LAYOUT).expect("draw_hit_rows records layout")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dear_imgui_rs::{Condition, FramePrepareOptions, WindowFlags};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct CountingHit {
+        name: String,
+        alias: String,
+        secondary_calls: Rc<Cell<usize>>,
+    }
+
+    impl NameHitRow for CountingHit {
+        fn hit_name(&self) -> &str {
+            &self.name
+        }
+
+        fn hit_secondary(&self) -> String {
+            self.secondary_calls.set(self.secondary_calls.get() + 1);
+            format!("#1  {}", self.alias)
+        }
+
+        fn hit_value(&self) -> &str {
+            &self.name
+        }
+    }
 
     fn row(name: &str, alias: &str) -> DebugName {
         DebugName {
@@ -240,115 +461,242 @@ mod tests {
         }
     }
 
-    #[test]
-    fn popup_width_fits_short_content_between_min_and_max() {
-        // "Steel arrowtips" + "#41  steel_arrowtips" easily fits: the popup
-        // hugs the content instead of collapsing to the old 180 px minimum.
-        let width = popup_width(800.0, 120.0, 110.0);
-        assert!(width >= ROW_PAD + 120.0 + NAME_GAP + 110.0);
-        assert!((PICKER_MIN_WIDTH..=PICKER_MAX_WIDTH).contains(&width));
-    }
-
-    #[test]
-    fn popup_width_never_exceeds_the_parent_panel() {
-        // A narrow panel clamps the popup even below the content minimum, so
-        // the popup stays inside the panel bounds.
-        assert_eq!(popup_width(300.0, 120.0, 110.0), 300.0);
-        assert_eq!(popup_width(300.0, 900.0, 400.0), 300.0);
-    }
-
-    /// Headless geometry proof for the operator screenshot: rows drawn from
-    /// real hits keep a name column at least as wide as the longest visible
-    /// name, stay inside the parent window, and highlight exactly one row.
-    #[test]
-    fn hit_rows_keep_full_names_inside_a_narrow_parent() {
-        let _guard = crate::test_support::imgui_context_guard();
-        let mut ctx = dear_imgui_rs::Context::create();
+    fn draw_popup_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        display_size: [f32; 2],
+        parent_size: [f32; 2],
+        hits: &[DebugName],
+        cached_rows: &mut PickerRows,
+    ) -> (PopupWorkArea, [f32; 2], [f32; 2], PopupLayout) {
         ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
+            FramePrepareOptions::new(display_size, 1.0 / 60.0).renderer_has_textures(),
         );
-        let hits = vec![
-            row("Steel arrowtips", "steel_arrowtips"),
-            row("Shortbow (unstrung)", "shortbow_unstrung_s"),
-            row("Strength potion(4)", "strength_potion_4"),
-        ];
-        let mut expected = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let mut actual = None;
+        let mut work_area = None;
+        let mut layout = None;
         {
             let ui = ctx.frame();
             ui.window("dp-parent")
-                .size([400.0, 500.0], dear_imgui_rs::Condition::Always)
+                .flags(WindowFlags::NO_TITLE_BAR | WindowFlags::NO_SAVED_SETTINGS)
+                .position([20.0, 20.0], Condition::Always)
+                .size(parent_size, Condition::Always)
                 .build(|| {
-                    let parent_w = ui.content_region_avail()[0];
-                    // Independent measures: the test recomputes what the row
-                    // drawer must honor, straight from the font.
-                    let max_name = hits
-                        .iter()
-                        .map(|hit| text_width(ui, hit.hit_name()))
-                        .fold(0.0, f32::max);
-                    let gap = crate::theme::scale_px(ui, super::NAME_GAP);
-                    let max_secondary = hits
-                        .iter()
-                        .map(|hit| text_width(ui, &hit.hit_secondary()))
-                        .fold(0.0, f32::max);
-                    expected = (parent_w, max_name, max_secondary, gap);
-                    let width = popup_width(parent_w, max_name, max_secondary);
-                    ui.child_window("##dp-hits")
-                        .size([width, super::PICKER_LIST_HEIGHT])
-                        .build(ui, || {
-                            draw_hit_rows(ui, &hits, selected_row(&hits, ""));
-                        });
+                    let area = PopupWorkArea::current(ui);
+                    work_area = Some(area);
+                    ui.set_cursor_screen_pos([area.max[0] - 48.0, area.min[1] + 40.0]);
+                    ui.button("Pick");
+                    let anchor = [ui.item_rect_min(), ui.item_rect_max()];
+                    ui.open_popup("##debug-name-picker");
+                    let next = prepare_popup(ui, area, anchor, hits, cached_rows);
+                    layout = Some(next);
+                    ui.popup("##debug-name-picker", || {
+                        ui.text("Pick object");
+                        ui.set_next_item_width(next.content_width);
+                        let mut query = String::new();
+                        ui.input_text("##headless-picker-query", &mut query).build();
+                        ui.child_window("##headless-picker-rows")
+                            .size([next.content_width, next.list_height])
+                            .build(ui, || {
+                                draw_hit_rows(ui, hits, cached_rows, None);
+                            });
+                        ui.button("Close##headless-picker-close");
+                        actual = Some((ui.window_pos(), ui.window_size()));
+                    });
                 });
         }
         ctx.render();
-
-        let (parent_w, max_name, max_secondary, gap) = expected;
-        assert!(parent_w <= 400.0, "parent window honors its 400 px size");
-        let layout = last_layout();
-        assert_eq!(layout.rows, 3);
-        // The picker list never leaves the 400 px parent window.
-        assert!(
-            layout.avail <= 400.0,
-            "picker list width {} exceeds parent 400",
-            layout.avail
-        );
-        // The drawn name column fits the longest visible name, measured
-        // independently above: names are never truncated before the alias.
-        assert_eq!(layout.name_col_w, max_name);
-        assert!(max_name > 0.0);
-        // The row spans name + gap + secondary (scrolling past the child
-        // only when even the clamped popup cannot hold it all).
-        assert_eq!(
-            layout.content_w,
-            (max_name + gap + max_secondary).max(layout.avail)
-        );
-        // Exactly the first row carries the highlight when nothing matches.
-        assert_eq!(layout.highlight, 0);
+        let area = work_area.expect("parent window work area");
+        let (pos, size) = actual.expect("popup opened");
+        (area, pos, size, layout.expect("popup layout"))
     }
 
-    /// `name_column_width` must return the max, not the mean or first.
+    fn assert_rect_inside(area: PopupWorkArea, pos: [f32; 2], size: [f32; 2]) {
+        const EPSILON: f32 = 0.05;
+        assert!(
+            pos[0] >= area.min[0] - EPSILON
+                && pos[1] >= area.min[1] - EPSILON
+                && pos[0] + size[0] <= area.max[0] + EPSILON
+                && pos[1] + size[1] <= area.max[1] + EPSILON,
+            "popup rect {pos:?} + {size:?} escaped parent work area {:?}..{:?}",
+            area.min,
+            area.max
+        );
+    }
+
     #[test]
-    fn name_column_width_takes_the_maximum() {
+    fn popup_rect_stays_inside_narrow_parent_at_right_edge_and_fractional_dpi() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        crate::app::apply_ui_scale(ctx.style_mut(), 1.5);
+        let short = vec![row("Bow", "bow_alias")];
+        let widened = vec![
+            row("Bow", "bow_alias"),
+            row(
+                "A very long display name that widens the picker after opening",
+                "long_alias",
+            ),
+        ];
+        let mut cached_rows = PickerRows::default();
+
+        let (wide_area, short_pos, short_size, _) = draw_popup_frame(
+            &mut ctx,
+            [820.0, 420.0],
+            [700.0, 280.0],
+            &short,
+            &mut cached_rows,
+        );
+        assert_rect_inside(wide_area, short_pos, short_size);
+
+        cached_rows.invalidate();
+        let (widened_area, widened_pos, widened_size, _) = draw_popup_frame(
+            &mut ctx,
+            [820.0, 420.0],
+            [700.0, 280.0],
+            &widened,
+            &mut cached_rows,
+        );
+        assert_eq!(wide_area, widened_area);
+        assert_rect_inside(widened_area, widened_pos, widened_size);
+        assert!(
+            widened_size[0] > short_size[0],
+            "popup did not widen with its content: {} <= {}",
+            widened_size[0],
+            short_size[0]
+        );
+
+        cached_rows.invalidate();
+        let (narrow_area, narrow_pos, narrow_size, _) = draw_popup_frame(
+            &mut ctx,
+            [520.0, 420.0],
+            [320.0, 280.0],
+            &widened,
+            &mut cached_rows,
+        );
+        assert_rect_inside(narrow_area, narrow_pos, narrow_size);
+    }
+
+    #[test]
+    fn popup_content_fit_width_tracks_the_longest_name() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let short = vec![row("Bow", "stable_alias")];
+        let long = vec![
+            row("Bow", "stable_alias"),
+            row(
+                "A substantially longer display name that should widen the picker",
+                "stable_alias",
+            ),
+        ];
+        let mut cached_rows = PickerRows::default();
+        let (area, _, short_popup_size, short_layout) = draw_popup_frame(
+            &mut ctx,
+            [1400.0, 800.0],
+            [1000.0, 650.0],
+            &short,
+            &mut cached_rows,
+        );
+        cached_rows.invalidate();
+        let (long_area, _, long_popup_size, long_layout) = draw_popup_frame(
+            &mut ctx,
+            [1400.0, 800.0],
+            [1000.0, 650.0],
+            &long,
+            &mut cached_rows,
+        );
+        assert_eq!(area, long_area);
+        assert!(
+            long_layout.content_width > short_layout.content_width,
+            "fit width did not grow: {} <= {}",
+            long_layout.content_width,
+            short_layout.content_width
+        );
+        assert!(
+            long_popup_size[0] > short_popup_size[0],
+            "actual popup did not grow with the longest name: {} <= {}",
+            long_popup_size[0],
+            short_popup_size[0]
+        );
+    }
+
+    #[test]
+    fn cached_rows_format_once_per_result_set() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let calls = Rc::new(Cell::new(0));
+        let hits = vec![CountingHit {
+            name: "Bow".into(),
+            alias: "shortbow".into(),
+            secondary_calls: calls.clone(),
+        }];
+        let mut cached_rows = PickerRows::default();
+
+        for _ in 0..2 {
+            ctx.prepare_frame(
+                FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                ui.window("dp-cached-rows")
+                    .position([20.0, 20.0], Condition::Always)
+                    .size([400.0, 300.0], Condition::Always)
+                    .build(|| {
+                        draw_hit_rows(ui, &hits, &mut cached_rows, None);
+                    });
+            }
+            ctx.render();
+        }
+        assert_eq!(calls.get(), 1, "unchanged rows were formatted again");
+
+        let mut hits = hits;
+        hits[0].alias = "changed".into();
+        cached_rows.invalidate();
+        ctx.prepare_frame(
+            FramePrepareOptions::new([600.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.window("dp-cached-rows")
+                .position([20.0, 20.0], Condition::Always)
+                .size([400.0, 300.0], Condition::Always)
+                .build(|| {
+                    draw_hit_rows(ui, &hits, &mut cached_rows, None);
+                });
+        }
+        ctx.render();
+        assert_eq!(calls.get(), 2, "changed result data was not reformatted");
+        assert_eq!(cached_rows.row(0).secondary, "#1  changed");
+    }
+    #[test]
+    fn popup_without_positive_parent_width_uses_minimum_content_width() {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
+            FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
         );
-        let ui = ctx.frame();
-        ui.window("dp-measure")
-            .size([800.0, 600.0], dear_imgui_rs::Condition::Always)
-            .build(|| {
-                let hits = vec![
-                    row("Bow", "shortbow"),
-                    row("Shortbow (unstrung)", "shortbow_u"),
-                ];
-                let column = name_column_width(ui, &hits);
-                let short = text_width(ui, "Bow");
-                let long = text_width(ui, "Shortbow (unstrung)");
-                assert!(long > short);
-                assert_eq!(column, long);
-            });
+        let hits = vec![row("Bow", "shortbow")];
+        let mut cached_rows = PickerRows::default();
+        {
+            let ui = ctx.frame();
+            ui.window("dp-no-positive-width")
+                .size([400.0, 500.0], Condition::Always)
+                .build(|| {
+                    let area = PopupWorkArea {
+                        min: [100.0, 100.0],
+                        max: [100.0, 600.0],
+                    };
+                    let layout = prepare_popup(
+                        ui,
+                        area,
+                        [[100.0, 140.0], [100.0, 160.0]],
+                        &hits,
+                        &mut cached_rows,
+                    );
+                    assert_eq!(
+                        layout.content_width,
+                        crate::theme::scale_px(ui, PICKER_MIN_WIDTH)
+                    );
+                });
+        }
         ctx.render();
     }
 }

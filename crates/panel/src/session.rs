@@ -1096,6 +1096,15 @@ pub struct Session {
     pub loadouts_search_slot: Option<String>,
     /// Supply row currently picking an item.
     pub loadouts_search_supply: Option<usize>,
+    /// Weak selected-data/query key for cached loadout search results.
+    pub(crate) loadouts_search_cache_key: Option<(
+        Option<std::sync::Weak<api::game_data::SelectedGameData>>,
+        String,
+        Option<String>,
+    )>,
+    /// Search results and formatted rows stay stable between query/data changes.
+    pub(crate) loadouts_search_hits: Vec<api::game_data::ItemSearchHit>,
+    pub(crate) loadouts_picker_rows: crate::name_picker::PickerRows,
     /// Per-supply quantity text buffers (stable across frames while editing).
     pub loadouts_qty_bufs: Vec<String>,
     /// Process-wide equipment/inventory presets.
@@ -1420,6 +1429,9 @@ impl Session {
             loadouts_search: String::new(),
             loadouts_search_slot: None,
             loadouts_search_supply: None,
+            loadouts_search_cache_key: None,
+            loadouts_search_hits: Vec::new(),
+            loadouts_picker_rows: crate::name_picker::PickerRows::default(),
             loadouts_qty_bufs: Vec::new(),
             loadouts: script::LoadoutsStore::with_default_path(),
             scenario: Arc::new(Mutex::new(None)),
