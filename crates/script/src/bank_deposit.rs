@@ -53,6 +53,7 @@ pub(crate) struct Deposit {
     matcher: Matcher,
     /// The caller's `log` hook, if it passed one.
     log: Option<usize>,
+    common_casket_id: Option<i32>,
     round: u32,
     phase: Phase,
 }
@@ -62,6 +63,7 @@ impl Deposit {
         Self {
             matcher,
             log,
+            common_casket_id: crate::supply_v2::random_event_casket_id(),
             round: 0,
             phase: Phase::Scan,
         }
@@ -140,6 +142,7 @@ impl Deposit {
                                     truthy(&value)
                                         || (*common
                                             && api::content::matches_common_bank_loot(
+                                                self.common_casket_id,
                                                 name.as_deref().unwrap_or_default(),
                                                 id,
                                             ))

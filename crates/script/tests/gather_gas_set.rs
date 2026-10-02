@@ -269,7 +269,7 @@ export default class T extends LoopingBot {
     iso.join();
 
     assert_eq!(
-        api::gather_methods::gas_rock_ids(data.mining_hazards()).unwrap(),
+        api::gather_methods::gas_rock_ids(data.as_ref(), data.mining_hazards()).unwrap(),
         gas_ids(),
         "script mutations never reach the selected data"
     );

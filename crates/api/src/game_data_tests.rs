@@ -150,6 +150,22 @@ fn minimal_json(tail: &str) -> String {
 }
 
 #[test]
+fn selected_prayer_layout_rejects_noncontiguous_or_oversized_rows() {
+    let mut gap: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
+    gap.prayers[0].varp += 1;
+    let error = validate_prayer_layout(&gap, ClientRevision::R289).unwrap_err();
+    assert!(error.contains("revision 289"));
+    assert!(error.contains("row 0"));
+
+    let mut oversized: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
+    let extra_rows = oversized.prayers.clone();
+    oversized.prayers.extend(extra_rows);
+    let error = validate_prayer_layout(&oversized, ClientRevision::R289).unwrap_err();
+    assert!(error.contains("revision 289"));
+    assert!(error.contains("supported count"));
+}
+
+#[test]
 fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
     let food: ConsumptionFact = serde_json::from_str(
         r#"{

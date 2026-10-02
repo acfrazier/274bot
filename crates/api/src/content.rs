@@ -1,24 +1,9 @@
-//! Shared 274/289 content facts: rock display names and the common-loot
-//! predicate.
+//! Shared 274/289 content facts: the common-loot predicate.
+//!
 //!
 //! Curated training sites / leashes and the hostile-attacker policy live with
 //! their script consumer in `script::content`; this module keeps the facts a
 //! lower layer must not depend on `script` to read.
-
-/// Posted rock option names. No rock-id sidecar is selected, so
-/// `resolveRockIds` throws `not impl` and these stay display names.
-pub const ROCK_TYPE_NAMES: &[&str] = &[
-    "Clay",
-    "Copper",
-    "Tin",
-    "Iron",
-    "Silver",
-    "Coal",
-    "Gold",
-    "Mithril",
-    "Adamantite",
-    "Runite",
-];
 
 /// Lowercase substrings treated as common loot by the compatibility API.
 /// The policy stays in Rust; shims only publish and invoke it.
@@ -36,12 +21,18 @@ pub const COMMON_BANK_LOOT: &[&str] = &[
     "kebab",
 ];
 
-/// Random-event fishing casket id in both selected 274 and 289 content/cache inputs.
-pub const RANDOM_EVENT_CASKET_ID: i32 = 405;
+/// Selected random-event fishing casket id, or no identity without selected
+/// game data.
+pub fn random_event_casket_id(data: Option<&crate::game_data::SelectedGameData>) -> Option<i32> {
+    data.and_then(|data| data.item_by_alias("casket"))
+        .map(|item| item.id)
+}
 
 /// Match one observed object against the host-owned common-loot policy.
-pub fn matches_common_bank_loot(name: &str, id: i32) -> bool {
-    id == RANDOM_EVENT_CASKET_ID
+/// Casket identity is resolved from selected item aliases and cached by the
+/// calling selected-data slot.
+pub fn matches_common_bank_loot(casket_id: Option<i32>, name: &str, id: i32) -> bool {
+    casket_id == Some(id)
         || (!name.is_empty()
             && COMMON_BANK_LOOT
                 .iter()
@@ -58,29 +49,29 @@ fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::io::ClientRevision;
 
     #[test]
-    fn common_bank_loot_matches_names_and_verified_casket_id() {
-        assert!(matches_common_bank_loot("Uncut sapphire", -1));
-        assert!(matches_common_bank_loot("STRANGE FRUIT", -1));
-        assert!(matches_common_bank_loot("", 405));
-        assert!(!matches_common_bank_loot("Rune scimitar", -1));
-        assert!(!matches_common_bank_loot("", -1));
-        assert_eq!(
-            COMMON_BANK_LOOT,
-            [
-                "uncut",
-                "sapphire",
-                "emerald",
-                "ruby",
-                "diamond",
-                "opal",
-                "jade",
-                "topaz",
-                "strange fruit",
-                "beer",
-                "kebab",
-            ]
-        );
+    fn common_bank_loot_matches_names_and_selected_casket_alias() {
+        let data = crate::game_data::for_revision(ClientRevision::R289).expect("R289 data");
+        let casket_id = random_event_casket_id(Some(data.as_ref())).expect("casket alias");
+        assert!(matches_common_bank_loot(
+            Some(casket_id),
+            "Uncut sapphire",
+            -1
+        ));
+        assert!(matches_common_bank_loot(
+            Some(casket_id),
+            "STRANGE FRUIT",
+            -1
+        ));
+        assert!(matches_common_bank_loot(Some(casket_id), "", casket_id));
+        assert!(!matches_common_bank_loot(None, "", casket_id));
+        assert!(!matches_common_bank_loot(
+            Some(casket_id),
+            "Rune scimitar",
+            -1
+        ));
+        assert!(!matches_common_bank_loot(Some(casket_id), "", -1));
     }
 }

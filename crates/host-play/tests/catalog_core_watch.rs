@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use host_play::catalog_core::{
     firemaker_spec, line_of_sight_dest_vis_alone, line_of_sight_pair_is_blocked,
-    line_of_sight_pair_is_open, select_line_of_sight_pairs, BoundedLoc, CoreCase, CoreWatch,
-    CoreWatchStatus, FiremakerCycle, LineOfSightHere, LineOfSightIdentity, LineOfSightObservation,
-    LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt, LineOfSightTile, Observation,
-    RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
-    HIGH_ALCH_MAGIC_XP, LOS_V2_STOP, LOS_VIS_SCENERY, LOS_V_E, LOS_V_W, LOS_WALK_SCENERY,
-    RUNE_CHAINBODY_HIGH_ALCH_COINS, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
+    line_of_sight_pair_is_open, prayer_varp_indexes, select_line_of_sight_pairs, BoundedLoc,
+    CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, LineOfSightHere, LineOfSightIdentity,
+    LineOfSightObservation, LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt,
+    LineOfSightTile, Observation, RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK,
+    BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER, HIGH_ALCH_MAGIC_XP, LOS_V2_STOP,
+    LOS_VIS_SCENERY, LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, RUNE_CHAINBODY_HIGH_ALCH_COINS,
+    VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
 use host_play::catalog_core::{
     ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
@@ -25,6 +26,14 @@ fn r289_item_id(alias: &str) -> i32 {
         .item_by_alias(alias)
         .unwrap_or_else(|| panic!("selected R289 game data lacks item alias {alias:?}"))
         .id
+}
+fn protect_prayer_identity() -> (i32, i32) {
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("selected R289 game data");
+    let prayer = data
+        .prayer_by_name("Protect from Melee")
+        .expect("Protect from Melee row");
+    (prayer.level, prayer.varp)
 }
 
 fn thiever_observation() -> Observation {
@@ -1371,6 +1380,7 @@ fn brimhaven_moss_inspect_v1_generation_transition_uses_new_ring_seq() {
 }
 
 fn prayer_ready() -> Observation {
+    let (protect_level, _) = protect_prayer_identity();
     let mut observation = Observation {
         ingame: true,
         scene_state: 2,
@@ -1378,9 +1388,11 @@ fn prayer_ready() -> Observation {
         tile: Some((3222, 3222, 0)),
         ..Observation::default()
     };
-    observation.levels.insert("prayer".into(), 43);
-    observation.effective_levels.insert("prayer".into(), 43);
-    for index in 83..=97 {
+    observation.levels.insert("prayer".into(), protect_level);
+    observation
+        .effective_levels
+        .insert("prayer".into(), protect_level);
+    for index in prayer_varp_indexes() {
         observation.varps.insert(index, 0);
     }
     observation
@@ -1388,13 +1400,13 @@ fn prayer_ready() -> Observation {
 
 fn prayer_on(mut observation: Observation) -> Observation {
     observation.tick += 1;
-    observation.varps.insert(97, 1);
+    observation.varps.insert(protect_prayer_identity().1, 1);
     observation
 }
 
 fn prayer_all_off(mut observation: Observation) -> Observation {
     observation.tick += 1;
-    for index in 83..=97 {
+    for index in prayer_varp_indexes() {
         observation.varps.insert(index, 0);
     }
     observation

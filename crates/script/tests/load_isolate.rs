@@ -5131,7 +5131,7 @@ export default class T extends LoopingBot {
 fn isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
-import { COMMON_BANK_LOOT, matchesCommonBankLoot, depositMatcher } from '../../api/bank/Banking.js';
+import { COMMON_BANK_LOOT, RANDOM_EVENT_CASKET_ID, matchesCommonBankLoot, depositMatcher } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     loop() {
         let calls = 0;
@@ -5141,7 +5141,7 @@ export default class T extends LoopingBot {
         globalThis.__common = {
             names: COMMON_BANK_LOOT.slice(),
             sapphire: matchesCommonBankLoot('Uncut sapphire'),
-            casket: matchesCommonBankLoot('', 405),
+            casket: matchesCommonBankLoot('', RANDOM_EVENT_CASKET_ID),
             negative: matchesCommonBankLoot('Rune scimitar', 1333),
             own: ownTrue('Rune scimitar', 1333),
             excluded: ownFalse('Uncut ruby', 1621),
@@ -5152,7 +5152,10 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
     let bank_side = [item_row(405, Some("Mystery box"), 1, &[], false, -1, 0)];
     let mut snap = base_snapshot();
     snap.bank_side = &bank_side;
@@ -9306,7 +9309,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("selected R289 game data");
+    let expected_rocks = api::gather_methods::rock_type_names(game_data.as_ref());
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        game_data.clone(),
+    )
+    .unwrap();
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
@@ -9345,8 +9357,8 @@ export default class T extends LoopingBot {
             .get("rocks")
             .and_then(|v| v.as_array())
             .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
-        Some(api::content::ROCK_TYPE_NAMES.to_vec()),
-        "handle.content.rock_type_names must be the Rust table: {probe:?}"
+        Some(expected_rocks),
+        "handle.content.rock_type_names must follow the selected mining rows: {probe:?}"
     );
     let ve = script::content::FIRE_PLOTS
         .iter()

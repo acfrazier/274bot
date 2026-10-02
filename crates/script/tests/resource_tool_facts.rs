@@ -178,7 +178,10 @@ fn tick(iso: &LoadIsolate, n: u64) {
 
 #[test]
 fn posted_axes_are_best_first_with_real_ids_including_black() {
-    let iso = spawn();
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(SRC.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
     let axes = iso.probe("__axes").unwrap();
     assert_eq!(
         axes,
