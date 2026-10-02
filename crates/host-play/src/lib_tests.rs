@@ -18145,7 +18145,160 @@ fn manual_resume_click(rig: &ReconnectRig, tick: u64) -> bool {
         },
         true,
         tick,
+        false,
     )
+}
+
+fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
+    force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.here);
+    let action = rig.slot().lock().unwrap().feed_watchdog(
+        Instant::now(),
+        Some(rig.here),
+        &[],
+        false,
+        true,
+        &[script::shim::InteractReq::RecoveryAnchor {
+            x: 40,
+            z: 40,
+            level: 0,
+        }],
+    );
+    assert!(matches!(action, script::WatchdogAction::ArmWalk { .. }));
+    apply_watchdog_nav_action(
+        action,
+        &mut rig.client,
+        Some(&rig.snap),
+        Some(rig.here),
+        &rig.navs,
+        &rig.world,
+        None,
+        "alice",
+    );
+    assert_eq!(
+        rig.armed().0,
+        0,
+        "production watchdog replacement is id-zero"
+    );
+}
+
+#[test]
+fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let request = rig.armed().0;
+    let original_generation = rig.navs.lock().unwrap()["alice"].route_generation;
+    eprintln!(
+        "manual config resident NavBot={} CarriedWalk={}",
+        std::mem::size_of::<NavBot>(),
+        std::mem::size_of::<CarriedWalk>()
+    );
+    let walks = rig.walks();
+    arm_manual_config_recovery(&mut rig);
+    assert!(take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        crate::SlotFrameInput {
+            manual_steps: 1,
+            ..crate::SlotFrameInput::default()
+        },
+        true,
+        2,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert!(rig
+        .slot()
+        .lock()
+        .unwrap()
+        .watchdog()
+        .recovering_anchor()
+        .is_none());
+    let terminal = {
+        let bots = rig.navs.lock().unwrap();
+        let bot = &bots["alice"];
+        assert_eq!(bot.walk_outcome_request_id, request);
+        assert_eq!(bot.walk_outcome_generation, original_generation);
+        assert_eq!(
+            bot.walk_outcome_cancel_reason,
+            script::isolate_fb::WalkCancelReason::UserInput
+        );
+        assert!(bot.carried_walk.is_none());
+        (bot.walk_outcome_seq, bot.walk_outcome_generation)
+    };
+    rig.frames(2);
+    rig.resume();
+    for tick in 3..8 {
+        rig.frames(tick);
+    }
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), false);
+    assert_eq!(
+        rig.walks(),
+        walks,
+        "neither carry nor recovery may replay the old request"
+    );
+    let slot = rig.slot();
+    let slot = slot.lock().unwrap();
+    assert!(!slot.watchdog().rearm_pending());
+    assert!(slot.watchdog().recovering_anchor().is_none());
+    drop(slot);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(
+        (bot.walk_outcome_seq, bot.walk_outcome_generation),
+        terminal
+    );
+    assert_eq!(bot.walk_outcome_request_id, request);
+    assert!(bot.carried_walk.is_none());
+    drop(bots);
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
+fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let generation = rig.slot().lock().unwrap().runtime_generation();
+    arm_manual_config_recovery(&mut rig);
+    let old = Instant::now() - script::watchdog::WEDGE - Duration::from_secs(1);
+    rig.slot().lock().unwrap().feed_watchdog(
+        old,
+        Some(rig.here),
+        &[],
+        false,
+        true,
+        &[script::shim::InteractReq::NoteProgress],
+    );
+    assert!(manual_resume_click(&rig, 2));
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Running);
+        assert_eq!(
+            slot.notify_walk_failed(Instant::now()),
+            script::WatchdogAction::None
+        );
+        assert_eq!(
+            slot.feed_watchdog(
+                Instant::now(),
+                Some(rig.here),
+                &[],
+                false,
+                true,
+                &[script::shim::InteractReq::LoopSettled],
+            ),
+            script::WatchdogAction::None,
+            "a non-moving human click gives gameplay a fresh wedge budget"
+        );
+        assert!(slot.progress(Instant::now()).unwrap().idle_for.unwrap() < Duration::from_secs(1));
+    }
+    for tick in 2..6 {
+        rig.frames(tick);
+    }
+    assert_eq!(rig.slot().lock().unwrap().runtime_generation(), generation);
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), false);
+    assert!(rig.navs.lock().unwrap()["alice"].carried_walk.is_none());
+    rig.slot().lock().unwrap().stop();
 }
 
 #[test]
@@ -18196,6 +18349,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         },
         false,
         2,
+        false,
     ));
     {
         let navs = rig.navs.lock().unwrap();

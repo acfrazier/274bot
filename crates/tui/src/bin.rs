@@ -525,6 +525,13 @@ impl TuiSession {
         }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
+        let pause_manual_walk = frontend_core::nav_preference_at(
+            &host_play::panel_ui_path(),
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            None,
+        )
+        .unwrap_or(true);
+        core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
         // The fleet rows show the map walks this TUI arms.
         core.set_walk_arms(Arc::clone(&travellers));
         Self {
@@ -2073,6 +2080,42 @@ impl TuiSession {
             }
         }
     }
+    /// Persist a changed global nav toggle and apply it to current and future
+    /// slots through the shared operator session.
+    fn project_manual_walk_pause(&mut self, app: &mut TuiApp) {
+        self.core
+            .set_pause_script_on_manual_walk_abort(app.pause_script_on_manual_walk_abort);
+        if !std::mem::take(&mut app.pause_script_on_manual_walk_abort_dirty) || !self.persist_ui {
+            return;
+        }
+        let path = app
+            .shared_preferences_path()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(host_play::panel_ui_path);
+        match frontend_core::nav_preference_at(
+            &path,
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            Some(app.pause_script_on_manual_walk_abort),
+        ) {
+            Ok(_) => {
+                if app.error.as_deref().is_some_and(|error| {
+                    error.starts_with("settings: pause script on manual movement:")
+                }) {
+                    app.error = None;
+                }
+            }
+            Err(error) => {
+                app.error = Some(format!(
+                    "settings: pause script on manual movement: {error}"
+                ));
+            }
+        }
+    }
+
+    /// Set the global pause policy before binding or arming a TUI live run.
+    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
+        self.core.set_pause_script_on_manual_walk_abort(enabled);
+    }
 
     /// The remembered terrain-bake choice, shared with the panel through
     /// `panel-ui.json`.
@@ -2088,6 +2131,7 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.project_manual_walk_pause(app);
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
             app.focused = Some(run.focus_index());
@@ -2725,7 +2769,7 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
 fn new_app(title: impl Into<String>) -> TuiApp {
     let mut app = TuiApp::new(title);
-    app.restore_map_preferences(host_play::panel_ui_path());
+    app.restore_preferences(host_play::panel_ui_path());
     app
 }
 

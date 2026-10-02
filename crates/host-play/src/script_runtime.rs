@@ -9,7 +9,9 @@ use bank::{action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_o
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]
-pub(super) use script_nav::{approach_tiles, resolve_route_exclusions, ScriptRouteRequest};
+pub(super) use script_nav::{
+    approach_tiles, resolve_route_exclusions, CarriedWalk, ScriptRouteRequest,
+};
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, PostedWalkOutcome,
     ScriptRouteExclusions, ScriptWalkArm,
@@ -17,13 +19,15 @@ pub(super) use script_nav::{
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 #[path = "script_walk.rs"]
 mod script_walk;
-#[cfg(test)]
-pub(super) use script_walk::apply_nav_follow_outcome;
+#[cfg(not(test))]
+use script_walk::apply_watchdog_nav_action;
 pub(super) use script_walk::{
     abort_script_walk, pause_script, session_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
     take_manual_walk_ownership,
 };
-use script_walk::{apply_watchdog_nav_action, recovery_walk_idle, resumed_walk};
+#[cfg(test)]
+pub(super) use script_walk::{apply_nav_follow_outcome, apply_watchdog_nav_action};
+use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
 mod script_snapshot;
 use script_snapshot::pack_cached_reach;

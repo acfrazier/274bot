@@ -74,6 +74,8 @@ mod play_wires;
 mod resource_view;
 mod rss;
 mod scatter;
+#[cfg(feature = "test-support")]
+mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod walk_arm;
@@ -266,6 +268,8 @@ pub struct Play {
     /// player-info tick. One struct per bot on the pump — no per-bot nav
     /// thread.
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    /// Shared user preference; slot threads read it at the takeover fence.
+    pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
     /// Host-scope nav world (collision + transport graph) baked from the
     /// pack at construction (see [`default_pack_path`]); `None` when no
     /// pack loads, and `ctx.walk` then refuses to arm.
@@ -277,6 +281,22 @@ pub struct Play {
 }
 
 impl Play {
+    /// Changes only owner pausing, never movement detection or cancellation.
+    /// Shared by current workers and workers spawned after this call.
+    pub fn set_pause_script_on_manual_walk_abort(&self, enabled: bool) {
+        self.pause_script_on_manual_walk_abort
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the UI should show the most recent manual-cancellation detail.
+    pub fn script_walk_cancelled_by_user(&self, name: &str) -> bool {
+        self.navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|bot| bot.manual_walk_cancelled_detail)
+    }
+
     /// The immutable process profile, absent only for the legacy 274 entry.
     pub fn server_profile(&self) -> Option<&Arc<ServerProfile>> {
         self.connection.profile()

@@ -269,6 +269,9 @@ pub struct OperatorSession<Io> {
     /// The front end's walk arms: a member with an armed WalkTo route is
     /// walking (script walks are on the host rows).
     walk_arms: Option<WalkArms>,
+    /// Shared preference applied whenever a Play is installed and whenever
+    /// either front end updates its projection.
+    pause_script_on_manual_walk_abort: bool,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
 }
@@ -315,6 +318,7 @@ impl<Io> OperatorSession<Io> {
             op_line: String::new(),
             resources: Resources::default(),
             walk_arms: None,
+            pause_script_on_manual_walk_abort: true,
             _instance: instance,
         }
     }
@@ -325,10 +329,23 @@ impl<Io> OperatorSession<Io> {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
+        play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
         self.writer = None;
+    }
+
+    /// Project the persisted manual-movement pause setting onto the current
+    /// Play and retain it for the next Play/session slot.
+    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
+        if self.pause_script_on_manual_walk_abort == enabled {
+            return;
+        }
+        self.pause_script_on_manual_walk_abort = enabled;
+        if let Some(play) = self.play.as_ref() {
+            play.set_pause_script_on_manual_walk_abort(enabled);
+        }
     }
 
     pub fn vault(&self) -> Option<&Vault> {

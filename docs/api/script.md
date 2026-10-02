@@ -88,6 +88,11 @@ owns the slot, not saved for replay after it ends. This deliberately differs
 from design §3.6's held-walk deferral: an old route must not regain foreground
 authority after a native session. The carried host walk is not counted as a
 dropped script row. When the session ends ordinary game dispatch resumes.
+The Load-slot seat's worked example is
+`crates/script/examples/gather_quest_v2.ts` (authoritative) beside
+`gather_quest_v2.js` (checked-in plain-JS form): one Power-mode gather session
+to a drop quota, then one read-only `questProgress` check, with no script game
+actions. See [js-api-v2.md](js-api-v2.md) "Worked example: GatherQuest v2".
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
@@ -433,6 +438,22 @@ notice before that snapshot, a new walking operation keeps the tick's observed
 baseline and settles false during admission or its next machine step, rather than
 waiting on a request the host's dispatch fence rejected. Stop/Start clears the prior
 run's cancellation outcome and delivery guard.
+
+The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
+displayed as “Pause script on manual movement,” and defaults to ON. It gates
+only pausing the script that owns the cancelled operation; OFF still cancels
+and publishes the same terminal while leaving the script running. In that mode
+compat walking settles `false`, while v2 can inspect its correlated
+`walk_outcome_cancel_reason: 'user-input'` and make its own decision. The
+setting does not forbid a fresh script-issued walk after the takeover is
+observed.
+
+This differs from movement during work that was already operator-paused or
+reconnect-carried: that idle carry is excluded from cancellation and retains
+its existing Resume behavior. Conversely, after an active walk is cancelled,
+explicit Resume may permit a native script to make a fresh decision, but the
+old cancelled request, host carry, queued work, and watchdog recovery never
+replay automatically.
 
 ## Catalog walking and recovery (compat v1)
 

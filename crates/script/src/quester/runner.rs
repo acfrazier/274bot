@@ -1304,6 +1304,87 @@ mod tests {
     }
 
     #[test]
+    fn failed_walk_parks_owner_until_explicit_retry() {
+        use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
+        use crate::native::{HostEffect, WalkEnd};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3103, 3163, 2], "source": "test fixture", "radius": 6
+        });
+        step.advances = true;
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            quests,
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut queued_at = None;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
+            });
+            if ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .any(|action| matches!(action.effect, HostEffect::Walk(_)))
+            }) {
+                queued_at = Some(tick);
+                break;
+            }
+        }
+        let poll_tick = queued_at.expect("authored walk queued") + 1;
+        let cursor = (script.seq_index, script.step_index);
+        let request_id = post_user_input_walk_receipt(&mut ledger, poll_tick);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Failed;
+        for tick in poll_tick..=poll_tick + 52 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, tick, |native| script.tick(native).unwrap()),
+                ScriptFlow::Blocked(failure) if failure.retryable
+            ));
+            assert_eq!((script.seq_index, script.step_index), cursor);
+        }
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(
+            outbox.len(),
+            1,
+            "neither retry nor interaction while parked"
+        );
+        assert_eq!(outbox[0].request_id.get(), request_id);
+        assert!(script.parked && !script.needs_read && !script.settling);
+
+        script.retry().unwrap();
+        assert!(
+            !script.parked && script.needs_read,
+            "Retry resumes with fresh quest evidence"
+        );
+    }
+
+    #[test]
     fn user_input_walk_parks_without_attempts_or_repeated_work() {
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};

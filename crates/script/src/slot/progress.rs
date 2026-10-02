@@ -291,15 +291,21 @@ impl SlotScript {
                     token: *token,
                     reason: error_reason(error),
                 },
-                Poll::Ready(Ok(read)) => ProgressPage::Done {
-                    token: *token,
-                    row: row(
-                        prepared,
-                        resolve_journal(&prepared.path, &read, None),
-                        QuestListStatus::InProgress,
-                        true,
-                    ),
-                },
+                Poll::Ready(Ok(read)) => {
+                    #[cfg(feature = "test-hooks")]
+                    {
+                        seat.journal_evidence = Some((read.acquired, read.closed));
+                    }
+                    ProgressPage::Done {
+                        token: *token,
+                        row: row(
+                            prepared,
+                            resolve_journal(&prepared.path, &read, None),
+                            QuestListStatus::InProgress,
+                            true,
+                        ),
+                    }
+                }
             }
         } else {
             let colour = quest_colour(&prepared.path, &prepared.quests, cx.snapshot());
