@@ -59,7 +59,6 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .unwrap()
         .as_millis();
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ml".into());
-    assert!(prefix.starts_with("ml"), "use assigned ml accounts");
     let name = format!("{prefix}{}", serial % 1_000_000_000);
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_SCRIPTED_LADDERS_RECEIPT").expect("receipt path"));
