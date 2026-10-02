@@ -1815,31 +1815,8 @@ impl TuiApp {
             .walk_dest
             .map(|t| format!("{} {} {}", t.x, t.z, t.level))
             .unwrap_or_else(|| "—".into());
-        let mode = if self.settings.lowmem {
-            "lowmem"
-        } else {
-            "highmem"
-        };
-        let login = self.memory.filter(|n| n.differs()).map(|n| {
-            if n.login_lowmem {
-                "lowmem"
-            } else {
-                "highmem"
-            }
-        });
-        let mem: String;
-        let note: Option<&str>;
-        match login {
-            Some(login) => {
-                mem = format!("{mode} (login {login})");
-                note =
-                    Some("server tabs + sound follow at the next login (settings: r = relog now)");
-            }
-            None => {
-                mem = mode.to_string();
-                note = None;
-            }
-        }
+        let mem = frontend_core::MemoryNotice::status_text(self.settings.lowmem, self.memory);
+        let note = self.memory.filter(|n| n.differs()).map(|n| n.notice_text());
         let pane = StatusPane::new(self.focused_detail(), &walk, &mem)
             .mem_notice(note)
             .resources(&self.resources)

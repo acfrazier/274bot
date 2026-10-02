@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
+use client::client::client::SessionExitReason;
 use client::client::{Client, LoginError};
 use client::config::IfType;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
@@ -156,11 +157,10 @@ pub struct SlotArm {
     /// An operator Logout issued while offline still ends held script work.
     /// The slot thread consumes this once at the next session/title boundary.
     logout_work_reset_pending: AtomicBool,
-    /// Effective memory mode for the live client and the next handshake.
-    /// 0 = no front-end-owned value, 1 = highmem, 2 = lowmem. A surface
-    /// seeds this from its disposable spawn profile (including session-only
-    /// overrides); operator toggles then replace it. The slot pump reads it
-    /// every frame without taking a lock.
+    /// Queued memory mode for the next login, never a live client latch.
+    /// 0 = no front-end-owned value, 1 = highmem, 2 = lowmem. A surface seeds
+    /// this from its disposable spawn profile (including session overrides);
+    /// operator toggles replace it without changing the active client.
     lowmem_handshake: AtomicU8,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
@@ -386,8 +386,7 @@ impl SlotArm {
         self.intent.lock().login_latch
     }
 
-    /// Record the effective memory mode for the live client and next
-    /// handshake.
+    /// Queue the memory mode for the next login, without touching the client.
     pub fn set_lowmem_handshake(&self, lowmem: bool) {
         self.lowmem_handshake
             .store(if lowmem { 2 } else { 1 }, Ordering::Relaxed);
@@ -885,8 +884,10 @@ pub(super) fn tick_flags(
     client: &mut Client,
     ifaces: &[Option<Box<IfType>>],
     arm: &SlotArm,
+    last_exit_clean: &mut bool,
 ) -> bool {
     if let Some(reason) = client.take_session_exit_reason() {
+        *last_exit_clean = matches!(reason, SessionExitReason::ServerLogout { .. });
         match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.

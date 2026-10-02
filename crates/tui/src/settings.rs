@@ -56,8 +56,7 @@ pub enum SettingsKey {
     MapBake,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
-    /// Relog the bound member now so a pending memory-mode switch reaches
-    /// the server.
+    /// Relog the bound member now to apply the entire queued memory mode.
     MemoryRelog,
     /// The key was consumed but nothing changed (navigation, Esc).
     Consumed,
@@ -69,10 +68,9 @@ pub enum SettingsKey {
 /// bound profile (for example `settings — alice`). `notice` is the bound
 /// profile's save feedback, drawn under the rows: a refusal or a failed
 /// write in red with [`NOTHING_SAVED`], or `Saved <name>.` in green once the
-/// write is durable. `memory` is the bound slot's login-time vs current
-/// memory mode, drawn under the memory row while they differ (with the `r`
-/// relog hint). The notice is drawn straight into the buffer, so it costs a
-/// frame no allocation.
+/// write is durable. `memory` is the bound slot's applied vs queued mode;
+/// changes take effect only at the next login, with an explicit `r` offer.
+/// The notices are drawn into the same buffer as the settings rows.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
     pub nav: &'a mut NavFindSettings,
@@ -117,11 +115,7 @@ impl<'a> SettingsPane<'a> {
     /// Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
-            KeyCode::Char('r')
-                if self
-                    .memory
-                    .is_some_and(|notice| notice.differs() && !notice.relog_pending) =>
-            {
+            KeyCode::Char('r') if self.memory.is_some_and(MemoryNotice::can_relog) => {
                 SettingsKey::MemoryRelog
             }
             KeyCode::Char('r') => SettingsKey::Consumed,
@@ -232,31 +226,14 @@ impl Widget for SettingsPane<'_> {
         if !self.state.open {
             return;
         }
-        let memory_note;
-        let memory_value = match self.memory.filter(|n| n.differs()) {
-            Some(n) => {
-                let login = if n.login_lowmem { "lowmem" } else { "highmem" };
-                memory_note = Some(if n.relog_pending {
-                    format!("server: {login} — relog queued, login follows once parked")
-                } else {
-                    format!("server: {login} — tabs/sound at next login (r = relog now)")
-                });
-                if self.settings.lowmem {
-                    format!("lowmem (login {login})")
-                } else {
-                    format!("highmem (login {login})")
-                }
-            }
-            None => {
-                memory_note = None;
-                if self.settings.lowmem {
-                    "lowmem".to_string()
-                } else {
-                    "highmem".to_string()
-                }
-            }
-        };
-        let popup = Self::drawn_rect(area, self.notice, memory_note.as_deref());
+        let memory_note = Some(
+            self.memory
+                .filter(|n| n.differs())
+                .map_or(MemoryNotice::NEXT_LOGIN_NOTE, |n| n.notice_text()),
+        );
+        let memory_value =
+            MemoryNotice::status_text(self.settings.lowmem, self.memory).into_owned();
+        let popup = Self::drawn_rect(area, self.notice, memory_note);
         Clear.render(popup, buf);
         let block = Block::default().borders(Borders::ALL).title(self.title);
         let inner = block.inner(popup);
@@ -289,7 +266,7 @@ impl Widget for SettingsPane<'_> {
                 Line::from(format!("{marker}{name}: {value}"))
             })
             .collect();
-        if let Some(note) = memory_note.as_deref() {
+        if let Some(note) = memory_note {
             lines.push(Line::styled(note, Style::default().fg(Color::Yellow)));
         }
         Paragraph::new(lines)
@@ -299,7 +276,7 @@ impl Widget for SettingsPane<'_> {
             let bottom = inner.y + inner.height;
             let mut y = inner.y
                 + ROWS
-                + memory_note.as_deref().map_or(0, |note| {
+                + memory_note.map_or(0, |note| {
                     wrapped_rows(note, usize::from(inner.width).max(1))
                 });
             match notice.error() {
@@ -584,6 +561,7 @@ mod tests {
             login_lowmem: false,
             desired_lowmem: true,
             relog_pending: false,
+            connected: true,
         });
         assert_eq!(
             pane.on_key(key(KeyCode::Char('r'))),
@@ -612,10 +590,14 @@ mod tests {
             login_lowmem: true,
             desired_lowmem: false,
             relog_pending: false,
+            connected: true,
         });
         let text = render(pane, 60, 14);
-        assert!(text.contains("memory: highmem (login lowmem)"), "{text:?}");
-        assert!(text.contains("r = relog now"), "{text:?}");
+        assert!(
+            text.contains("memory: lowmem (next login highmem)"),
+            "{text:?}"
+        );
+        assert!(text.contains("Relog now"), "{text:?}");
     }
 
     #[test]

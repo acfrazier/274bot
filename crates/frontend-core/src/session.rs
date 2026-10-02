@@ -131,11 +131,10 @@ pub enum ArmMirror {
         lamp_skill: String,
         lamp_auto: bool,
     },
-    /// Memory mode (`ProfileSettings.lowmem`): re-affirmed to the slot's
-    /// arm once the write is durable. The arm is also set when the toggle
-    /// is issued (a parked slot's hooks never run, so the live client may
-    /// not have converged by the next handshake); a failed write resets
-    /// the arm to the restored durable value.
+    /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
+    /// Set when the toggle is issued and re-affirmed once durable; a failed
+    /// write resets the arm to the restored durable value. No client state
+    /// changes until the worker begins its next handshake.
     Memory(bool),
     /// Handshake-time settings (password, world) for the next login, and
     /// the whole bag for the run captured at edit time when the save
@@ -182,10 +181,8 @@ struct PendingWrite {
     member: String,
 }
 
-/// What the Music/SFX (memory-mode) toggle shows for one slot: the detail
-/// mode the server fixed at login against the operator's current setting.
-/// While they differ the server-side tabs, music and sound still follow
-/// the login mode; the client side already follows the setting.
+/// The memory mode applied at the last login against the queued setting.
+/// Automatic socket reconnects keep that mode; a clean logout permits a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryNotice {
     /// The slot's detail mode as the login handshake sent it.
@@ -194,12 +191,52 @@ pub struct MemoryNotice {
     pub desired_lowmem: bool,
     /// A Relog-now is in flight: logout issued or its login half queued.
     pub relog_pending: bool,
+    /// Whether the slot currently has a connected session to relog.
+    pub connected: bool,
 }
 
 impl MemoryNotice {
-    /// Whether the server still runs the login mode: the notice shows.
+    pub const NEXT_LOGIN_NOTE: &'static str = "The entire memory mode applies at the next login.";
+
+    /// Whether a different mode is queued for the next login.
     pub fn differs(self) -> bool {
         self.login_lowmem != self.desired_lowmem
+    }
+
+    pub fn can_relog(self) -> bool {
+        self.connected && self.differs() && !self.relog_pending
+    }
+
+    pub fn mode_name(lowmem: bool) -> &'static str {
+        if lowmem {
+            "lowmem"
+        } else {
+            "highmem"
+        }
+    }
+
+    /// Shared panel/TUI notice, including the queued action's disabled state.
+    pub fn notice_text(self) -> &'static str {
+        if self.relog_pending {
+            "Relog queued — login follows once logged out."
+        } else if !self.connected {
+            "Applies at the next Log in."
+        } else {
+            "Applies at the next login. Relog now to apply it."
+        }
+    }
+
+    /// Applied mode first; a queued setting must never look like a live switch.
+    pub fn status_text(lowmem: bool, notice: Option<Self>) -> std::borrow::Cow<'static, str> {
+        match notice {
+            Some(n) if n.differs() => std::borrow::Cow::Owned(format!(
+                "{} (next login {})",
+                Self::mode_name(n.login_lowmem),
+                Self::mode_name(n.desired_lowmem)
+            )),
+            Some(n) => std::borrow::Cow::Borrowed(Self::mode_name(n.login_lowmem)),
+            None => std::borrow::Cow::Borrowed(Self::mode_name(lowmem)),
+        }
     }
 }
 
@@ -570,8 +607,7 @@ impl<Io> OperatorSession<Io> {
         let attach = surface.attach(name, &mut profile, retained);
         if let Some(arm) = arm.as_ref() {
             // The surface may apply a session-only override to the disposable
-            // spawn profile. Keep the arm on that effective mode so both the
-            // live client and every later handshake use the same value.
+            // spawn profile. Queue that mode for this lifetime's next login.
             arm.set_lowmem_handshake(profile.settings.lowmem);
         }
         if !self.spawn_workers {
@@ -878,30 +914,32 @@ impl<Io> OperatorSession<Io> {
         self.operations.set(op, name, Outcome::Pending);
     }
 
-    /// The Music/SFX (memory-mode) state for `name`: the mode published by
-    /// the last successful login handshake against the effective session
-    /// mode, plus any Relog-now in flight. `None` until a handshake succeeds.
-    pub fn memory_status(&self, name: &str) -> Option<MemoryNotice> {
-        let login_lowmem = self
-            .statuses
-            .iter()
-            .find(|status| status.username == name)?
-            .login_lowmem?;
-        let desired_lowmem = self
-            .play
+    /// The queued memory mode, including any session-only spawn override.
+    pub fn memory_mode(&self, name: &str) -> Option<bool> {
+        self.play
             .as_ref()
             .and_then(|play| play.arm(name))
             .and_then(|arm| arm.lowmem_handshake())
             .or_else(|| {
-                self.vault
-                    .as_ref()
-                    .and_then(|vault| vault.get(name))
-                    .map(|profile| profile.settings.lowmem)
-            })?;
+                self.deferred
+                    .get(name)
+                    .map(|spawn| spawn.profile.settings.lowmem)
+            })
+            .or_else(|| self.vault.as_ref()?.get(name).map(|p| p.settings.lowmem))
+    }
+
+    /// Applied vs queued memory mode, plus any Relog-now in flight.
+    /// `None` until the worker's first successful login.
+    pub fn memory_status(&self, name: &str) -> Option<MemoryNotice> {
+        let status = self
+            .statuses
+            .iter()
+            .find(|status| status.username == name)?;
         Some(MemoryNotice {
-            login_lowmem,
-            desired_lowmem,
+            login_lowmem: status.login_lowmem?,
+            desired_lowmem: self.memory_mode(name)?,
             relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
+            connected: status.connected,
         })
     }
 
@@ -914,12 +952,9 @@ impl<Io> OperatorSession<Io> {
         )
     }
 
-    /// The shared Music/SFX toggle both front ends call: persist the new
-    /// mode to the vault and arm it for the next handshake at once, so a
-    /// parked slot (whose hooks never run) still handshakes the new mode.
-    /// The live client follows within a frame through the slot pump; the
-    /// server-side tabs, music and sound follow at the next login, shown
-    /// by [`Self::memory_status`] until then. Never logs out on its own.
+    /// Queue and persist the memory mode for the next login. Both front ends
+    /// use this command; it never mutates the running client or logs out.
+    /// [`Self::memory_status`] retains the applied mode through socket reconnects.
     pub fn set_memory_mode(&mut self, name: &str, lowmem: bool) -> Result<OperationId, String> {
         let mut profile = self
             .vault
@@ -2001,7 +2036,17 @@ impl<Io> OperatorSession<Io> {
                         return;
                     }
                 }
-                SettingsResult::Saved(self.apply_mirror(&member, pending.mirror, committed))
+                // Operation IDs order profile saves across commits, not just
+                // within a writer batch. A late memory completion must never
+                // re-arm a mode the operator has since cancelled.
+                let delivery = if matches!(pending.mirror, ArmMirror::Memory(_))
+                    && !newest.iter().any(|(name, _)| *name == member)
+                {
+                    LiveDelivery::NotRunning
+                } else {
+                    self.apply_mirror(&member, pending.mirror, committed)
+                };
+                SettingsResult::Saved(delivery)
             }
             Err(error) if !written.superseded => {
                 // A failed memory toggle put the arm ahead of the restored

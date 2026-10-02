@@ -3505,11 +3505,19 @@ fn edit_parameters_enabled() -> bool {
 /// random, the last login error while retrying, the newest operation, mem),
 /// wrapped.
 fn status_section(ui: &Ui, session: &mut Session) {
+    // The offer must survive closing the picker (or folding the status rows).
+    if let Some(notice) = session.focused_memory_notice().filter(|n| n.differs()) {
+        ui.text_wrapped(notice.notice_text());
+        memory_relog_button(ui, session, notice);
+    }
     if !section_open(ui, session, "status") {
         return;
     }
     let walk = session.walk_status_text();
-    let mem = Session::mem_notice_text(session.focused_lowmem(), session.focused_memory_notice());
+    let mem = frontend_core::MemoryNotice::status_text(
+        session.focused_lowmem(),
+        session.focused_memory_notice(),
+    );
     let Some(d) = session.core.fleet_view().detail() else {
         kv_row(ui, "state", "no bot selected");
         status_kv_row(ui, "walk", &walk);
@@ -3633,6 +3641,23 @@ fn inverted_button(ui: &Ui, label: &str, selected: bool, size: [f32; 2]) -> bool
 
 const MEM_POPUP: &str = "mem-pick";
 
+fn memory_relog_button(ui: &Ui, session: &mut Session, notice: frontend_core::MemoryNotice) {
+    if !notice.can_relog() {
+        return;
+    }
+    if session.focused_memory_relog_warning() {
+        ui.text_wrapped("Relog interrupts running or queued script work. Click twice to confirm.");
+    }
+    let label = if session.mem_relog_armed() {
+        "Relog now (confirm interruption)"
+    } else {
+        "Relog now"
+    };
+    if ui.button_with_size(label, [0.0, 0.0]) {
+        session.request_focused_memory_relog();
+    }
+}
+
 /// Sticky highmem/lowmem popup (click-away to close), opened by the mem
 /// button the same way Teles opens dests.
 fn mem_popup(ui: &Ui, session: &mut Session) {
@@ -3646,24 +3671,14 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
         if inverted_button(ui, "lowmem", low, [0.0, 0.0]) {
             session.request_focused_lowmem(true);
         }
-        if session
-            .focused_memory_notice()
-            .is_some_and(|notice| notice.differs())
-        {
-            ui.text_wrapped("server tabs + sound follow at the next login");
-            let notice = session.focused_memory_notice().expect("checked above");
+        // Self-sized popups need an explicit wrap edge; do not let their
+        // short mode buttons determine the width of a multi-line notice.
+        popup_text(ui, frontend_core::MemoryNotice::NEXT_LOGIN_NOTE);
+        if let Some(notice) = session.focused_memory_notice().filter(|n| n.differs()) {
             if notice.relog_pending {
-                ui.text_disabled("relog queued…");
-            } else if session.mem_relog_armed() || !session.focused_memory_relog_warning() {
-                if ui.button_with_size("Relog now", [0.0, 0.0]) {
-                    session.request_focused_memory_relog();
-                }
-            } else if ui.button_with_size(
-                "Relog now (interrupts script work — click again)",
-                [0.0, 0.0],
-            ) {
-                session.request_focused_memory_relog();
+                popup_text(ui, notice.notice_text());
             }
+            memory_relog_button(ui, session, notice);
         }
     });
 }
@@ -3699,7 +3714,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
         ui.open_popup(MEM_POPUP);
     }
     ui.set_item_tooltip(
-        "Game pane highmem / lowmem — the live client flips at once, server tabs + sound follow at the next login (Relog now in this picker)",
+        "Queue highmem / lowmem for the next login. Textures, tabs and sound stay unchanged until then. Relog now is offered in the picker and status.",
     );
     mem_popup(ui, session);
 }
@@ -3876,7 +3891,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
 /// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
 /// threads from the shared focus on every frame.
 fn slot_render_section(ui: &Ui, session: &mut Session) {
-    ui.text_wrapped("Game pane only. Rail members stay GPU / lowmem at 1 fps (CPU/none as fallback). Click lowmem/highmem for the sticky picker. Switching GPU↔CPU or mem drops + reattaches the renderer — the client stays logged in.");
+    ui.text_wrapped("Game pane only. GPU↔CPU reattaches the renderer without a logout. Memory mode is queued for the next login; textures, tabs and sound stay unchanged until then.");
     raster_picker(ui, session);
 }
 

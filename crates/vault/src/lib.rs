@@ -64,9 +64,9 @@ const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 /// Per-profile settings. Low-memory is the default for headless clients;
 /// auto-login defaults off so v1 blobs (which only carried `lowmem`)
 /// deserialize with the box unchecked.
-/// How this slot paints the 274 scene. Off is `set_draw` only. Gpu↔Cpu
-/// (or lowmem) on a live slot drops + reattaches the `Renderer`; the
-/// `Client` and its socket stay up.
+/// How this slot paints the scene. Off is `set_draw` only. Gpu↔Cpu on a
+/// live slot reattaches the `Renderer` without a logout. Memory mode is a
+/// separate setting applied at the next login.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RasterMode {
