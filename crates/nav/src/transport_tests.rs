@@ -452,6 +452,7 @@ queue(shantay_pass_enter, 0, 0);
 fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
     TransportEdge {
         kind,
+        player_delta: None,
         at: WorldTile {
             x: 3200,
             z: 3200,
@@ -7672,6 +7673,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
     );
     let edge = |loc_id, id, min| TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 100,
             z: 100,

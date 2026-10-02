@@ -45,6 +45,7 @@ fn entry_edges_are_the_wizard_npc_hops_only() {
     assert!(is_essence_entry_edge(&entry));
     let cart = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 2834,
             z: 2954,

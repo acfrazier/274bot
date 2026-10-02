@@ -102,6 +102,7 @@ pub(super) fn push_glider_flight(
 ) {
     graph.edges.push(TransportEdge {
         kind: TransportKind::Glider,
+        player_delta: None,
         at,
         to,
         loc_id: GNOME_PILOT,

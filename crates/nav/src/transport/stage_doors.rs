@@ -1424,6 +1424,7 @@ fn gated_edge(
     }
     Some(TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id: id,

@@ -33,6 +33,7 @@ fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollisi
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> TransportEdge {
     TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id,

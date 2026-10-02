@@ -22,6 +22,29 @@ pub(super) enum Landing {
     PlayerDelta { dx: i32, d_level: i32, dz: i32 },
 }
 
+impl Landing {
+    fn player_delta(&self) -> Option<WorldTile> {
+        match *self {
+            Self::PlayerDelta { dx, d_level, dz } => Some(WorldTile {
+                x: dx,
+                z: dz,
+                level: d_level,
+            }),
+            Self::FromLevel { d } => Some(WorldTile {
+                x: 0,
+                z: 0,
+                level: d,
+            }),
+            Self::FromZ { d } => Some(WorldTile {
+                x: 0,
+                z: d,
+                level: 0,
+            }),
+            Self::Abs { .. } | Self::LocDelta { .. } => None,
+        }
+    }
+}
+
 /// A parsed `[oplocN,name]` script block: destinations keyed by the loc's
 /// packed coord, the loc's angle, or a fallback (m8aq `ScriptRule`).
 #[derive(Debug, Default)]
@@ -451,6 +474,7 @@ fn resolve_ladder_stair_rules(
                     }
                     graph.edges.push(TransportEdge {
                         kind: *kind,
+                        player_delta: landing.player_delta(),
                         at,
                         to,
                         loc_id: id,
@@ -584,6 +608,7 @@ pub(super) fn trapdoor_edges(
                 seen.insert(at);
                 graph.edges.push(TransportEdge {
                     kind: TransportKind::Ladder,
+                    player_delta: landing.player_delta(),
                     at,
                     to,
                     loc_id: closed_id,
@@ -624,6 +649,7 @@ pub(super) fn trapdoor_edges(
             }
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Ladder,
+                player_delta: landing.player_delta(),
                 at,
                 to,
                 loc_id: open_id,

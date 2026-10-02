@@ -1619,6 +1619,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         TransportGraph {
             edges: vec![TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: WorldTile {
                     x: 3202,
                     z: 3202,
@@ -2084,6 +2085,7 @@ fn door_route() -> Route {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: WorldTile {
                         x: 3202,
                         z: 3200,
@@ -2332,6 +2334,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: tiles[300],
                     to: tiles[301],
                     loc_id: 1530,
@@ -3332,6 +3335,7 @@ fn toll_world() -> NavWorld {
     }
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 2,
@@ -3533,6 +3537,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -3638,6 +3643,7 @@ fn picker_confirm_uses_find_with_options() {
     };
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,

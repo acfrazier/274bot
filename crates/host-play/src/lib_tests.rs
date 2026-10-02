@@ -5358,6 +5358,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Boat,
+        player_delta: None,
         at,
         to: stand,
         loc_id: 378,
@@ -11233,6 +11234,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -11981,6 +11983,7 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
     }
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 2,
@@ -20386,6 +20389,7 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
 
     let edge = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 2,
             z: 1,
@@ -21172,6 +21176,7 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
 
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 29,
             z: 32,
@@ -21575,6 +21580,7 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
 
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 19,
             z: 32,
@@ -21856,6 +21862,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
     }
     let door = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 59,
             z: 50,
@@ -21969,6 +21976,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
             graph.at.entry(from).or_default().push(index);
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: from,
                 to: stand,
                 loc_id: 1,
@@ -22079,6 +22087,7 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     graph.at.entry(from).or_default().push(0);
     graph.edges.push(TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: from,
         to: stand,
         loc_id: 1,
@@ -22244,6 +22253,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
 fn glory_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -22485,6 +22495,7 @@ fn toll_nav_world() -> NavWorld {
     }
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 2,

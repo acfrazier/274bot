@@ -344,6 +344,7 @@ fn blocked_door_fixture() -> WorldCollision {
 fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at,
         to,
         loc_id: 1530,
@@ -431,6 +432,7 @@ fn teleport(
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: tile(0, 0, 0),
         to,
         loc_id: 0,
@@ -666,6 +668,7 @@ fn find_transport_changes_level_and_walks_upstairs() {
     let wc = bake(4, 4, &[]);
     let ladder = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: tile(0, 0, 0),
         to: tile(1, 1, 1),
         loc_id: 1747,
@@ -1174,6 +1177,7 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
         graph.at.entry(at).or_default().push(0);
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at,
             to: tile(200, 201, 0),
             loc_id: 1,
@@ -1631,6 +1635,7 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
     };
     let edge = |kind, at, to, ticks, item_req| TransportEdge {
         kind,
+        player_delta: None,
         at,
         to,
         loc_id: 1,
