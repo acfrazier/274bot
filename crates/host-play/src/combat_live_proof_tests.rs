@@ -182,7 +182,23 @@ impl Case {
 
     fn stand(self, world: &nav::world::NavWorld) -> Result<WorldTile, String> {
         match self {
-            Self::M1 | Self::M1HandIn | Self::M5 => Ok(IMP_START),
+            Self::M1 | Self::M5 => Ok(IMP_START),
+            // COMBAT-S3A-2 operator-authorized hand-in-only staging: the
+            // CB46 seed cannot cross the default danger zones from Ardougne.
+            // Start on the Wizard Tower ground floor, not at the farm.
+            // wizard_mizgog.rs2:3-19,39-52 still runs both production talks.
+            Self::M1HandIn => {
+                let start = WorldTile {
+                    x: 3102,
+                    z: 3160,
+                    level: 0,
+                };
+                world
+                    .collision
+                    .standable(start)
+                    .then_some(start)
+                    .ok_or_else(|| "Wizard Tower hand-in start is not standable".to_owned())
+            }
             Self::M2 | Self::M3 | Self::M6 => standable_neighbor(world, WARLORD_ANCHOR),
             Self::M4 => world
                 .collision
