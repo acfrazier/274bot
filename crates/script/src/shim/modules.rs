@@ -832,10 +832,6 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("clue_paint.js"),
         ),
         Module::new(
-            "/rs2b0t/bot/api/ai/clues/data/cluedb.js",
-            include_str!("cluedb.js"),
-        ),
-        Module::new(
             "/rs2b0t/bot/api/ai/clues/data/toolAcquire.js",
             include_str!("clue_tool_acquire.js"),
         ),
