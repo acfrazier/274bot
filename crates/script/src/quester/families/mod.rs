@@ -973,7 +973,7 @@ struct WalkPlan {
 impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(self.tile, self.radius, cx.required_after),
+            reach::walk_request(self.tile, self.radius, None, cx.required_after),
             &mut cx.tick.cx,
         )?;
         Ok(Box::new(WalkRun { handle }))
@@ -1116,7 +1116,7 @@ impl StepRun for TalkRun {
                     here.is_some_and(|obs| reach::within(obs.value, tile, i32::from(self.leash)));
                 if !near {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.leash, cx.required_after),
+                        reach::walk_request(tile, self.leash, None, cx.required_after),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1340,7 +1340,12 @@ impl StepRun for InteractRun {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.radius.max(1) as u16, cx.required_after),
+                        reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
+                        ),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1662,7 +1667,12 @@ impl StepRun for UseOnRun {
                 let here = cx.tick.cx.snapshot().here();
                 if !here.is_some_and(|obs| reach::within(obs.value, tile, self.radius)) {
                     self.walk = Some(cx.tick.actions.begin::<Walk>(
-                        reach::walk_request(tile, self.radius.max(1) as u16, cx.required_after),
+                        reach::walk_request(
+                            tile,
+                            self.radius.max(1) as u16,
+                            None,
+                            cx.required_after,
+                        ),
                         &mut cx.tick.cx,
                     )?);
                     return Poll::Pending;
@@ -1722,7 +1732,7 @@ impl StepRun for UseOnRun {
                     let index = npc.index as i32;
                     if npc.distance > 1 {
                         self.walk = Some(cx.tick.actions.begin::<Walk>(
-                            reach::walk_request(tile, 1, cx.required_after),
+                            reach::walk_request(tile, 1, None, cx.required_after),
                             &mut cx.tick.cx,
                         )?);
                         return Poll::Pending;

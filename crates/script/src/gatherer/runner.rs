@@ -587,15 +587,25 @@ impl Gatherer {
         self.target = Some(selected.plan.clone());
         // Observed NPC ops own their client-side approach. Their occupied water
         // tile is not a navigation destination (and can move before arrival).
-        if selected.class == PlacementClass::Unloaded
-            || (selected.plan.npc_index < 0
-                && !adjacent(
-                    tick.cx.snapshot().here().map(|here| here.value),
-                    selected.plan.tile,
-                ))
-        {
+        let loc_id = match selected.plan.entity {
+            api::selected::EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let needs_walk = if selected.class == PlacementClass::Unloaded {
+            true
+        } else if selected.plan.npc_index >= 0 {
+            false
+        } else {
+            let snapshot = tick.cx.snapshot();
+            !snapshot.here().is_some_and(|here| match loc_id {
+                Some(id) => snapshot.walk_loc_arrived(here.value, selected.plan.tile, 1, id),
+                None => snapshot.walk_arrived(here.value, selected.plan.tile, 1),
+            })
+        };
+        if needs_walk {
             let request = WalkRequest {
                 target: selected.plan.tile,
+                loc_id,
                 radius: 1,
                 options: FindOptions {
                     allow_teleports: self.settings().allow_teleports,
@@ -989,6 +999,7 @@ impl Gatherer {
                 z: here.z.saturating_add(dz),
                 level: here.level,
             },
+            loc_id: None,
             radius: 0,
             options: FindOptions {
                 allow_teleports: false,
@@ -1305,12 +1316,6 @@ fn tool_gate_met(tool: &ToolUse, skill: Skill, stat: &StatView) -> bool {
             Skill::Woodcutting | Skill::Mining | Skill::Fishing => true,
         }
     }
-}
-
-fn adjacent(here: Option<WorldTile>, target: WorldTile) -> bool {
-    here.is_some_and(|here| {
-        here.level == target.level && (here.x - target.x).abs().max((here.z - target.z).abs()) <= 1
-    })
 }
 
 #[cfg(test)]

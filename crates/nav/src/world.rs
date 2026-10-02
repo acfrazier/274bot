@@ -66,7 +66,8 @@ impl NavWorld {
         ));
         self.named_banks
             .set(facts)
-            .map_err(|_| "bank facts already bound")
+            .map_err(|_| "bank facts already bound")?;
+        Ok(())
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world
