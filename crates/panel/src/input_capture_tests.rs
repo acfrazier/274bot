@@ -4,7 +4,8 @@ use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
     add_shifted_key_event, capture_key_ch, capture_keys, discard_unconsumed_native_capture,
-    maybe_send_click, shifted_imgui_key, shifted_imgui_key_at_location, stream_capture,
+    maybe_send_click, note_native_ime_commit, shifted_imgui_key, shifted_imgui_key_at_location,
+    stream_capture,
 };
 
 #[test]
@@ -486,4 +487,152 @@ fn maybe_send_click_outside_image_sends_nothing() {
     let (tx, rx) = std::sync::mpsc::channel();
     maybe_send_click(&Some(tx), -5.0, 10.0, 765.0, 503.0);
     assert!(rx.try_recv().is_err());
+}
+
+fn prepare_opts() -> dear_imgui_rs::FramePrepareOptions {
+    dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures()
+}
+
+/// Debug-tab search field: the operator-reported leak source.
+fn debug_search_frame(ctx: &mut dear_imgui_rs::Context, buf: &mut String, focus: bool) {
+    ctx.prepare_frame(prepare_opts());
+    {
+        let ui = ctx.frame();
+        let _ = ui
+            .window("debug-search-probe")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([400.0, 200.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                if focus {
+                    ui.set_keyboard_focus_here();
+                }
+                ui.input_text("##debug-search", buf)
+                    .hint("Search commands, categories, descriptions")
+                    .build();
+            });
+    }
+    ctx.render();
+}
+
+/// Production hovered Game-pane sample: `stream_capture(..., &capture_keys(ui))`.
+fn stream_hovered_keys(
+    ctx: &mut dear_imgui_rs::Context,
+    buf: Option<&mut String>,
+    left_down: bool,
+    require_keyboard: bool,
+) -> Vec<InputEv> {
+    ctx.prepare_frame(prepare_opts());
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let ui = ctx.frame();
+        if let Some(buf) = buf {
+            let _ = ui
+                .window("debug-search-probe")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([400.0, 200.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    ui.input_text("##debug-search", buf)
+                        .hint("Search commands, categories, descriptions")
+                        .build();
+                });
+        }
+        if require_keyboard {
+            assert!(
+                ui.io().want_capture_keyboard() || ui.io().want_text_input(),
+                "Debug search InputText must own the keyboard (capture={} text={})",
+                ui.io().want_capture_keyboard(),
+                ui.io().want_text_input()
+            );
+        }
+        stream_capture(
+            &Some(tx),
+            0.0,
+            0.0,
+            765.0,
+            503.0,
+            left_down,
+            false,
+            false,
+            false,
+            &capture_keys(ui),
+        );
+    }
+    ctx.render();
+    std::iter::from_fn(|| rx.try_recv().ok()).collect()
+}
+
+fn key_chs(evs: &[InputEv]) -> Vec<(bool, i32)> {
+    evs.iter()
+        .filter_map(|ev| match ev {
+            InputEv::Key { down, ch } => Some((*down, *ch)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn native_type_hi_enter_and_ime(io: &mut dear_imgui_rs::Io) {
+    tap_character(io, "h");
+    tap_character(io, "i");
+    tap_named(io, NamedKey::Enter);
+    tap_named(io, NamedKey::Escape);
+    tap_named(io, NamedKey::ArrowLeft);
+    note_native_ime_commit("ab");
+}
+
+/// Headed report: typing in a panel text field (Debug search) also lands in
+/// the client's chat. Drive the real window-event → native queue → hovered
+/// `stream_capture` path. ImGui owning the keyboard must drop keys, text,
+/// Enter/Escape, arrows, and IME commits; the game pane (no active widget)
+/// must still forward them. Mouse Down stays on the capture channel either way.
+#[test]
+fn focused_panel_text_field_does_not_forward_keys_to_client() {
+    let _guard = crate::test_support::imgui_context_guard();
+    discard_unconsumed_native_capture();
+    let mut ctx = dear_imgui_rs::Context::create();
+    let _ = ctx.set_ini_filename(None::<String>);
+    let mut buf = String::new();
+
+    debug_search_frame(&mut ctx, &mut buf, true);
+    debug_search_frame(&mut ctx, &mut buf, false);
+
+    native_type_hi_enter_and_ime(ctx.io_mut());
+    let focused = stream_hovered_keys(&mut ctx, Some(&mut buf), true, true);
+    assert!(
+        focused
+            .iter()
+            .any(|ev| matches!(ev, InputEv::Move { .. }))
+            && focused
+                .iter()
+                .any(|ev| matches!(ev, InputEv::Down { button: 1, .. })),
+        "mouse-owner path must still stream Move/Down while ImGui has the keyboard, got {focused:?}"
+    );
+    assert!(
+        key_chs(&focused).is_empty(),
+        "panel text focus must not forward keys/IME to the client, got {focused:?}"
+    );
+    drop(ctx);
+
+    discard_unconsumed_native_capture();
+    let mut ctx = dear_imgui_rs::Context::create();
+    let _ = ctx.set_ini_filename(None::<String>);
+    native_type_hi_enter_and_ime(ctx.io_mut());
+    let game = stream_hovered_keys(&mut ctx, None, true, false);
+    let keys = key_chs(&game);
+    let mut expected = Vec::new();
+    expected.extend_from_slice(&down_up(b'h'));
+    expected.extend_from_slice(&down_up(b'i'));
+    expected.extend_from_slice(&down_up(10));
+    expected.extend_from_slice(&down_up(27));
+    expected.extend_from_slice(&down_up(1));
+    expected.extend_from_slice(&down_up(b'a'));
+    expected.extend_from_slice(&down_up(b'b'));
+    assert_eq!(
+        keys, expected,
+        "game pane focus must still forward keys, Enter, Escape, arrows, and IME commits"
+    );
+    assert!(
+        game.iter()
+            .any(|ev| matches!(ev, InputEv::Down { button: 1, .. })),
+        "mouse Down must still reach the client with the game focused, got {game:?}"
+    );
 }
