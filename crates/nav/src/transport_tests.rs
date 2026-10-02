@@ -2858,14 +2858,6 @@ fn derive_transports_skips_script_names_missing_from_pack() {
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "");
     fx.write(
-        "scripts/ladders+stairs/scripts/ladders.rs2",
-        "\
-[oploc1,some_unknown_ladder]
-p_arrivedelay;
-~climb_ladder(movecoord(coord(), 0, 1, 0), true);
-",
-    );
-    fx.write(
         "maps/m44_53.jm2",
         "\
 ==== MAP ====
@@ -2876,9 +2868,22 @@ p_arrivedelay;
     );
     let defs = loc_defs(&[(1747, 1, 1)]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let baseline = derive_transports(fx.path(), &defs, &wc);
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[oploc1,some_unknown_ladder]
+p_arrivedelay;
+~climb_ladder(movecoord(coord(), 0, 1, 0), true);
+",
+    );
     let graph = derive_transports(fx.path(), &defs, &wc);
-    // The unknown ladder name resolves nothing; ungated explicit hops
-    // remain, while Shanks and gliders require absent source proofs.
+    assert_eq!(
+        graph.edges, baseline.edges,
+        "an unresolved ladder script must not add a route"
+    );
+    // Other ungated explicit hops remain, while Shanks and gliders require
+    // absent source proofs.
     let explicit = graph
         .edges
         .iter()
@@ -2890,14 +2895,6 @@ p_arrivedelay;
         })
         .count();
     assert_eq!(explicit, graph.edges.len());
-    assert_eq!(
-        graph
-            .edges
-            .iter()
-            .filter(|e| e.kind == TransportKind::Ladder)
-            .count(),
-        6
-    );
     // 2 carts + the 5 essence-mine wizard entries + the 2 Elkoy maze
     // escorts.
     assert_eq!(
