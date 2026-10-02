@@ -1712,6 +1712,7 @@ impl SelectedGameData {
                 .then_some(fact.level)
         })
     }
+
     pub fn spells(&self) -> &[SpellFact] {
         &self.spells
     }
