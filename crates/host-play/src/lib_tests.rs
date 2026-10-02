@@ -15685,20 +15685,23 @@ fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapsho
         Arc::new(vec![]),
         Vec::new(),
     );
-    c.var = vec![0; VARP_LEN];
-    for index in 0..api::prayer::PRAYER_COUNT {
-        c.var[api::prayer::PRAYER_VARP0 as usize + index] = 0;
+    let selected_data =
+        api::game_data::for_revision(client::io::ClientRevision::R289).expect("R289 game data");
+    let prayers = selected_data.prayers();
+    let protect = selected_data
+        .prayer_by_name("Protect from Melee")
+        .expect("Protect from Melee row");
+    c.var.resize(VARP_LEN, 0);
+    for prayer in prayers {
+        c.var[prayer.varp as usize] = 0;
     }
-    c.var[97] = melee;
+    c.var[protect.varp as usize] = melee;
     let mut filled = 0;
     for index in 0..VARP_LEN {
         if index == 108 || index == 300 || index == 301 {
             continue;
         }
-        if (api::prayer::PRAYER_VARP0 as usize
-            ..=api::prayer::PRAYER_VARP0 as usize + api::prayer::PRAYER_COUNT - 1)
-            .contains(&index)
-        {
+        if catalog_core::is_prayer_varp(index as i32) {
             continue;
         }
         if filled < extra_nonzero {
@@ -15706,8 +15709,8 @@ fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapsho
             filled += 1;
         }
     }
-    c.stat_base_level[5] = 43;
-    c.stat_effective_level[5] = 43;
+    c.stat_base_level[5] = protect.level;
+    c.stat_effective_level[5] = protect.level;
     c.bump_gens(client::io::ServerProt::VARP_SYNC);
     c.bump_gens(client::io::ServerProt::UPDATE_STAT);
     let mut snapshot = GameSnapshot::new();
@@ -15744,7 +15747,7 @@ fn posted_varp(view: &script::isolate_fb::Snapshot<'_>, index: i32) -> Option<i3
 }
 
 /// Production `script_snapshot_fb` → FlatBuffer → helper must carry the
-/// selected 15 prayer overlays including 0, and every other nonzero varp,
+/// selected prayer overlays including 0, and every other nonzero varp,
 /// however many there are.
 #[test]
 fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
@@ -15753,9 +15756,7 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
     let on_snap = prayer_overlay_game_snapshot(1, extras);
     let (off_bytes, off_fp) = publish_script_snapshot(None, 1, &off_snap);
     let off_view = script::isolate_fb::decode_snapshot(&off_bytes).expect("off keyframe");
-    for index in
-        api::prayer::PRAYER_VARP0..api::prayer::PRAYER_VARP0 + api::prayer::PRAYER_COUNT as i32
-    {
+    for index in catalog_core::prayer_varp_indexes() {
         assert_eq!(
             posted_varp(&off_view, index),
             Some(0),
@@ -15775,9 +15776,7 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
                 && index != 108
                 && index != 300
                 && index != 301
-                && !(api::prayer::PRAYER_VARP0
-                    ..api::prayer::PRAYER_VARP0 + api::prayer::PRAYER_COUNT as i32)
-                    .contains(&index)
+                && !catalog_core::is_prayer_varp(index)
         })
         .count();
     assert_eq!(
@@ -15786,6 +15785,10 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
     );
 
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let protect_varp = game_data
+        .prayer_by_name("Protect from Melee")
+        .expect("Protect from Melee row")
+        .varp;
     let iso = script::LoadIsolate::spawn_with_game_data(
         r#"
 export const apiVersion = 2;
@@ -15806,9 +15809,9 @@ export function tick(api) {
     let (on_bytes, on_fp) = publish_script_snapshot(Some(&off_fp), 2, &on_snap);
     let on_view = script::isolate_fb::decode_snapshot(&on_bytes).expect("on delta");
     assert_eq!(
-        posted_varp(&on_view, 97),
+        posted_varp(&on_view, protect_varp),
         Some(1),
-        "97=1 must not lose the reserved overlay slot to extra pressure"
+        "selected Protect prayer varp must not lose its reserved overlay slot to extra pressure"
     );
     iso.post_snapshot(on_bytes);
     iso.on_game_tick(2);
@@ -15827,9 +15830,9 @@ export function tick(api) {
     let (back_bytes, _) = publish_script_snapshot(Some(&held_fp), 4, &off_snap);
     let back = script::isolate_fb::decode_snapshot(&back_bytes).expect("off delta");
     assert_eq!(
-        posted_varp(&back, 97),
+        posted_varp(&back, protect_varp),
         Some(0),
-        "host 97=0 must be published; omitting it leaves the helper ON"
+        "host selected Protect prayer varp=0 must be published; omitting it leaves the helper ON"
     );
     iso.post_snapshot(back_bytes);
     iso.on_game_tick(4);

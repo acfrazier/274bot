@@ -798,7 +798,7 @@ fn gas_rock_ids_are_the_hazard_targets_of_the_ore_ladder_on_both_revisions() {
             "{revision:?}"
         );
         assert_eq!(
-            api::gather_methods::gas_rock_ids(data.mining_hazards()).unwrap(),
+            api::gather_methods::gas_rock_ids(data.as_ref(), data.mining_hazards()).unwrap(),
             expected,
             "{revision:?}: gem rock 2140 is not a frozen gas rock"
         );

@@ -993,7 +993,7 @@ pub fn validate_case_baseline_with_preparation(
             "Captain Barnaby pier (2683,3272,0) r4, ingame && scene_state==2"
         }
         CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
-            "ingame && scene_state==2, prayer base>=43, positive points, varps 83..97 present and 0"
+            "ingame && scene_state==2, prayer base>=selected Protect from Melee level, positive points, selected prayer varps present and 0"
         }
         CoreCase::LineOfSightV2 => {
             "ingame && scene_state==2 && SceneView.available, here in published collision bounds"

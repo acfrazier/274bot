@@ -1500,6 +1500,15 @@ impl SelectedGameData {
                 .then_some(fact.level)
         })
     }
+    /// Generated pickpocket display names and their required levels, in
+    /// selected fact and NPC order.
+    pub fn pickpocket_targets(&self) -> impl Iterator<Item = (&str, i32)> + '_ {
+        self.pickpocket.iter().flat_map(|fact| {
+            fact.npcs
+                .iter()
+                .map(move |npc| (npc.name.as_str(), fact.level))
+        })
+    }
 
     pub fn spells(&self) -> &[SpellFact] {
         &self.spells

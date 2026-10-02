@@ -90,7 +90,11 @@ fn an_absent_family_is_a_token_never_an_empty_list() {
         gather_resource(None, "not-a-resource"),
         Err("family-unavailable:gather_methods")
     );
-    assert_eq!(gas_rock_ids(None), Err("family-unavailable:gather_methods"));
+    let selected = for_revision(ClientRevision::R289).expect("selected data");
+    assert_eq!(
+        gas_rock_ids(selected.as_ref(), None),
+        Err("family-unavailable:gather_methods")
+    );
     for resource in ["oak", "nope", "", "   "] {
         assert_eq!(
             gather_placements(None, resource, &wide(), None, 64),

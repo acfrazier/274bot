@@ -557,12 +557,10 @@ impl Observation {
         self.varps.get(&index).copied().unwrap_or(0)
     }
 
-    /// Copy varps 83..=97 only. Absent snapshot rows stay absent (not 0).
+    /// Copy only selected prayer overlay varps. Absent snapshot rows stay absent.
     pub fn attach_prayer_varps(&mut self, snapshot: &GameSnapshot) {
-        let first = api::prayer::PRAYER_VARP0;
-        let last = first + api::prayer::PRAYER_COUNT as i32 - 1;
         for varp in snapshot.varps() {
-            if (first..=last).contains(&varp.index) {
+            if super::is_prayer_varp(varp.index) {
                 self.varps.insert(varp.index, varp.value);
             }
         }

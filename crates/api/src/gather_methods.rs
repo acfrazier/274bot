@@ -51,18 +51,69 @@ pub struct MiningHazard {
     pub locs: Vec<i32>,
 }
 
+fn mining_rock_resources<'a>(
+    data: &'a crate::game_data::SelectedGameData,
+    hazards: &[MiningHazard],
+) -> Vec<&'a crate::game_data::GatherResourceOption> {
+    let mut resources: Vec<_> = data
+        .gather_resources_for("mining")
+        .filter(|resource| resource.selectable)
+        .filter(|resource| {
+            resource.label == "Clay" || resource.label == "Coal" || resource.label.ends_with(" ore")
+        })
+        .filter(|resource| resource.key != "blurite" && resource.key != "gems")
+        .filter(|resource| {
+            hazards.iter().any(|hazard| {
+                hazard
+                    .resources
+                    .iter()
+                    .any(|key| key.eq_ignore_ascii_case(&resource.key))
+            })
+        })
+        .collect();
+    resources.sort_by_key(|resource| resource.level);
+    resources
+}
+
+/// Display names from selected clay/ore resources present in the hazard rows,
+/// ordered by level to preserve the compatibility option list.
+pub fn rock_type_names(data: &crate::game_data::SelectedGameData) -> Vec<&str> {
+    let Some(hazards) = data.mining_hazards() else {
+        return Vec::new();
+    };
+    mining_rock_resources(data, hazards)
+        .into_iter()
+        .map(|resource| {
+            resource
+                .label
+                .strip_suffix(" ore")
+                .unwrap_or(&resource.label)
+        })
+        .collect()
+}
+
 /// Gas-event rock loc ids, derived from the selected mining methods' hazard targets rather than copied from the
 /// JavaScript catalog: the selectable ore ladder plus quest-only blurite, not the separate gem rock. Ascending,
 /// without repeats; `None` (no generated slice) is unavailable, never an empty list.
-pub fn gas_rock_ids(hazards: Option<&[MiningHazard]>) -> Result<Vec<i32>, &'static str> {
+pub fn gas_rock_ids(
+    data: &crate::game_data::SelectedGameData,
+    hazards: Option<&[MiningHazard]>,
+) -> Result<Vec<i32>, &'static str> {
     let Some(hazards) = hazards else {
         return Err(FAMILY_UNAVAILABLE);
     };
+    let mining_resources = mining_rock_resources(data, hazards);
     let keep = |key: &String| {
         key.eq_ignore_ascii_case("blurite")
-            || crate::content::ROCK_TYPE_NAMES
-                .iter()
-                .any(|name| key.eq_ignore_ascii_case(name))
+            || mining_resources.iter().any(|resource| {
+                key.eq_ignore_ascii_case(&resource.key)
+                    || key.eq_ignore_ascii_case(
+                        resource
+                            .label
+                            .strip_suffix(" ore")
+                            .unwrap_or(&resource.label),
+                    )
+            })
     };
     let mut ids: Vec<i32> = hazards
         .iter()

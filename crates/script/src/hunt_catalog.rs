@@ -504,7 +504,11 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
             json!(
                 listed
                     || (flag(field(f, "bankCommon"))
-                        && api::content::matches_common_bank_loot(name, id))
+                        && api::content::matches_common_bank_loot(
+                            crate::supply_v2::random_event_casket_id(),
+                            name,
+                            id,
+                        ))
             )
         }
         "keyStatus" => json!(key_status(num(a(0)), num(a(1)))),
