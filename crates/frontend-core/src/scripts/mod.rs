@@ -825,6 +825,7 @@ impl Scripts {
         profile: &str,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
+        self.refuse_start_if_copy_pending("Start")?;
         if script_active(core, profile) {
             return Ok(());
         }
@@ -845,6 +846,7 @@ impl Scripts {
         heading: Option<&script::ScriptSel>,
         catalog_root: Option<&Path>,
     ) -> Result<(), String> {
+        self.refuse_start_if_copy_pending("Start")?;
         if script_active(core, profile) {
             return Err("script already active: stop it first".into());
         }
@@ -1094,16 +1096,24 @@ impl Scripts {
     /// Cancel: the frozen bags have not been written yet. Publishes the
     /// block as the bulk report and returns true when Start must stop.
     pub fn block_start_if_copy_pending(&mut self, label: &str) -> bool {
-        let Some(scope) = self.prepared_settings_sync() else {
-            return false;
-        };
-        let report = format!(
+        self.refuse_start_if_copy_pending(label).is_err()
+    }
+
+    fn copy_pending_block(&self, label: &str) -> Option<String> {
+        let scope = self.prepared_settings_sync()?;
+        Some(format!(
             "{label}: blocked, a settings copy from {} is waiting for Apply or Cancel",
             scope.source
-        );
+        ))
+    }
+
+    fn refuse_start_if_copy_pending(&mut self, label: &str) -> Result<(), String> {
+        let Some(report) = self.copy_pending_block(label) else {
+            return Ok(());
+        };
         self.last_bulk_report = Some(report.clone());
-        self.show(report);
-        true
+        self.show(report.clone());
+        Err(report)
     }
 
     // ---- per-frame settlement ------------------------------------------

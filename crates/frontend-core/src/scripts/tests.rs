@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::{Notice, Scripts};
+use crate::marked::prepare_apply_settings_marked;
 use crate::operations::Outcome;
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
@@ -283,13 +284,11 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     assert_eq!(f.scripts.take_notice(), Some(Notice::Show(summary)));
 }
 
-/// Operator 2026-10-02: Thiever settings on Test, Apply while Test2 has no
-/// assignment (used to skip with "no assignment"), then Start while a copy
-/// confirm is still pending. Apply now assigns the unassigned member and
-/// copies the bag; Start is blocked until Apply or Cancel.
+/// Wall-wide Apply to all copies same-card members only: unassigned members
+/// are skipped and not assigned.
 #[test]
-fn apply_to_all_assigns_unassigned_and_start_waits_for_pending_copy() {
-    let mut f = fixture("sync-unassigned-start", &["alice", "bob"]);
+fn apply_to_all_skips_unassigned_members() {
+    let mut f = fixture("sync-unassigned-skip", &["alice", "bob", "carol"]);
     let thiever = f.card("thiever.ts", LOOPING);
     f.assign("alice", &thiever);
     f.set("alice", &thiever, "target", json!("Knight of Ardougne"));
@@ -298,61 +297,68 @@ fn apply_to_all_assigns_unassigned_and_start_waits_for_pending_copy() {
 
     f.prepare("alice", &thiever);
     let scope = f.scripts.prepared_settings_sync().unwrap();
-    assert_eq!(scope.targets, ["bob"], "unassigned bob is a copy target");
-    assert!(scope.skipped.is_empty());
+    assert!(
+        scope.targets.is_empty(),
+        "unassigned members are not wall-wide targets: {:?}",
+        scope.targets
+    );
+    assert_eq!(
+        scope.skipped,
+        [
+            ("bob".to_string(), "no assignment".to_string()),
+            ("carol".to_string(), "no assignment".to_string()),
+        ]
+    );
+    assert!(
+        !scope.prompt().to_ascii_lowercase().contains("assign"),
+        "{}",
+        scope.prompt()
+    );
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    assert_eq!(
-        Scripts::assignment(&f.core, "bob").unwrap().key(),
-        thiever.identity_key()
-    );
-    assert_eq!(
-        f.saved_bag("bob", &thiever.identity_key()),
-        Some(bag(&[("target", json!("Knight of Ardougne"))]))
-    );
+    assert!(Scripts::assignment(&f.core, "bob").is_none());
+    assert!(Scripts::assignment(&f.core, "carol").is_none());
+    assert_eq!(f.saved_bag("bob", &thiever.identity_key()), None);
+}
 
-    f.set("alice", &thiever, "target", json!("Paladin"));
+/// Focused Start and per-profile Start refuse while a copy confirm is waiting,
+/// the same as Fleet Start / Start all.
+#[test]
+fn focused_and_profile_start_wait_for_pending_copy() {
+    let mut f = fixture("sync-start-pending", &["alice", "bob"]);
+    let thiever = f.card("thiever.ts", LOOPING);
+    f.assign("alice", &thiever);
+    f.assign("bob", &thiever);
+    f.set("alice", &thiever, "target", json!("Knight of Ardougne"));
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     f.prepare("alice", &thiever);
-    assert!(f.scripts.prepared_settings_sync().is_some());
 
-    let mut selected = MarkedSelection::default();
-    selected.mark_all([ProfileIdentity::uid(1), ProfileIdentity::uid(2)]);
-    let card_sel = script::ScriptSel::Loaded(thiever.source, thiever.identity_id());
-    start_marked(
-        &selected,
-        &mut f.core,
-        &mut f.scripts,
-        Some(&card_sel),
-        None,
-    );
-    let blocked = f.scripts.last_bulk_report().unwrap();
+    let err = f
+        .scripts
+        .start_selected(&mut f.core, "bob", None, None)
+        .unwrap_err();
     assert!(
-        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
-        "{blocked}"
+        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
+        "{err}"
     );
-    assert_eq!(f.state("alice"), script::RunState::Idle);
+    let err = f
+        .scripts
+        .start_profile(&mut f.core, "bob", None)
+        .unwrap_err();
+    assert!(
+        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
+        "{err}"
+    );
     assert_eq!(f.state("bob"), script::RunState::Idle);
 
-    f.scripts.apply_settings_sync(&mut f.core).unwrap();
-    f.core.flush_writes();
-    f.scripts.poll(&mut f.core);
-    start_marked(
-        &selected,
-        &mut f.core,
-        &mut f.scripts,
-        Some(&card_sel),
-        None,
-    );
+    f.scripts.cancel_settings_sync();
+    f.scripts
+        .start_selected(&mut f.core, "bob", None, None)
+        .unwrap();
     f.settle();
-    f.wait_state("alice", script::RunState::Running);
     f.wait_state("bob", script::RunState::Running);
-    assert_eq!(
-        f.saved_bag("bob", &thiever.identity_key()),
-        Some(bag(&[("target", json!("Paladin"))]))
-    );
 }
 
 /// Apply to all shares the prepare path: freezing it for a newly assigned
@@ -1583,6 +1589,63 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
             .settings
             .clue_duel_partner,
         ""
+    );
+}
+
+/// A compiled copy that the target cannot accept must not persist an
+/// assignment on an unassigned bot.
+#[test]
+fn failed_native_copy_does_not_assign_an_unassigned_bot() {
+    let mut f = fixture("native-copy-no-assign", &["alice", "bob"]);
+    let id = script::CompiledId("Sherlock");
+    let key = script::compiled_identity_key(id);
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    let mut row = f.core.vault().unwrap().get("bob").unwrap().clone();
+    row.settings.script_settings.insert(
+        key.clone(),
+        json!({"schema_version": 999, "values": {}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    f.core
+        .save_profile(row, crate::ArmMirror::None, "plant")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(Scripts::assignment(&f.core, "bob").is_none());
+
+    let sel = script::ScriptSel::Compiled(id);
+    prepare_apply_settings_marked(&mark_uids(&[2]), &f.core, &mut f.scripts, "alice", &sel)
+        .unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert_eq!(report.saved, 0, "{report:?}");
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert!(
+        Scripts::assignment(&f.core, "bob").is_none(),
+        "failed copy assigned {:?}",
+        Scripts::assignment(&f.core, "bob")
+    );
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
+    assert!(disk
+        .get("bob")
+        .unwrap()
+        .settings
+        .script_assignment
+        .is_none());
+    assert_eq!(
+        f.saved_bag("bob", &key),
+        Some(
+            json!({"schema_version": 999, "values": {}})
+                .as_object()
+                .unwrap()
+                .clone()
+        )
     );
 }
 
