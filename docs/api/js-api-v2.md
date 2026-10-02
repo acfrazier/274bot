@@ -322,11 +322,6 @@ admission but stay queued in Starting/Paused slots until ordinary dispatch
 resumes, even if the paused frame is offline, held or has no snapshot. Held
 reconnect walks and the carried host walk are discarded, not replayed after
 the session.
-Declarations are generated from the Rust tables
-(`cargo test -p script --test host_js regen_host_js -- --ignored`)
-and pinned by the freshness gate plus pinned TypeScript 5.8.3 consumer
-probes: gather-only, quest progress using both calls and every row
-field, and the gather_quest_v2 sample below.
 
 ## Quest progress
 
@@ -411,53 +406,21 @@ and the journal read are all host-owned:
   kept with `.then`, never awaited, and each tick polls `api.snapshot.gather`
   until `status.dropped >= logs`, then calls `api.gather.stop()`. The stop
   quota (default 56) is two full 28-slot power-drop cycles;
-- the settled `run` outcome is handled explicitly: sync `refused`
+- the settled `run` outcome is handled explicitly: synchronous `refused`
   (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`,
   `busy`), nested `refused` / `blocked` / `failed`, and machine `aborted`
-  all stop the script with their reason; only `stopped` continues. A failed
-  `stop()` (`no-session`) stops the script too;
+  results stop the script after the full outcome is logged; only `stopped`
+  continues. A failed `stop()` (`no-session`) also stops the script;
 - one read-only Cook's Assistant check: `questPaths()` is read sync and must
   list `cook`, then a single `await api.questProgress({ quest: 'cook' })`
   resolves the row; the script logs `colour` / `stage` / `complete` and stops
   with `done`.
 
-Receipts for the live harness are the four `api.log` lines (`gather outcome:`,
-`gather stop:`, `quest paths:`, `quest progress:`), each carrying the exact
-machine envelope or helper result as JSON. They are consumer logs, not a second
-host wire.
-
-The sample type-checks against the generated declarations with pinned
-TypeScript 5.8.3 (strict, ES2022, `ESNext`, `Bundler`):
+To check the sample against the generated declarations:
 
 ```sh
 cargo test -p script --test host_js tsc_gather_quest_sample_type_checks -- --ignored
 ```
-
-The slice-C live cell loads the checked-in `.js` through the real Load path.
-The harness uses test-support receipts and fixture-control seams, so it
-requires `--features test-support`:
-
-```sh
-LIVE=1 cargo test -p host-play --features test-support --test script_api_live -- --ignored --test-threads=1
-```
-
-with `WORLD_ENGINE_DIR`, `WORLD_NAV_PACK`, `BOT_CACHE_DIR`,
-`BOT_EVIDENCE_DIR` and `BOT_LIVE_NAME_PREFIX` set. No panel/TUI presentation
-and no bank-trip (slice E) behavior is claimed here.
-
-`script_api_gather_and_quest` records the public running/gathering phases,
-confirmed yields and emptied drop slots, the Driver packet budget, the stopped
-session envelope and Cook's colour-only progress row. Its final receipt is
-`script-api-gather-and-quest-receipt.json` under `BOT_EVIDENCE_DIR`.
-
-The slice-D cell, `script_api_progress_journal`, uses the released Romeo & Juliet
-journal rules. It seeds stage 30 with the varp cheat, reads progress, advances
-the real fixture to stage 40 and reads again. It requires known stage/rule keys,
-`inProgress`, `complete: 'false'`, hidden journal paint while the quiet lease is
-owned, and public evidence matching the real closed-journal observation after
-the acquired observation. The final
-`script-api-progress-journal-receipt.json` includes both reads, their host
-evidence stamps and the journal open/close packet trace.
 
 ## Quest query helpers
 
@@ -518,12 +481,9 @@ still-open, or unobserved page releases the token as `modal-timeout`. Pause and
 hold freeze either window. The journal pages remain private isolate scene data
 and are not exposed on `api.snapshot`.
 
-The Rust machine also owns the host's quiet-paint lease for the unchanged
-click/capture/close sequence. While it is owned, the main journal modal is not
-painted and the pre-read side panel/tab chrome is retained. Observed close,
-Stop, reset, error, and a ten-second wall-clock safety fuse release quiet
-painting. Pause and hold freeze the machine's acquisition/close windows, not
-that wall-clock fuse. This adds no JS action or snapshot field.
+During a journal read, the modal stays out of view while the existing side
+panel and tab remain visible. After the journal closes or the read ends, the
+normal view returns. No additional script action or snapshot field is needed.
 
 ## Clue helpers
 
