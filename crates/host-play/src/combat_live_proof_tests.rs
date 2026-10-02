@@ -1512,23 +1512,38 @@ fn first_attack_action(capture: &CombatCapture) -> Option<&Value> {
 }
 
 fn local_attack_onsets(capture: &CombatCapture, engaged_index: i64) -> Vec<i64> {
+    // Independent of CombatTables/style_seq: selected scimitars.obj (bronze and
+    // rune) names human_sword_stab/slash; selected seq.pack resolves386/390.
+    // Defend388 and eat829 are not attacks. Design§3.3(b) separates our
+    // already-observed output from the next input phase.
     let mut previous_animation = None;
+    let mut previous_frame = None;
     let mut onsets = Vec::new();
     for frame in &capture.frames {
         let local = &frame["local_player"];
         let animation = local["animation"].as_i64();
+        let animation_frame = local["animation_frame"].as_i64();
         let targets_engaged = local["target"]["kind"] == json!("Npc")
             && local["target"]["index"] == json!(engaged_index);
-        if local["in_combat"] == json!(true)
-            && targets_engaged
-            && animation.is_some_and(|animation| animation >= 0)
-            && animation != previous_animation
+        let scimitar_equipped = frame["equipment"].as_array().is_some_and(|equipment| {
+            equipment
+                .iter()
+                .any(|item| matches!(item["id"].as_i64(), Some(1321 | 1333)))
+        });
+        let restarted = animation_frame
+            .zip(previous_frame)
+            .is_some_and(|(current, previous)| current < previous);
+        if targets_engaged
+            && scimitar_equipped
+            && matches!(animation, Some(386 | 390))
+            && (animation != previous_animation || restarted)
         {
             if let Some(tick) = frame["tick"].as_i64() {
                 onsets.push(tick);
             }
         }
         previous_animation = animation;
+        previous_frame = animation_frame;
     }
     onsets
 }
@@ -1996,28 +2011,63 @@ fn m3_timing_receipt(capture: &CombatCapture) -> Value {
     let onsets = engaged_index
         .map(|index| local_attack_onsets(capture, index))
         .unwrap_or_default();
+    let eat_ticks = capture
+        .actions
+        .iter()
+        .filter(|action| is_eat(action))
+        .filter_map(|eat| eat["tick"].as_i64())
+        .collect::<Vec<_>>();
     let eats = capture
         .actions
         .iter()
         .filter(|action| is_eat(action))
         .map(|eat| {
             let tick = eat["tick"].as_i64();
+            // Design§3.3(b),§3.4 and §5.1 M3 P4, independently from content:
+            // player_melee.rs2:52-56 writes map_clock+4; consume.rs2:129-130
+            // adds3 to that existing clock on every ordinary Eat. A swing
+            // observed at E belongs to the prior output, before Eat input E.
             let previous_onset =
-                tick.and_then(|tick| onsets.iter().copied().filter(|onset| *onset < tick).max());
-            let old_deadline = previous_onset.map(|onset| onset + 4);
-            let expected_onset = tick
+                tick.and_then(|tick| onsets.iter().copied().filter(|onset| *onset <= tick).max());
+            let old_deadline = previous_onset.zip(tick).map(|(onset, tick)| {
+                onset
+                    + 4
+                    + 3 * eat_ticks
+                        .iter()
+                        .filter(|eat| onset <= **eat && **eat < tick)
+                        .count() as i64
+            });
+            let mut expected_onset = tick
                 .zip(old_deadline)
                 .map(|(eat_tick, deadline)| (eat_tick + 1).max(deadline + 3));
             let eligible = tick
                 .zip(old_deadline)
                 .is_some_and(|(eat_tick, deadline)| deadline + 3 <= eat_tick + 1);
             let observed_onset =
-                tick.and_then(|tick| onsets.iter().copied().filter(|onset| *onset >= tick).min());
+                tick.and_then(|tick| onsets.iter().copied().filter(|onset| *onset > tick).min());
+            let mut intervening_eats = 0;
+            if let Some(tick) = tick {
+                for later_eat in eat_ticks.iter().copied().filter(|eat| *eat > tick) {
+                    if observed_onset.is_some_and(|onset| later_eat >= onset) {
+                        break;
+                    }
+                    // Input at the expected observation tick cannot undo a
+                    // swing the preceding output was already obliged to show.
+                    if let Some(expected) = expected_onset.filter(|expected| later_eat < *expected)
+                    {
+                        expected_onset = Some(expected + 3);
+                        intervening_eats += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
             json!({
                 "eat_sequence": eat["sequence"],
                 "eat_tick": tick,
                 "previous_swing_onset": previous_onset,
                 "old_attack_deadline": old_deadline,
+                "intervening_eats_before_next_swing": intervening_eats,
                 "deadline_plus_three_was_due_at_eat": eligible,
                 "expected_next_swing_onset": expected_onset,
                 "observed_next_swing_onset": observed_onset,
@@ -2028,6 +2078,8 @@ fn m3_timing_receipt(capture: &CombatCapture) -> Value {
     json!({
         "swing_rate_ticks": 4,
         "observation_delivery_offset_ticks": 1,
+        "attack_sequences": [386, 390],
+        "authority": "R4 design§3.3(b),§3.4,§5.1 M3 P4; selected scimitars.obj,seq.pack,player_melee.rs2:52-56,consume.rs2:129-130",
         "eligible_eat_count": eats.iter().filter(|eat| eat["deadline_plus_three_was_due_at_eat"] == json!(true)).count(),
         "eats": eats,
     })
@@ -2660,4 +2712,58 @@ fn static_tree_identity_uses_selected_type_not_debug_name() {
     assert!(start_preflight(Case::M4, &baseline).is_some());
     capture.frames[0]["nearby_npcs"][0]["type"] = json!(1226);
     assert_eq!(m4_first_tree_hit_tick(&capture), None);
+}
+
+#[test]
+fn food_oracle_discriminates_past_deadline_and_cumulative_extension() {
+    let fixture = |onsets: &[i64], eats: &[i64]| {
+        let mut capture = CombatCapture::default();
+        capture.statuses.push(json!({"fields": {
+            "combat_end": "Killed", "combat_engaged_index": 830
+        }}));
+        for tick in onsets {
+            for (frame_tick, animation) in [(tick - 1, -1), (*tick, 390)] {
+                capture.frames.push(json!({
+                    "tick": frame_tick, "equipment": [{"id": RUNE_SCIMITAR_ID}],
+                    "local_player": {
+                        "animation": animation,
+                        "target": {"kind": "Npc", "index": 830}
+                    }
+                }));
+            }
+        }
+        for tick in eats {
+            capture.actions.push(json!({
+                "tick": tick, "request": {"op": "held", "action": "Eat"}
+            }));
+        }
+        capture
+    };
+    // Design case28's product branch: OBS20 => D24, Eat32 => D27 (past),
+    // same-plan Attack32 => next OBS33. A single-op Attack33 slips to OBS34.
+    let eligible = fixture(&[20, 33], &[32]);
+    assert!(m3_eat_timing_ok(&eligible));
+    let delayed_attack = fixture(&[20, 34], &[32]);
+    assert!(!m3_eat_timing_ok(&delayed_attack));
+    // A mutant that ignores the food's clock extension swings at13, not16.
+    let ignores_deadline = fixture(&[9, 13], &[11]);
+    assert_eq!(
+        m3_timing_receipt(&ignores_deadline)["eats"][0]["exact"],
+        json!(false)
+    );
+    let cumulative = fixture(&[127, 137], &[129, 133]);
+    let receipt = m3_timing_receipt(&cumulative);
+    assert!(receipt["eats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|eat| eat["exact"] == json!(true)));
+    assert_eq!(receipt["eats"][1]["old_attack_deadline"], json!(134));
+    // Moving the second input one tick late cannot retroactively suppress the
+    // output that was due at134; the independent oracle must reject this trace.
+    let late_eat = fixture(&[127, 137], &[129, 134]);
+    assert_eq!(
+        m3_timing_receipt(&late_eat)["eats"][0]["exact"],
+        json!(false)
+    );
 }

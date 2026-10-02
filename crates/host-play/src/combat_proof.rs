@@ -458,6 +458,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
                 json!({"kind": format!("{:?}", target.kind), "index": target.index})
             }),
             "animation": player.player.actor.animation,
+            "animation_frame": player.player.actor.animation_frame,
             "spot_animation": player.player.actor.spot_animation,
         })
     });
