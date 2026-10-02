@@ -23,6 +23,16 @@ static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat aborted; caller must handle the failure"));
 static RETURN_TO_STAND_FAILED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from("combat target-loss walk did not reach the stand"));
+static ABORT_WALK_FAILED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from("combat abort walk did not reach a safe tile"));
+
+fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
+    if a.level != b.level {
+        i32::MAX
+    } else {
+        (a.x - b.x).abs().max((a.z - b.z).abs())
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct CombatReceipt {
@@ -480,6 +490,7 @@ impl StepPlan for CombatPlan {
 enum Phase {
     Combat,
     ReturningToStand,
+    WalkingOutAfterAbort,
     Loot,
 }
 
@@ -559,6 +570,90 @@ impl CombatRun {
         Ok(())
     }
 
+    fn abort_walk_destination(
+        &self,
+        report: CombatReport,
+        cx: &StepContext<'_, '_>,
+    ) -> Option<api::WorldTile> {
+        let snapshot = cx.tick.cx.snapshot();
+        let here = snapshot.here()?.value;
+        let target = report.engaged.and_then(|engaged| match engaged.kind {
+            api::snapshot::ActorKind::Npc => {
+                let index = usize::from(engaged.index);
+                let kind = usize::try_from(report.engaged_npc_type).ok()?;
+                snapshot
+                    .npcs()?
+                    .value
+                    .iter()
+                    .find(|npc| npc.index == index && npc.r#type == Some(kind))
+                    .map(|npc| npc.tile)
+            }
+            api::snapshot::ActorKind::Player => snapshot
+                .players()?
+                .value
+                .iter()
+                .find(|player| player.index == usize::from(engaged.index))
+                .map(|player| player.actor.tile),
+        });
+        let Some(target) = target else {
+            return self.request.stand;
+        };
+        let chase_range = if report
+            .engaged
+            .is_some_and(|actor| actor.kind == api::snapshot::ActorKind::Npc)
+        {
+            self.tables
+                .selected()
+                .npc_name(report.engaged_npc_type)
+                .map(|npc| npc.maxrange.saturating_add(npc.attackrange).max(0))
+                .unwrap_or(10)
+        } else {
+            0
+        };
+        if let Some(stand) = self.request.stand {
+            if tile_distance(stand, target) > chase_range.saturating_add(1) {
+                return Some(stand);
+            }
+        }
+
+        let retreat_distance = chase_range.saturating_add(2).max(2);
+        let dx = (here.x - target.x).signum();
+        let dz = (here.z - target.z).signum();
+        [(dx, dz), (dx, 0), (0, dz), (1, 0), (-1, 0), (0, 1), (0, -1)]
+            .into_iter()
+            .find_map(|(x, z)| {
+                if x == 0 && z == 0 {
+                    return None;
+                }
+                let destination = api::WorldTile {
+                    x: here.x.saturating_add(x.saturating_mul(retreat_distance)),
+                    z: here.z.saturating_add(z.saturating_mul(retreat_distance)),
+                    level: here.level,
+                };
+                (0..=16_383)
+                    .contains(&destination.x)
+                    .then_some(destination)
+                    .filter(|_| (0..=16_383).contains(&destination.z))
+            })
+    }
+
+    fn begin_abort_walk(
+        &mut self,
+        report: CombatReport,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<(), ActionError> {
+        let destination = self
+            .abort_walk_destination(report, cx)
+            .ok_or_else(|| ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))?;
+        let handle = cx.tick.actions.begin::<Walk>(
+            reach::walk_request(destination, 1, None, cx.required_after),
+            &mut cx.tick.cx,
+        )?;
+        self.phase = Phase::WalkingOutAfterAbort;
+        self.action = Some(Action::Walk(handle));
+        Ok(())
+    }
+
     fn on_return_walk(
         &mut self,
         receipt: WalkReceipt,
@@ -574,6 +669,16 @@ impl CombatRun {
             ))));
         }
         self.rebegin_combat(cx, true)
+    }
+
+    fn on_abort_walk(&mut self, receipt: WalkReceipt) -> Poll<Result<StepOutcome, ActionError>> {
+        self.action = None;
+        let error = match receipt.end {
+            WalkEnd::UserInput => ActionError::UserInput,
+            WalkEnd::Arrived => ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP)),
+            _ => ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)),
+        };
+        Poll::Ready(Err(error))
     }
 
     fn on_combat_report(
@@ -623,11 +728,11 @@ impl CombatRun {
                 // (design-combat-s3.md §5.1).
                 self.finish(cx)
             }
-            CombatEnd::Aborted(_) => {
-                // Abort ends the boss step; the caller decides what follows
-                // (design-combat.md §2.2, §2.6).
-                Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORTED_COMBAT_STEP))))
-            }
+            CombatEnd::Aborted(_) => match self.begin_abort_walk(report, cx) {
+                Ok(()) => Poll::Pending,
+                Err(ActionError::UserInput) => Poll::Ready(Err(ActionError::UserInput)),
+                Err(_) => Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))),
+            },
         }
     }
 
@@ -784,8 +889,18 @@ impl StepRun for CombatRun {
         };
         match polled {
             ActionPoll::Pending => Poll::Pending,
+            ActionPoll::Failed(error) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
+                if matches!(error, ActionError::UserInput) {
+                    Poll::Ready(Err(ActionError::UserInput))
+                } else {
+                    Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
+                }
+            }
             ActionPoll::Failed(error) => Poll::Ready(Err(error)),
             ActionPoll::Combat(report) => self.on_combat_report(report, cx),
+            ActionPoll::Walk(receipt) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
+                self.on_abort_walk(receipt)
+            }
             ActionPoll::Walk(receipt) => self.on_return_walk(receipt, cx),
             ActionPoll::Loot(taken) => {
                 self.action = None;
@@ -863,4 +978,4 @@ impl CombatEndName {
 
 #[cfg(test)]
 #[path = "combat_tests.rs"]
-mod tests;
+pub(crate) mod tests;

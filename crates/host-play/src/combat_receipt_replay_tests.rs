@@ -119,6 +119,43 @@ fn replay_all_retained_combat_receipts() {
             }
         }
         match case {
+            Case::M1HandIn if ready => {
+                // Grok F5; wizard_mizgog.rs2:1-19,39-52 requires both talks.
+                for missing in 0..2 {
+                    let mut mutant = value.clone();
+                    let mut talk = 0;
+                    mutant["actions"].as_array_mut().unwrap().retain(|row| {
+                        if row["request"]["action"] != "Talk-to" {
+                            return true;
+                        }
+                        let keep = talk != missing;
+                        talk += 1;
+                        keep
+                    });
+                    assert!(!case_ready(case, &capture(&mutant)));
+                    let root = Path::new(&output).parent().unwrap().join("mutations");
+                    std::fs::create_dir_all(&root).unwrap();
+                    let mutant_path = root.join(format!(
+                        "{}.missing-talk-{missing}.json",
+                        path.file_name().unwrap().to_string_lossy()
+                    ));
+                    std::fs::write(&mutant_path, serde_json::to_vec_pretty(&mutant).unwrap())
+                        .unwrap();
+                    leaves[format!("missing_talk_{missing}_mutant_rejected")] = json!(mutant_path);
+                }
+                for op in ["Talk-to", "ContinueDialog", "Answer { option: 1 }"] {
+                    let mut mutant = value.clone();
+                    let row = mutant["actions"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|row| row["request"]["action"] == op || row["request"]["debug"] == op)
+                        .unwrap();
+                    row["wire_opcodes"] = json!([0]);
+                    assert!(!case_ready(case, &capture(&mutant)));
+                }
+                leaves["hand_in_wrong_wire_mutants_rejected"] = json!(true);
+            }
             Case::M1 => {
                 leaves["every_imp_corpse_has_outcome"] = json!(every_imp_corpse_has_outcome(&c));
                 leaves["four_beads"] = json!(c
@@ -170,6 +207,27 @@ fn replay_all_retained_combat_receipts() {
             }
             Case::M3 => leaves["food_timing"] = m3_timing_receipt(&c),
             Case::M6 => {
+                if preflight.is_none() && c.start_baseline.is_some() {
+                    let mut mutant = value.clone();
+                    let inventory = mutant["start_baseline"]["inventory"]
+                        .as_array_mut()
+                        .unwrap();
+                    let food = inventory
+                        .iter()
+                        .position(|row| row["id"] == LOBSTER_ID)
+                        .unwrap();
+                    inventory.remove(food);
+                    assert!(start_preflight(case, &mutant["start_baseline"]).is_some());
+                    let root = Path::new(&output).parent().unwrap().join("mutations");
+                    std::fs::create_dir_all(&root).unwrap();
+                    let mutant_path = root.join(format!(
+                        "{}.wrong-food-quantity.json",
+                        path.file_name().unwrap().to_string_lossy()
+                    ));
+                    std::fs::write(&mutant_path, serde_json::to_vec_pretty(&mutant).unwrap())
+                        .unwrap();
+                    leaves["wrong_food_quantity_mutant_rejected"] = json!(mutant_path);
+                }
                 let combo = m6_combo_receipt(&c);
                 if let Some(eat) = combo["eats"].as_array().and_then(|rows| {
                     rows.iter()
