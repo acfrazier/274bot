@@ -204,14 +204,15 @@ impl TransportEdge {
     /// Resolve a landing from the actual takeoff, not the loc's anchor.
     /// Reconstructed route edges keep their exact planned `to` while retaining
     /// this content delta for live settlement from the stand used at send time.
-    pub fn landing_from(&self, from: WorldTile) -> WorldTile {
+    /// Returns `None` when applying the relative displacement overflows.
+    pub fn landing_from(&self, from: WorldTile) -> Option<WorldTile> {
         match self.player_delta {
-            Some(delta) => WorldTile {
-                x: from.x + delta.x,
-                z: from.z + delta.z,
-                level: from.level + delta.level,
-            },
-            None => self.to,
+            Some(delta) => Some(WorldTile {
+                x: from.x.checked_add(delta.x)?,
+                z: from.z.checked_add(delta.z)?,
+                level: from.level.checked_add(delta.level)?,
+            }),
+            None => Some(self.to),
         }
     }
 }
@@ -710,22 +711,29 @@ fn pack_coord(level: i32, x: i32, z: i32) -> i32 {
     ((level & 0x3) << 28) | ((x & 0x3fff) << 14) | (z & 0x3fff)
 }
 
+/// Engine operation cost for invoking a transport.
+const OP_BASE_TICKS: i32 = 1;
+/// Standard ladder extras include the arrival delay and `p_delay(0)`.
+const ARRIVAL_DELAY_TICKS: i32 = 1;
+const P_DELAY_BASE_TICKS: i32 = 1;
+const LADDER_EXTRA_TICKS: i32 = ARRIVAL_DELAY_TICKS + P_DELAY_BASE_TICKS;
+
 /// m8aq `costs.ts` `BY_NAME` extras (ladders/stairs/shortcuts relevant to the
-/// parsed scripts). A loc name absent here is unpriced and skipped, like
-/// m8aq's `SKIP_UNPRICED`. Edge ticks = `1` (m8aq `opBase`) + extra.
+/// parsed scripts). A loc name absent here is unpriced, like `SKIP_UNPRICED`.
+/// Edge ticks = `OP_BASE_TICKS` + extra.
 const EXTRA_TICKS: &[(&str, i32)] = &[
     // ladders.rs2: two ticks for a climb, one for a shipladder / wizard tower.
-    ("ship_ladder", 2),
-    ("ship_laddertop", 2),
-    ("laddertop", 2),
-    ("ladder", 2),
-    ("laddermiddle", 2),
-    ("laddertop_directional", 2),
-    ("ladder_directional", 2),
-    ("ladder_cellar", 2),
-    ("ladder_from_cellar", 2),
-    ("ladder_from_cellar_directional", 2),
-    ("ladder_cellar_inside_down", 2),
+    ("ship_ladder", LADDER_EXTRA_TICKS),
+    ("ship_laddertop", LADDER_EXTRA_TICKS),
+    ("laddertop", LADDER_EXTRA_TICKS),
+    ("ladder", LADDER_EXTRA_TICKS),
+    ("laddermiddle", LADDER_EXTRA_TICKS),
+    ("laddertop_directional", LADDER_EXTRA_TICKS),
+    ("ladder_directional", LADDER_EXTRA_TICKS),
+    ("ladder_cellar", LADDER_EXTRA_TICKS),
+    ("ladder_from_cellar", LADDER_EXTRA_TICKS),
+    ("ladder_from_cellar_directional", LADDER_EXTRA_TICKS),
+    ("ladder_cellar_inside_down", LADDER_EXTRA_TICKS),
     // trapdoors.rs2: Open then Climb-down / p_telejump z±6400.
     ("trapdoor", 2),
     ("trapdoor_open", 2),
@@ -787,6 +795,17 @@ fn extra_ticks(name: &str) -> Option<i32> {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, extra)| *extra)
+}
+fn edge_ticks(extra: i32) -> Option<i32> {
+    OP_BASE_TICKS.checked_add(extra)
+}
+
+fn delay_ticks(delay: i32) -> Option<i32> {
+    if delay < 0 {
+        None
+    } else {
+        delay.checked_add(P_DELAY_BASE_TICKS)
+    }
 }
 
 fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usize) {

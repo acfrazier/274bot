@@ -687,7 +687,9 @@ impl FollowRun {
             // The content displaces the player's actual takeoff stand. A
             // route's planned landing is not proof if live admission used a
             // different stand, and an unchanged tile cannot prove a crossing.
-            let landing = hop.sent_tile.map(|sent| (sent, edge.landing_from(sent)));
+            let landing = hop
+                .sent_tile
+                .and_then(|sent| edge.landing_from(sent).map(|to| (sent, to)));
             Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
                 landing.is_some_and(|(sent, to)| {
                     now.world_tile().is_some_and(|here| {

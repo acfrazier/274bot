@@ -58,8 +58,8 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ms".into());
-    assert!(prefix.starts_with("ms"), "use agent-owned ms accounts");
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ml".into());
+    assert!(prefix.starts_with("ml"), "use assigned ml accounts");
     let name = format!("{prefix}{}", serial % 1_000_000_000);
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_SCRIPTED_LADDERS_RECEIPT").expect("receipt path"));
@@ -242,5 +242,20 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
     );
     assert!(saw_cellar_attempt, "{receipt}");
     assert!(gundai.is_some(), "{receipt}");
+    let sent = cellar_sent_tile
+        .get()
+        .expect("cellar transport attempt records its takeoff");
+    let delta = cellar_edge
+        .player_delta
+        .expect("cellar edge uses a player-relative landing");
+    let expected_landing = WorldTile {
+        x: sent.x.checked_add(delta.x).expect("cellar x landing fits"),
+        z: sent.z.checked_add(delta.z).expect("cellar z landing fits"),
+        level: sent
+            .level
+            .checked_add(delta.level)
+            .expect("cellar level landing fits"),
+    };
+    assert_eq!(cellar_landing, Some(expected_landing), "{receipt}");
     assert_eq!(receipt["scene_state"], 2);
 }

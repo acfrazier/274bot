@@ -8921,6 +8921,173 @@ p_teleport($end);
 }
 
 #[test]
+fn scripted_climb_pair_uses_the_shared_ladder_tick_price() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "4187=viking_warrior_ladder\n4189=viking_warrior_ladder_down\n",
+    );
+    fx.write(
+        "maps/m48_61.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 19 53: 4187 10\n1 22 53: 4189 10\n",
+    );
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[proc,climb_ladder](coord $coord, boolean $up)
+if ($up = true) { anim(human_reachforladder, 0); } else { anim(human_pickupfloor, 0); }
+p_delay(0);
+p_telejump($coord);
+",
+    );
+    fx.write(
+        "scripts/quests/quest_viking/scripts/viking_thorvald.rs2",
+        "\
+[oploc3,viking_warrior_ladder]
+~climb_ladder(movecoord(coord, 0, 1, 0), true);
+[oploc1,viking_warrior_ladder_down]
+~climb_ladder(movecoord(coord, 0, -1, 0), true);
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 4187,
+            op: vec![None, None, Some("Climb-up".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 4189,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let ticks = |loc_id, option| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == loc_id && edge.option == option)
+            .unwrap_or_else(|| panic!("missing scripted ladder {loc_id}/{option}"))
+            .ticks
+    };
+
+    assert_eq!(ticks(4187, 3), 3);
+    assert_eq!(ticks(4189, 1), 3);
+}
+
+#[test]
+fn scripted_climb_requires_the_handled_op_to_be_a_climb() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "9001=open_with_later_climb\n9002=selected_climb\n",
+    );
+    fx.write(
+        "maps/m48_61.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 19 53: 9001 10\n0 22 53: 9002 10\n",
+    );
+    fx.write(
+        "scripts/areas/area_example/scripts/climbs.rs2",
+        "\
+[oploc1,open_with_later_climb]
+p_telejump(movecoord(coord, 0, 1, 0));
+[oploc1,selected_climb]
+p_telejump(movecoord(coord, 0, 1, 0));
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 9001,
+            op: vec![Some("Open".into()), Some("Climb-up".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9002,
+            op: vec![Some("Climb-up".into())],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+
+    assert!(
+        !graph.edges.iter().any(|edge| edge.loc_id == 9001),
+        "an unrelated Climb option cannot authorize Open op 1"
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.loc_id == 9002 && edge.option == 1),
+        "the actual Climb option remains admitted"
+    );
+}
+
+#[test]
+fn relative_landing_returns_none_on_coordinate_overflow() {
+    let mut edge = members_check_edge(TransportKind::Ladder, 2871, 1);
+    for (takeoff, delta) in [
+        (
+            WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            WorldTile {
+                x: i32::MAX,
+                z: 0,
+                level: 0,
+            },
+        ),
+        (
+            WorldTile {
+                x: 0,
+                z: 1,
+                level: 0,
+            },
+            WorldTile {
+                x: 0,
+                z: i32::MAX,
+                level: 0,
+            },
+        ),
+        (
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 1,
+            },
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: i32::MAX,
+            },
+        ),
+    ] {
+        edge.player_delta = Some(delta);
+        assert_eq!(edge.landing_from(takeoff), None);
+    }
+    edge.player_delta = Some(WorldTile {
+        x: 2,
+        z: -3,
+        level: 1,
+    });
+    assert_eq!(
+        edge.landing_from(WorldTile {
+            x: 10,
+            z: 20,
+            level: 0
+        }),
+        Some(WorldTile {
+            x: 12,
+            z: 17,
+            level: 1
+        })
+    );
+}
+
+#[test]
 fn direct_relative_climbs_scan_area_scripts_without_erasing_gates() {
     let fx = Fixture::new();
     fx.write(
@@ -8976,7 +9143,10 @@ if (%quest = 2) { p_telejump(movecoord(coord, -549, 0, 756)); }
             level: 0
         }
     );
-    assert_eq!(down.ticks, 3, "interaction plus source p_delay(1)");
+    assert_eq!(
+        down.ticks, 4,
+        "interaction, shared arrival-delay tick, and source p_delay(1)"
+    );
     let up = graph
         .edges
         .iter()
@@ -8990,7 +9160,10 @@ if (%quest = 2) { p_telejump(movecoord(coord, -549, 0, 756)); }
             level: 0
         }
     );
-    assert_eq!(up.ticks, 4, "interaction plus helper's source p_delay(2)");
+    assert_eq!(
+        up.ticks, 5,
+        "interaction, shared arrival-delay tick, and helper p_delay(2)"
+    );
     assert!(
         !graph.edges.iter().any(|edge| edge.loc_id == 9003),
         "a conditional offset is not an unconditional crossing"

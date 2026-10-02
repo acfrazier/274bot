@@ -359,14 +359,14 @@ pub(super) fn scripted_climb_edges(
     // Area/quest scripts also declare direct climb ops. Admit only the same
     // unconditional presentation + fixed-move shape, not arbitrary scripted
     // gates, choices, labels or queues. Existing coordinate/angle rules win.
-    let mut scripted_ticks = HashMap::new();
+    let mut scripted_extras = HashMap::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
         for (op, name, body) in script_blocks(text) {
             let Some(option) = oploc_option(&op) else {
                 continue;
             };
             let key = (name.clone(), option);
-            let Some((landing, ticks)) = direct_climb(&body, climb_ticks) else {
+            let Some((landing, extra_ticks)) = direct_climb(&body, climb_ticks) else {
                 continue;
             };
             if matches!(landing, Landing::Abs { .. }) {
@@ -382,10 +382,10 @@ pub(super) fn scripted_climb_edges(
             {
                 continue;
             }
-            let Some(def) = loc_defs.loc(id) else {
-                continue;
-            };
-            if !def.ops.iter().any(|op| op.starts_with("Climb")) {
+            if !loc_defs
+                .op_at(id, option)
+                .is_some_and(|op| op.starts_with("Climb"))
+            {
                 continue;
             }
             let kind = if name.contains("stair") {
@@ -400,12 +400,12 @@ pub(super) fn scripted_climb_edges(
                     ..ScriptRule::default()
                 },
             ));
-            scripted_ticks.insert(key, ticks);
+            scripted_extras.insert(key, extra_ticks);
         }
     });
     resolve_ladder_stair_rules(
         &rules,
-        &scripted_ticks,
+        &scripted_extras,
         ids,
         positions,
         loc_defs,
@@ -416,7 +416,7 @@ pub(super) fn scripted_climb_edges(
 
 fn resolve_ladder_stair_rules(
     rules: &HashMap<(String, i32), (TransportKind, ScriptRule)>,
-    scripted_ticks: &HashMap<(String, i32), i32>,
+    scripted_extras: &HashMap<(String, i32), i32>,
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
     loc_defs: &LocDefs,
@@ -432,11 +432,11 @@ fn resolve_ladder_stair_rules(
         let Some(_def) = loc_defs.loc(id) else {
             continue;
         };
-        let ticks = if let Some(&ticks) = scripted_ticks.get(&(loc_name.clone(), option)) {
-            ticks
-        } else if let Some(extra) = extra_ticks(&loc_name) {
-            1 + extra
-        } else {
+        let extra = scripted_extras
+            .get(&(loc_name.clone(), option))
+            .copied()
+            .or_else(|| extra_ticks(&loc_name));
+        let Some(ticks) = extra.and_then(edge_ticks) else {
             bump(
                 skipped,
                 SKIP_UNPRICED,
@@ -511,22 +511,24 @@ fn climb_helper_ticks(text: &str) -> Option<i32> {
         )?
         .strip_suffix(");p_telejump($coord);")?;
     let delay = int_or_null(delay)?;
-    (delay >= 0).then(|| delay.checked_add(1)).flatten()
+    delay_ticks(delay)
 }
 
 /// A direct climb's one landing and source delay cost. The AST parser rejects
 /// control flow and unknown side effects rather than silently losing gates.
 fn direct_climb(body: &str, climb_ticks: Option<i32>) -> Option<(Landing, i32)> {
     let mut landing = None;
-    let mut ticks = 1i32; // interaction
+    // Source scripts share the named ladder rule's arrival-delay extra; the
+    // edge's operation base is applied once after all extras are collected.
+    let mut extra_ticks = ARRIVAL_DELAY_TICKS;
     for statement in parse_body(body)? {
         let Stmt::Call(name, args) = statement else {
             return None;
         };
         match (name.as_str(), args.as_slice()) {
-            ("p_arrivedelay", []) => {}
+            ("p_arrivedelay", []) => {} // Included once in the shared baseline above.
             ("p_delay", [Expr::Num(delay)]) if *delay >= 0 => {
-                ticks = ticks.checked_add(delay.checked_add(1)?)?;
+                extra_ticks = extra_ticks.checked_add(delay_ticks(*delay)?)?;
             }
             ("anim", [Expr::Word(_), Expr::Num(_)]) => {}
             ("mes", [Expr::Str(calls)]) if calls.is_empty() => {}
@@ -538,14 +540,14 @@ fn direct_climb(body: &str, climb_ticks: Option<i32>) -> Option<(Landing, i32)> 
                     return None;
                 };
                 if name == "~climb_ladder" {
-                    ticks = ticks.checked_add(climb_ticks?)?;
+                    extra_ticks = extra_ticks.checked_add(climb_ticks?)?;
                 }
                 landing = Some(to);
             }
             _ => return None,
         }
     }
-    landing.map(|landing| (landing, ticks))
+    landing.map(|landing| (landing, extra_ticks))
 }
 
 /// Closed trapdoor placements (`trapdoors.rs2`) plus already-open leaves.

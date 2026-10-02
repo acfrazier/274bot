@@ -2228,7 +2228,9 @@ impl<'a> ReverseClosure<'a> {
                     continue;
                 }
                 let edge = &self.graph.edges[index];
-                let to = edge.landing_from(takeoff);
+                let Some(to) = edge.landing_from(takeoff) else {
+                    continue;
+                };
                 if (edge.player_delta.is_some() && !self.seen.contains(&to))
                     || !wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
                 {
@@ -2491,7 +2493,9 @@ fn search_kernel(
                         if !edge_allowed(state, edge, relax) {
                             continue;
                         }
-                        let to = edge.landing_from(cur);
+                        let Some(to) = edge.landing_from(cur) else {
+                            continue;
+                        };
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(to, avoid) {
                             continue;
                         }

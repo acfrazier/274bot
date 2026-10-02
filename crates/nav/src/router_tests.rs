@@ -368,6 +368,19 @@ fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
 }
 
 #[test]
+fn find_skips_relative_transport_when_takeoff_landing_overflows() {
+    let collision = walled_5x5();
+    let mut graph = door(tile(2, 2, 0), tile(4, 2, 0), 1);
+    graph.edges[0].kind = TransportKind::Ladder;
+    graph.edges[0].player_delta = Some(tile(i32::MAX, 0, 0));
+
+    assert_eq!(
+        find(&collision, &graph, tile(1, 2, 0), tile(4, 2, 0)).err(),
+        Some(RouteError::NoPath)
+    );
+}
+
+#[test]
 fn rectangular_transport_takeoffs_share_forward_and_reverse_wall_admission() {
     let from = tile(0, 6, 0);
     let to = tile(59, 4, 1);
