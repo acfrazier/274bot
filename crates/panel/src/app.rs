@@ -2039,7 +2039,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
             "maxme" => {
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.debug_panel_open = true;
-                    crate::debug_panel::request_destructive_send(
+                    crate::debug_panel::request_bulk_send(
                         ui,
                         session,
                         "maxme".into(),
@@ -2048,6 +2048,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                             .map(|cmd| (*cmd).to_string())
                             .collect(),
                         "maxme (19× setstat 99)".into(),
+                        "This sets every skill to 99.".into(),
                     );
                 }
                 ui.set_item_tooltip("19× setstat 99 — confirmation is required");

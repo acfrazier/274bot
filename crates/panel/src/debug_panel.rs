@@ -118,6 +118,11 @@ struct PendingSend {
     wires: Vec<String>,
     summary: String,
     targets: Vec<TargetRow>,
+    /// False for bulk sends that raise state (the maxme rail): the confirm
+    /// keeps its accurate wording and never wears destructive styling.
+    destructive: bool,
+    /// Accurate one-line effect for a non-destructive confirm, if any.
+    confirm_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,6 +349,39 @@ pub(crate) fn request_destructive_send(
     wires: Vec<String>,
     summary: String,
 ) {
+    request_confirm_send(ui, session, command_name, wires, summary, true, None);
+}
+
+/// A bulk send that is not destructive (the maxme rail): the confirm stays,
+/// but with plain styling and the caller's accurate wording.
+pub(crate) fn request_bulk_send(
+    ui: &Ui,
+    session: &mut Session,
+    command_name: String,
+    wires: Vec<String>,
+    summary: String,
+    confirm_note: String,
+) {
+    request_confirm_send(
+        ui,
+        session,
+        command_name,
+        wires,
+        summary,
+        false,
+        Some(confirm_note),
+    );
+}
+
+fn request_confirm_send(
+    ui: &Ui,
+    session: &mut Session,
+    command_name: String,
+    wires: Vec<String>,
+    summary: String,
+    destructive: bool,
+    confirm_note: Option<String>,
+) {
     let targets = target_rows(session);
     if targets.is_empty() {
         session.debug_panel.status = Some(PanelStatus {
@@ -357,6 +395,8 @@ pub(crate) fn request_destructive_send(
         wires,
         summary,
         targets,
+        destructive,
+        confirm_note,
     });
     ui.open_popup(CONFIRM_POPUP);
 }
@@ -864,14 +904,24 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
     }
 
     ui.popup(CONFIRM_POPUP, || {
-        let red = ui.push_style_color(StyleColor::Text, ERROR);
-        ui.text("Destructive debug command");
-        red.pop();
-        ui.text_wrapped(format!(
-            "Send {} to {}? This command irreversibly clears, resets, or lowers account state (inventory or bank, a quest or stats, a stat level, or items).",
-            pending.summary,
-            target_description(&pending.targets)
-        ));
+        if pending.destructive {
+            let red = ui.push_style_color(StyleColor::Text, ERROR);
+            ui.text("Destructive debug command");
+            red.pop();
+            ui.text_wrapped(format!(
+                "Send {} to {}? This command irreversibly clears, resets, or lowers account state (inventory or bank, a quest or stats, a stat level, or items).",
+                pending.summary,
+                target_description(&pending.targets)
+            ));
+        } else {
+            ui.text("Confirm bulk send");
+            let mut body = format!("Send {} to {}?", pending.summary, target_description(&pending.targets));
+            if let Some(note) = pending.confirm_note.as_deref() {
+                body.push(' ');
+                body.push_str(note);
+            }
+            ui.text_wrapped(body);
+        }
         if ui.button("Confirm send##debug-confirm") {
             if same_targets(&target_rows(session), &pending.targets) {
                 send_wires(
