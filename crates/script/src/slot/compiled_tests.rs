@@ -649,10 +649,12 @@ fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, 
 fn gatherer_slot(incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
+    let mut bag = SettingsBag::new();
+    bag.insert("disposition".into(), serde_json::json!("Power"));
     slot.start_compiled(
         "gatherer-lifecycle",
         crate::CompiledId("Gatherer"),
-        Arc::new(SettingsBag::new()),
+        Arc::new(bag),
         selected(),
         Arc::default(),
     )

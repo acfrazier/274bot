@@ -25,7 +25,7 @@ pub struct CompileContext<'a> {
     pub gathering: Option<&'a GatherCatalog>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
     pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
-    /// `None` means select the nearest eligible bank at step start.
+    /// `None` uses the shared eligible-bank cost selector at step start.
     pub bank: Option<NamedBank>,
     pub bank_items: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
@@ -106,6 +106,7 @@ pub struct StepContext<'a, 'frame> {
     pub progress: &'a [QuestProgress],
     pub required_after: EvidenceStamp,
     pub bank: &'a super::bank_memo::BankMemo,
+    pub banks: &'a Arc<api::named_banks::NamedBankFacts>,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
@@ -139,6 +140,11 @@ pub trait StepRun: Send {
     fn progress_read_completed(&mut self, _now: std::time::Duration) {}
     /// Borrowed wait detail; machines do not allocate on pending polls.
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        None
+    }
+    /// Latest completed sub-operation, borrowed for change-only status reporting.
+    /// This does not replace the final outcome returned by `poll`.
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
         None
     }
 }
@@ -757,7 +763,7 @@ mod tests {
     #[test]
     fn unknown_handler_is_rejected() {
         let err = compile_err(|document| {
-            document.roles[0].sequences[0].steps[0].kind = "combat".into();
+            document.roles[0].sequences[0].steps[0].kind = "no_such_family".into();
         });
         assert_eq!(err.code.as_ref(), "unknown-handler");
     }

@@ -9,11 +9,14 @@ pub mod api_gather;
 pub mod api_progress;
 #[cfg(feature = "load")]
 mod api_session;
+/// Shared native bank selector and transfer machines.
+pub mod bank;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;
 #[cfg(feature = "load")]
 pub mod channel;
+pub mod combat;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;
@@ -45,7 +48,6 @@ pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 mod module_imports;
-/// Typed compiled cards, preparation, execution and output.
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
@@ -182,7 +184,6 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-#[cfg(feature = "load")]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;

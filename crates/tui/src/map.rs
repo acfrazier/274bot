@@ -31,29 +31,20 @@ pub const ZOOMS: [usize; 4] = [8, 4, 2, 1];
 /// courtyard, same default as the headed picker.
 pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
-const NAV_PREF_KEY: &str = "nav";
-const SPECIAL_AREA_PREF_KEY: &str = "show_special_areas";
-
-/// Read the shared panel/TUI nav preference from an explicitly configured
-/// store. `MapView::new` deliberately does not touch the operator's home so
-/// unit tests cannot observe or mutate real preferences.
+/// Read the shared panel/TUI special-area preference from an explicitly
+/// configured store. `MapView::new` does not touch the operator's home.
 fn persisted_wilderness(path: &Path) -> bool {
-    host_play::panel_ui_value_at(path, NAV_PREF_KEY)
-        .and_then(|value| value.get(SPECIAL_AREA_PREF_KEY).and_then(|v| v.as_bool()))
+    frontend_core::nav_preference_at(path, frontend_core::NavPreference::ShowSpecialAreas, None)
         .unwrap_or(false)
 }
 
 fn persist_wilderness(path: &Path, enabled: bool) -> io::Result<()> {
-    let mut nav = host_play::panel_ui_value_at(path, NAV_PREF_KEY)
-        .filter(|value| value.is_object())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if let Some(object) = nav.as_object_mut() {
-        object.insert(
-            SPECIAL_AREA_PREF_KEY.into(),
-            serde_json::Value::Bool(enabled),
-        );
-    }
-    host_play::persist_panel_ui_value_at(path, NAV_PREF_KEY, nav)
+    frontend_core::nav_preference_at(
+        path,
+        frontend_core::NavPreference::ShowSpecialAreas,
+        Some(enabled),
+    )
+    .map(|_| ())
 }
 
 const WILDERNESS_BG: Color = Color::Rgb(72, 16, 72);

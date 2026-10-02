@@ -165,11 +165,13 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
                 tile,
                 distance: 0,
                 animation: -1,
+                animation_frame: 0,
                 pose_animation: -1,
                 orientation: 0,
                 target_orientation: 0,
                 overhead_text: None,
                 spot_animation: -1,
+                spot_animation_stamp: 0,
                 health: 10,
                 total_health: 10,
                 face_entity: -1,
@@ -180,6 +182,7 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
             },
             combat_level: 3,
             skill_level: 0,
+            weapon: None,
         },
         energy: 100,
         weight: 0,
@@ -355,11 +358,13 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
                 tile: tile(3077, 3426),
                 distance: 0,
                 animation: -1,
+                animation_frame: 0,
                 pose_animation: -1,
                 orientation: 0,
                 target_orientation: 0,
                 overhead_text: None,
                 spot_animation: -1,
+                spot_animation_stamp: 0,
                 health: 10,
                 total_health: 10,
                 face_entity: -1,
@@ -370,6 +375,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             },
             combat_level: 3,
             skill_level: 0,
+            weapon: None,
         },
         energy: 100,
         weight: 0,
@@ -410,6 +416,7 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
+        HostEffect::BankPick(_) => panic!("open door recovery cannot select a bank"),
     }
     assert!(
         !ledger.as_ref().unwrap().outbox.iter().any(|entry| matches!(
@@ -597,6 +604,7 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
+        HostEffect::BankPick(_) => panic!("door approach cannot select a bank"),
     }
 }
 
@@ -631,6 +639,13 @@ fn vanished_clicked_loc_fails_immediately_without_retargeting_a_replacement() {
     }
 }
 fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>) -> R) -> R {
+    with_step_banks(t, &Arc::new(api::named_banks::NamedBankFacts::empty()), f)
+}
+fn with_step_banks<R>(
+    t: &mut NativeTick<'_>,
+    banks: &Arc<api::named_banks::NamedBankFacts>,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
     let quests = api::quest_facts::QuestCatalog::empty();
     let required_after = t.cx.evidence();
     let bank = crate::quester::bank_memo::BankMemo::default();
@@ -640,8 +655,230 @@ fn with_step<R>(t: &mut NativeTick<'_>, f: impl FnOnce(&mut StepContext<'_, '_>)
         progress: &[],
         required_after,
         bank: &bank,
+        banks,
     })
 }
+
+#[test]
+fn bank_without_candidates_fails_before_walk_or_open() {
+    compile_context_test(|compile| {
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), compile).unwrap();
+        let mut snapshot = ready();
+        seed_dialogue_combat(&mut snapshot, false);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Err(crate::native::ActionError::Unavailable(reason)))
+                if reason.as_ref() == "no eligible bank"
+        ));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    });
+}
+
+#[test]
+fn native_bank_without_explicit_selection_opens_the_context_bank() {
+    compile_context_test(|compile| {
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), compile).unwrap();
+        let mut snapshot = ready();
+        seed_dialogue_combat(&mut snapshot, false);
+        let bank_tile = snapshot.local_player().unwrap().player.actor.tile;
+        let bank = api::named_banks::NamedBank::new("Native nearest", bank_tile);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+        let mut booth = loc(2213, "Bank booth", "Use-quickly");
+        booth.tile = bank_tile;
+        booth.distance = 0;
+        snapshot.seed_locs(vec![booth]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step_banks(tick, &banks, |cx| plan.begin(cx).unwrap())
+        });
+        for now in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, now, |tick| {
+                with_step_banks(tick, &banks, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+        let HostEffect::BankPick(request) = &action.effect else {
+            panic!("native bank selection must precede walking or opening");
+        };
+        assert!(request.explicit_bank.is_none());
+        ledger.as_mut().unwrap().complete_bank_pick(
+            &action.authority(),
+            crate::bank::BankPickReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: action.authority().run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                selected: crate::bank::SelectedBank {
+                    bank_index: 0,
+                    access_tile: bank_tile,
+                    kind: crate::bank::PickKind::AirFallback,
+                    access: Some(Arc::new(crate::bank::BankStandAccess {
+                        bank,
+                        stand_tile: bank_tile,
+                        kind: crate::bank::AccessKind::Booth,
+                        stand_op: 1,
+                        name: None,
+                        choose: None,
+                    })),
+                },
+            },
+        );
+        for now in 4..=7 {
+            assert!(with_tick(&snapshot, &mut ledger, now, |tick| {
+                with_step_banks(tick, &banks, |cx| run.poll(cx))
+            })
+            .is_pending());
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                break;
+            }
+        }
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::OpenStand {
+                x: 3253,
+                z: 3401,
+                level: 0,
+                kind,
+                name,
+                stand_op: Some(1),
+                ..
+            } if kind == "booth" && name.as_deref() == Some("Bank booth")
+        ));
+    });
+}
+
+#[test]
+fn custom_path_bank_tile_opens_observed_booth() {
+    compile_context_test(|base| {
+        let bank_tile = tile(3200, 3200);
+        let compile = crate::quester::compile::CompileContext {
+            path: base.path,
+            progress: base.progress,
+            selected: base.selected,
+            quests: base.quests,
+            gathering: base.gathering,
+            areas: base.areas,
+            recipes: base.recipes,
+            bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
+            bank_items: base.bank_items,
+            loadouts: base.loadouts,
+        };
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                actor: api::snapshot::ActorView {
+                    name: None,
+                    actions: vec![],
+                    tile: bank_tile,
+                    distance: 0,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: -1,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 3,
+                skill_level: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+        });
+        let mut booth = loc(2213, "Bank booth", "Use-quickly");
+        booth.tile = bank_tile;
+        booth.distance = 0;
+        snapshot.seed_locs(vec![booth]);
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::OpenBooth {
+                x: 3200,
+                z: 3200,
+                level: 0,
+                id: 2213,
+                name: None,
+                action: None,
+            }
+        ));
+    });
+}
+
+#[test]
+fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
+    compile_context_test(|base| {
+        let compile = crate::quester::compile::CompileContext {
+            path: base.path,
+            progress: base.progress,
+            selected: base.selected,
+            quests: base.quests,
+            gathering: base.gathering,
+            areas: base.areas,
+            recipes: base.recipes,
+            bank: Some(api::named_banks::NamedBank::new(
+                "Path bank",
+                tile(3200, 3200),
+            )),
+            bank_items: base.bank_items,
+            loadouts: base.loadouts,
+        };
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let snapshot = ready();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        post_user_input_walk_receipt(&mut ledger, 3);
+        ledger.as_mut().unwrap().outbox.clear();
+        assert_manual_movement(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    });
+}
+
 #[test]
 fn interact_false_is_failure_not_success() {
     let s = ready();
@@ -918,11 +1155,13 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
                     tile: tile(3209, 3215),
                     distance: 0,
                     animation: -1,
+                    animation_frame: 0,
                     pose_animation: -1,
                     orientation: 0,
                     target_orientation: 0,
                     overhead_text: None,
                     spot_animation: -1,
+                    spot_animation_stamp: -1,
                     health: 10,
                     total_health: 10,
                     face_entity: -1,
@@ -933,6 +1172,7 @@ fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
                 },
                 combat_level: 3,
                 skill_level: 0,
+                weapon: None,
             },
             energy: 100,
             weight: 0,
@@ -1013,11 +1253,13 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
             tile: tile(2542, 3170),
             distance: 1,
             animation: -1,
+            animation_frame: 0,
             pose_animation: -1,
             orientation: 0,
             target_orientation: 0,
             overhead_text: None,
             spot_animation: -1,
+            spot_animation_stamp: -1,
             health: 1,
             total_health: 1,
             face_entity: -1,
@@ -1083,11 +1325,13 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
             tile: tile(2542, 3170),
             distance,
             animation: -1,
+            animation_frame: 0,
             pose_animation: -1,
             orientation: 0,
             target_orientation: 0,
             overhead_text: None,
             spot_animation: -1,
+            spot_animation_stamp: -1,
             health: 1,
             total_health: 1,
             face_entity: -1,
@@ -1118,7 +1362,9 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
                 assert_eq!(request.target, tile(2542, 3170));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) => panic!("talked before approaching the NPC"),
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+                panic!("talked before approaching the NPC")
+            }
         }
 
         let mut near = ready();
@@ -1145,11 +1391,13 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
             tile: tile(3200, 3276),
             distance,
             animation: -1,
+            animation_frame: 0,
             pose_animation: -1,
             orientation: 0,
             target_orientation: 0,
             overhead_text: None,
             spot_animation: -1,
+            spot_animation_stamp: -1,
             health: 1,
             total_health: 1,
             face_entity: -1,
@@ -1201,7 +1449,9 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
                 assert_eq!(request.target, tile(3200, 3276));
                 assert_eq!(request.radius, 1);
             }
-            HostEffect::Interaction(_) => panic!("used the item before approaching the NPC"),
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
+                panic!("used the item before approaching the NPC")
+            }
         }
     });
 }
@@ -1222,11 +1472,13 @@ fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
                 tile: tile(3200, 3276),
                 distance: 1,
                 animation: -1,
+                animation_frame: 0,
                 pose_animation: -1,
                 orientation: 0,
                 target_orientation: 0,
                 overhead_text: None,
                 spot_animation: -1,
+                spot_animation_stamp: 0,
                 health: 1,
                 total_health: 1,
                 face_entity: -1,
@@ -1435,6 +1687,127 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
             tick += 1;
         }
         assert_eq!(count, 20);
+    });
+}
+
+#[test]
+fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
+    compile_context_test(|cx| {
+        let shears = ItemView {
+            def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![shears], 28);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears", "target": {"item": "shears"},
+                "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+        let first_id = authority.request_id();
+        ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "accepted click without product must wait a bounded round"
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.cx.active_now = Duration::from_secs(12);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "a silent round must retry inside the until loop, not park until settle_ms"
+        );
+        let last_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .authority()
+            .request_id();
+        assert_ne!(
+            last_id, first_id,
+            "silent round must queue another UseOn before the 240s step timeout"
+        );
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+    });
+}
+
+#[test]
+fn use_on_until_continues_objbox_before_the_next_attempt() {
+    compile_context_test(|cx| {
+        let shears = ItemView {
+            def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let wool = ItemView {
+            def: def(resolve_obj(cx, "wool").unwrap(), "Wool"),
+            slot: 1,
+            count: 1,
+            ..shears.clone()
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![shears.clone(), wool], 28);
+        snapshot.seed_chat_modal(2100, vec!["You get some wool.".into()]);
+        snapshot.seed_chat_options(vec![], 2105);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears", "target": {"item": "shears"},
+                "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(emitted(&ledger), InteractReq::ContinueDialog),
+            "objbox from a successful shear must be continued before the next UseOn"
+        );
     });
 }
 
@@ -1726,6 +2099,7 @@ fn with_sheep_step<R>(
         progress: &progress,
         required_after: evidence,
         bank: &bank,
+        banks: &Arc::new(api::named_banks::NamedBankFacts::empty()),
     })
 }
 
@@ -2606,11 +2980,13 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
                 tile: tile(3253, 3401),
                 distance: 0,
                 animation: -1,
+                animation_frame: 0,
                 pose_animation: -1,
                 orientation: 0,
                 target_orientation: 0,
                 overhead_text: None,
                 spot_animation: -1,
+                spot_animation_stamp: -1,
                 health: 10,
                 total_health: 10,
                 face_entity: -1,
@@ -2621,6 +2997,7 @@ pub(crate) fn seed_dialogue_combat(snapshot: &mut GameSnapshot, in_combat: bool)
             },
             combat_level: 3,
             skill_level: 0,
+            weapon: None,
         },
         energy: 100,
         weight: 0,
@@ -2799,11 +3176,13 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         tile: tile(3189, 3273),
         distance: 5,
         animation: -1,
+        animation_frame: 0,
         pose_animation: -1,
         orientation: 0,
         target_orientation: 0,
         overhead_text: None,
         spot_animation: -1,
+        spot_animation_stamp: -1,
         health: 1,
         total_health: 1,
         face_entity: -1,
@@ -3007,11 +3386,13 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             tile: npc_tile,
             distance: 2,
             animation: -1,
+            animation_frame: 0,
             pose_animation: -1,
             orientation: 0,
             target_orientation: 0,
             overhead_text: None,
             spot_animation: -1,
+            spot_animation_stamp: 0,
             health: 1,
             total_health: 1,
             face_entity: -1,
@@ -3065,6 +3446,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             HostEffect::Interaction(_) => {
                 panic!("geometric proximity cannot bypass closed clipping")
             }
+            HostEffect::BankPick(_) => panic!("NPC approach cannot select a bank"),
         }
         assert!(
             with_tick_reach(&snapshot, &blocked, &mut ledger, 3, |tick| {
@@ -3135,6 +3517,55 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
 }
 
 #[test]
+fn refused_talk_approach_blocks_without_requeueing_the_walk() {
+    for end in [WalkEnd::Failed, WalkEnd::Blocked, WalkEnd::Refused] {
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 2632,
+            z: 3222,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let mut run = TalkRun {
+            id: 42,
+            npc: Arc::from("test npc"),
+            tile: Some(WorldTile {
+                x: 3103,
+                z: 3163,
+                level: 2,
+            }),
+            leash: 6,
+            prefer: Arc::from([]),
+            choose: None,
+            walk: None,
+            dialogue: None,
+            started: false,
+        };
+        assert!(with_tick(&snapshot, &mut ledger, 40, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let request_id = post_user_input_walk_receipt(&mut ledger, 66);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = end.clone();
+        let result = with_tick(&snapshot, &mut ledger, 66, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        });
+        assert!(
+            matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))),
+            "the owner must see the refused {end:?} approach, not another pending walk"
+        );
+        let requests: Vec<_> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .map(|action| action.request_id.get())
+            .collect();
+        assert_eq!(requests, vec![request_id], "no second walk or dialogue");
+    }
+}
+
+#[test]
 fn use_on_walk_user_input_blocks_before_interaction() {
     let snapshot = ready();
     let mut ledger = None;
@@ -3155,6 +3586,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         interaction: None,
         accepted: false,
         round_before: None,
+        round_deadline: None,
         chat_since: 0,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {

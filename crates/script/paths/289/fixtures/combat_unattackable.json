@@ -1,0 +1,82 @@
+{
+  "schema": 2,
+  "id": "imp",
+  "display_name": "Combat Unattackable Fixture",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:imp",
+      "progress": {
+        "colour": { "not_started": "imp:0", "in_progress": "imp:0", "complete": "imp:2" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "imp:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "approach-natural-unattackable-attacker",
+              "kind": "walk",
+              "version": 1,
+              "args": { "tile": [3108, 3346, 0], "source": "selected maps-server n48_52 nasty_tree at 3108/3346; native radius1 approaches its one-tile hunt range after HP8 Start", "radius": 1 },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } },
+                { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } }
+              ] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3108, 3346, 0], "radius": 1 } } }
+            },
+            {
+              "id": "observe-unattackable-attacker",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": { "attacker": { "npcs": true, "players": false } },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 6, "auto_retaliate": true },
+                "loadout": null,
+                "lost_radius": 12,
+                "kill_budget_ticks": 120,
+                "loot": []
+              },
+              "skip_if": { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } },
+              "settle": { "All": [] }
+            },
+            {
+              "id": "walk-out-after-unattackable",
+              "kind": "walk",
+              "version": 1,
+              "args": { "tile": [3093, 3243, 0], "source": "A defs/cooksassistant.ts:145", "radius": 2 },
+              "skip_if": { "Any": [
+                { "Not": { "Fact": { "kind": "combat_end", "version": 1, "args": { "end": "aborted_unattackable" } } } },
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3093, 3243, 0], "radius": 2 } } }
+              ] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3093, 3243, 0], "radius": 2 } } }
+            }
+          ]
+        },
+        { "stage": "imp:2", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}

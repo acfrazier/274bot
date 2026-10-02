@@ -24,6 +24,26 @@ export function parsePack(text: string) {
     }
     return out;
 }
+type ParamDef = { type?: string; default?: string };
+
+export function parseParamDefinitions(text: string) {
+    const defs = new Map<string, ParamDef>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            defs.set(current, {});
+            continue;
+        }
+        if (!current) continue;
+        const entry = defs.get(current)!;
+        if (line.startsWith('type=')) entry.type = line.slice('type='.length);
+        else if (line.startsWith('default=')) entry.default = line.slice('default='.length);
+    }
+    return defs;
+}
 export function integer(value: string, label: string) { const parsed = Number(value); if (!Number.isInteger(parsed)) throw new Error(`${label}: expected integer, got ${value}`); return parsed; }
 export function parseMapsquarePath(relative: string) {
     const base = path.basename(relative, '.jm2');

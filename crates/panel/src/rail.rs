@@ -61,41 +61,71 @@ pub fn light_rgb(light: Light) -> [f32; 4] {
         Light::Green => crate::theme::GREEN,
     }
 }
-/// Draw five filled squares in the U+2059 pattern for a member's light.
+/// Five filled squares in the U+2059 quincunx pattern for a member's light.
 /// The marker consumes one text line and does not depend on font coverage.
-/// Its size and origin are snapped in framebuffer pixels at any scale.
-pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
-    const DOT_CENTERS: [[f32; 2]; 5] = [
-        [0.28, 0.28],
-        [0.72, 0.28],
-        [0.50, 0.50],
-        [0.28, 0.72],
-        [0.72, 0.72],
-    ];
-
+/// The squares share one physical size and pitch, so the gaps are equal and
+/// the layout mirrors exactly around the marker centre at any scale.
+/// Edges are whole physical pixels, matching the fractional-scale layout.
+pub(crate) fn status_dot_rects(
+    x: f32,
+    y: f32,
+    width: f32,
+    line_h: f32,
+    scale: f32,
+) -> [[f32; 4]; 5] {
     const DOT_SIZE: f32 = 3.0;
-    let scale = crate::theme::scale_px(ui, 1.0);
-    let logical_width = width / scale;
+    // 4px logical pitch (1px gap at 1x) keeps the 2*pitch+size extent inside
+    // both the 3270 and the test-default line heights at 1x..2x.
+    const DOT_PITCH: f32 = 4.0;
+    const DOT_EXTENT_LOGICAL: f32 = DOT_PITCH * 2.0 + DOT_SIZE;
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
     let size = (DOT_SIZE * scale).round().max(1.0);
+    // A shared pitch keeps every gap at `pitch - size`; the `max` only
+    // guards degenerate scales, the 1x..2x layouts always clear it.
+    let pitch = (DOT_PITCH * scale).round().max(size + 1.0);
+    // Integer logical margins, snapped after scaling like the old fractional
+    // layout: no `.5` logical offset gets magnified by the scale, so 1x..2x
+    // stay within a pixel of the 1x baseline. `floor` keeps the marker
+    // inside the line for both fonts; margins may differ by a pixel, the
+    // squares themselves still mirror exactly.
+    let left_log = ((width / scale - DOT_EXTENT_LOGICAL) * 0.5)
+        .floor()
+        .max(0.0);
+    let top_log = ((line_h / scale - DOT_EXTENT_LOGICAL) * 0.5)
+        .floor()
+        .max(0.0);
+    let origin = [
+        (x + left_log * scale).round(),
+        (y + top_log * scale).round(),
+    ];
+    let square = |col: f32, row: f32| {
+        let min = [origin[0] + col * pitch, origin[1] + row * pitch];
+        [min[0], min[1], min[0] + size, min[1] + size]
+    };
+    [
+        square(0.0, 0.0),
+        square(2.0, 0.0),
+        square(1.0, 1.0),
+        square(0.0, 2.0),
+        square(2.0, 2.0),
+    ]
+}
+pub(crate) fn draw_status_dot(ui: &Ui, light: Light, width: f32) {
+    let scale = crate::theme::scale_px(ui, 1.0);
     let [x, y] = ui.cursor_screen_pos();
     let line_h = ui.text_line_height();
     let colour = light_rgb(light);
     {
         let draw_list = ui.get_window_draw_list();
-        for [cx, cy] in DOT_CENTERS {
-            let center = [logical_width * cx, crate::theme::PANEL_FONT_SIZE * cy];
-            // Snap the base geometry before scaling its origin; a shared
-            // physical size keeps fractional-DPI dots square.
-            let logical_min = [
-                (center[0] - DOT_SIZE * 0.5).round(),
-                (center[1] - DOT_SIZE * 0.5).round(),
-            ];
-            let min = [
-                (x + logical_min[0] * scale).round(),
-                (y + logical_min[1] * scale).round(),
-            ];
-            let max = [min[0] + size, min[1] + size];
-            draw_list.add_rect(min, max, colour).filled(true).build();
+        for [x0, y0, x1, y1] in status_dot_rects(x, y, width, line_h, scale) {
+            draw_list
+                .add_rect([x0, y0], [x1, y1], colour)
+                .filled(true)
+                .build();
         }
     }
     ui.dummy([width, line_h]);
@@ -331,6 +361,108 @@ mod tests {
                 physical_sizes.iter().all(|size| *size == physical_sizes[0]),
                 "all five squares must have equal physical sizes at {scale}×: {physical_sizes:?}"
             );
+        }
+    }
+    #[test]
+    fn status_dot_rects_are_symmetric_with_equal_gaps_at_every_ui_scale() {
+        // Computed geometry (not a pixel snapshot): the quincunx must mirror
+        // around its centre with one shared gap at 1x..2x.
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            // Integer and fractional origins: snapping must not break the mirror.
+            for origin in [[0.0, 0.0], [7.0, 5.0], [2.5, 3.5]] {
+                let width = 18.0 * scale;
+                let line_h = 14.0 * scale;
+                let rects = super::status_dot_rects(origin[0], origin[1], width, line_h, scale);
+                for rect in &rects {
+                    assert!(
+                        rect.iter().all(|edge| (*edge - edge.round()).abs() < 0.001),
+                        "edges are whole physical pixels at {scale}x from {origin:?}: {rect:?}"
+                    );
+                    // Snapping a fractional cell origin can push an edge up to a
+                    // pixel outside; integer origins (the rail rounds them) stay
+                    // strictly inside.
+                    let outside = if origin[0].fract() == 0.0 && origin[1].fract() == 0.0 {
+                        0.001
+                    } else {
+                        1.0
+                    };
+                    assert!(
+                        rect[0] >= origin[0] - outside
+                            && rect[1] >= origin[1] - outside
+                            && rect[2] <= origin[0] + width + outside
+                            && rect[3] <= origin[1] + line_h + outside,
+                        "marker stays inside the {width}x{line_h} cell at {scale}x from {origin:?}: {rect:?}"
+                    );
+                }
+                let sizes: Vec<f32> = rects
+                    .iter()
+                    .map(|rect| [rect[2] - rect[0], rect[3] - rect[1]])
+                    .map(|[w, h]| {
+                        assert!(
+                            (w - h).abs() < 0.001,
+                            "squares stay square at {scale}x: {rects:?}"
+                        );
+                        assert!(
+                            (w - w.round()).abs() < 0.001,
+                            "square size is whole pixels at {scale}x: {rects:?}"
+                        );
+                        w
+                    })
+                    .collect();
+                assert!(
+                    sizes
+                        .windows(2)
+                        .all(|pair| (pair[0] - pair[1]).abs() < 0.001),
+                    "all five squares share one size at {scale}x: {sizes:?}"
+                );
+                let [tl, tr, centre, bl, br] =
+                    [&rects[0], &rects[1], &rects[2], &rects[3], &rects[4]];
+                assert!(
+                    (tl[0] - bl[0]).abs() < 0.001 && (tr[0] - br[0]).abs() < 0.001,
+                    "columns line up at {scale}x: {rects:?}"
+                );
+                assert!(
+                    (tl[1] - tr[1]).abs() < 0.001 && (bl[1] - br[1]).abs() < 0.001,
+                    "rows line up at {scale}x: {rects:?}"
+                );
+                let pitch_x0 = centre[0] - tl[0];
+                let pitch_x1 = tr[0] - centre[0];
+                let pitch_y0 = centre[1] - tl[1];
+                let pitch_y1 = bl[1] - centre[1];
+                assert!(
+                    (pitch_x0 - pitch_x1).abs() < 0.001
+                        && (pitch_x0 - pitch_y0).abs() < 0.001
+                        && (pitch_x0 - pitch_y1).abs() < 0.001,
+                    "one shared pitch in x and y at {scale}x: {pitch_x0}, {pitch_x1}, {pitch_y0}, {pitch_y1}"
+                );
+                let gaps = [
+                    centre[0] - tl[2],
+                    tr[0] - centre[2],
+                    centre[1] - tl[3],
+                    bl[1] - centre[3],
+                ];
+                assert!(
+                    gaps.iter().all(|gap| (*gap - gaps[0]).abs() < 0.001),
+                    "equal gaps on all four sides at {scale}x: {gaps:?} in {rects:?}"
+                );
+                assert!(
+                    gaps[0] >= 1.0 - 0.001,
+                    "squares must not touch at {scale}x: {gaps:?} in {rects:?}"
+                );
+                let marker_cx = (tl[0] + br[2]) * 0.5;
+                let marker_cy = (tl[1] + br[3]) * 0.5;
+                assert!(
+                    ((centre[0] + centre[2]) * 0.5 - marker_cx).abs() < 0.001
+                        && ((centre[1] + centre[3]) * 0.5 - marker_cy).abs() < 0.001,
+                    "centre square sits on the marker centre at {scale}x: {rects:?}"
+                );
+                assert!(
+                    ((tl[0] + tl[2]) * 0.5 + (tr[0] + tr[2]) * 0.5 - 2.0 * marker_cx).abs() < 0.001
+                        && ((tl[1] + tl[3]) * 0.5 + (bl[1] + bl[3]) * 0.5 - 2.0 * marker_cy).abs()
+                            < 0.001,
+                    "corners mirror around the marker centre at {scale}x: {rects:?}"
+                );
+            }
         }
     }
 }

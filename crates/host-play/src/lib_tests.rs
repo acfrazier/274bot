@@ -3171,7 +3171,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
             Some(nearby),
             "stale nearby worker result must not replace the exact request"
         );
-        bot.publish_route(2, 0, false, pending.calculate());
+        bot.publish_route(2, 0, false, pending.calculate().0);
         assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
     }
 
@@ -4720,7 +4720,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         max_z: 3,
         level: Some(0),
     };
-    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate() else {
+    let RouteOutcome::Routed(straight) = request(Vec::new()).calculate().0 else {
         panic!("open floor routes");
     };
     // Every tile stepped, the waypoints' straight/diagonal runs expanded.
@@ -4749,7 +4749,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "without the rectangle the cheapest route crosses it: {:?}",
         straight
     );
-    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate() else {
+    let RouteOutcome::Routed(around) = request(vec![thrower]).calculate().0 else {
         panic!("a detour exists north of the rectangle");
     };
     assert_eq!(around.dest.x, 11);
@@ -4763,7 +4763,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         ..thrower
     };
     assert!(matches!(
-        request(vec![sealed]).calculate(),
+        request(vec![sealed]).calculate().0,
         RouteOutcome::NoPath
     ));
 }
@@ -4794,7 +4794,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("open floor should route");
     };
     assert_eq!(
@@ -4841,7 +4841,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("same-room approach should route");
     };
     assert_ne!(
@@ -4893,7 +4893,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("occupied target should route to a neighbour");
     };
     assert_ne!(route.dest, target);
@@ -4958,7 +4958,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     };
     assert!(component.contains(&same_side));
     assert!(!component.contains(&far_side), "component={component:?}");
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("same-side WALL_L approach should route");
     };
     assert!(component.contains(&route.dest));
@@ -5006,7 +5006,7 @@ fn radius_calculate_drops_detour_outside_radius() {
         z: 3,
         level: 0
     }));
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("global detour should still leave a local approach");
     };
     assert!(component.contains(&route.dest));
@@ -5053,7 +5053,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         completion: Default::default(),
         exclusions: None,
     };
-    let RouteOutcome::Routed(route) = request.calculate() else {
+    let RouteOutcome::Routed(route) = request.calculate().0 else {
         panic!("actual 289 route should exist");
     };
     assert_ne!(
@@ -16226,6 +16226,8 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
         held_ops: 0,
         npc_ops: 0,
         if_button_components: Vec::new(),
+        move_calls: 0,
+        menu_order: Vec::new(),
         sink: Sink,
     };
     let ctx = ScriptCtx {
@@ -17973,7 +17975,160 @@ fn manual_resume_click(rig: &ReconnectRig, tick: u64) -> bool {
         },
         true,
         tick,
+        false,
     )
+}
+
+fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
+    force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.here);
+    let action = rig.slot().lock().unwrap().feed_watchdog(
+        Instant::now(),
+        Some(rig.here),
+        &[],
+        false,
+        true,
+        &[script::shim::InteractReq::RecoveryAnchor {
+            x: 40,
+            z: 40,
+            level: 0,
+        }],
+    );
+    assert!(matches!(action, script::WatchdogAction::ArmWalk { .. }));
+    apply_watchdog_nav_action(
+        action,
+        &mut rig.client,
+        Some(&rig.snap),
+        Some(rig.here),
+        &rig.navs,
+        &rig.world,
+        None,
+        "alice",
+    );
+    assert_eq!(
+        rig.armed().0,
+        0,
+        "production watchdog replacement is id-zero"
+    );
+}
+
+#[test]
+fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let request = rig.armed().0;
+    let original_generation = rig.navs.lock().unwrap()["alice"].route_generation;
+    eprintln!(
+        "manual config resident NavBot={} CarriedWalk={}",
+        std::mem::size_of::<NavBot>(),
+        std::mem::size_of::<CarriedWalk>()
+    );
+    let walks = rig.walks();
+    arm_manual_config_recovery(&mut rig);
+    assert!(take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        crate::SlotFrameInput {
+            manual_steps: 1,
+            ..crate::SlotFrameInput::default()
+        },
+        true,
+        2,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert!(rig
+        .slot()
+        .lock()
+        .unwrap()
+        .watchdog()
+        .recovering_anchor()
+        .is_none());
+    let terminal = {
+        let bots = rig.navs.lock().unwrap();
+        let bot = &bots["alice"];
+        assert_eq!(bot.walk_outcome_request_id, request);
+        assert_eq!(bot.walk_outcome_generation, original_generation);
+        assert_eq!(
+            bot.walk_outcome_cancel_reason,
+            script::isolate_fb::WalkCancelReason::UserInput
+        );
+        assert!(bot.carried_walk.is_none());
+        (bot.walk_outcome_seq, bot.walk_outcome_generation)
+    };
+    rig.frames(2);
+    rig.resume();
+    for tick in 3..8 {
+        rig.frames(tick);
+    }
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), false);
+    assert_eq!(
+        rig.walks(),
+        walks,
+        "neither carry nor recovery may replay the old request"
+    );
+    let slot = rig.slot();
+    let slot = slot.lock().unwrap();
+    assert!(!slot.watchdog().rearm_pending());
+    assert!(slot.watchdog().recovering_anchor().is_none());
+    drop(slot);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(
+        (bot.walk_outcome_seq, bot.walk_outcome_generation),
+        terminal
+    );
+    assert_eq!(bot.walk_outcome_request_id, request);
+    assert!(bot.carried_walk.is_none());
+    drop(bots);
+    rig.slot().lock().unwrap().stop();
+}
+
+#[test]
+fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
+    let mut rig = manual_resume_rig();
+    rig.frames(1);
+    let generation = rig.slot().lock().unwrap().runtime_generation();
+    arm_manual_config_recovery(&mut rig);
+    let old = Instant::now() - script::watchdog::WEDGE - Duration::from_secs(1);
+    rig.slot().lock().unwrap().feed_watchdog(
+        old,
+        Some(rig.here),
+        &[],
+        false,
+        true,
+        &[script::shim::InteractReq::NoteProgress],
+    );
+    assert!(manual_resume_click(&rig, 2));
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Running);
+        assert_eq!(
+            slot.notify_walk_failed(Instant::now()),
+            script::WatchdogAction::None
+        );
+        assert_eq!(
+            slot.feed_watchdog(
+                Instant::now(),
+                Some(rig.here),
+                &[],
+                false,
+                true,
+                &[script::shim::InteractReq::LoopSettled],
+            ),
+            script::WatchdogAction::None,
+            "a non-moving human click gives gameplay a fresh wedge budget"
+        );
+        assert!(slot.progress(Instant::now()).unwrap().idle_for.unwrap() < Duration::from_secs(1));
+    }
+    for tick in 2..6 {
+        rig.frames(tick);
+    }
+    assert_eq!(rig.slot().lock().unwrap().runtime_generation(), generation);
+    assert_eq!(rig.slot().lock().unwrap().probe("__rs_ok").unwrap(), false);
+    assert!(rig.navs.lock().unwrap()["alice"].carried_walk.is_none());
+    rig.slot().lock().unwrap().stop();
 }
 
 #[test]
@@ -18024,6 +18179,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         },
         false,
         2,
+        false,
     ));
     {
         let navs = rig.navs.lock().unwrap();
@@ -19723,11 +19879,16 @@ struct NavRec {
     /// The component ids pressed via IF_BUTTON, in order (the follow's
     /// dialog-ride arm asserts *which* choice was answered).
     if_button_components: Vec<i32>,
+    /// Number of movement calls, including NPC approach and nav follow.
+    move_calls: usize,
+    /// Menu actions in dispatch order; the component is meaningful for buttons.
+    menu_order: Vec<(i32, i32)>,
     sink: Sink,
 }
 
 impl Driver for NavRec {
     fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, c: i32) {
+        self.menu_order.push((action, c));
         match action {
             MiniMenuAction::OP_HELD1
             | MiniMenuAction::OP_HELD2
@@ -19761,6 +19922,7 @@ impl Driver for NavRec {
         _ty: i32,
     ) -> bool {
         self.walked = Some((dx, dz));
+        self.move_calls += 1;
         true
     }
     fn local_route(&self) -> Option<(i32, i32)> {
@@ -22304,12 +22466,203 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     assert_eq!(route.map(|route| route.dest), Some(stand));
 }
 
-/// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear
-/// in open terrain routes to an approach tile 12 tiles from the dest, where
-/// the BFS rank of the dest is past the 512 arrival budget, so `is_arrived`
-/// is false. When the follow reaches that route end it must publish a
-/// settled (not failed) outcome for the armed request id, or the isolate
-/// wait hangs to the caller timeout.
+/// Compare every admitted and rejected candidate, including directed walls
+/// and detours whose distance alone cannot decide the dequeue-rank budget.
+#[test]
+fn real_v13_batched_arrival_matches_every_forward_predicate() {
+    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
+        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+        return;
+    };
+    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v13 pack");
+    let tile = |x, z, level| WorldTile { x, z, level };
+    let cases = [
+        (tile(3017, 3170, 0), 12),
+        (tile(3005, 3182, 0), 12),
+        (tile(2553, 3406, 0), 10),
+        (tile(3096, 3814, 0), 22),
+        (tile(3110, 9832, 0), 16),
+        (tile(2575, 9893, 0), 10),
+    ];
+    let collision_at = |tile: WorldTile| {
+        let collision = &world.collision;
+        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
+        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
+        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
+            .then(|| collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+    };
+    let check = |target, radius| {
+        let all = approach_tiles(&world, target, target, radius, true);
+        let probe = api::query::CollisionArrivalProbe::new(collision_at);
+        let expected: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|&stand| api::query::is_arrived(stand, target, radius, || &probe))
+            .collect();
+        let actual = approach_tiles(&world, target, target, radius, false);
+        assert_eq!(actual, expected, "target={target:?}, radius={radius}");
+        all.len()
+    };
+    let reviewed: usize = cases
+        .iter()
+        .map(|&(target, radius)| check(target, radius))
+        .sum();
+    assert_eq!(reviewed, 4_059, "the reviewer's complete real-pack corpus");
+    let mut state = 0x2742_8902_u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut random_candidates = 0;
+    // Reproducible random targets around each reviewed outdoor/dungeon region,
+    // on all levels, and across the complete pack (including its boundaries).
+    for index in 0..72 {
+        let center = cases[index % cases.len()].0;
+        let target = if index < 48 {
+            tile(
+                center.x + (random() % 97) as i32 - 48,
+                center.z + (random() % 97) as i32 - 48,
+                if index < 36 {
+                    center.level
+                } else {
+                    (random() % 4) as i32
+                },
+            )
+        } else {
+            tile(
+                world.collision.origin.x + (random() % world.collision.width as u64) as i32,
+                world.collision.origin.z + (random() % world.collision.height as u64) as i32,
+                (random() % 4) as i32,
+            )
+        };
+        let radius = [1, 4, 10, 12, 16, 22][index % 6];
+        random_candidates += check(target, radius);
+    }
+    assert_eq!(
+        approach_tiles(&world, cases[0].0, cases[0].0, i32::from(u16::MAX), false),
+        approach_tiles(&world, cases[0].0, cases[0].0, 104, false),
+        "the box and the reach budget share the planning clamp"
+    );
+    eprintln!("NAV-ARRIVAL-2 differential: {reviewed} reviewed + {random_candidates} random candidates; no disagreements");
+}
+
+/// NAV-ARRIVAL-1: the real Return route and the native snapshot must agree.
+/// Set NAV_ARRIVAL_PACK to a v13 pack; its raw flags sidecar supplies the
+/// endpoint scene without connecting to the game engine.
+#[test]
+fn real_v13_return_radius_endpoint_is_native_arrival() {
+    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
+        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let mut world = NavWorld::load_pack(&path).expect("real v13 pack");
+    let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
+        .expect("matching raw flags");
+    assert_eq!(flags.origin, world.collision.origin);
+    assert_eq!(
+        (flags.width, flags.height),
+        (world.collision.width, world.collision.height)
+    );
+    world.collision.flags = Some(Arc::try_unwrap(flags.flags).expect("sole flags owner"));
+    let origin = WorldTile {
+        x: 3185,
+        z: 3440,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 3017,
+        z: 3170,
+        level: 0,
+    };
+    let endpoint = WorldTile {
+        x: 3005,
+        z: 3182,
+        level: 0,
+    };
+    let candidates = approach_tiles(&world, origin, target, 12, false);
+    assert_eq!(candidates.first(), Some(&endpoint));
+    let request = ScriptRouteRequest {
+        generation: 1,
+        request_id: 1,
+        world: Arc::new(world),
+        from: origin,
+        to: target,
+        radius: 12,
+        loc_id: None,
+        opts: FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            ..FindOptions::default()
+        },
+        state: None,
+        bank: Vec::new(),
+        live_candidates: None,
+        exclusions: None,
+        completion: Default::default(),
+    };
+    let route = nav::router::find_with_avoid(
+        &request.world.collision,
+        &request.world.graph,
+        origin,
+        endpoint,
+        request.opts,
+        &nav::WorldState::empty(),
+        &[],
+    )
+    .expect("reported fallback endpoint routes");
+    assert_eq!(route.dest, endpoint);
+    let mut client = nav_client();
+    client.map_build_base_x = 2960;
+    client.map_build_base_z = 3160;
+    for lx in 0..104 {
+        for lz in 0..104 {
+            client.collision[0].flags[lx][lz] =
+                request
+                    .world
+                    .collision
+                    .flag(2960 + lx as i32, 3160 + lz as i32, 0) as i32;
+        }
+    }
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, endpoint.x, endpoint.z);
+    let flood = api::query::SceneQuery::new(snapshot.scene(), Some(endpoint))
+        .flood_reach()
+        .expect("fresh endpoint flood");
+    let view = api::query::pack_reach_query(snapshot.scene(), Some(&flood));
+    let index = (target.x - view.base_x) as usize * view.height as usize
+        + (target.z - view.base_z) as usize;
+    eprintln!("NAV-ARRIVAL-1 endpoint={endpoint:?} scene_available={} target_walkable={} exact_rank={} adjacent_rank={} component_size={}",
+        view.available, view.walkable(target), view.exact_rank[index],
+        view.adjacent_rank[index], candidates.len());
+    assert!(view.available && view.probeable(target));
+    assert_eq!(
+        view.exact_rank[(endpoint.x - view.base_x) as usize * view.height as usize
+            + (endpoint.z - view.base_z) as usize],
+        0
+    );
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: snapshot.tick() as u64,
+        sequence: 1,
+    };
+    assert!(
+        api::snapshot::SnapshotView::new(Some(&snapshot), stamp)
+            .with_reach(Some(&view))
+            .walk_arrived(endpoint, target, 12),
+        "planner endpoint must satisfy the native arrival predicate"
+    );
+}
+
+/// A radius walk settling at its arrival-capable approach tile publishes a
+/// successful outcome keyed to the original destination and request id.
 #[test]
 fn radius_walk_route_end_publishes_a_settled_outcome() {
     let world = Arc::new(NavWorld::from_parts(
@@ -22354,8 +22707,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         12,
         "the route ends on the near edge of the radius box"
     );
-    // Open reach around the approach tile, wide enough that ring 12 is a
-    // full BFS ring: the reach-aware rule says not arrived there.
+    // A complete open-scene radius ring fits the radius-derived reach budget.
     let open_reach = move || {
         let scene = api::snapshot::SceneView {
             available: true,
@@ -22369,7 +22721,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         let flood = api::query::SceneQuery::new(&scene, Some(approach)).flood_reach();
         Arc::new(api::query::pack_reach_query(&scene, flood.as_ref()))
     };
-    assert!(!api::query::is_arrived(approach, dest, 12, open_reach));
+    assert!(api::query::is_arrived(approach, dest, 12, open_reach));
 
     let mut d = NavRec::default();
     let mut c = nav_client();
@@ -23484,3 +23836,665 @@ mod read_journal_tests {
 }
 #[path = "script_journal_paint_tests.rs"]
 mod journal_paint;
+
+mod host_batch_tests {
+    use super::*;
+    use script::native::{
+        ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
+        ScriptFlow,
+    };
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+    use std::task::Poll;
+
+    use super::super::script_runtime::{install_dispatch_barrier, DispatchBarrier};
+
+    #[derive(Clone, Copy)]
+    enum AdmissionOrder {
+        BatchThenOrdinary,
+        OrdinaryThenBatch,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct BatchReport {
+        batch: Result<u64, ActionError>,
+        batch_receipts: Option<Vec<bool>>,
+        ordinary: Option<Result<u64, ActionError>>,
+        ordinary_receipt: Option<bool>,
+        followup: Option<Result<u64, ActionError>>,
+        followup_receipts: Option<Vec<bool>>,
+    }
+
+    struct BatchArgs {
+        rows: [Option<script::shim::InteractReq>; 5],
+        order: AdmissionOrder,
+        ordinary: Option<script::shim::InteractReq>,
+        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+    }
+
+    fn prefix_len(rows: &[Option<script::shim::InteractReq>; 5]) -> usize {
+        rows.iter().take_while(|row| row.is_some()).count()
+    }
+
+    fn rows(
+        requests: impl IntoIterator<Item = script::shim::InteractReq>,
+    ) -> [Option<script::shim::InteractReq>; 5] {
+        let mut rows: [Option<script::shim::InteractReq>; 5] = std::array::from_fn(|_| None);
+        let mut requests = requests.into_iter();
+        for row in &mut rows {
+            *row = requests.next();
+        }
+        assert!(requests.next().is_none(), "test batch exceeds five rows");
+        rows
+    }
+
+    fn observed_receipts(cx: &ActionContext<'_>, first: u64, len: usize) -> Option<Vec<bool>> {
+        let mut receipts = Vec::with_capacity(len);
+        for offset in 0..len {
+            receipts.push(cx.interaction_receipt(first + offset as u64)?.accepted);
+        }
+        Some(receipts)
+    }
+
+    struct BatchMachine {
+        batch: Result<u64, ActionError>,
+        batch_len: usize,
+        batch_receipts: Option<Vec<bool>>,
+        ordinary: Option<Result<u64, ActionError>>,
+        ordinary_receipt: Option<bool>,
+        followup_rows: Option<[Option<script::shim::InteractReq>; 5]>,
+        followup: Option<Result<u64, ActionError>>,
+        followup_id: Option<u64>,
+        followup_len: usize,
+        followup_receipts: Option<Vec<bool>>,
+    }
+
+    impl NativeMachine for BatchMachine {
+        type Args = BatchArgs;
+        type Output = BatchReport;
+
+        fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+            let batch_len = prefix_len(&args.rows);
+            let (batch, ordinary) = match args.order {
+                AdmissionOrder::BatchThenOrdinary => {
+                    let batch = cx.emit_batch(args.rows);
+                    let ordinary = args.ordinary.map(|request| cx.emit(request));
+                    (batch, ordinary)
+                }
+                AdmissionOrder::OrdinaryThenBatch => {
+                    let ordinary = args.ordinary.map(|request| cx.emit(request));
+                    let batch = cx.emit_batch(args.rows);
+                    (batch, ordinary)
+                }
+            };
+            Ok(Self {
+                batch,
+                batch_len,
+                batch_receipts: None,
+                ordinary,
+                ordinary_receipt: None,
+                followup_rows: args.followup,
+                followup: None,
+                followup_id: None,
+                followup_len: 0,
+                followup_receipts: None,
+            })
+        }
+
+        fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+            if self.batch_receipts.is_none() {
+                if let Ok(first) = &self.batch {
+                    let Some(receipts) = observed_receipts(cx, *first, self.batch_len) else {
+                        return Poll::Pending;
+                    };
+                    self.batch_receipts = Some(receipts);
+                }
+            }
+            if self.ordinary_receipt.is_none() {
+                if let Some(Ok(request_id)) = &self.ordinary {
+                    let Some(receipt) = cx.interaction_receipt(*request_id) else {
+                        return Poll::Pending;
+                    };
+                    self.ordinary_receipt = Some(receipt.accepted);
+                }
+            }
+            if let Some(rows) = self.followup_rows.take() {
+                self.followup_len = prefix_len(&rows);
+                let followup = cx.emit_batch(rows);
+                if let Ok(first) = &followup {
+                    self.followup_id = Some(*first);
+                }
+                self.followup = Some(followup);
+                if self.followup_id.is_some() {
+                    return Poll::Pending;
+                }
+            }
+            if self.followup_receipts.is_none() {
+                if let Some(first) = self.followup_id {
+                    let Some(receipts) = observed_receipts(cx, first, self.followup_len) else {
+                        return Poll::Pending;
+                    };
+                    self.followup_receipts = Some(receipts);
+                }
+            }
+            Poll::Ready(Ok(BatchReport {
+                batch: self.batch.clone(),
+                batch_receipts: self.batch_receipts.clone(),
+                ordinary: self.ordinary.clone(),
+                ordinary_receipt: self.ordinary_receipt,
+                followup: self.followup.clone(),
+                followup_receipts: self.followup_receipts.clone(),
+            }))
+        }
+
+        fn cancel(&mut self) {}
+    }
+
+    struct BatchScript {
+        args: Option<BatchArgs>,
+        direct: Option<script::shim::InteractReq>,
+        handle: Option<ActionHandle<BatchMachine>>,
+        report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
+    }
+
+    impl Script for BatchScript {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if let Some(request) = self.direct.take() {
+                tick.queue_test_interaction(request);
+            }
+            if let Some(handle) = &self.handle {
+                if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                    *self.report.lock().unwrap() = Some(result);
+                    self.handle = None;
+                }
+            } else if let Some(args) = self.args.take() {
+                match tick.actions.begin::<BatchMachine>(args, &mut tick.cx) {
+                    Ok(handle) => self.handle = Some(handle),
+                    Err(error) => *self.report.lock().unwrap() = Some(Err(error)),
+                }
+            }
+            Ok(ScriptFlow::Continue)
+        }
+
+        fn recovery_anchor(&self) -> Option<api::WorldTile> {
+            Some(api::WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            })
+        }
+    }
+
+    struct BatchRig {
+        scripts: ScriptWall,
+        cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+        navs: Arc<Mutex<HashMap<String, NavBot>>>,
+        world: Option<Arc<NavWorld>>,
+        statuses: Arc<Mutex<Vec<SlotStatus>>>,
+        client: Client,
+        snapshot: GameSnapshot,
+        driver: NavRec,
+        report: Arc<Mutex<Option<Result<BatchReport, ActionError>>>>,
+    }
+
+    fn rig(
+        batch: [Option<script::shim::InteractReq>; 5],
+        order: AdmissionOrder,
+        ordinary: Option<script::shim::InteractReq>,
+        followup: Option<[Option<script::shim::InteractReq>; 5]>,
+        direct: Option<script::shim::InteractReq>,
+        world: Option<Arc<NavWorld>>,
+    ) -> BatchRig {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+        let report = Arc::new(Mutex::new(None));
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_test_script(
+                Box::new(BatchScript {
+                    args: Some(BatchArgs {
+                        rows: batch,
+                        order,
+                        ordinary,
+                        followup,
+                    }),
+                    direct,
+                    handle: None,
+                    report: Arc::clone(&report),
+                }),
+                None,
+            )
+            .unwrap();
+
+        let mut client = nav_client();
+        client.main_modal_id = 3323;
+        client.set_iface(
+            3323,
+            IfType {
+                id: 3323,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![3420, 3421, 3422]),
+                ..Default::default()
+            },
+        );
+        for component in [3420, 3421, 3422] {
+            client.set_iface(
+                component as usize,
+                IfType {
+                    id: component,
+                    layer_id: 3323,
+                    r#type: ComponentType::TYPE_RECT,
+                    button_text: "Ok".into(),
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component as usize,
+                IfTypeMut {
+                    button_type: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        let npc_type = 500;
+        {
+            let cache = Arc::get_mut(&mut client.cache).expect("sole test cache owner");
+            while cache.npcs.len() <= npc_type {
+                cache.npcs.push(client::config::NpcType::default());
+            }
+            cache.npcs[npc_type] = client::config::NpcType {
+                id: npc_type as i32,
+                name: "Goblin".into(),
+                op: vec![Some("Attack".into())],
+                ..Default::default()
+            };
+        }
+        let mut npc = client::dash3d::ClientNpc::at(1, 0);
+        npc.r#type = Some(npc_type);
+        client.npc[0] = Some(Box::new(npc));
+        client.npc_ids[0] = 0;
+        client.npc_count = 1;
+        client.bump_gens(client::io::ServerProt::IF_OPENMAIN_SIDE);
+        let mut snapshot = GameSnapshot::new();
+        nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
+
+        BatchRig {
+            scripts,
+            cheats,
+            navs,
+            world,
+            statuses,
+            client,
+            snapshot,
+            driver: NavRec::default(),
+            report,
+        }
+    }
+
+    impl BatchRig {
+        fn observe(
+            &mut self,
+            tick: u64,
+            tick_edge: bool,
+            hold: bool,
+        ) -> crate::script_runtime::ScriptObservation {
+            super::super::script_observe_cached_with_channels(
+                &mut self.driver,
+                "alice",
+                true,
+                tick_edge,
+                false,
+                tick,
+                Some((0, 0, 0)),
+                None,
+                None,
+                Some(&self.snapshot),
+                None,
+                None,
+                &self.scripts,
+                &self.cheats,
+                &self.navs,
+                &self.world,
+                hold,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                super::super::script_channels::BrokerWorld::Unavailable,
+                None,
+                None,
+            )
+        }
+
+        fn report(&self) -> Option<Result<BatchReport, ActionError>> {
+            self.report.lock().unwrap().clone()
+        }
+    }
+
+    fn arm_route(rig: &BatchRig) {
+        let world = rig.world.as_ref().expect("route fixture world");
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::clone(world)),
+            navs: Arc::clone(&rig.navs),
+            name: "alice".into(),
+            state: None,
+            bank: Vec::new(),
+        };
+        assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
+        assert!(wait_until(5_000, || queued(&rig.navs).is_some()));
+    }
+
+    fn step_nav(rig: &mut BatchRig) {
+        step_nav_bot(
+            &mut rig.driver,
+            "alice",
+            Some((0, 0, 0)),
+            &rig.snapshot,
+            &rig.navs,
+            &rig.statuses,
+            rig.world.as_ref(),
+            false,
+            false,
+            no_reach,
+        );
+    }
+
+    #[test]
+    fn refused_batch_fails_stops_suffix_and_releases_reservations_without_blocking_direct_work() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::shim::InteractReq::Held {
+                    name: "missing food".into(),
+                    action: "Eat".into(),
+                    slot: Some(0),
+                },
+                script::shim::InteractReq::Npc {
+                    name: "Goblin".into(),
+                    action: "Attack".into(),
+                    index: Some(0),
+                },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            Some(rows([script::shim::InteractReq::IfButton {
+                component_id: 3422,
+            }])),
+            Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+            None,
+        );
+
+        let first = rig.observe(1, true, false);
+        assert!(
+            first.exclusive,
+            "a live nonzero batch owns this observation"
+        );
+        assert_eq!(
+            rig.driver.if_button_components,
+            vec![3420, 3421],
+            "the batch prefix dispatches, then unrelated direct interaction still runs"
+        );
+        assert_eq!(
+            rig.driver.npc_ops, 0,
+            "the terminal suffix is not dispatched after row two is refused"
+        );
+
+        let second = rig.observe(2, true, false);
+        assert!(
+            second.exclusive,
+            "the follow-up batch is independently exclusive"
+        );
+        assert_eq!(rig.driver.if_button_components, vec![3420, 3421, 3422]);
+        let third = rig.observe(3, true, false);
+        assert!(!third.exclusive, "receipt polling is not a batch dispatch");
+
+        let report = rig.report().unwrap().unwrap();
+        assert_eq!(report.batch_receipts, Some(vec![true, false, false]));
+        assert!(matches!(report.followup, Some(Ok(_))));
+        assert_eq!(report.followup_receipts, Some(vec![true]));
+    }
+
+    #[test]
+    fn ordinary_and_batch_admission_orders_keep_batch0_independent_and_gate_follow() {
+        for (order, batch_exclusive, dispatched_button) in [
+            (AdmissionOrder::BatchThenOrdinary, true, 3420),
+            (AdmissionOrder::OrdinaryThenBatch, false, 3421),
+        ] {
+            let world = Arc::new(open_world(40, 1));
+            let mut rig = rig(
+                rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+                order,
+                Some(script::shim::InteractReq::IfButton { component_id: 3421 }),
+                None,
+                None,
+                Some(world),
+            );
+            arm_route(&rig);
+            let observation = rig.observe(1, true, false);
+            assert_eq!(observation.exclusive, batch_exclusive);
+            assert_eq!(rig.driver.if_button_components, vec![dispatched_button]);
+
+            let key = (rig.client.gens.player, Some((0, 0, 0)));
+            let mut last = None;
+            let due = super::super::play_slots::nav_step_due(
+                &mut last,
+                key,
+                false,
+                observation.exclusive,
+                || queued(&rig.navs).is_some(),
+            );
+            assert_eq!(
+                due, !batch_exclusive,
+                "only an admitted batch freezes the follow for this key"
+            );
+            if due {
+                step_nav(&mut rig);
+                assert_eq!(rig.driver.move_calls, 1);
+            } else {
+                assert_eq!(rig.driver.move_calls, 0);
+            }
+
+            let _ = rig.observe(2, true, false);
+            let report = rig.report().unwrap().unwrap();
+            if batch_exclusive {
+                assert!(report.batch.is_ok());
+                assert_eq!(report.batch_receipts, Some(vec![true]));
+                assert!(matches!(
+                    report.ordinary,
+                    Some(Err(ActionError::BudgetExhausted))
+                ));
+                assert_eq!(report.ordinary_receipt, None);
+            } else {
+                assert!(matches!(report.batch, Err(ActionError::BudgetExhausted)));
+                assert_eq!(report.batch_receipts, None);
+                assert!(matches!(report.ordinary, Some(Ok(_))));
+                assert_eq!(report.ordinary_receipt, Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn host_batch_preserves_builder_component_order() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3421 },
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let observation = rig.observe(1, true, false);
+        assert!(observation.exclusive);
+        assert_eq!(rig.driver.if_button_components, vec![3421, 3420]);
+        let _ = rig.observe(2, true, false);
+        assert_eq!(
+            rig.report().unwrap().unwrap().batch_receipts,
+            Some(vec![true, true])
+        );
+    }
+
+    #[test]
+    fn terminal_batch_freezes_only_its_player_observation_key() {
+        let mut rig = rig(
+            rows([
+                script::shim::InteractReq::IfButton { component_id: 3420 },
+                script::shim::InteractReq::Npc {
+                    name: "Goblin".into(),
+                    action: "Attack".into(),
+                    index: Some(0),
+                },
+            ]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            Some(Arc::new(open_world(40, 1))),
+        );
+        arm_route(&rig);
+
+        let first = rig.observe(1, true, false);
+        assert!(first.exclusive);
+        assert_eq!(rig.driver.if_button_components, vec![3420]);
+        assert_eq!(rig.driver.npc_ops, 1);
+        assert_eq!(rig.driver.menu_order.len(), 2);
+        assert_eq!(rig.driver.menu_order[0], (MiniMenuAction::IF_BUTTON, 3420));
+        assert_eq!(rig.driver.menu_order[1].0, MiniMenuAction::OP_NPC1);
+
+        let key = (rig.client.gens.player, Some((0, 0, 0)));
+        let mut last = None;
+        let moves_after_terminal = rig.driver.move_calls;
+        let menu_after_terminal = rig.driver.menu_order.clone();
+        assert!(!super::super::play_slots::nav_step_due(
+            &mut last,
+            key,
+            false,
+            first.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        let repeated = rig.observe(1, false, false);
+        assert!(!repeated.exclusive);
+        assert!(!super::super::play_slots::nav_step_due(
+            &mut last,
+            key,
+            false,
+            repeated.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        assert_eq!(
+            rig.driver.move_calls, moves_after_terminal,
+            "same-key follow is inert; no movement is sent after the terminal"
+        );
+        assert_eq!(rig.driver.menu_order, menu_after_terminal);
+        assert!(queued(&rig.navs).is_some(), "the route stays armed");
+
+        nav_snapshot_at(&mut rig.client, &mut rig.snapshot, 0, 0);
+        let next_key = (rig.client.gens.player, Some((0, 0, 0)));
+        let next = rig.observe(2, true, false);
+        assert!(!next.exclusive);
+        assert!(super::super::play_slots::nav_step_due(
+            &mut last,
+            next_key,
+            false,
+            next.exclusive,
+            || queued(&rig.navs).is_some(),
+        ));
+        step_nav(&mut rig);
+        assert_eq!(rig.driver.move_calls, moves_after_terminal + 1);
+    }
+
+    #[test]
+    fn guardian_and_recovery_holds_dispatch_no_native_batch() {
+        let mut guardian = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let held = guardian.observe(1, true, true);
+        assert!(!held.exclusive);
+        assert!(guardian.driver.if_button_components.is_empty());
+
+        let mut recovering = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        {
+            let slot = script_slot(&recovering.scripts, "alice").unwrap();
+            let mut slot = slot.lock().unwrap();
+            let now = Instant::now();
+            slot.feed_watchdog(now, Some((0, 0, 0)), &[], false, true, &[]);
+            assert!(matches!(
+                slot.feed_watchdog(
+                    now + script::watchdog::WEDGE,
+                    Some((0, 0, 0)),
+                    &[],
+                    false,
+                    true,
+                    &[],
+                ),
+                script::WatchdogAction::ArmWalk { .. }
+            ));
+            assert!(slot.watchdog().holds_script_actions());
+        }
+        let held = recovering.observe(1, true, false);
+        assert!(!held.exclusive);
+        assert!(
+            recovering.driver.if_button_components.is_empty(),
+            "recovery hold closes the batch producer and host dispatch gates"
+        );
+    }
+
+    #[test]
+    fn changed_work_epoch_revokes_queued_batch_before_host_dispatch() {
+        let mut rig = rig(
+            rows([script::shim::InteractReq::IfButton { component_id: 3420 }]),
+            AdmissionOrder::BatchThenOrdinary,
+            None,
+            None,
+            None,
+            None,
+        );
+        let slot = script_slot(&rig.scripts, "alice").unwrap();
+        let epoch = slot.lock().unwrap().work_epoch();
+        let barrier = DispatchBarrier::new();
+        install_dispatch_barrier(Arc::clone(&barrier));
+        barrier.arm_for_current_thread();
+
+        let scripts = Arc::clone(&rig.scripts);
+        let reset_barrier = Arc::clone(&barrier);
+        let resetter = std::thread::spawn(move || {
+            reset_barrier.wait_entered();
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .reset_session_work();
+            reset_barrier.release();
+        });
+
+        let observation = rig.observe(1, true, false);
+        resetter.join().unwrap();
+        assert!(!observation.exclusive);
+        assert!(rig.driver.if_button_components.is_empty());
+        assert_ne!(slot.lock().unwrap().work_epoch(), epoch);
+    }
+}

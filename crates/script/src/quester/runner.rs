@@ -1,21 +1,27 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::bank_memo::BankMemo;
-use super::compile::{CompiledPath, CompiledStep, PredicateContext, StepContext, StepRun};
+use super::compile::{
+    CompiledPath, CompiledStep, PredicateContext, StepContext, StepOutcome, StepRun,
+};
 use super::death::DeathLatch;
+use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::Provisioner;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
+use crate::combat::ClearPrayers;
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
 };
 use crate::quest_journal::{JournalMachine, JournalRequest};
 use crate::CompiledId;
+use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
 use api::selected::{FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
+use api::{DetectedRandom, RandomClaim};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::task::Poll;
@@ -39,7 +45,9 @@ enum QuesterFailureKind {
 pub struct Quester {
     run: RunKey,
     path: Arc<CompiledPath>,
+    selected: Arc<SelectedGameData>,
     quests: Arc<QuestCatalog>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
     stage: Option<FactKey>,
     progress: Option<Arc<QuestProgress>>,
     journal: Option<ActionHandle<JournalMachine>>,
@@ -51,6 +59,14 @@ pub struct Quester {
     seq_index: usize,
     step_index: usize,
     step: Option<Box<dyn StepRun>>,
+    clear_prayers: Option<ActionHandle<ClearPrayers>>,
+    prayer_cleanup_pending: bool,
+    last_outcome: Option<StepOutcome>,
+    /// Latest Combat family receipt, kept after later non-combat steps begin
+    /// so Path `combat_end` skip_if can still select the caller walk-out
+    /// (design-combat.md:664).
+    last_combat: Option<StepOutcome>,
+    published_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
     advances: bool,
     in_prelude: bool,
     settling: bool,
@@ -77,13 +93,200 @@ pub struct Quester {
     death: DeathLatch,
     provisioner: Provisioner,
 }
+fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutcome>) {
+    let Some(receipt) = outcome
+        .and_then(|outcome| outcome.receipt.as_ref())
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+    else {
+        return;
+    };
+    let report = receipt.report;
+    fields.push(StatusField {
+        key: "combat_end",
+        label: "Combat end",
+        value: StatusValue::Text(Arc::from(format!("{:?}", report.end))),
+    });
+    fields.push(StatusField {
+        key: "combat_target_gone_restarts",
+        label: "Combat target-gone restarts",
+        value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
+    });
+    if let Some(mode) = report.melee_mode_fallback {
+        static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| {
+            [
+                Arc::from("accurate"),
+                Arc::from("aggressive"),
+                Arc::from("defensive"),
+                Arc::from("controlled"),
+            ]
+        });
+        fields.push(StatusField {
+            key: "combat_melee_mode_fallback",
+            label: "Combat melee-mode fallback",
+            value: StatusValue::Text(Arc::clone(&MODES[mode as usize])),
+        });
+    }
+    for (key, label, value) in [
+        (
+            "combat_evidence_run_slot",
+            "Combat evidence run slot",
+            report.evidence.run.slot,
+        ),
+        (
+            "combat_evidence_run",
+            "Combat evidence run",
+            report.evidence.run.run,
+        ),
+        (
+            "combat_evidence_session",
+            "Combat evidence session",
+            report.evidence.run.session,
+        ),
+        (
+            "combat_evidence_tick",
+            "Combat evidence tick",
+            report.evidence.tick,
+        ),
+        (
+            "combat_evidence_sequence",
+            "Combat evidence sequence",
+            report.evidence.sequence,
+        ),
+    ] {
+        fields.push(StatusField {
+            key,
+            label,
+            value: StatusValue::Integer(i64::try_from(value).unwrap_or(i64::MAX)),
+        });
+    }
+    fields.push(StatusField {
+        key: "combat_engaged",
+        label: "Combat actor engaged",
+        value: StatusValue::Truth(if report.engaged.is_some() {
+            Truth::True
+        } else {
+            Truth::False
+        }),
+    });
+    fields.push(StatusField {
+        key: "combat_engaged_npc_type",
+        label: "Combat NPC type",
+        value: StatusValue::Integer(i64::from(report.engaged_npc_type)),
+    });
+    if let Some(actor) = report.engaged {
+        fields.push(StatusField {
+            key: "combat_engaged_kind",
+            label: "Combat actor kind",
+            value: StatusValue::Text(Arc::from(format!("{:?}", actor.kind))),
+        });
+        fields.push(StatusField {
+            key: "combat_engaged_index",
+            label: "Combat actor index",
+            value: StatusValue::Integer(i64::from(actor.index)),
+        });
+    }
+    for (key, label, value) in [
+        ("combat_ticks", "Combat ticks", i64::from(report.ticks)),
+        ("combat_swings", "Combat swings", i64::from(report.swings)),
+        ("combat_casts", "Combat casts", i64::from(report.casts)),
+        (
+            "combat_damage_taken",
+            "Combat damage taken",
+            i64::from(report.damage_taken),
+        ),
+        ("combat_food", "Combat food", i64::from(report.food)),
+        (
+            "combat_prayer_doses",
+            "Combat prayer doses",
+            i64::from(report.prayer_doses),
+        ),
+        (
+            "combat_boost_doses",
+            "Combat boost doses",
+            i64::from(report.boost_doses),
+        ),
+        (
+            "combat_antifire_doses",
+            "Combat antifire doses",
+            i64::from(report.antifire_doses),
+        ),
+        (
+            "combat_hits_while_protected",
+            "Hits while protected",
+            i64::from(report.hits_while_protected),
+        ),
+        (
+            "combat_protect_switches",
+            "Protect switches",
+            i64::from(report.protect_switches),
+        ),
+        (
+            "combat_intruders",
+            "Combat intruders",
+            i64::from(report.intruders),
+        ),
+        (
+            "combat_ammo_pickups",
+            "Combat ammo pickups",
+            i64::from(report.ammo_pickups),
+        ),
+        (
+            "combat_restorations",
+            "Combat restorations",
+            i64::from(report.restorations),
+        ),
+        (
+            "combat_locked_ticks",
+            "Combat locked ticks",
+            i64::from(report.locked_ticks),
+        ),
+        (
+            "combat_multi_op_plans",
+            "Combat multi-operation plans",
+            i64::from(report.multi_op_plans),
+        ),
+        (
+            "combat_flick_resets",
+            "Combat flick resets",
+            i64::from(report.flick_resets),
+        ),
+        (
+            "combat_flick_misses",
+            "Combat flick misses",
+            i64::from(report.flick_misses),
+        ),
+    ] {
+        fields.push(StatusField {
+            key,
+            label,
+            value: StatusValue::Integer(value),
+        });
+    }
+    fields.push(StatusField {
+        key: "combat_flick_fallback",
+        label: "Combat flick fallback",
+        value: StatusValue::Truth(if report.flick_fallback {
+            Truth::True
+        } else {
+            Truth::False
+        }),
+    });
+}
 
 impl Quester {
-    pub fn new(run: RunKey, path: Arc<CompiledPath>, quests: Arc<QuestCatalog>) -> Self {
+    pub fn new(
+        run: RunKey,
+        path: Arc<CompiledPath>,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+    ) -> Self {
         Self {
             run,
             path,
+            selected,
             quests,
+            banks,
             stage: None,
             progress: None,
             journal: None,
@@ -95,6 +298,11 @@ impl Quester {
             seq_index: 0,
             step_index: 0,
             step: None,
+            clear_prayers: None,
+            prayer_cleanup_pending: true,
+            last_outcome: None,
+            last_combat: None,
+            published_receipt: None,
             advances: false,
             in_prelude: false,
             settling: false,
@@ -206,10 +414,44 @@ impl Quester {
     }
 
     fn publish(&mut self, output: &mut dyn NativeOutput) {
+        let outcome = self
+            .step
+            .as_ref()
+            .and_then(|step| step.in_flight_outcome())
+            .or(self.last_outcome.as_ref());
+        let combat_status = self.last_combat.as_ref().or(outcome);
+        let receipt = combat_status.and_then(|outcome| outcome.receipt.as_ref());
+        let unchanged = match (receipt, self.published_receipt.as_ref()) {
+            (Some(current), Some(previous)) => Arc::ptr_eq(current, previous),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            self.dirty = true;
+        }
         if !self.dirty {
             return;
         }
+        self.emit_status(
+            output,
+            if self.parked {
+                NativePhase::Blocked
+            } else {
+                NativePhase::Working
+            },
+        );
+    }
+
+    fn emit_status(&mut self, output: &mut dyn NativeOutput, phase: NativePhase) {
         self.dirty = false;
+        let outcome = self
+            .step
+            .as_ref()
+            .and_then(|step| step.in_flight_outcome())
+            .or(self.last_outcome.as_ref());
+        let combat_status = self.last_combat.as_ref().or(outcome);
+        let receipt = combat_status.and_then(|outcome| outcome.receipt.as_ref());
+        self.published_receipt = receipt.map(Arc::clone);
         let stage = self
             .stage
             .as_ref()
@@ -241,6 +483,7 @@ impl Quester {
                 }),
             },
         ];
+        append_combat_status(&mut fields, combat_status);
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "progress",
@@ -293,15 +536,11 @@ impl Quester {
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
-            phase: if self.parked {
-                NativePhase::Blocked
-            } else {
-                NativePhase::Working
-            },
+            phase,
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
-            failure: self.parked.then(|| self.blocked_failure()),
+            failure: (phase == NativePhase::Blocked).then(|| self.blocked_failure()),
         });
     }
 
@@ -309,6 +548,9 @@ impl Quester {
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
         self.journal = None;
         self.advances = false;
         self.attempts = 0;
@@ -549,6 +791,7 @@ impl Quester {
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
+        self.prayer_cleanup_pending = true;
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -593,6 +836,7 @@ impl Script for Quester {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
             self.cancel_step(tick);
+            self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
         }
@@ -600,16 +844,100 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
-        if self.parked {
-            self.publish(tick.output);
-            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+        if self.prayer_cleanup_pending && self.step.is_some() {
+            self.cancel_step(tick);
+            self.dirty = true;
         }
         if self.death.observe(tick.cx.snapshot()) {
             self.cancel_step(tick);
+            self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
+        }
+        if let Some(result) = self
+            .clear_prayers
+            .as_ref()
+            .map(|handle| tick.actions.poll(handle, &mut tick.cx))
+        {
+            match result {
+                Poll::Pending => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Poll::Ready(Ok(report)) => {
+                    self.clear_prayers = None;
+                    if report.timed_out != 0 {
+                        self.prayer_cleanup_pending = true;
+                        self.parked = true;
+                        self.record_failure(ActionError::Blocked(Arc::from(
+                            "prayer cleanup timed out",
+                        )));
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                    }
+                    self.prayer_cleanup_pending = false;
+                }
+                Poll::Ready(Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                )) => {
+                    self.clear_prayers = None;
+                    self.prayer_cleanup_pending = true;
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Poll::Ready(Err(error)) => {
+                    self.clear_prayers = None;
+                    self.parked = true;
+                    self.record_failure(error);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                }
+            }
+        }
+        if self.prayer_cleanup_pending && self.step.is_none() && !self.settling {
+            let Some(active) = tick.cx.snapshot().prayers_active() else {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            };
+            if active.value.iter().any(|on| *on) {
+                match tick
+                    .actions
+                    .begin::<ClearPrayers>(Arc::clone(&self.selected), &mut tick.cx)
+                {
+                    Ok(handle) => {
+                        self.clear_prayers = Some(handle);
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(
+                        ActionError::Busy
+                        | ActionError::Held
+                        | ActionError::Stale
+                        | ActionError::Cancelled
+                        | ActionError::BudgetExhausted,
+                    ) => {
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(error) => {
+                        self.parked = true;
+                        self.record_failure(error);
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                    }
+                }
+            }
+            self.prayer_cleanup_pending = false;
+        }
+        if self.parked {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if self.step.is_none() && !self.settling && !self.needs_read {
             let contradicted = quest_colour(&self.path, &self.quests, tick.cx.snapshot())
@@ -647,7 +975,7 @@ impl Script for Quester {
             .get(self.seq_index)
             .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
         {
-            self.publish(tick.output);
+            self.emit_status(tick.output, NativePhase::Complete);
             return Ok(ScriptFlow::Complete);
         }
         if self.settling {
@@ -658,7 +986,7 @@ impl Script for Quester {
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: self.chat_since,
-                    outcome: None,
+                    outcome: self.last_outcome.as_ref(),
                     bank: &self.bank,
                 };
                 self.current_step()
@@ -703,7 +1031,7 @@ impl Script for Quester {
                     progress: self.progress_slice(),
                     required_after: tick.cx.evidence(),
                     chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome: None,
+                    outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
                     bank: &self.bank,
                 };
                 match select(&self.path, self.seq_index, &pred) {
@@ -729,6 +1057,9 @@ impl Script for Quester {
                 }
             };
             self.selection_since = None;
+            if selected.is_none() {
+                self.last_outcome = None;
+            }
             let Some((index, advances, prelude)) = selected else {
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
@@ -752,16 +1083,21 @@ impl Script for Quester {
             };
             self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
+            if step.kind.as_ref() == "combat" {
+                self.last_combat = None;
+            }
             let mut step_cx = StepContext {
                 tick,
                 quests: &self.quests,
                 progress: self.progress_slice(),
                 required_after,
                 bank: &self.bank,
+                banks: &self.banks,
             };
             match step.plan.begin(&mut step_cx) {
                 Ok(run) => {
                     self.step = Some(run);
+                    self.last_outcome = None;
                     self.dirty = true;
                     self.clear_last_error();
                 }
@@ -788,6 +1124,7 @@ impl Script for Quester {
                     .unwrap_or(&[]),
                 required_after,
                 bank: &self.bank,
+                banks: &self.banks,
             };
             self.step
                 .as_mut()
@@ -813,6 +1150,18 @@ impl Script for Quester {
                 }) {
                     self.bank.update(receipt);
                 }
+                if outcome.receipt.as_ref().is_some_and(|receipt| {
+                    receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
+                }) {
+                    self.last_combat = Some(StepOutcome {
+                        progress: outcome.progress.clone(),
+                        evidence: outcome.evidence,
+                        receipt: outcome.receipt.clone(),
+                    });
+                }
+                self.last_outcome = Some(outcome);
+                self.prayer_cleanup_pending = true;
+                self.dirty = true;
                 if self.advances {
                     self.needs_read = true;
                 }
@@ -825,7 +1174,25 @@ impl Script for Quester {
                         .unwrap_or_default();
             }
             Poll::Ready(Err(error @ (ActionError::Blocked(_) | ActionError::UserInput))) => {
+                if let Some(outcome) = self
+                    .step
+                    .as_ref()
+                    .and_then(|step| step.in_flight_outcome())
+                    .filter(|outcome| {
+                        outcome.receipt.as_ref().is_some_and(|receipt| {
+                            receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
+                        })
+                    })
+                {
+                    self.last_combat = Some(StepOutcome {
+                        progress: outcome.progress.clone(),
+                        evidence: outcome.evidence,
+                        receipt: outcome.receipt.clone(),
+                    });
+                }
                 self.step = None;
+                self.last_outcome = None;
+                self.prayer_cleanup_pending = true;
                 self.parked = true;
                 self.record_failure(error);
                 self.update_wait();
@@ -834,6 +1201,8 @@ impl Script for Quester {
             }
             Poll::Ready(Err(error)) => {
                 self.step = None;
+                self.last_outcome = None;
+                self.prayer_cleanup_pending = true;
                 self.fail_streak = self.fail_streak.saturating_add(1);
                 self.record_failure(error);
                 if self.fail_streak >= 5 {
@@ -852,6 +1221,9 @@ impl Script for Quester {
             Interrupt::Resume | Interrupt::SessionReady => {
                 self.needs_read = true;
                 self.step = None;
+                self.prayer_cleanup_pending = true;
+                self.last_outcome = None;
+                self.last_combat = None;
                 self.settling = false;
                 self.journal = None;
                 self.progress = None;
@@ -865,6 +1237,9 @@ impl Script for Quester {
             }
             Interrupt::SessionEnded => {
                 self.step = None;
+                self.prayer_cleanup_pending = true;
+                self.last_outcome = None;
+                self.last_combat = None;
                 self.journal = None;
                 self.progress = None;
                 self.settling = false;
@@ -877,6 +1252,29 @@ impl Script for Quester {
             Interrupt::Pause | Interrupt::Hold(_) => {}
         }
     }
+    fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.step = None;
+        self.clear_prayers = None;
+        self.journal = None;
+        self.needs_read = true;
+        self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
+        self.last_combat = None;
+        self.advances = false;
+        self.attempts = 0;
+        self.progress = None;
+        self.settling = false;
+        self.settle_deadline = Duration::ZERO;
+        self.unreadable_since = None;
+        self.journal_attempts = 0;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
+        self.selection_since = None;
+        self.waiting = None;
+        self.dirty = true;
+        RandomClaim::Host
+    }
 
     fn on_stop(&mut self, _reason: StopReason) {
         self.step = None;
@@ -884,6 +1282,10 @@ impl Script for Quester {
         self.settling = false;
         self.dirty = true;
         self.waiting = None;
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = false;
+        self.last_outcome = None;
+        self.last_combat = None;
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
@@ -899,6 +1301,10 @@ impl Script for Quester {
         self.parked = false;
         self.needs_read = true;
         self.step = None;
+        self.clear_prayers = None;
+        self.prayer_cleanup_pending = true;
+        self.last_outcome = None;
+        self.last_combat = None;
         self.journal = None;
         self.progress = None;
         self.settling = false;
@@ -932,6 +1338,357 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
         assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
     }
+    #[test]
+    fn combat_report_is_exposed_in_quester_status() {
+        use crate::combat::{CombatEnd, CombatReport};
+        use api::quest_progress::EvidenceStamp;
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        let (mut script, _) = fixture();
+        let report = CombatReport {
+            end: CombatEnd::TargetGone,
+            evidence: EvidenceStamp {
+                run: script.run,
+                tick: 23,
+                sequence: 4,
+            },
+            engaged: None,
+            engaged_npc_type: 477,
+            ticks: 9,
+            swings: 3,
+            casts: 0,
+            damage_taken: 2,
+            food: 1,
+            prayer_doses: 0,
+            boost_doses: 0,
+            antifire_doses: 0,
+            hits_while_protected: 0,
+            protect_switches: 0,
+            intruders: 0,
+            ammo_pickups: 0,
+            restorations: 0,
+            locked_ticks: 0,
+            multi_op_plans: 0,
+            melee_mode_fallback: None,
+            flick_resets: 0,
+            flick_misses: 0,
+            flick_fallback: false,
+        };
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report,
+                target_gone_restarts: 1,
+            })),
+        });
+        let mut output = Capture::default();
+        script.publish(&mut output);
+        let fields = &output.0.last().unwrap().fields;
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+        }));
+        for (key, expected) in [
+            ("combat_evidence_run_slot", 1),
+            ("combat_evidence_run", 1),
+            ("combat_evidence_session", 1),
+            ("combat_evidence_tick", 23),
+            ("combat_evidence_sequence", 4),
+        ] {
+            assert!(fields.iter().any(|field| {
+                field.key == key
+                    && matches!(&field.value, StatusValue::Integer(value) if *value == expected)
+            }));
+        }
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_engaged"
+                && matches!(&field.value, StatusValue::Truth(Truth::False))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_engaged_npc_type"
+                && matches!(&field.value, StatusValue::Integer(477))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_food" && matches!(&field.value, StatusValue::Integer(1))
+        }));
+        assert!(fields.iter().any(|field| {
+            field.key == "combat_target_gone_restarts"
+                && matches!(&field.value, StatusValue::Integer(1))
+        }));
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..200 {
+                script.publish(&mut output);
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(
+            output.0.len(),
+            1,
+            "unchanged reports must not be republished"
+        );
+
+        let mut killed = report;
+        killed.end = CombatEnd::Killed;
+        killed.evidence.tick = 24;
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: killed.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report: killed,
+                target_gone_restarts: 1,
+            })),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 2);
+        assert!(output.0[1].fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "Killed")
+        }));
+        script.last_outcome = None;
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 3);
+        assert!(!output.0[2]
+            .fields
+            .iter()
+            .any(|field| field.key == "combat_end"));
+
+        script.last_combat = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report,
+                target_gone_restarts: 1,
+            })),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 4);
+        assert!(output.0[3].fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
+        }));
+    }
+
+    #[test]
+    fn no_food_abort_walks_then_parks_with_receipt_without_advancing() {
+        use crate::native::{HostEffect, WalkEnd, WalkReceipt};
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::ClientRevision;
+        use api::snapshot::{GameSnapshot, NpcView};
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        fn scene(here: api::WorldTile, npc_tile: api::WorldTile, npc_type: i32) -> GameSnapshot {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_local_player(super::super::families::tests::local_player(here));
+            snapshot.seed_npcs(vec![NpcView {
+                index: 0,
+                r#type: Some(usize::try_from(npc_type).unwrap()),
+                name: Some("Khazard warlord".into()),
+                actions: vec![Some("Attack".into())],
+                tile: npc_tile,
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 40,
+                total_health: 40,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: true,
+                level: 0,
+                size: 1,
+                network: npc_tile,
+                x: npc_tile.x,
+                z: npc_tile.z,
+                yaw: 0,
+            }]);
+            snapshot
+        }
+
+        fn chebyshev(a: api::WorldTile, b: api::WorldTile) -> i32 {
+            (a.x - b.x).abs().max((a.z - b.z).abs())
+        }
+
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let path = super::super::compile::compile_path(
+            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+            &data,
+            &quests,
+        )
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        script.stage = Some(FactKey::new("imp:0"));
+        script.needs_read = false;
+        script.prayer_cleanup_pending = false;
+
+        let here = api::WorldTile {
+            x: 2458,
+            z: 3303,
+            level: 0,
+        };
+        let npc_tile = api::WorldTile {
+            x: 2457,
+            z: 3302,
+            level: 0,
+        };
+        let stand = npc_tile;
+        let warlord = data.npc_by_config("khazard_warlord").unwrap();
+        let snapshot = scene(here, npc_tile, warlord.id);
+        let mut ledger = None;
+        let mut output = Capture::default();
+        let step = super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            24,
+            &mut output,
+            |tick| {
+                let required_after = tick.cx.evidence();
+                let mut step_cx = StepContext {
+                    tick,
+                    quests: &script.quests,
+                    progress: &[],
+                    required_after,
+                    bank: &script.bank,
+                    banks: &script.banks,
+                };
+                super::super::families::combat::tests::no_food_abort_run_for_runner(
+                    &mut step_cx,
+                    stand,
+                )
+            },
+        );
+        script.step = Some(step);
+        let cursor = (script.seq_index, script.step_index);
+
+        let (request_id, destination) = {
+            let action = ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .find(|action| matches!(&action.effect, HostEffect::Walk(_)))
+                .expect("the CombatRun must issue its abort walk");
+            let HostEffect::Walk(request) = &action.effect else {
+                unreachable!();
+            };
+            (action.request_id.get(), request.target)
+        };
+        assert_ne!(destination, stand, "the unsafe boss stand is not an exit");
+        assert!(
+            chebyshev(destination, npc_tile) > warlord.maxrange + warlord.attackrange,
+            "the abort walk must leave the warlord's spawn chase envelope"
+        );
+
+        let before_arrival = super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            25,
+            &mut output,
+            |tick| script.tick(tick).unwrap(),
+        );
+        assert!(matches!(before_arrival, ScriptFlow::Continue));
+        assert!(!script.parked, "do not park before the abort walk settles");
+        assert_eq!((script.seq_index, script.step_index), cursor);
+
+        let arrived = scene(destination, npc_tile, warlord.id);
+        ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run,
+                tick: 26,
+                sequence: 26,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+        });
+        assert!(matches!(
+            super::super::families::tests::with_tick_output(
+                &arrived,
+                &mut ledger,
+                26,
+                &mut output,
+                |tick| script.tick(tick).unwrap()
+            ),
+            ScriptFlow::Blocked(_)
+        ));
+        assert!(script.parked);
+        assert!(script.step.is_none());
+        assert_eq!(
+            (script.seq_index, script.step_index),
+            cursor,
+            "the failed combat step must not advance after its walk"
+        );
+        let retained = script
+            .last_combat
+            .as_ref()
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+            .expect("the runner must retain the terminal combat receipt");
+        assert_eq!(
+            retained.report.end,
+            crate::combat::CombatEnd::Aborted(crate::combat::AbortReason::Unprotected(
+                crate::combat::Unprotected::NoFood
+            ))
+        );
+        assert_eq!(retained.report.evidence.tick, 12);
+        assert_eq!(retained.report.engaged.map(|actor| actor.index), Some(0));
+        assert_eq!(retained.report.engaged_npc_type, warlord.id);
+        assert!(
+            output.0.last().unwrap().fields.iter().any(|field| {
+                field.key == "combat_end"
+                    && matches!(&field.value, StatusValue::Text(value)
+                        if value.as_ref() == "Aborted(Unprotected(NoFood))")
+            }),
+            "the original NoFood end must remain visible after the walk"
+        );
+        assert_eq!(
+            ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "the aborted CombatRun must not restart combat after walking"
+        );
+    }
 
     #[test]
     fn message_settle_uses_step_begin_chat_not_tick_sequence() {
@@ -956,7 +1713,13 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let mut script = Quester::new(run, path, quests);
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
         let mut s = GameSnapshot::new();
         s.seed_ingame(2);
         s.seed_quest_statuses(
@@ -1010,7 +1773,9 @@ mod tests {
                     session: 1,
                 },
                 path,
+                Arc::clone(&data),
                 quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             ),
             s,
         )
@@ -1048,7 +1813,9 @@ mod tests {
                 session: 1,
             },
             path,
+            Arc::clone(&data),
             quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
         );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -1227,7 +1994,9 @@ mod tests {
                     session: 1,
                 },
                 path,
+                Arc::clone(&data),
                 quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
             );
             let mut s = GameSnapshot::new();
             s.seed_ingame(2);
@@ -1287,6 +2056,89 @@ mod tests {
     }
 
     #[test]
+    fn failed_walk_parks_owner_until_explicit_retry() {
+        use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
+        use crate::native::{HostEffect, WalkEnd};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3103, 3163, 2], "source": "test fixture", "radius": 6
+        });
+        step.advances = true;
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            data,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut queued_at = None;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
+            });
+            if ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .any(|action| matches!(action.effect, HostEffect::Walk(_)))
+            }) {
+                queued_at = Some(tick);
+                break;
+            }
+        }
+        let poll_tick = queued_at.expect("authored walk queued") + 1;
+        let cursor = (script.seq_index, script.step_index);
+        let request_id = post_user_input_walk_receipt(&mut ledger, poll_tick);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Failed;
+        for tick in poll_tick..=poll_tick + 52 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, tick, |native| script.tick(native).unwrap()),
+                ScriptFlow::Blocked(failure) if failure.retryable
+            ));
+            assert_eq!((script.seq_index, script.step_index), cursor);
+        }
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(
+            outbox.len(),
+            1,
+            "neither retry nor interaction while parked"
+        );
+        assert_eq!(outbox[0].request_id.get(), request_id);
+        assert!(script.parked && !script.needs_read && !script.settling);
+
+        script.retry().unwrap();
+        assert!(
+            !script.parked && script.needs_read,
+            "Retry resumes with fresh quest evidence"
+        );
+    }
+
+    #[test]
     fn user_input_walk_parks_without_attempts_or_repeated_work() {
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -1308,7 +2160,13 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let mut script = Quester::new(run, path, quests);
+        let mut script = Quester::new(
+            run,
+            path,
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_quest_statuses(

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
+import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
+import { buildSpellMaxHits, extractNpcCombatFacts, parseCombatScripts, type CombatNpcSource, type CombatScripts } from './combat.ts';
 
-export const npcNamesContentFiles = ['pack/npc.pack'];
+export const npcNamesContentFiles = ['pack/npc.pack', 'scripts/skill_combat/configs/combat.param'];
 
 type NpcBlock = {
     name: string;
@@ -16,6 +17,14 @@ type NpcBlock = {
     vislevel: number;
     hitpoints: number;
     damagetype: string | null;
+    category: string | null;
+    strength: number | null;
+    ranged: number | null;
+    strengthbonus: number | null;
+    rangebonus: number | null;
+    undead: number | null;
+    attackrate: number | null;
+    params: Map<string, string>;
 };
 
 function parseIntField(raw: string | undefined, _key: string, fallback: number) {
@@ -25,11 +34,39 @@ function parseIntField(raw: string | undefined, _key: string, fallback: number) 
     return parsed;
 }
 
+function parseCombatInt(raw: string | undefined, label: string): number | null {
+    if (raw === undefined || raw === '') return null;
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed)) throw new Error(`npc_names: ${label} is not an integer: ${raw}`);
+    return parsed;
+}
+
+function parseParamInt(raw: string | undefined, label: string): number | null {
+    if (raw === '^true' || raw === 'true') return 1;
+    if (raw === '^false' || raw === 'false') return 0;
+    return parseCombatInt(raw, label);
+}
+
 function parseNpcFiles(content: string) {
+    const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const defaultParam = (name: string) => {
+        const definition = definitions.get(name);
+        if (definition?.type !== undefined && definition.type !== 'int') {
+            throw new Error(`npc_names: ${name} is not an integer parameter`);
+        }
+        const value = parseParamInt(definition?.default, `${name} default`);
+        if (name === 'attackrate' && value !== null && (value < 0 || value > 255)) {
+            throw new Error(`npc_names: ${name} default is out of range: ${value}`);
+        }
+        return value;
+    };
+    const strengthbonus = defaultParam('strengthbonus');
+    const rangebonus = defaultParam('rangebonus');
+    const attackrate = defaultParam('attackrate');
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
-        files.push(path.relative(content, file));
+        files.push(path.relative(content, file).split(path.sep).join('/'));
         let current: NpcBlock | null = null;
         for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
             const line = raw.trim();
@@ -49,6 +86,14 @@ function parseNpcFiles(content: string) {
                     vislevel: 0,
                     hitpoints: 0,
                     damagetype: null,
+                    category: null,
+                    strength: null,
+                    ranged: null,
+                    strengthbonus,
+                    rangebonus,
+                    undead: null,
+                    attackrate,
+                    params: new Map(),
                 };
                 blocks.set(name, current);
                 continue;
@@ -67,36 +112,47 @@ function parseNpcFiles(content: string) {
             else if (key === 'huntrange') current.huntrange = parseIntField(value, key, 0);
             else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : parseIntField(value, key, 0);
             else if (key === 'hitpoints') current.hitpoints = parseIntField(value, key, 0);
-            else if (key === 'param' && value.startsWith('damagetype,')) {
-                current.damagetype = value.slice('damagetype,'.length);
+            else if (key === 'category') current.category = value;
+            else if (key === 'strength') current.strength = parseCombatInt(value, `${current.name}.strength`);
+            else if (key === 'ranged') current.ranged = parseCombatInt(value, `${current.name}.ranged`);
+            else if (key === 'param') {
+                const comma = value.indexOf(',');
+                if (comma <= 0) continue;
+                const param = value.slice(0, comma);
+                const rawValue = value.slice(comma + 1);
+                current.params.set(param, rawValue);
+                if (param === 'damagetype') current.damagetype = rawValue;
+                else if (param === 'strengthbonus') current.strengthbonus = parseParamInt(rawValue, `${current.name}.strengthbonus`);
+                else if (param === 'rangebonus') current.rangebonus = parseParamInt(rawValue, `${current.name}.rangebonus`);
+                else if (param === 'undead') current.undead = parseParamInt(rawValue, `${current.name}.undead`);
+                else if (param === 'attackrate') {
+                    const rate = parseCombatInt(rawValue, `${current.name}.attackrate`);
+                    if (rate !== null && (rate < 0 || rate > 255)) throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
+                    current.attackrate = rate;
+                }
             }
         }
     }
     return { blocks, files };
 }
 
-function dragonfireNpcs(content: string, known: Set<string>) {
-    const flagged = new Set<string>();
-    for (const file of walkContentFiles(path.join(content, 'scripts'), '.rs2')) {
-        const text = fs.readFileSync(file, 'utf8');
-        if (!text.includes('%dragonresist')) continue;
-        for (const match of text.matchAll(/\[(?:ai_[^\],]+),([A-Za-z0-9_]+)\]/g)) {
-            if (known.has(match[1])) flagged.add(match[1]);
-        }
-    }
-    return flagged;
-}
-
-export function extractNpcNamesFacts(content: string) {
+export function extractNpcNamesFacts(content: string, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
-    const known = new Set(pack.keys());
     const { blocks, files } = parseNpcFiles(content);
-    const dragonfire = dragonfireNpcs(content, known);
+    const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
         .map(([config, id]) => {
             const block = blocks.get(config);
+            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
+            combatNpcs.push({
+                config,
+                category: block?.category ?? null,
+                params: block?.params ?? new Map(),
+                attack_kind: combat.attack_kind,
+                dragonfire: combat.dragonfire,
+            });
             return {
                 id,
                 config,
@@ -110,12 +166,22 @@ export function extractNpcNamesFacts(content: string) {
                 vislevel: block?.vislevel ?? 0,
                 hitpoints: block?.hitpoints ?? 0,
                 damagetype: block?.damagetype ?? null,
-                dragonfire: dragonfire.has(config),
+                strength: block?.strength ?? null,
+                ranged: block?.ranged ?? null,
+                strengthbonus: block?.strengthbonus ?? null,
+                rangebonus: block?.rangebonus ?? null,
+                undead: block?.undead ?? null,
+                ap_attack: combat.ap_attack,
+                attack_kind: combat.attack_kind,
+                forced_max_hit: combat.forced_max_hit,
+                dragonfire: combat.dragonfire,
+                attackrate: block?.attackrate ?? null,
+                bespoke: combat.bespoke,
             };
         });
     if (rows.length === 0) throw new Error('npc_names: no extracted rows');
     if (!rows.some((row) => row.config === 'khazard_warlord' && row.id === 477)) {
         throw new Error('npc_names: missing khazard_warlord pack join');
     }
-    return { rows, files };
+    return { rows, files, combatNpcs };
 }

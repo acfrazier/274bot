@@ -5,16 +5,18 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
-import { sha256, sourceFile, parseRows, parsePack, integer, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
+import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
 import { extractGatheringFamily, gatherResources, miningHazards } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
+import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits } from './extractors/combat.ts';
+import { consumptionRule, parseConsumeMessageDelays, parseConsumptionEffects } from './extractors/consumption.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 
-type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; params?: Map<number, number | string> };
+type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
 type GeneratedInputs = { engine_commit: string; content_commit: string; engine: InputHash[]; content: InputHash[] };
 type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
@@ -67,7 +69,21 @@ export const trailContentFiles = [
     'scripts/minigames/game_trail/configs/trail_hard.obj',
     'scripts/minigames/game_trail/configs/trail_casket.obj',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
+const combatContentFiles = [
+    'scripts/player/scripts/consumption/consume.rs2',
+    'scripts/player/configs/consumption/consume_messages.dbrow',
+    'scripts/skill_combat/scripts/combat.rs2',
+    'scripts/skill_combat/scripts/player/player_attackstyles.rs2',
+    'scripts/skill_combat/configs/combat_damagestyles.constant',
+    'scripts/skill_combat/configs/combat.dbrow',
+    'scripts/skill_combat/configs/combat.dbtable',
+    'pack/category.pack',
+    'pack/enum.pack',
+    'pack/seq.pack',
+    'pack/spotanim.pack',
+    'pack/npc.pack',
+];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, ...combatContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles];
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
@@ -278,6 +294,11 @@ export function assertRs2b0tPinned(rs2b0tRoot: string, pin = RS2B0T_PIN) {
 function row(obj: ObjType, piles: ReadonlySet<number>) { if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`); return { alias: obj.debugname, id: obj.id, name: obj.name, cost: obj.cost, stackable: obj.stackable, members: obj.members, certificate_link: obj.certlink, certificate_template: obj.certtemplate, wear_position: obj.wearpos, wear_position_2: obj.wearpos2, wear_position_3: obj.wearpos3, tradeable: obj.tradeable, stack_variant: piles.has(obj.id) }; }
 function pileModels(objs: readonly ObjType[]) { const piles = new Set<number>(); for (const obj of objs) for (const pile of Array.from(obj.countobj ?? [])) if (pile > 0) piles.add(pile); return piles; }
 function required(values: Record<string, string[][]>, key: string, rowName: string) { const value = values[key]?.[0]?.[0]; if (value === undefined) throw new Error(`${rowName}: missing ${key}`); return value; }
+function boolean(values: Record<string, string[][]>, key: string, rowName: string) {
+    const value = required(values, key, rowName);
+    if (value !== 'true' && value !== 'false') throw new Error(`${rowName}: invalid ${key} ${value}`);
+    return value === 'true';
+}
 function namedItem(itemIds: Map<string, { id: number; name: string | null }>, alias: string, label: string) {
     const item = itemIds.get(alias);
     if (!item) throw new Error(`${label}: unknown item ${alias}`);
@@ -299,14 +320,22 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const spells = parseRows(fs.readFileSync(path.join(content, 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow'), 'utf8'))
         .filter((parsed) => parsed.values.name?.[0]?.[0] && parsed.values.continue_by_autocast?.[0]?.[0] === 'true')
-        .map((parsed, ssb) => ({
-            name: required(parsed.values, 'name', parsed.name),
-            source_row: parsed.name,
-            ssb,
-            level: integer(required(parsed.values, 'levelrequired', parsed.name), parsed.name),
-            continue_by_autocast: true,
-            runes: runeCosts(parsed.values, parsed.name, itemIds)
-        }));
+        .map((parsed, ssb) => {
+            const wornrequired = parsed.values.wornrequired?.[0]?.[0];
+            if (wornrequired !== undefined) namedItem(itemIds, wornrequired, `${parsed.name} required weapon`);
+            return {
+                name: required(parsed.values, 'name', parsed.name),
+                source_row: parsed.name,
+                ssb,
+                spellcom: required(parsed.values, 'spellcom', parsed.name),
+                level: integer(required(parsed.values, 'levelrequired', parsed.name), parsed.name),
+                maxhit: integer(required(parsed.values, 'maxhit', parsed.name), parsed.name),
+                members: boolean(parsed.values, 'members', parsed.name),
+                wornrequired: wornrequired ?? null,
+                continue_by_autocast: true,
+                runes: runeCosts(parsed.values, parsed.name, itemIds),
+            };
+        });
     if (spells[0]?.name !== 'Wind Strike') {
         throw new Error(`expected Wind Strike first, got ${spells[0]?.name}`);
     }
@@ -945,26 +974,6 @@ export function parseIdentifyHerbPairs(text: string) {
     return pairs;
 }
 
-type ParamDef = { type?: string; default?: string };
-
-export function parseParamDefinitions(text: string) {
-    const defs = new Map<string, ParamDef>();
-    let current: string | null = null;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
-        if (line.startsWith('[') && line.endsWith(']')) {
-            current = line.slice(1, -1);
-            defs.set(current, {});
-            continue;
-        }
-        if (!current) continue;
-        const entry = defs.get(current)!;
-        if (line.startsWith('type=')) entry.type = line.slice('type='.length);
-        else if (line.startsWith('default=')) entry.default = line.slice('default='.length);
-    }
-    return defs;
-}
 
 /** Default Herblore level from pinned `identify.param`, not obj cost. */
 export function identifiedHerbLevelDefault(content: string) {
@@ -2199,14 +2208,188 @@ export function assertTrioGiverPins(facts: TrioGiverFacts, revision: number) {
 
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
+    const objectsByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
+    const aliasesById = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.id, item.debugname as string]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
-    const consumption: any[] = [];
-    for (const file of ['consume_normal.dbrow', 'consume_effects.dbrow']) for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/player/configs/consumption', file), 'utf8'))) {
-        const changes = parsed.values.stat_change ?? []; const heals = parsed.values.stat_heal ?? []; const energy = parsed.values.healenergy ?? [];
-        for (const alias of parsed.values.consumable ?? []) { const item = itemIds.get(alias[0]); if (!item) throw new Error(`consumption ${file}/${parsed.name}: unknown item ${alias[0]}`); const statChange = changes.map((v) => ({ stat: v[0], base: integer(v[1], parsed.name), percent: integer(v[2], parsed.name) })); const statHeal = heals.map((v) => ({ stat: v[0], base: integer(v[1], parsed.name), percent: integer(v[2], parsed.name) })); const fixedHp = file === 'consume_normal.dbrow' && statChange.length === 0 && statHeal.length === 1 && statHeal[0].stat === 'hitpoints' && statHeal[0].percent === 0 && statHeal[0].base > 0 && energy.length === 0; consumption.push({ action: 'consume', item: { alias: alias[0], id: item.id, name: item.name }, source_row: parsed.name, source_file: file, stat_change: statChange, stat_heal: statHeal, heal_energy: energy.map((v) => integer(v[0], parsed.name)), qualification: fixedHp ? 'fixed_hp_heal' : 'not_fixed_hp_heal' }); }
+    const categoryNames = new Map([...parsePack(requireGatherText(content, 'pack/category.pack'))].map(([name, id]) => [id, name]));
+    const paramIds = parsePack(requireGatherText(content, 'pack/param.pack'));
+    const enumNames = new Map([...parsePack(requireGatherText(content, 'pack/enum.pack'))].map(([name, id]) => [id, name]));
+    const consumptionEffects = parseConsumptionEffects(requireGatherText(content, 'scripts/player/scripts/consumption/consume.rs2'));
+    const messageDelays = parseConsumeMessageDelays(requireGatherText(content, 'scripts/player/configs/consumption/consume_messages.dbrow'));
+    const parameter = (object: ObjType, name: string) => {
+        const id = paramIds.get(name);
+        if (id === undefined) throw new Error(`pack/param.pack: missing ${name}`);
+        return object.params?.get(id);
+    };
+    const paramReference = (value: number | string | undefined, namesById: ReadonlyMap<number, string>, label: string) => {
+        if (value === undefined) return null;
+        if (typeof value === 'number') {
+            if (value < 0) return null;
+            const name = namesById.get(value);
+            if (!name) throw new Error(`${label}: unknown referenced id ${value}`);
+            return name;
+        }
+        const name = value.trim().replace(/^\^/, '');
+        if (!name || name === 'null' || name === 'none' || name === '-1') return null;
+        if (/^-?\d+$/.test(name)) {
+            const id = Number(name);
+            if (id < 0) return null;
+            const referenced = namesById.get(id);
+            if (!referenced) throw new Error(`${label}: unknown referenced id ${name}`);
+            return referenced;
+        }
+        return name;
+    };
+    const sourceInfo = (alias: string) => {
+        const object = objectsByAlias.get(alias);
+        if (!object) throw new Error(`consumption ${alias}: missing selected object config`);
+        const category = object.category === undefined || object.category < 0 ? undefined : categoryNames.get(object.category);
+        if (object.category !== undefined && object.category >= 0 && category === undefined) {
+            throw new Error(`obj ${alias}: category ${object.category} is absent from pack/category.pack`);
+        }
+        const nextStage = paramReference(parameter(object, 'next_obj_stage'), aliasesById, `obj ${alias} next_obj_stage`);
+        const familyName = paramReference(parameter(object, 'decant_potion_enum'), enumNames, `obj ${alias} decant_potion_enum`);
+        const rawDoseCount = parameter(object, 'dose_count');
+        let doseCount: number | undefined;
+        if (rawDoseCount !== undefined) {
+            const count = typeof rawDoseCount === 'number' ? rawDoseCount : Number(rawDoseCount);
+            if (!Number.isInteger(count)) throw new Error(`obj ${alias}: dose_count is not an integer`);
+            doseCount = count;
+        }
+        if (category === 'potion' && (familyName !== null || doseCount !== undefined)) {
+            if (!familyName || doseCount === undefined || doseCount < 1 || doseCount > 4) {
+                throw new Error(`obj ${alias}: incomplete potion dose family`);
+            }
+        }
+        return {
+            category,
+            next_stage: nextStage,
+            dose_family: category === 'potion' ? familyName : null,
+            dose_count: category === 'potion' ? doseCount ?? null : null,
+        };
+    };
+    type ConsumptionRow = {
+        action: 'consume';
+        item: { alias: string; id: number; name: string };
+        source_row: string;
+        source_file: string;
+        effect: string;
+        eat_delay_arg: number | null;
+        skill_delay_arg: number | null;
+        message_delay: number | null;
+        stat_change: { stat: string; base: number; percent: number }[];
+        stat_heal: { stat: string; base: number; percent: number }[];
+        heal_energy: number[];
+        qualification: string;
+        next_stage: string | null;
+        dose_family: string | null;
+        dose_count: number | null;
+    };
+    const consumption: ConsumptionRow[] = [];
+    const consumedAliases = new Set<string>();
+    for (const file of ['consume_normal.dbrow', 'consume_effects.dbrow']) {
+        for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/player/configs/consumption', file), 'utf8'))) {
+            const changes = parsed.values.stat_change ?? [];
+            const heals = parsed.values.stat_heal ?? [];
+            const energy = parsed.values.healenergy ?? [];
+            const statChange = changes.map((value) => ({ stat: value[0], base: integer(value[1], parsed.name), percent: integer(value[2], parsed.name) }));
+            const statHeal = heals.map((value) => ({ stat: value[0], base: integer(value[1], parsed.name), percent: integer(value[2], parsed.name) }));
+            const fixedHp = file === 'consume_normal.dbrow' && statChange.length === 0 && statHeal.length === 1 && statHeal[0].stat === 'hitpoints' && statHeal[0].percent === 0 && statHeal[0].base > 0 && energy.length === 0;
+            for (const [alias] of parsed.values.consumable ?? []) {
+                const item = itemIds.get(alias);
+                if (!item) throw new Error(`consumption ${file}/${parsed.name}: unknown item ${alias}`);
+                if (!item.name) throw new Error(`consumption ${file}/${parsed.name}: ${alias} has no display name`);
+                const info = sourceInfo(alias);
+                const timing = consumptionRule(consumptionEffects, alias, info.category, info.next_stage);
+                const handled = timing !== null;
+                consumption.push({
+                    action: 'consume',
+                    item: { alias, id: item.id, name: item.name },
+                    source_row: parsed.name,
+                    source_file: file,
+                    effect: timing?.effect ?? '',
+                    eat_delay_arg: timing?.eat_delay_arg ?? null,
+                    skill_delay_arg: timing?.skill_delay_arg ?? null,
+                    message_delay: handled ? messageDelays.get(alias) ?? null : null,
+                    stat_change: statChange,
+                    stat_heal: statHeal,
+                    heal_energy: energy.map((value) => integer(value[0], parsed.name)),
+                    qualification: fixedHp && handled ? 'fixed_hp_heal' : 'not_fixed_hp_heal',
+                    next_stage: info.next_stage,
+                    dose_family: info.dose_family,
+                    dose_count: info.dose_count,
+                });
+                consumedAliases.add(alias);
+            }
+        }
     }
-    const pickpocket: any[] = [];
-    for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow'), 'utf8'))) { const npc = (parsed.values.npc ?? []).map((v) => { const found = npcIds.get(v[0]); if (!found) throw new Error(`pickpocket ${parsed.name}: unknown NPC ${v[0]}`); return { alias: v[0], id: found.id, name: found.name }; }); const chance = parsed.values.success_chance?.[0]; if (!chance || chance.length !== 2) throw new Error(`${parsed.name}: malformed success chance`); const loot = (parsed.values.loot ?? []).map((v) => { const item = itemIds.get(v[0]); if (!item) throw new Error(`pickpocket ${parsed.name}: unknown loot ${v[0]}`); return { item: { alias: v[0], id: item.id, name: item.name }, min: integer(v[1], parsed.name), max: integer(v[2], parsed.name), weight: integer(v[3], parsed.name) }; }); pickpocket.push({ group: parsed.name, npcs: npc, level: integer(required(parsed.values, 'level', parsed.name), parsed.name), experience: integer(required(parsed.values, 'experience', parsed.name), parsed.name), stun_ticks: integer(required(parsed.values, 'stun_ticks', parsed.name), parsed.name), stun_damage: integer(required(parsed.values, 'stun_damage', parsed.name), parsed.name), success_chance: { numerator: integer(chance[0], parsed.name), denominator: integer(chance[1], parsed.name) }, loot, pocket: required(parsed.values, 'pocket', parsed.name) }); }
+    for (const [alias, item] of itemIds) {
+        const info = sourceInfo(alias);
+        if (info.category !== 'potion' || !info.dose_family || info.dose_count === null || consumedAliases.has(alias)) continue;
+        if (!item.name) throw new Error(`consumption consume.rs2: ${alias} has no display name`);
+        const timing = consumptionRule(consumptionEffects, alias, info.category, info.next_stage);
+        consumption.push({
+            action: 'consume',
+            item: { alias, id: item.id, name: item.name },
+            source_row: 'consume.rs2',
+            source_file: 'consume.rs2',
+            effect: timing?.effect ?? '',
+            eat_delay_arg: timing?.eat_delay_arg ?? null,
+            skill_delay_arg: timing?.skill_delay_arg ?? null,
+            message_delay: timing === null ? null : messageDelays.get(alias) ?? null,
+            stat_change: [],
+            stat_heal: [],
+            heal_energy: [],
+            qualification: 'not_fixed_hp_heal',
+            next_stage: info.next_stage,
+            dose_family: info.dose_family,
+            dose_count: info.dose_count,
+        });
+    }
+    type PickpocketRow = {
+        group: string;
+        npcs: { alias: string; id: number; name: string }[];
+        level: number;
+        experience: number;
+        stun_ticks: number;
+        stun_damage: number;
+        success_chance: { numerator: number; denominator: number };
+        loot: { item: { alias: string; id: number; name: string }; min: number; max: number; weight: number }[];
+        pocket: string;
+    };
+    const pickpocket: PickpocketRow[] = [];
+    for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow'), 'utf8'))) {
+        const npc = (parsed.values.npc ?? []).map((value) => {
+            const found = npcIds.get(value[0]);
+            if (!found) throw new Error(`pickpocket ${parsed.name}: unknown NPC ${value[0]}`);
+            if (!found.name) throw new Error(`pickpocket ${parsed.name}: NPC ${value[0]} has no display name`);
+            return { alias: value[0], id: found.id, name: found.name };
+        });
+        const chance = parsed.values.success_chance?.[0];
+        if (!chance || chance.length !== 2) throw new Error(`${parsed.name}: malformed success chance`);
+        const loot = (parsed.values.loot ?? []).map((value) => {
+            const item = itemIds.get(value[0]);
+            if (!item) throw new Error(`pickpocket ${parsed.name}: unknown loot ${value[0]}`);
+            if (!item.name) throw new Error(`pickpocket ${parsed.name}: loot ${value[0]} has no display name`);
+            return {
+                item: { alias: value[0], id: item.id, name: item.name },
+                min: integer(value[1], parsed.name),
+                max: integer(value[2], parsed.name),
+                weight: integer(value[3], parsed.name),
+            };
+        });
+        pickpocket.push({
+            group: parsed.name,
+            npcs: npc,
+            level: integer(required(parsed.values, 'level', parsed.name), parsed.name),
+            experience: integer(required(parsed.values, 'experience', parsed.name), parsed.name),
+            stun_ticks: integer(required(parsed.values, 'stun_ticks', parsed.name), parsed.name),
+            stun_damage: integer(required(parsed.values, 'stun_damage', parsed.name), parsed.name),
+            success_chance: { numerator: integer(chance[0], parsed.name), denominator: integer(chance[1], parsed.name) },
+            loot,
+            pocket: required(parsed.values, 'pocket', parsed.name),
+        });
+    }
     return { consumption, pickpocket };
 }
 type CatalogBank = {
@@ -2649,7 +2832,18 @@ async function generate(spec: Revision) {
     if (spec.revision === 289 && (questIdentity.rows.length !== 69 || !questIdentity.rows.some((row) => row.id === 'barcrawl') || !questIdentity.rows.some((row) => row.id === 'hauntedmine' && row.kind === 'stub'))) {
         throw new Error(`${spec.revision}: expected 69 identity rows, got ${questIdentity.rows.length}`);
     }
-    const npcNames = extractNpcNamesFacts(spec.content);
+    const combatScripts = parseCombatScripts(spec.content);
+    const spellMaxHits = buildSpellMaxHits(spec.content);
+    const npcNames = extractNpcNamesFacts(spec.content, combatScripts, spellMaxHits);
+    const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts);
+    Object.assign(facts, {
+        style_seqs: combatStyles.style_seqs,
+        style_spotanims: combatStyles.style_spotanims,
+        combat_tabs: combatStyles.combat_tabs,
+        weapon_styles: combatStyles.weapon_styles,
+        melee_modes: combatStyles.melee_modes,
+        melee_mode_varp: combatStyles.melee_mode_varp,
+    });
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
     if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
@@ -2666,7 +2860,12 @@ async function generate(spec: Revision) {
     assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
     const baseProvenance = baseProvenanceInputs(spec.engine, spec.content);
     const inputs = baseProvenance.inputs;
-    const contentInputPaths = [...new Set([...contentFiles, ...questStartContentFiles(spec.content)])];
+    const contentInputPaths = [...new Set([
+        ...contentFiles,
+        ...questStartContentFiles(spec.content),
+        ...npcNames.files,
+        ...combatScripts.files.map((script) => script.relative),
+    ])].sort();
     const contentInputs = contentInputPaths.map((file) => sourceFile(spec.content, file));
     const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const rs2b0tRoot = envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0'));
