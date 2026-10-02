@@ -1453,6 +1453,11 @@ fn spawn_slot_thread(
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
                                 crate::combat_proof::record_observation(name, *script_tick, exclusive);
+                                if let Some(status) = script_slot(&slot_scripts, name)
+                                    .and_then(|slot| slot.lock().ok()?.native_status())
+                                {
+                                    crate::combat_proof::record_status(name, &status);
+                                }
                             }
                             c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
                             // TUI chat / WASD sends: run the queued wire

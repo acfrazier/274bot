@@ -56,6 +56,7 @@ pub struct Quester {
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
     last_outcome: Option<StepOutcome>,
+    published_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
     advances: bool,
     in_prelude: bool,
     settling: bool,
@@ -289,6 +290,7 @@ impl Quester {
             clear_prayers: None,
             prayer_cleanup_pending: true,
             last_outcome: None,
+            published_receipt: None,
             advances: false,
             in_prelude: false,
             settling: false,
@@ -378,10 +380,25 @@ impl Quester {
     }
 
     fn publish(&mut self, output: &mut dyn NativeOutput) {
+        let outcome = self
+            .step
+            .as_ref()
+            .and_then(|step| step.in_flight_outcome())
+            .or(self.last_outcome.as_ref());
+        let receipt = outcome.and_then(|outcome| outcome.receipt.as_ref());
+        let unchanged = match (receipt, self.published_receipt.as_ref()) {
+            (Some(current), Some(previous)) => Arc::ptr_eq(current, previous),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            self.dirty = true;
+        }
         if !self.dirty {
             return;
         }
         self.dirty = false;
+        self.published_receipt = receipt.map(Arc::clone);
         let stage = self
             .stage
             .as_ref()
@@ -413,7 +430,7 @@ impl Quester {
                 }),
             },
         ];
-        append_combat_status(&mut fields, self.last_outcome.as_ref());
+        append_combat_status(&mut fields, outcome);
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "progress",
@@ -1323,6 +1340,42 @@ mod tests {
             field.key == "combat_target_gone_restarts"
                 && matches!(&field.value, StatusValue::Integer(1))
         }));
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..200 {
+                script.publish(&mut output);
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(
+            output.0.len(),
+            1,
+            "unchanged reports must not be republished"
+        );
+
+        let mut killed = report;
+        killed.end = CombatEnd::Killed;
+        killed.evidence.tick = 24;
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: killed.evidence,
+            receipt: Some(Arc::new(CombatReceipt {
+                report: killed,
+                target_gone_restarts: 1,
+            })),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 2);
+        assert!(output.0[1].fields.iter().any(|field| {
+            field.key == "combat_end"
+                && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "Killed")
+        }));
+        script.last_outcome = None;
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 3);
+        assert!(!output.0[2]
+            .fields
+            .iter()
+            .any(|field| field.key == "combat_end"));
     }
 
     #[test]

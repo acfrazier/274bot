@@ -135,6 +135,11 @@ pub trait StepRun: Send {
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         None
     }
+    /// Latest completed sub-operation, borrowed for change-only status reporting.
+    /// This does not replace the final outcome returned by `poll`.
+    fn in_flight_outcome(&self) -> Option<&StepOutcome> {
+        None
+    }
 }
 pub type CompileStep =
     fn(&serde_json::Value, &CompileContext<'_>) -> Result<Arc<dyn StepPlan>, CompileError>;
