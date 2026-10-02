@@ -4768,6 +4768,10 @@ fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
 fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_prefs() {
     let saved = crate::ui_state::PanelUiState {
         last_focus: None,
+        nav: crate::nav_settings::NavSettings {
+            pause_script_on_manual_walk_abort: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     crate::ui_state::save(&saved);
@@ -4777,7 +4781,7 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         let mut scenario = scenario::get("nav_door").unwrap();
         scenario.settings.nav.allow_teleports = true;
         scenario.settings.nav.allow_wilderness = true;
-        let baseline = crate::nav_settings::from_scenario(&scenario.settings.nav);
+        let baseline = crate::nav_settings::from_scenario(&scenario.settings.nav, &saved.nav);
         let deadline = scenario.settings.deadline;
         let terminal_shot = scenario.settings.terminal_shot;
         session.live_prepare_script(scenario).unwrap();
@@ -4792,6 +4796,10 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         assert_eq!(published, session.effective_nav());
         assert!(published.allow_teleports && published.allow_wilderness);
         assert_eq!(published.allow_bank_fetch, baseline.allow_bank_fetch);
+        assert!(
+            !published.pause_script_on_manual_walk_abort,
+            "the saved OFF preference survives each scenario overlay"
+        );
         assert_eq!(published.color_path, baseline.color_path);
         match choice {
             Some(on) => {
@@ -4822,6 +4830,7 @@ fn live_force_layers_does_not_write_panel_ui() {
     let mut s = Session::new();
     s.nav_overlay = Some(crate::nav_settings::from_scenario(
         &scenario::nav_test_paints(),
+        &s.ui.nav,
     ));
     assert!(
         s.effective_nav().show_nav_path,
