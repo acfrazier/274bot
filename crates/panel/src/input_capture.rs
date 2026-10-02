@@ -1,5 +1,5 @@
 //! Game input capture: native keyboard queue, ImGui shifted-key adapter,
-//! and hovered-frame mouse/key streaming to slot channels.
+//! hover-independent key ownership, and hovered new-input streaming.
 
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
@@ -141,9 +141,6 @@ pub(crate) fn add_shifted_key_event(
 
 static NATIVE_CAPTURE: Mutex<Vec<(bool, i32)>> = Mutex::new(Vec::new());
 static NATIVE_PRESS_CH: Mutex<Vec<(Key, i32)>> = Mutex::new(Vec::new());
-/// GameShell `ch` values whose downs were actually forwarded to the client.
-static DELIVERED_DOWN: Mutex<Vec<i32>> = Mutex::new(Vec::new());
-static KEYBOARD_CAPTURED: Mutex<bool> = Mutex::new(false);
 
 fn physical_capture_key(logical_key: &WinitKey, location: KeyLocation) -> Option<Key> {
     if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
@@ -251,23 +248,15 @@ fn note_native_capture_key(logical_key: &WinitKey, location: KeyLocation, down: 
         .push((down, ch));
 }
 
-fn take_native_capture() -> Vec<(bool, i32)> {
-    std::mem::take(&mut *NATIVE_CAPTURE.lock().expect("native capture"))
-}
-
-/// Drop unconsumed capture so capture-off / unhovered frames cannot
-/// replay later. Held press-character ownership is cleared only when
-/// events were actually discarded: an empty queue after a drained press
-/// must keep ownership so a later Shift-up release still pairs. Clearing
-/// held on every empty capture-off frame would rewrite `:` into `;` if
-/// the cursor left the pane between press and release.
+/// Drop new input not consumed by a hovered Game Image. Native press-character
+/// identities live until their matching release (or next press), even when
+/// unrelated panel input is discarded between a shifted down and its up.
 pub(crate) fn discard_unconsumed_native_capture() {
     let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
     if queued.is_empty() {
         return;
     }
     queued.clear();
-    NATIVE_PRESS_CH.lock().expect("native press ch").clear();
 }
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
@@ -298,55 +287,118 @@ pub(crate) fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
     None
 }
 
-/// Map hovered keys to GameShell `ch` values (arrows 1–4, ASCII).
-/// Printable and named capture keys share one native event queue so a
-/// same-frame `a`/Space/`b` stays `a b`. Produced printables are the
-/// characters recorded at KeyboardInput so a later Shift sample cannot
-/// rewrite `:` into `;`.
-///
-/// When ImGui wants the keyboard (a focused text field or another active
-/// widget), new key-downs are not forwarded so panel typing cannot land in
-/// the client's chat. Keys already delivered down still emit their matching
-/// key-up, and a rising capture edge synthesizes releases for any still-held
-/// delivered keys. Unhovered / capture-off frames still drop leftovers via
-/// [`discard_unconsumed_native_capture`].
-pub(crate) fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
-    let capturing = ui.io().want_capture_keyboard();
-    let queued = take_native_capture();
-    let mut delivered = DELIVERED_DOWN.lock().expect("delivered down");
-    let mut keyboard_captured = KEYBOARD_CAPTURED.lock().expect("keyboard captured");
-    let mut out = Vec::new();
+/// Keys belong to the slot that received their downs, not to the pointer.
+/// One instance lives at the frame owner, outside either Game-pane layout.
+pub(crate) struct KeyboardOwner {
+    down: [bool; 128],
+    held_count: usize,
+    tx: Option<Sender<InputEv>>,
+    target: Option<String>,
+}
 
-    if capturing && !*keyboard_captured {
-        for ch in delivered.drain(..) {
-            out.push((false, ch));
+impl Default for KeyboardOwner {
+    fn default() -> Self {
+        Self {
+            down: [false; 128],
+            held_count: 0,
+            tx: None,
+            target: None,
         }
     }
-    *keyboard_captured = capturing;
+}
 
-    if !capturing {
-        for &(down, ch) in &queued {
-            if down {
-                if !delivered.contains(&ch) {
-                    delivered.push(ch);
+fn game_keyboard_available(ui: &Ui) -> bool {
+    // SAFETY: called on the UI thread during the active Ui frame, so the
+    // current ImGui context and its IO are alive. Copy the platform focus
+    // flag immediately; no raw reference survives another ImGui call.
+    let focus_lost = unsafe { (*dear_imgui_rs::sys::igGetIO_Nil()).AppFocusLost };
+    !focus_lost && !ui.io().want_capture_keyboard()
+}
+
+impl KeyboardOwner {
+    fn release(&mut self, ch: i32) {
+        if self.down[ch as usize] {
+            if let Some(tx) = &self.tx {
+                let _ = tx.send(InputEv::Key { down: false, ch });
+            }
+            self.down[ch as usize] = false;
+            self.held_count -= 1;
+        }
+    }
+
+    /// Every frame, before any Image-hover gate: deliver native ups already
+    /// owned by the game, then release everything left if ownership is lost.
+    /// Retain the old sender through capture-off/slot-switch so releases go
+    /// to the slot that actually received the downs.
+    pub(crate) fn process_ownership(
+        &mut self,
+        ui: &Ui,
+        tx: Option<&Sender<InputEv>>,
+        target: Option<&str>,
+    ) {
+        let changed = self.target.as_deref() != target;
+        if !changed && self.held_count != 0 && tx.is_some() {
+            // The same slot may reconnect its channel. Keep releases on its
+            // current receiver; a different slot still owes the old sender.
+            self.tx = tx.cloned();
+        }
+        NATIVE_CAPTURE
+            .lock()
+            .expect("native capture")
+            .retain(|&(down, ch)| {
+                if !down && self.down[ch as usize] {
+                    self.release(ch);
+                    false
+                } else {
+                    true
                 }
-            } else if let Some(i) = delivered.iter().position(|&held| held == ch) {
-                delivered.remove(i);
+            });
+
+        if self.held_count != 0 && (changed || tx.is_none() || !game_keyboard_available(ui)) {
+            for ch in 0..self.down.len() {
+                self.release(ch as i32);
             }
         }
-        return queued;
+        if tx.is_none() {
+            self.tx = None;
+            self.target = None;
+        } else if changed {
+            self.target = target.map(str::to_owned);
+        }
     }
 
-    for (down, ch) in queued {
-        if down {
-            continue;
+    /// Only called for a hovered Game Image. New downs/text remain gated by
+    /// panel capture and OS focus. Same-frame down/up bursts retain native
+    /// event order and the character recorded at the press, not later Shift.
+    pub(crate) fn capture_keys(&mut self, ui: &Ui, tx: Option<&Sender<InputEv>>) {
+        if !game_keyboard_available(ui) {
+            return;
         }
-        if let Some(i) = delivered.iter().position(|&held| held == ch) {
-            delivered.remove(i);
-            out.push((false, ch));
+        let Some(tx) = tx else {
+            return;
+        };
+        let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
+        if queued.is_empty() {
+            return;
+        }
+        self.tx = Some(tx.clone());
+        for (down, ch) in queued.drain(..) {
+            let held = &mut self.down[ch as usize];
+            if down {
+                if !*held {
+                    self.held_count += 1;
+                }
+                *held = true;
+            } else {
+                if !*held {
+                    continue;
+                }
+                self.held_count -= 1;
+                *held = false;
+            }
+            let _ = tx.send(InputEv::Key { down, ch });
         }
     }
-    out
 }
 
 /// Click-through helper: maps a click inside the Game Image (local coords,

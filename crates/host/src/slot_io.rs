@@ -456,6 +456,9 @@ impl SlotInput {
 
     fn drain_user(&self, shell: &mut GameShell) {
         if !self.enabled.load(Ordering::Relaxed) {
+            // Capture revocation still owes ups for keys/buttons already
+            // held by the client. Reuse the release-only queue drain.
+            self.discard_user(shell);
             return;
         }
         let mut events = Vec::new();
@@ -1174,29 +1177,6 @@ mod tests {
             Some((764, 502))
         );
         assert_eq!(map_image_to_applet(-1.0, 10.0, 765.0, 503.0), None);
-    }
-
-    #[test]
-    fn drain_skips_recv_when_disabled_then_applies_when_enabled() {
-        use std::sync::mpsc;
-        let inp = SlotInput::new();
-        let (tx, rx) = mpsc::channel();
-        inp.connect_rx(rx);
-        tx.send(InputEv::Down {
-            button: 1,
-            x: 10,
-            y: 10,
-        })
-        .unwrap();
-        let mut shell = client::client::GameShell::new();
-        inp.set_enabled(false);
-        inp.drain(&mut shell);
-        shell.latch_click();
-        assert_eq!(shell.mouse_click_button, 0);
-        inp.set_enabled(true);
-        inp.drain(&mut shell);
-        shell.latch_click();
-        assert_eq!((shell.mouse_click_button, shell.mouse_click_x), (1, 10));
     }
 
     fn live_input() -> std::sync::Arc<SlotInput> {

@@ -3729,8 +3729,8 @@ impl Session {
     }
 
     /// Capture checkbox. On: attach a fresh channel and enable the focused
-    /// slot's drain. Off: disable the drain and drop the sender so the UI
-    /// cannot enqueue (the slot thread does no `try_recv` while disabled).
+    /// slot's drain. Off: drop the sender to block new input; the disabled
+    /// slot still consumes releases owed to its held keys/buttons.
     pub fn set_capture(&mut self, on: bool) {
         self.focus.lock().unwrap().capture = on;
         if self.persist_ui {
