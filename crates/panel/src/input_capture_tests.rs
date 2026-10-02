@@ -1,11 +1,11 @@
+use client::client::GameShell;
 use dear_imgui_rs::Key;
 use host::InputEv;
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
     add_shifted_key_event, capture_key_ch, capture_keys, discard_unconsumed_native_capture,
-    maybe_send_click, note_native_ime_commit, shifted_imgui_key, shifted_imgui_key_at_location,
-    stream_capture,
+    maybe_send_click, shifted_imgui_key, shifted_imgui_key_at_location, stream_capture,
 };
 
 #[test]
@@ -570,20 +570,38 @@ fn key_chs(evs: &[InputEv]) -> Vec<(bool, i32)> {
         .collect()
 }
 
-fn native_type_hi_enter_and_ime(io: &mut dear_imgui_rs::Io) {
+/// Same KeyboardInput adapter `window_event` uses after the winit backend
+/// handles the event: non-repeat `add_shifted_key_event`. winit's `KeyEvent`
+/// is not constructible outside that crate, so tests cannot build a
+/// `WindowEvent::KeyboardInput`.
+fn window_keyboard(io: &mut dear_imgui_rs::Io, key: WinitKey, down: bool) {
+    add_shifted_key_event(io, &key, KeyLocation::Standard, down);
+}
+
+fn native_type_hi_enter(io: &mut dear_imgui_rs::Io) {
     tap_character(io, "h");
     tap_character(io, "i");
     tap_named(io, NamedKey::Enter);
     tap_named(io, NamedKey::Escape);
     tap_named(io, NamedKey::ArrowLeft);
-    note_native_ime_commit("ab");
+}
+
+fn apply_keys_to_shell(shell: &mut GameShell, evs: &[InputEv]) {
+    for ev in evs {
+        if let InputEv::Key { down, ch } = ev {
+            shell.apply_key(*down, 0, *ch);
+        }
+    }
 }
 
 /// Headed report: typing in a panel text field (Debug search) also lands in
-/// the client's chat. Drive the real window-event → native queue → hovered
-/// `stream_capture` path. ImGui owning the keyboard must drop keys, text,
-/// Enter/Escape, arrows, and IME commits; the game pane (no active widget)
-/// must still forward them. Mouse Down stays on the capture channel either way.
+/// the client's chat. Drive the native KeyboardInput adapter used by
+/// `window_event` (`add_shifted_key_event`) → native queue → hovered
+/// `stream_capture`. ImGui owning the keyboard must drop new key-downs
+/// (letters, Enter/Escape, arrows); the game pane (no active widget) must
+/// still forward them. Mouse Down stays on the capture channel either way.
+/// Settled-focus gating only — not a click-back timing or IME-commit proof.
+/// Compiles against pristine `e3028f834` (no IME helper).
 #[test]
 fn focused_panel_text_field_does_not_forward_keys_to_client() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -595,7 +613,7 @@ fn focused_panel_text_field_does_not_forward_keys_to_client() {
     debug_search_frame(&mut ctx, &mut buf, true);
     debug_search_frame(&mut ctx, &mut buf, false);
 
-    native_type_hi_enter_and_ime(ctx.io_mut());
+    native_type_hi_enter(ctx.io_mut());
     let focused = stream_hovered_keys(&mut ctx, Some(&mut buf), true, true);
     assert!(
         focused
@@ -608,14 +626,14 @@ fn focused_panel_text_field_does_not_forward_keys_to_client() {
     );
     assert!(
         key_chs(&focused).is_empty(),
-        "panel text focus must not forward keys/IME to the client, got {focused:?}"
+        "panel text focus must not forward new keys to the client, got {focused:?}"
     );
     drop(ctx);
 
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let _ = ctx.set_ini_filename(None::<String>);
-    native_type_hi_enter_and_ime(ctx.io_mut());
+    native_type_hi_enter(ctx.io_mut());
     let game = stream_hovered_keys(&mut ctx, None, true, false);
     let keys = key_chs(&game);
     let mut expected = Vec::new();
@@ -624,15 +642,58 @@ fn focused_panel_text_field_does_not_forward_keys_to_client() {
     expected.extend_from_slice(&down_up(10));
     expected.extend_from_slice(&down_up(27));
     expected.extend_from_slice(&down_up(1));
-    expected.extend_from_slice(&down_up(b'a'));
-    expected.extend_from_slice(&down_up(b'b'));
     assert_eq!(
         keys, expected,
-        "game pane focus must still forward keys, Enter, Escape, arrows, and IME commits"
+        "game pane focus must still forward keys, Enter, Escape, and arrows"
     );
     assert!(
         game.iter()
             .any(|ev| matches!(ev, InputEv::Down { button: 1, .. })),
         "mouse Down must still reach the client with the game focused, got {game:?}"
+    );
+}
+
+/// Hold ArrowLeft over the game, focus Debug search in the same ImGui
+/// context, then release: GameShell must observe the key-up. Uses the
+/// KeyboardInput adapter `window_event` calls (`add_shifted_key_event`).
+#[test]
+fn held_game_key_release_reaches_client_after_panel_focus() {
+    let _guard = crate::test_support::imgui_context_guard();
+    discard_unconsumed_native_capture();
+    let mut ctx = dear_imgui_rs::Context::create();
+    let _ = ctx.set_ini_filename(None::<String>);
+    let mut shell = GameShell::new();
+    let mut buf = String::new();
+
+    window_keyboard(ctx.io_mut(), WinitKey::Named(NamedKey::ArrowLeft), true);
+    let game = stream_hovered_keys(&mut ctx, None, false, false);
+    apply_keys_to_shell(&mut shell, &game);
+    assert_eq!(
+        key_chs(&game),
+        vec![(true, 1)],
+        "game pane must receive ArrowLeft down, got {game:?}"
+    );
+    assert_eq!(
+        shell.key_held[1], 1,
+        "client must hold ArrowLeft after down"
+    );
+
+    debug_search_frame(&mut ctx, &mut buf, true);
+    debug_search_frame(&mut ctx, &mut buf, false);
+
+    window_keyboard(ctx.io_mut(), WinitKey::Named(NamedKey::ArrowLeft), false);
+    let focused = stream_hovered_keys(&mut ctx, Some(&mut buf), false, true);
+    apply_keys_to_shell(&mut shell, &focused);
+    assert!(
+        key_chs(&focused).contains(&(false, 1)),
+        "release of a game-owned key must reach the client while the panel field is focused, got {focused:?}"
+    );
+    assert!(
+        !key_chs(&focused).contains(&(true, 1)),
+        "panel focus must not start a new ArrowLeft down, got {focused:?}"
+    );
+    assert_eq!(
+        shell.key_held[1], 0,
+        "client must not keep ArrowLeft held after the native release"
     );
 }

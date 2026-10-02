@@ -1683,9 +1683,6 @@ where
                         );
                     }
                 }
-                if let WindowEvent::Ime(winit::event::Ime::Commit(text)) = &event {
-                    crate::input_capture::note_native_ime_commit(text);
-                }
 
                 match event {
                     WindowEvent::Resized(physical_size) => {

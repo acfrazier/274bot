@@ -141,6 +141,9 @@ pub(crate) fn add_shifted_key_event(
 
 static NATIVE_CAPTURE: Mutex<Vec<(bool, i32)>> = Mutex::new(Vec::new());
 static NATIVE_PRESS_CH: Mutex<Vec<(Key, i32)>> = Mutex::new(Vec::new());
+/// GameShell `ch` values whose downs were actually forwarded to the client.
+static DELIVERED_DOWN: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+static KEYBOARD_CAPTURED: Mutex<bool> = Mutex::new(false);
 
 fn physical_capture_key(logical_key: &WinitKey, location: KeyLocation) -> Option<Key> {
     if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
@@ -252,22 +255,6 @@ fn take_native_capture() -> Vec<(bool, i32)> {
     std::mem::take(&mut *NATIVE_CAPTURE.lock().expect("native capture"))
 }
 
-/// Record an IME commit as capture key taps. ImGui already received the
-/// characters via the winit backend; this is only the game-chat path.
-/// Control and non-ASCII characters are skipped, matching KeyboardInput
-/// capture which only queues ASCII `ch` values.
-pub(crate) fn note_native_ime_commit(text: &str) {
-    let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
-    for ch in text.chars() {
-        if ch.is_control() || !ch.is_ascii() {
-            continue;
-        }
-        let code = ch as i32;
-        queued.push((true, code));
-        queued.push((false, code));
-    }
-}
-
 /// Drop unconsumed capture so capture-off / unhovered frames cannot
 /// replay later. Held press-character ownership is cleared only when
 /// events were actually discarded: an empty queue after a drained press
@@ -318,15 +305,48 @@ pub(crate) fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
 /// rewrite `:` into `;`.
 ///
 /// When ImGui wants the keyboard (a focused text field or another active
-/// widget), discard the queue instead of forwarding so panel typing cannot
-/// land in the client's chat. Unhovered / capture-off frames still drop
-/// leftovers via [`discard_unconsumed_native_capture`].
+/// widget), new key-downs are not forwarded so panel typing cannot land in
+/// the client's chat. Keys already delivered down still emit their matching
+/// key-up, and a rising capture edge synthesizes releases for any still-held
+/// delivered keys. Unhovered / capture-off frames still drop leftovers via
+/// [`discard_unconsumed_native_capture`].
 pub(crate) fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
-    if ui.io().want_capture_keyboard() {
-        discard_unconsumed_native_capture();
-        return Vec::new();
+    let capturing = ui.io().want_capture_keyboard();
+    let queued = take_native_capture();
+    let mut delivered = DELIVERED_DOWN.lock().expect("delivered down");
+    let mut keyboard_captured = KEYBOARD_CAPTURED.lock().expect("keyboard captured");
+    let mut out = Vec::new();
+
+    if capturing && !*keyboard_captured {
+        for ch in delivered.drain(..) {
+            out.push((false, ch));
+        }
     }
-    take_native_capture()
+    *keyboard_captured = capturing;
+
+    if !capturing {
+        for &(down, ch) in &queued {
+            if down {
+                if !delivered.contains(&ch) {
+                    delivered.push(ch);
+                }
+            } else if let Some(i) = delivered.iter().position(|&held| held == ch) {
+                delivered.remove(i);
+            }
+        }
+        return queued;
+    }
+
+    for (down, ch) in queued {
+        if down {
+            continue;
+        }
+        if let Some(i) = delivered.iter().position(|&held| held == ch) {
+            delivered.remove(i);
+            out.push((false, ch));
+        }
+    }
+    out
 }
 
 /// Click-through helper: maps a click inside the Game Image (local coords,
