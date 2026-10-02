@@ -33,6 +33,28 @@ fn manual_movement_error() -> ActionError {
     ActionError::UserInput
 }
 
+/// A route refusal is a terminal for the owning step, not permission to
+/// silently re-arm its approach. Park until an explicit owner retry.
+fn walk_step_evidence(
+    receipt: WalkReceipt,
+) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
+    match receipt.end {
+        WalkEnd::Arrived | WalkEnd::RouteEnded => Ok(receipt.evidence),
+        WalkEnd::UserInput => Err(manual_movement_error()),
+        WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
+            "walk needs live quest evidence: {gates:?}"
+        )))),
+        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => {
+            static REASON: std::sync::LazyLock<Arc<str>> =
+                std::sync::LazyLock::new(|| Arc::from("walk failed"));
+            Err(ActionError::Blocked(
+                receipt.detail.unwrap_or_else(|| Arc::clone(&REASON)),
+            ))
+        }
+        WalkEnd::Cancelled => Err(ActionError::Cancelled),
+    }
+}
+
 pub fn handlers() -> &'static [super::compile::StepHandler] {
     &[
         super::compile::StepHandler {
@@ -998,36 +1020,13 @@ impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(WalkReceipt {
-                end: WalkEnd::UserInput,
-                ..
-            })) => Poll::Ready(Err(manual_movement_error())),
-            Poll::Ready(Ok(WalkReceipt {
-                end: WalkEnd::Arrived,
-                evidence,
-                ..
-            }))
-            | Poll::Ready(Ok(WalkReceipt {
-                end: WalkEnd::RouteEnded,
-                evidence,
-                ..
-            })) => Poll::Ready(Ok(StepOutcome {
-                progress: None,
-                evidence,
-                receipt: None,
-            })),
-            Poll::Ready(Ok(WalkReceipt {
-                end: WalkEnd::NeedsEvidence(gates),
-                ..
-            })) => Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
-                "walk needs live quest evidence: {gates:?}"
-            ))))),
-            Poll::Ready(Ok(WalkReceipt {
-                end: WalkEnd::Refused,
-                detail: Some(detail),
-                ..
-            })) => Poll::Ready(Err(ActionError::Failed(detail))),
-            Poll::Ready(Ok(_)) => Poll::Ready(Err(ActionError::Failed(Arc::from("walk failed")))),
+            Poll::Ready(Ok(receipt)) => {
+                Poll::Ready(walk_step_evidence(receipt).map(|evidence| StepOutcome {
+                    progress: None,
+                    evidence,
+                    receipt: None,
+                }))
+            }
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
         }
     }
@@ -1121,11 +1120,10 @@ impl StepRun for TalkRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(WalkReceipt {
-                    end: WalkEnd::UserInput,
-                    ..
-                })) => return Poll::Ready(Err(manual_movement_error())),
-                Poll::Ready(Ok(_)) => self.walk = None,
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt)?;
+                    self.walk = None;
+                }
             }
         }
         if !self.started {
@@ -1351,7 +1349,10 @@ impl StepRun for InteractRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => self.walk = None,
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt)?;
+                    self.walk = None;
+                }
             }
         }
         if !self.started {
@@ -1657,16 +1658,18 @@ impl StepRun for UseOnRun {
         let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Ready(Ok(WalkReceipt {
-                    end: WalkEnd::UserInput,
-                    ..
-                })) => return Poll::Ready(Err(manual_movement_error())),
+                Poll::Ready(Ok(receipt)) if receipt.end == WalkEnd::UserInput => {
+                    return Poll::Ready(Err(manual_movement_error()))
+                }
                 _ if timed_out => {
                     return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
                 }
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => self.walk = None,
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt)?;
+                    self.walk = None;
+                }
             }
         }
         if timed_out {

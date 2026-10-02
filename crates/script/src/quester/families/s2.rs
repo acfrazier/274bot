@@ -1,7 +1,7 @@
 //! Bank, shop, production, equipment and loadout compiled families.
-use super::reach;
+use super::{reach, walk_step_evidence};
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkEnd};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
@@ -355,11 +355,7 @@ impl StepRun for BankRun {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    if !matches!(receipt.end, WalkEnd::Arrived | WalkEnd::RouteEnded) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank walk failed",
-                        ))));
-                    }
+                    walk_step_evidence(receipt)?;
                     self.walk = None;
                 }
             }
@@ -500,7 +496,10 @@ impl StepRun for BuyRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => self.walk = None,
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt)?;
+                    self.walk = None;
+                }
             }
         }
         if self.buy.is_none() {
@@ -657,7 +656,10 @@ impl StepRun for MakeRun {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => self.walk = None,
+                Poll::Ready(Ok(receipt)) => {
+                    walk_step_evidence(receipt)?;
+                    self.walk = None;
+                }
             }
         }
         if self.trigger.is_none() && self.make.is_none() {
