@@ -433,6 +433,25 @@ owner, and live route-less walking composers stop through the shared intent
 sequence. Already operator-paused or reconnect-carried script work keeps its
 existing Resume behavior.
 
+The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
+displayed as “Pause script on manual movement,” defaults to ON. It gates only
+the pause of the script that owns the cancelled walk; it never gates intent
+detection, cancellation, or the posted outcome. With it OFF, cancellation
+still occurs and scripts remain able to observe their normal end state,
+including compat `false` and the v2 `user-input` reason. A native script may
+make a new decision after an explicit Resume, but the cancelled request, host
+carry, queued pre-takeover walking work, and watchdog recovery are not replayed.
+
+The detector classifies movement intent, not successful displacement. Accepted
+conservative positives include a world-menu Examine/Cancel selection and
+unwalkable or same-path clicks, even when no movement follows. Inventory,
+chat, main-modal widgets, and unrelated keyboard input are excluded. The
+documented residue remains: a rare pointer jump from a hovered world-menu
+action to side chrome can invoke the last-drawn default action without passing
+the world-pointer classifier; spellbook/jewellery teleports and dialogue travel
+are also outside this takeover rule, and standalone client-window input is not
+claimed.
+
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:

@@ -121,6 +121,35 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   latches a bank session; `bank_planned` requires a PRE-state stand
   proof.
 
+### Walk outcome and manual movement
+
+`walk` and `walk-near` complete through snapshot outcomes, not a returned
+Promise. For a caller-supplied `request_id`, treat a result as belonging to that
+request only when `walk_outcome_seq` has advanced and
+`walk_outcome_request_id`, `walk_outcome_generation`, and the outcome key
+(`walk_outcome_x`, `walk_outcome_z`, `walk_outcome_level`,
+`walk_outcome_radius`, and `walk_outcome_allow_teleports`) match.
+`walk_outcome_cancel_reason` is the typed `'none' | 'user-input'` discriminator;
+a user-input cancellation also has `walk_outcome_failed: true`, so do not
+infer its reason from the failure flag.
+The per-slot `user_move_intent_seq` advances for qualifying manual movement
+even when no walk outcome is produced. Snapshot deltas keep unchanged outcome
+fields; a new outcome replaces the reason as part of the same outcome family.
+
+The shared navigation preference `nav.pause_script_on_manual_walk_abort`
+(displayed as “Pause script on manual movement”) defaults to ON. It controls
+only whether the owning script is paused after cancellation: OFF still cancels
+the walk and publishes the correlated result, so a running v2 script can
+observe `'user-input'` and choose what to do. Already-paused or reconnect-carried
+work is not cancelled merely because movement happens during that hold. After
+an explicit Resume, a native script may make a fresh decision, but the old
+cancelled request, host carry, queued work, and watchdog recovery are never
+automatically replayed. See [Nav](nav.md) for the accepted intent bounds and
+known detector residue.
+
+User-owned world/minimap clicks and TUI Manual steps are classified as intent;
+script-generated input is not. This is not evidence that the player moved.
+
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.
 
