@@ -91,6 +91,54 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+## JS API v2 GatherQuest sample checks
+
+The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
+the Rust API tables. Regenerate it with:
+
+```sh
+cargo test -p script --test host_js regen_host_js -- --ignored
+```
+
+The pinned TypeScript 5.8.3 consumer probes check the generated declarations,
+including the `gather_quest_v2.ts` sample. Its probe checks with and without
+`--strict`, emits JavaScript, and requires the checked-in
+`gather_quest_v2.js` to match that emit:
+
+```sh
+cargo test -p script --test host_js -- --ignored tsc
+```
+
+## JS API v2 GatherQuest live cells
+
+The ignored `script_api_live` tests load the checked-in `gather_quest_v2.js`
+through the real Load path and exercise it against a local R289 server. The
+engine and game/cache endpoints must be reachable on `127.0.0.1:45594` and
+`127.0.0.1:2080`. Provide a matching `WORLD_ENGINE_DIR` and `WORLD_NAV_PACK`,
+and set `BOT_CACHE_DIR` to a copied client cache.
+
+Run from the repository root with `LIVE=1`. The `HOME` used by the test must be
+a disposable directory under `BOT_EVIDENCE_DIR`; the test writes receipts
+there. `BOT_LIVE_NAME_PREFIX` may be set to distinguish the minted test
+account from other live runs.
+
+```sh
+LIVE=1 cargo test -p host-play --features test-support --test script_api_live -- --ignored --test-threads=1
+```
+
+`script_api_gather_and_quest` records the running/gathering phases, confirmed
+yields and emptied drop slots, the Driver packet budget, the stopped session
+envelope, and Cook's colour-only progress row. Its receipt is
+`script-api-gather-and-quest-receipt.json` in `BOT_EVIDENCE_DIR`.
+
+`script_api_progress_journal` uses the released Romeo & Juliet journal rules.
+It seeds stage 30, reads progress, advances the fixture to stage 40 and reads
+again. It requires known stage/rule keys, `inProgress`, `complete: 'false'`,
+hidden journal paint while the quiet-paint lease is held, and public evidence
+matching the real closed-journal observation after the acquired observation.
+Its receipt, `script-api-progress-journal-receipt.json`, contains both reads,
+their host evidence stamps and the journal open/close packet trace.
+
 A scenario that waits for a card's clean stop (`wait_script_stop`) must
 also watch the card's own work. Its post-Start watch and terminal proof must
 be an outcome its pre-Start seed cannot already satisfy, or the run passes
