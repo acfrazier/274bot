@@ -193,6 +193,10 @@ an open modal without a loaded item table is not a successful native open.
 A bank without packed stand or declared NPC access fails closed with its name.
 Native counted withdrawals use the same session-fenced host amount-dialog
 continuation as compatibility scripts; dispatch alone never confirms a transfer.
+Named bank deposits use one content `Deposit All` operation for all held copies
+of that item, rather than sending an operation for each occupied slot. Other
+item types and configured keep items are untouched; observed inventory changes,
+not accepted dispatch alone, still settle the transfer.
 
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank

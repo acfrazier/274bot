@@ -633,17 +633,19 @@ where
                 }
             }
             InteractReq::Deposit { name } => {
-                let wanted = name.to_lowercase();
-                for item in snapshot.bank_side() {
-                    let resolved = obj_names.and_then(|n| n.name(item.def.id));
-                    if resolved.is_some_and(|n| n.eq_ignore_ascii_case(&wanted)) {
-                        if let Some(op) = all_slot(&item.actions) {
-                            wrote |= matches!(
-                                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                                SendResult::Sent { .. }
-                            );
-                        }
-                    }
+                // The content's Deposit All operation moves every held copy
+                // of this item, including copies in other inventory slots.
+                if let Some((item, op)) = snapshot.bank_side().iter().find_map(|item| {
+                    obj_names
+                        .and_then(|names| names.name(item.def.id))
+                        .is_some_and(|actual| actual.eq_ignore_ascii_case(&name))
+                        .then(|| all_slot(&item.actions).map(|op| (item, op)))
+                        .flatten()
+                }) {
+                    wrote |= matches!(
+                        ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                        SendResult::Sent { .. }
+                    );
                 }
             }
             InteractReq::Withdraw { name, action } => {
