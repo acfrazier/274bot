@@ -5497,6 +5497,14 @@ fn ui_frame(
         } else {
             None
         };
+        if let Some(slot) = focus
+            .focused
+            .as_deref()
+            .and_then(|name| state.session.core.slot_io(name))
+        {
+            slot.input
+                .set_keyboard_enabled(crate::input_capture::game_keyboard_available(ui));
+        }
         state
             .keyboard
             .process_ownership(ui, tx, focus.focused.as_deref());

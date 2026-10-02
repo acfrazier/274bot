@@ -292,7 +292,6 @@ pub(crate) fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
 pub(crate) struct KeyboardOwner {
     down: [bool; 128],
     held_count: usize,
-    tx: Option<Sender<InputEv>>,
     target: Option<String>,
 }
 
@@ -301,13 +300,12 @@ impl Default for KeyboardOwner {
         Self {
             down: [false; 128],
             held_count: 0,
-            tx: None,
             target: None,
         }
     }
 }
 
-fn game_keyboard_available(ui: &Ui) -> bool {
+pub(crate) fn game_keyboard_available(ui: &Ui) -> bool {
     // SAFETY: called on the UI thread during the active Ui frame, so the
     // current ImGui context and its IO are alive. Copy the platform focus
     // flag immediately; no raw reference survives another ImGui call.
@@ -316,20 +314,9 @@ fn game_keyboard_available(ui: &Ui) -> bool {
 }
 
 impl KeyboardOwner {
-    fn release(&mut self, ch: i32) {
-        if self.down[ch as usize] {
-            if let Some(tx) = &self.tx {
-                let _ = tx.send(InputEv::Key { down: false, ch });
-            }
-            self.down[ch as usize] = false;
-            self.held_count -= 1;
-        }
-    }
-
-    /// Every frame, before any Image-hover gate: deliver native ups already
-    /// owned by the game, then release everything left if ownership is lost.
-    /// Retain the old sender through capture-off/slot-switch so releases go
-    /// to the slot that actually received the downs.
+    /// Every frame, before any Image-hover gate, pair physical ups for the
+    /// still-attached slot. Detach releases are authoritative in SlotInput,
+    /// not synthetic events sent to a receiver that may already be gone.
     pub(crate) fn process_ownership(
         &mut self,
         ui: &Ui,
@@ -337,30 +324,27 @@ impl KeyboardOwner {
         target: Option<&str>,
     ) {
         let changed = self.target.as_deref() != target;
-        if !changed && self.held_count != 0 && tx.is_some() {
-            // The same slot may reconnect its channel. Keep releases on its
-            // current receiver; a different slot still owes the old sender.
-            self.tx = tx.cloned();
+        if self.held_count != 0 && (changed || tx.is_none() || !game_keyboard_available(ui)) {
+            self.down.fill(false);
+            self.held_count = 0;
         }
         NATIVE_CAPTURE
             .lock()
             .expect("native capture")
             .retain(|&(down, ch)| {
                 if !down && self.down[ch as usize] {
-                    self.release(ch);
+                    if let Some(tx) = tx {
+                        let _ = tx.send(InputEv::Key { down: false, ch });
+                    }
+                    self.down[ch as usize] = false;
+                    self.held_count -= 1;
                     false
                 } else {
                     true
                 }
             });
 
-        if self.held_count != 0 && (changed || tx.is_none() || !game_keyboard_available(ui)) {
-            for ch in 0..self.down.len() {
-                self.release(ch as i32);
-            }
-        }
         if tx.is_none() {
-            self.tx = None;
             self.target = None;
         } else if changed {
             self.target = target.map(str::to_owned);
@@ -381,7 +365,6 @@ impl KeyboardOwner {
         if queued.is_empty() {
             return;
         }
-        self.tx = Some(tx.clone());
         for (down, ch) in queued.drain(..) {
             let held = &mut self.down[ch as usize];
             if down {
