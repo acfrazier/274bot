@@ -40,6 +40,7 @@ fn run_selected_facts<'s>(
     let op = js_to_string(scope, args.get(0))?;
     match op.as_str() {
         "item-db" => item_db(scope),
+        "fixed-food-heals" => fixed_food_heals(scope),
         "food-forms" => food_forms(scope, args.get(1)),
         "range-loadout" => range_loadout(scope, args.get(1), args.get(2)),
         "ranged-item" => ranged_item(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
@@ -80,6 +81,22 @@ fn item_db<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Valu
         array
             .set_index(scope, index as u32, row.into())
             .ok_or_else(|| "selected facts item array".to_string())?;
+    }
+    Ok(array.into())
+}
+
+fn fixed_food_heals<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let array = v8::Array::new(scope, 0);
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(array.into());
+    };
+    for (index, (name, _)) in data.fixed_food_heals().enumerate() {
+        let name = v8_str(scope, name)?;
+        array
+            .set_index(scope, index as u32, name)
+            .ok_or_else(|| "selected facts fixed food array".to_string())?;
     }
     Ok(array.into())
 }
