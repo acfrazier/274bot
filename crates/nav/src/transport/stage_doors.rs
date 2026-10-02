@@ -588,8 +588,12 @@ enum Arrival {
     /// An open-and-close proc walked the player through the wall; the
     /// leaf it places.
     Door(LocRef),
-    /// `~climb_ladder` jumped the player to this tile.
-    Climb(WorldTile),
+    /// `~climb_ladder` jumped to this anchor landing; a direct `coord`
+    /// displacement is kept separately for checked player-relative routing.
+    Climb {
+        to: WorldTile,
+        player_delta: Option<WorldTile>,
+    },
 }
 
 /// Where a path ended.
@@ -612,6 +616,9 @@ struct Eval<'s> {
     stand: Option<WorldTile>,
     angle: i32,
     needs: Needs,
+    /// Whether this handler can be represented as an unconditional,
+    /// side-effect-free player-relative landing.
+    relative_landing_safe: bool,
     jumps: usize,
 }
 
@@ -632,6 +639,7 @@ impl Eval<'_> {
                         if !self.src.certified(rest) {
                             return Flow::Refused;
                         }
+                        self.relative_landing_safe &= !relative_landing_side_effect(rest);
                         if matches!(rest, Stmt::Return(_)) {
                             return Flow::Crossed(leaf, true);
                         }
@@ -659,6 +667,7 @@ impl Eval<'_> {
                     && other.as_deref().is_none_or(inert)
                     && self.src.certified(stmt) =>
             {
+                self.relative_landing_safe &= !relative_landing_side_effect(stmt);
                 Flow::Next
             }
             Stmt::If(arms, other) => {
@@ -718,6 +727,7 @@ impl Eval<'_> {
                 if INERT_CALLS.contains(&name.as_str())
                     && args.iter().all(|a| self.value(a, env).is_some())
                 {
+                    self.relative_landing_safe &= name == "p_arrivedelay";
                     Flow::Next
                 } else {
                     Flow::Refused
@@ -823,19 +833,33 @@ impl Eval<'_> {
         if !matches!(self.value(up, env), Some(Val::Bool(_))) {
             return Flow::Refused;
         }
-        let to = match self.value(dest, env) {
-            Some(Val::Coord(to)) => to,
-            Some(Val::Rel(0, dy, 0)) => WorldTile {
-                level: self.at.level + dy,
-                ..self.at
-            },
-            Some(Val::Rel(0, 0, dz)) if dz.abs() == CELLAR_SHIFT => WorldTile {
-                z: self.at.z + dz,
-                ..self.at
-            },
+        let (to, player_delta) = match self.value(dest, env) {
+            Some(Val::Coord(to)) => (to, None),
+            Some(Val::Rel(0, dy, 0)) => (
+                WorldTile {
+                    level: self.at.level + dy,
+                    ..self.at
+                },
+                Some(WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: dy,
+                }),
+            ),
+            Some(Val::Rel(0, 0, dz)) if dz == CELLAR_SHIFT || dz == -CELLAR_SHIFT => (
+                WorldTile {
+                    z: self.at.z + dz,
+                    ..self.at
+                },
+                Some(WorldTile {
+                    x: 0,
+                    z: dz,
+                    level: 0,
+                }),
+            ),
             _ => return Flow::Refused,
         };
-        Flow::Crossed(Arrival::Climb(to), false)
+        Flow::Crossed(Arrival::Climb { to, player_delta }, false)
     }
 
     /// A pure expression's value, or `None` for anything with an effect
@@ -1095,6 +1119,24 @@ fn stat_id(args: &[Expr]) -> Option<i32> {
     STATS.iter().position(|s| s == name).map(|i| i as i32)
 }
 
+/// Side effects excluded from the spatial-only player-relative mode. The
+/// shared `p_arrivedelay` call is modeled timing and remains safe; its tick
+/// is still priced by `extra_ticks("ladder_cellar")`.
+fn relative_landing_side_effect(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Call(name, _) => INERT_CALLS.contains(&name.as_str()) && name != "p_arrivedelay",
+        Stmt::Block(body) => body.iter().any(relative_landing_side_effect),
+        Stmt::If(arms, other) => {
+            arms.iter()
+                .any(|(_, body)| body.iter().any(relative_landing_side_effect))
+                || other
+                    .as_deref()
+                    .is_some_and(|body| body.iter().any(relative_landing_side_effect))
+        }
+        _ => false,
+    }
+}
+
 /// `door_procs.rs2` `[proc,check_axis]`: the coord shares the loc's z for
 /// a north/south wall, its x for a west/east wall.
 fn check_axis(coord: WorldTile, loc: WorldTile, angle: i32) -> bool {
@@ -1296,10 +1338,13 @@ pub(super) fn stage_door_edges(
                     stand,
                     angle: p.angle,
                     needs: Needs::default(),
+                    relative_landing_safe: true,
                     jumps: 0,
                 };
                 match eval.run(&handler.body, &mut Env::new()) {
-                    Flow::Crossed(arrival, _) => Some((arrival, eval.needs)),
+                    Flow::Crossed(arrival, _) => {
+                        Some((arrival, eval.needs, eval.relative_landing_safe))
+                    }
                     _ => None,
                 }
             };
@@ -1318,7 +1363,7 @@ pub(super) fn stage_door_edges(
                                 level: at.level,
                             }
                         };
-                        let Some((Arrival::Door(leaf), needs)) = eval(Some(stand)) else {
+                        let Some((Arrival::Door(leaf), needs, _)) = eval(Some(stand)) else {
                             continue;
                         };
                         let leaf = match leaf {
@@ -1341,7 +1386,9 @@ pub(super) fn stage_door_edges(
                     }
                 }
                 Some(Role::Ladder) => {
-                    let Some((Arrival::Climb(to), needs)) = eval(None) else {
+                    let Some((Arrival::Climb { to, player_delta }, needs, relative_landing_safe)) =
+                        eval(None)
+                    else {
                         continue;
                     };
                     // `~climb_ladder`'s price is the measured ladders.rs2
@@ -1356,10 +1403,19 @@ pub(super) fn stage_door_edges(
                     if !in_world_box(&to) {
                         continue;
                     }
+                    let relative = if needs == Needs::default() && relative_landing_safe {
+                        player_delta
+                    } else {
+                        None
+                    };
                     let Some(mut edge) = gated_edge(TransportKind::Ladder, id, at, to, needs)
                     else {
                         continue;
                     };
+                    // Guarded, dialog-driven, or side-effectful handlers
+                    // retain their anchor landing; only unguarded direct
+                    // `coord` climbs use the existing relative wire mode.
+                    edge.player_delta = relative;
                     edge.ticks = ticks;
                     proven = true;
                     observable.admit_edge(graph, edge, audit);
