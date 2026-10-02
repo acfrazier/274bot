@@ -68,6 +68,10 @@ live-harness = ["dep:scenario"]
 # production builds.
 test-support = ["script/test-hooks"]
 
+# Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
+# dev-dependencies, never production builds.
+live-probe = []
+
 # Windows-only headed Quester journal paint proof. The code remains gated by
 # both this feature and `cfg(windows)` so ordinary Mac/headless tests never
 # construct a native window.

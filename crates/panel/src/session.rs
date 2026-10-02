@@ -42,7 +42,7 @@ use host_play::{
     map_ready_catalogue, map_ready_images, open_vault, peek_map_catalogue, run_prepared_template,
     run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
     ProfileOptions, ReadyCatalogue, ReadyImages, ScriptNavPaint, ServerProfile,
-    SharedClientTemplate, SlotStatus, ValidatedTemplate, WalkArm,
+    SharedClientTemplate, SlotFrameInput, SlotStatus, ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -51,6 +51,7 @@ use nav::paint::{
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Secret, Vault};
 
@@ -947,6 +948,8 @@ pub struct Session {
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
+    /// WalkTo-only opt-out, reset when the picker opens; never persisted.
+    pub route_through_zones: bool,
     /// Separate Fleet window and the shared identity-keyed marked rows.
     pub fleet_open: bool,
     pub fleet_selection: frontend_core::MarkedSelection,
@@ -1347,6 +1350,7 @@ impl Session {
             fleet_report_follows_start: false,
             fleet_restart_confirm: false,
             walkto_open: false,
+            route_through_zones: false,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             map_demand: None,
@@ -1889,11 +1893,14 @@ impl Session {
         );
         if let Some(world) = profile.world() {
             crate::picker::set_reach_binding(
-                profile.reach(),
+                profile.reach_source(),
                 world.collision.origin,
                 world.collision.width,
                 world.collision.height,
-                profile.nav_origin().is_bundled(),
+                profile.nav_origin().is_bundled()
+                    || profile
+                        .nav_identity()
+                        .is_some_and(|identity| identity.reach_sha256.is_some()),
             );
         } else {
             crate::picker::set_reach_binding(
@@ -2708,7 +2715,21 @@ impl Session {
             .as_ref()
             .map(|t| t.profile().map_members())
             .unwrap_or(false);
-        let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
+        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
+            let hold = frame.hold;
+            if host_play::cancel_walk_arm_on_manual_input(
+                name,
+                &travellers,
+                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
+                    x,
+                    z,
+                    level,
+                }),
+                frame,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+                nav_paint_cache.lock().unwrap().invalidate(name);
+            }
             let session_boundary = publish_frontend_slot(
                 name,
                 c,
@@ -4553,6 +4574,20 @@ impl Session {
             .availability(kind, &self.picker_context(world), origin)
     }
 
+    fn walk_find_options(&self) -> FindOptions {
+        FindOptions {
+            allow_teleports: self.ui.nav.allow_teleports,
+            allow_wilderness: self.ui.nav.allow_wilderness,
+            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+            zones: if self.route_through_zones {
+                ZoneExempt::all()
+            } else {
+                ZoneExempt::NONE
+            },
+            ..Default::default()
+        }
+    }
+
     /// Consume a pending selection once. Missing player/focus is an explicit
     /// refusal, never an arm stored for a future login.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
@@ -4561,12 +4596,7 @@ impl Session {
         let origin = self
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });
-        let options = FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            ..Default::default()
-        };
+        let options = self.walk_find_options();
         let name = self.focused_name();
         let profile = self.server_profile.clone();
         let request = WalkRequest {
@@ -4722,12 +4752,7 @@ impl Session {
     pub fn confirm_picker_group_walk(&mut self, world: &NavWorld) -> bool {
         use frontend_core::{MarkedWalk, WalkInputs};
         let context = self.picker_context(world);
-        let options = FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            ..Default::default()
-        };
+        let options = self.walk_find_options();
         let destination = self
             .map_model
             .pending()

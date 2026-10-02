@@ -31,10 +31,11 @@ use std::sync::Arc;
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
-    AvoidRect, BankApproach, BankStand, Booth, Carry, ChatLine, ChatOption, Collision, CombatStyle,
-    InspectHop, Interact, InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth,
-    NpcBox, PuzzleBoard, QuestStatus, Reach, Row, SceneEntity, SideTabIface, Snapshot, Stat, Tile,
-    Varp, WidgetText,
+    ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand, Booth, Carry,
+    ChatLine, ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch,
+    MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
+    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface, Snapshot,
+    Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -296,13 +297,13 @@ pub struct NearestBoothInput<'a> {
     pub op: &'a str,
 }
 
-/// The snapshot fields the host observed this PLAYER_INFO — exactly the
-/// set the shim Game/Inventory/Skills/Bank/Banking/EventSignal read, no
-/// World clone. `inv`/`bank`/`bank_side` rows carry the resolved obj name
-/// (`None` when the host table has no name for the id — a script query
-/// never matches); `stats` the stat index/name/xp; `booths` the scene
-/// locs with a `Use-quickly` action; `banks` the packed stands; `hold`/
-/// `ours` the guardian's status for `EventSignal.pending()`.
+/// The host-observed PLAYER_INFO facts sent to the isolate, plus correlated
+/// movement intent and walk-outcome reason. No cloned World. `inv`/`bank`/
+/// `bank_side` rows carry the resolved obj name (`None` when the host table
+/// has no name for the id — a script query never matches); `stats` the stat
+/// index/name/xp; `booths` the scene locs with a `Use-quickly` action; `banks`
+/// the packed stands; `hold`/`ours` the guardian's status for
+/// `EventSignal.pending()`.
 pub struct SnapshotInput<'a> {
     pub tick: u64,
     pub here: Option<TileInput>,
@@ -392,10 +393,14 @@ pub struct SnapshotInput<'a> {
     pub self_target_index: i32,
     /// Selected-world widget text rows. Absent id is not a stale IfType label.
     pub widgets: &'a [WidgetTextInput<'a>],
+    /// Latest qualifying user movement intent, independent of a walk terminal.
+    pub user_move_intent_seq: u64,
+    /// Bounded cancellation reason for the latest posted walk outcome.
+    pub walk_outcome_cancel_reason: WalkCancelReason,
 }
 
 /// Optional native facts appended to the isolate snapshot. Kept separate
-/// from [`SnapshotInput`] so existing one-shot callers remain source-compatible.
+/// from [`SnapshotInput`] so callers can omit these facts when unused.
 #[derive(Clone, Copy, Default)]
 pub struct NativeFactsInput<'a> {
     pub self_chat: Option<&'a str>,
@@ -454,6 +459,14 @@ pub struct NativeFactsInput<'a> {
     /// `-1` idle or no local player). `None` omits the slot (callers that
     /// do not observe it); the isolate keeps its last value.
     pub self_anim: Option<i32>,
+    /// The host's live gather session. `None` means do not write this delta
+    /// page; `Some` has a status only after the card publishes one.
+    pub api_gather: Option<&'a crate::api_gather::GatherPage>,
+    /// The retained terminal result. Absence means retain any prior outcome.
+    pub api_gather_outcome: Option<&'a crate::api_gather::GatherEnd>,
+    /// The most recently published progress acknowledgment or terminal.
+    /// Absence omits the page and retains the isolate's prior value.
+    pub api_progress: Option<&'a crate::api_progress::ProgressPage>,
     /// Bank item packet generation (`-1` while closed), not the open/close
     /// session identity. `None` omits the slot and keeps the last value.
     pub bank_snapshot_generation: Option<i64>,
@@ -622,8 +635,17 @@ pub fn decode_snapshot(buf: &[u8]) -> Result<Snapshot<'_>, String> {
 
 impl<'a> Snapshot<'a> {
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, String> {
-        root_as_snapshot_with_opts(&isolate_verify_opts(), buf)
-            .map_err(|err: InvalidFlatbuffer| err.to_string())
+        let snapshot = root_as_snapshot_with_opts(&isolate_verify_opts(), buf)
+            .map_err(|err: InvalidFlatbuffer| err.to_string())?;
+        if snapshot.has_walk_outcome_cancel_reason()
+            && !matches!(
+                snapshot.walk_outcome_cancel_reason(),
+                WalkCancelReason::None | WalkCancelReason::UserInput
+            )
+        {
+            return Err("unknown walk outcome cancellation reason".to_string());
+        }
+        Ok(snapshot)
     }
 
     presence_methods! {
@@ -709,6 +731,9 @@ impl<'a> Snapshot<'a> {
         has_main_make => VT_MAIN_MAKE,
         has_main_make_available => VT_MAIN_MAKE_AVAILABLE,
         has_bank_approaches => VT_BANK_APPROACHES,
+        has_user_move_intent_seq => VT_USER_MOVE_INTENT_SEQ,
+        has_walk_outcome_cancel_reason => VT_WALK_OUTCOME_CANCEL_REASON,
+
         has_walk_outcome_seq => VT_WALK_OUTCOME_SEQ,
         has_walk_outcome_generation => VT_WALK_OUTCOME_GENERATION,
         has_walk_outcome_failed => VT_WALK_OUTCOME_FAILED,
@@ -760,6 +785,9 @@ impl<'a> Snapshot<'a> {
         has_self_anim => VT_SELF_ANIM,
         has_walk_outcome_blocked => VT_WALK_OUTCOME_BLOCKED,
         has_bank_snapshot_generation => VT_BANK_SNAPSHOT_GENERATION,
+        has_api_gather => VT_API_GATHER,
+        has_api_gather_outcome => VT_API_GATHER_OUTCOME,
+        has_api_progress => VT_API_PROGRESS,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1012,6 +1040,41 @@ fn reach_fp(r: &ReachViewInput<'_>) -> ReachViewFp {
         stamp: 0,
     }
 }
+/// The live gather page's delta identity. Keeping the status `Arc` alive is
+/// deliberate: pointer identity cannot be confused by allocator address reuse.
+#[derive(Clone)]
+pub struct ApiGatherFp {
+    token: u64,
+    phase: u8,
+    status: Option<Arc<crate::native::ScriptStatus>>,
+}
+
+impl PartialEq for ApiGatherFp {
+    fn eq(&self, other: &Self) -> bool {
+        self.token == other.token
+            && self.phase == other.phase
+            && match (&self.status, &other.status) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+}
+
+impl Eq for ApiGatherFp {}
+
+impl From<&crate::api_gather::GatherPage> for ApiGatherFp {
+    fn from(page: &crate::api_gather::GatherPage) -> Self {
+        Self {
+            token: page.token,
+            phase: match page.phase {
+                crate::api_gather::GatherPhase::Preparing => 1,
+                crate::api_gather::GatherPhase::Running => 2,
+            },
+            status: page.status.clone(),
+        }
+    }
+}
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
@@ -1106,6 +1169,8 @@ pub struct SnapshotFingerprint {
     pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
+    pub user_move_intent_seq: u64,
+
     pub walk_outcome_seq: u64,
     pub walk_outcome_generation: u64,
     pub walk_outcome_failed: bool,
@@ -1116,6 +1181,7 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub walk_outcome_blocked: bool,
+    pub walk_outcome_cancel_reason: WalkCancelReason,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
     /// left to a stale keep.
@@ -1124,6 +1190,13 @@ pub struct SnapshotFingerprint {
     pub collision: CollisionViewFp,
     pub bank_selection: BankSelectionInput,
     pub self_anim: Option<i32>,
+    /// `(token, phase, status Arc identity)` for the live host session.
+    pub api_gather: Option<ApiGatherFp>,
+    /// The most recent terminal token; terminals are retained, never cleared
+    /// by a delta.
+    pub api_gather_outcome: Option<u64>,
+    /// The current page identity; only a new `(token, kind)` is posted.
+    pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
 }
 
@@ -1387,6 +1460,7 @@ impl SnapshotFingerprint {
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
+            user_move_intent_seq: input.user_move_intent_seq,
             walk_outcome_seq: native.walk_outcome_seq,
             walk_outcome_generation: native.walk_outcome_generation,
             walk_outcome_failed: native.walk_outcome_failed,
@@ -1397,6 +1471,7 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             walk_outcome_blocked: native.walk_outcome_blocked,
+            walk_outcome_cancel_reason: input.walk_outcome_cancel_reason,
             walk_missing_carry: native
                 .walk_missing_carry
                 .iter()
@@ -1411,6 +1486,9 @@ impl SnapshotFingerprint {
             bank_selection: native.bank_selection,
             self_anim: native.self_anim,
             bank_snapshot_generation: native.bank_snapshot_generation,
+            api_gather: native.api_gather.map(ApiGatherFp::from),
+            api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
+            api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
         }
     }
 }
@@ -1545,6 +1623,7 @@ pub struct DeltaMask {
     pub quest_statuses: bool,
     pub npc_boxes: bool,
     pub bank_approaches: bool,
+    pub user_move_intent_seq: bool,
     pub walk_outcome: bool,
     pub route_inspect: bool,
     pub collision: bool,
@@ -1562,6 +1641,12 @@ pub struct DeltaMask {
     /// The local player's animation id; written only when supplied.
     pub self_anim: bool,
     pub bank_snapshot_generation: bool,
+    /// The live session page, including an explicit zero-id clear.
+    pub api_gather: bool,
+    /// The retained terminal is only replaced, never cleared by a delta.
+    pub api_gather_outcome: bool,
+    /// A progress page is replaced by the next request or cleared on teardown.
+    pub api_progress: bool,
 }
 
 impl DeltaMask {
@@ -1645,6 +1730,7 @@ impl DeltaMask {
             quest_statuses: true,
             npc_boxes: true,
             bank_approaches: true,
+            user_move_intent_seq: true,
             walk_outcome: true,
             route_inspect: true,
             collision: true,
@@ -1653,6 +1739,9 @@ impl DeltaMask {
             bank_selection: true,
             self_anim: true,
             bank_snapshot_generation: true,
+            api_gather: true,
+            api_gather_outcome: true,
+            api_progress: true,
         }
     }
 
@@ -1747,6 +1836,7 @@ impl DeltaMask {
             quest_statuses: next.quest_statuses != last.quest_statuses,
             npc_boxes: next.npc_boxes != last.npc_boxes,
             bank_approaches: next.bank_approaches != last.bank_approaches,
+            user_move_intent_seq: next.user_move_intent_seq != last.user_move_intent_seq,
             walk_outcome: next.walk_outcome_seq != last.walk_outcome_seq
                 || next.walk_outcome_generation != last.walk_outcome_generation
                 || next.walk_outcome_failed != last.walk_outcome_failed
@@ -1757,6 +1847,7 @@ impl DeltaMask {
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
                 || next.walk_outcome_blocked != last.walk_outcome_blocked
+                || next.walk_outcome_cancel_reason != last.walk_outcome_cancel_reason
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
@@ -1768,6 +1859,10 @@ impl DeltaMask {
             self_anim: next.self_anim != last.self_anim,
             bank_snapshot_generation: next.bank_snapshot_generation
                 != last.bank_snapshot_generation,
+            api_gather: next.api_gather != last.api_gather,
+            api_gather_outcome: next.api_gather_outcome.is_some()
+                && next.api_gather_outcome != last.api_gather_outcome,
+            api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
         }
     }
 }
@@ -2330,6 +2425,26 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    // The live page posts an explicit request-id-zero table on keyframes and
+    // when a session clears. Terminal outcomes are retained: `None` omits the
+    // table even on an ordinary delta.
+    let api_gather_slot = mask
+        .api_gather
+        .then(|| api_gather_off(b, native.api_gather));
+    let api_gather_outcome_slot = if mask.api_gather_outcome {
+        native
+            .api_gather_outcome
+            .map(|outcome| api_gather_outcome_off(b, outcome))
+    } else {
+        None
+    };
+    // A progress page is present only when supplied and changed. Unlike the
+    // live Gatherer page, there is no request-id-zero clear table.
+    let api_progress_slot = if mask.api_progress {
+        native.api_progress.map(|page| api_progress_off(b, page))
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -2601,6 +2716,9 @@ fn encode_snapshot_masked_into(
             table.add_bank_approaches(off);
         }
     }
+    if mask.user_move_intent_seq {
+        table.add_user_move_intent_seq(input.user_move_intent_seq);
+    }
     if mask.walk_outcome {
         table.add_walk_outcome_seq(native.walk_outcome_seq);
         table.add_walk_outcome_generation(native.walk_outcome_generation);
@@ -2612,7 +2730,7 @@ fn encode_snapshot_masked_into(
         table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
         table.add_walk_outcome_request_id(native.walk_outcome_request_id);
         table.add_walk_outcome_blocked(native.walk_outcome_blocked);
-        // The vector rides every post of the family: a supplied empty one is
+        table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason);
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
         if let Some(off) = walk_missing_carry_off {
@@ -2672,6 +2790,15 @@ fn encode_snapshot_masked_into(
         table.add_puzzle_board(off);
         table.add_puzzle_board_generation(generation);
     }
+    if let Some(off) = api_gather_slot {
+        table.add_api_gather(off);
+    }
+    if let Some(off) = api_gather_outcome_slot {
+        table.add_api_gather_outcome(off);
+    }
+    if let Some(off) = api_progress_slot {
+        table.add_api_progress(off);
+    }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
     let root = table.finish();
@@ -2683,6 +2810,513 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'
     table.add_x(t.x);
     table.add_z(t.z);
     table.add_level(t.level);
+    table.finish()
+}
+/// The largest encoded settings vector admitted for `gather-run`.
+pub(crate) const GATHER_SETTINGS_MAX_BYTES: usize = 4 * 1024;
+const MAX_GATHER_SETTING_ROWS: usize = 256;
+const MAX_GATHER_SETTING_LIST_ITEMS: usize = 512;
+
+/// Whether `bag` has supported typed values whose exact FlatBuffer vector
+/// fits the isolate wire limit.
+pub(crate) fn gather_settings_within_limit(bag: &crate::native::SettingsBag) -> bool {
+    let mut builder = FlatBufferBuilder::new();
+    let Ok(settings) = settings_vector_off(&mut builder, bag) else {
+        return false;
+    };
+    builder.finish(settings, None);
+    builder.finished_data().len() <= GATHER_SETTINGS_MAX_BYTES
+}
+
+fn setting_tile(value: &serde_json::Value, key: &str) -> Result<TileInput, String> {
+    let serde_json::Value::Object(fields) = value else {
+        return Err(format!("setting {key:?} is not a tile"));
+    };
+    if fields.len() != 3 {
+        return Err(format!("setting {key:?} is not a tile"));
+    }
+    let coordinate = |name| {
+        fields
+            .get(name)
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or_else(|| format!("setting {key:?} has an invalid tile"))
+    };
+    Ok(TileInput {
+        x: coordinate("x")?,
+        z: coordinate("z")?,
+        level: coordinate("level")?,
+    })
+}
+fn setting_text_bytes(key: &str, value: &serde_json::Value) -> Result<usize, String> {
+    let mut bytes = key.len();
+    match value {
+        serde_json::Value::String(text) => bytes = bytes.saturating_add(text.len()),
+        serde_json::Value::Number(number) => {
+            if number.as_i64().is_none() {
+                return Err(format!("setting {key:?} is not an integer"));
+            }
+        }
+        serde_json::Value::Bool(_) => {}
+        serde_json::Value::Array(items) => {
+            if items.len() > MAX_GATHER_SETTING_LIST_ITEMS {
+                return Err("gather-run settings exceed cap".into());
+            }
+            for item in items {
+                let Some(text) = item.as_str() else {
+                    return Err(format!("setting {key:?} is not a string list"));
+                };
+                bytes = bytes.saturating_add(text.len());
+            }
+        }
+        serde_json::Value::Object(_) => {
+            setting_tile(value, key)?;
+        }
+        serde_json::Value::Null => {
+            return Err(format!("setting {key:?} has an unsupported value"));
+        }
+    }
+    if bytes > GATHER_SETTINGS_MAX_BYTES {
+        return Err("gather-run settings exceed cap".into());
+    }
+    Ok(bytes)
+}
+
+fn setting_row_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<WIPOffset<SettingRow<'b>>, String> {
+    let key_off = b.create_string(key);
+    match value {
+        serde_json::Value::String(text) => {
+            let text_off = b.create_string(text);
+            // FlatBuffer child offsets must be built before their parent.
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(1);
+            table.add_text(text_off);
+            Ok(table.finish())
+        }
+        serde_json::Value::Number(number) => {
+            let integer = number
+                .as_i64()
+                .ok_or_else(|| format!("setting {key:?} is not an integer"))?;
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(2);
+            table.add_integer(integer);
+            Ok(table.finish())
+        }
+        serde_json::Value::Bool(flag) => {
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(3);
+            table.add_flag(*flag);
+            Ok(table.finish())
+        }
+        serde_json::Value::Array(items) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(text) = item.as_str() else {
+                    return Err(format!("setting {key:?} is not a string list"));
+                };
+                values.push(b.create_string(text));
+            }
+            let list = b.create_vector(&values);
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(4);
+            table.add_list(list);
+            Ok(table.finish())
+        }
+        serde_json::Value::Object(_) => {
+            let tile = setting_tile(value, key)?;
+            let tile = tile_off(b, tile);
+            let mut table = SettingRowBuilder::new(b);
+            table.add_key(key_off);
+            table.add_kind(5);
+            table.add_tile(tile);
+            Ok(table.finish())
+        }
+        serde_json::Value::Null => Err(format!("setting {key:?} has an unsupported value")),
+    }
+}
+
+fn settings_vector_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    bag: &crate::native::SettingsBag,
+) -> Result<WIPOffset<flatbuffers::Vector<'b, flatbuffers::ForwardsUOffset<SettingRow<'b>>>>, String>
+{
+    if bag.len() > MAX_GATHER_SETTING_ROWS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let list_items = bag
+        .values()
+        .filter_map(serde_json::Value::as_array)
+        .fold(0usize, |sum, values| sum.saturating_add(values.len()));
+    if list_items > MAX_GATHER_SETTING_LIST_ITEMS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let _text_bytes = bag.iter().try_fold(0usize, |sum, (key, value)| {
+        let field_bytes = setting_text_bytes(key, value)?;
+        let total = sum.saturating_add(field_bytes);
+        (total <= GATHER_SETTINGS_MAX_BYTES)
+            .then_some(total)
+            .ok_or_else(|| "gather-run settings exceed cap".to_string())
+    })?;
+    let rows = bag
+        .iter()
+        .map(|(key, value)| setting_row_off(b, key, value))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(b.create_vector(&rows))
+}
+
+fn validate_gather_settings_rows<'a>(
+    rows: flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<SettingRow<'a>>>,
+) -> Result<(), String> {
+    if rows.len() > MAX_GATHER_SETTING_ROWS {
+        return Err("gather-run settings exceed cap".into());
+    }
+    let mut encoded_text_bytes = 0usize;
+    let mut list_items = 0usize;
+    for (index, row) in rows.iter().enumerate() {
+        let key = row
+            .key()
+            .ok_or_else(|| "gather-run setting has no key".to_string())?;
+        if rows
+            .iter()
+            .take(index)
+            .any(|previous| previous.key() == Some(key))
+        {
+            return Err("gather-run settings contain a duplicate key".into());
+        }
+        encoded_text_bytes = encoded_text_bytes.saturating_add(key.len());
+        if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+            return Err("gather-run settings exceed cap".into());
+        }
+        match row.kind() {
+            1 => {
+                let text = row
+                    .text()
+                    .ok_or_else(|| "gather-run text setting has no value".to_string())?;
+                encoded_text_bytes = encoded_text_bytes.saturating_add(text.len());
+            }
+            2 | 3 => {}
+            4 => {
+                let list = row
+                    .list()
+                    .ok_or_else(|| "gather-run list setting has no value".to_string())?;
+                list_items = list_items.saturating_add(list.len());
+                if list_items > MAX_GATHER_SETTING_LIST_ITEMS {
+                    return Err("gather-run settings exceed cap".into());
+                }
+                for text in list.iter() {
+                    encoded_text_bytes = encoded_text_bytes.saturating_add(text.len());
+                    if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+                        return Err("gather-run settings exceed cap".into());
+                    }
+                }
+            }
+            5 => {
+                if row.tile().is_none() {
+                    return Err("gather-run tile setting has no value".into());
+                }
+            }
+            kind => return Err(format!("gather-run setting has unknown kind {kind}")),
+        }
+        if encoded_text_bytes > GATHER_SETTINGS_MAX_BYTES {
+            return Err("gather-run settings exceed cap".into());
+        }
+    }
+    Ok(())
+}
+
+fn decode_gather_settings<'a>(
+    rows: flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<SettingRow<'a>>>,
+) -> Result<crate::native::SettingsBag, String> {
+    validate_gather_settings_rows(rows)?;
+    let mut bag = crate::native::SettingsBag::new();
+    for row in rows.iter() {
+        let key = row
+            .key()
+            .ok_or_else(|| "gather-run setting has no key".to_string())?;
+        let value = match row.kind() {
+            1 => serde_json::Value::String(
+                row.text()
+                    .ok_or_else(|| "gather-run text setting has no value".to_string())?
+                    .to_string(),
+            ),
+            2 => serde_json::Value::from(row.integer()),
+            3 => serde_json::Value::Bool(row.flag()),
+            4 => {
+                let list = row
+                    .list()
+                    .ok_or_else(|| "gather-run list setting has no value".to_string())?;
+                let values = list
+                    .iter()
+                    .map(|text| serde_json::Value::String(text.to_string()))
+                    .collect();
+                serde_json::Value::Array(values)
+            }
+            5 => {
+                let tile = row
+                    .tile()
+                    .ok_or_else(|| "gather-run tile setting has no value".to_string())?;
+                serde_json::json!({
+                    "x": tile.x(),
+                    "z": tile.z(),
+                    "level": tile.level(),
+                })
+            }
+            kind => return Err(format!("gather-run setting has unknown kind {kind}")),
+        };
+        if bag.insert(key.to_string(), value).is_some() {
+            return Err("gather-run settings contain a duplicate key".into());
+        }
+    }
+    if !gather_settings_within_limit(&bag) {
+        return Err("gather-run settings exceed cap".into());
+    }
+    Ok(bag)
+}
+
+fn status_field_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    field: &crate::native::StatusField,
+) -> Option<WIPOffset<StatusField<'b>>> {
+    use crate::native::StatusValue;
+    if matches!(&field.value, crate::native::StatusValue::Quest(_)) {
+        return None;
+    }
+    let key = b.create_string(field.key);
+    match &field.value {
+        StatusValue::Text(value) => {
+            let value = b.create_string(value);
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(1);
+            table.add_text(value);
+            Some(table.finish())
+        }
+        StatusValue::Integer(value) => {
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(2);
+            table.add_integer(*value);
+            Some(table.finish())
+        }
+        StatusValue::Tile(value) => {
+            let tile = tile_off(
+                b,
+                TileInput {
+                    x: value.x,
+                    z: value.z,
+                    level: value.level,
+                },
+            );
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(3);
+            table.add_tile(tile);
+            Some(table.finish())
+        }
+        StatusValue::Truth(value) => {
+            let truth = match value {
+                api::selected::Truth::True => 1,
+                api::selected::Truth::False => 2,
+                api::selected::Truth::Unknown => 3,
+            };
+            let mut table = StatusFieldBuilder::new(b);
+            table.add_key(key);
+            table.add_kind(4);
+            table.add_truth(truth);
+            Some(table.finish())
+        }
+        StatusValue::Quest(_) => None,
+    }
+}
+
+fn api_gather_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    page: Option<&crate::api_gather::GatherPage>,
+) -> WIPOffset<ApiGather<'b>> {
+    let (request_id, phase, has_status) = match page {
+        Some(page) => (
+            page.token,
+            match page.phase {
+                crate::api_gather::GatherPhase::Preparing => 1,
+                crate::api_gather::GatherPhase::Running => 2,
+            },
+            page.status.is_some(),
+        ),
+        None => (0, 0, false),
+    };
+    let fields = page.and_then(|page| page.status.as_deref()).map(|status| {
+        let rows = status
+            .fields
+            .iter()
+            .filter_map(|field| status_field_off(b, field))
+            .collect::<Vec<_>>();
+        b.create_vector(&rows)
+    });
+    let mut table = ApiGatherBuilder::new(b);
+    table.add_request_id(request_id);
+    table.add_phase(phase);
+    table.add_has_status(has_status);
+    if let Some(fields) = fields {
+        table.add_fields(fields);
+    }
+    table.finish()
+}
+
+fn api_gather_outcome_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    outcome: &crate::api_gather::GatherEnd,
+) -> WIPOffset<ApiGatherOutcome<'b>> {
+    use crate::api_gather::GatherEnd;
+    let (end, code, message, retryable, counts) = match outcome {
+        GatherEnd::Stopped { counts, .. } => (1, None, None, false, *counts),
+        GatherEnd::Blocked {
+            failure, counts, ..
+        } => (
+            2,
+            Some(failure.code.as_ref()),
+            Some(failure.message.as_ref()),
+            failure.retryable,
+            *counts,
+        ),
+        GatherEnd::Refused { reason, .. } => {
+            (3, None, Some(reason.as_ref()), false, Default::default())
+        }
+        GatherEnd::Failed { reason, counts, .. } => {
+            (4, None, Some(reason.as_ref()), false, *counts)
+        }
+    };
+    let code = code.map(|value| b.create_string(value));
+    let message = message.map(|value| b.create_string(value));
+    let mut table = ApiGatherOutcomeBuilder::new(b);
+    table.add_request_id(outcome.token());
+    table.add_end(end);
+    if let Some(code) = code {
+        table.add_code(code);
+    }
+    if let Some(message) = message {
+        table.add_message(message);
+    }
+    table.add_retryable(retryable);
+    table.add_yielded(counts.yielded);
+    table.add_dropped(counts.dropped);
+    table.add_deposited(counts.deposited);
+    table.add_trips(counts.trips);
+    table.add_xp(counts.xp);
+    table.finish()
+}
+pub(crate) const MAX_PROGRESS_FLAG_COUNT: u32 = 999_999_999;
+
+fn progress_truth_code(truth: api::selected::Truth) -> u8 {
+    match truth {
+        api::selected::Truth::True => 1,
+        api::selected::Truth::False => 2,
+        api::selected::Truth::Unknown => 3,
+    }
+}
+
+fn progress_colour_code(colour: api::snapshot::QuestListStatus) -> u8 {
+    match colour {
+        api::snapshot::QuestListStatus::NotStarted => 1,
+        api::snapshot::QuestListStatus::InProgress => 2,
+        api::snapshot::QuestListStatus::Complete => 3,
+        api::snapshot::QuestListStatus::Unknown => 4,
+    }
+}
+
+fn knowledge_parts(value: &api::selected::Knowledge<Arc<str>>) -> (&str, &str) {
+    match value {
+        api::selected::Knowledge::Known(value) => (value, ""),
+        api::selected::Knowledge::Partial { known, gaps } => {
+            (known, gaps.first().map_or("", |gap| gap.code.as_ref()))
+        }
+        api::selected::Knowledge::Unknown(gap) => ("", gap.code.as_ref()),
+    }
+}
+
+fn progress_row_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &crate::api_progress::QuestProgressRow,
+) -> WIPOffset<QuestProgressRow<'b>> {
+    let quest = b.create_string(&row.quest);
+    let display = b.create_string(&row.display);
+    let (stage_value, stage_gap) = knowledge_parts(&row.stage);
+    let stage = b.create_string(stage_value);
+    let stage_gap = b.create_string(stage_gap);
+    let (rule_value, rule_gap) = knowledge_parts(&row.rule);
+    let rule = b.create_string(rule_value);
+    let rule_gap = b.create_string(rule_gap);
+    let binding = b.create_string(&row.binding);
+    let role = row.role.as_deref().map(|value| b.create_string(value));
+    let flags = row
+        .flags
+        .iter()
+        .map(|flag| {
+            let name = b.create_string(flag.flag.0.as_ref());
+            let count = flag.count.map_or(-1, |count| {
+                assert!(
+                    count <= MAX_PROGRESS_FLAG_COUNT,
+                    "quest progress flag count exceeds the nine-digit wire bound"
+                );
+                count as i32
+            });
+            let mut table = ProgressFlagRowBuilder::new(b);
+            table.add_flag(name);
+            table.add_truth(progress_truth_code(flag.truth));
+            table.add_count(count);
+            table.finish()
+        })
+        .collect::<Vec<_>>();
+    let flags = b.create_vector(&flags);
+
+    let mut table = QuestProgressRowBuilder::new(b);
+    table.add_quest(quest);
+    table.add_display(display);
+    table.add_colour(progress_colour_code(row.colour));
+    table.add_stage(stage);
+    table.add_stage_gap(stage_gap);
+    table.add_complete(progress_truth_code(row.complete));
+    table.add_rule(rule);
+    table.add_rule_gap(rule_gap);
+    table.add_flags(flags);
+    table.add_evidence_run(row.evidence.run.run);
+    table.add_evidence_session(row.evidence.run.session);
+    table.add_evidence_tick(row.evidence.tick);
+    table.add_evidence_sequence(row.evidence.sequence);
+    table.add_journal_read(row.journal_read);
+    table.add_binding(binding);
+    if let Some(role) = role {
+        table.add_role(role);
+    }
+    table.finish()
+}
+
+fn api_progress_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    page: &crate::api_progress::ProgressPage,
+) -> WIPOffset<ApiProgress<'b>> {
+    use crate::api_progress::ProgressPage;
+    let (reason, row) = match page {
+        ProgressPage::Reading { .. } => (None, None),
+        ProgressPage::Done { row, .. } => (None, Some(progress_row_off(b, row))),
+        ProgressPage::Refused { reason, .. } => (Some(b.create_string(reason)), None),
+    };
+    let mut table = ApiProgressBuilder::new(b);
+    table.add_request_id(page.token());
+    table.add_kind(page.kind());
+    if let Some(reason) = reason {
+        table.add_reason(reason);
+    }
+    if let Some(row) = row {
+        table.add_row(row);
+    }
     table.finish()
 }
 
@@ -2709,6 +3343,19 @@ fn avoid_rect_off<'b>(
     table.add_max_z(max_z);
     table.add_level(level.unwrap_or(-1));
     table.finish()
+}
+fn avoid_catalog_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    catalog_id: &str,
+) -> WIPOffset<AvoidRect<'b>> {
+    let catalog_id = b.create_string(catalog_id);
+    let mut table = AvoidRectBuilder::new(b);
+    table.add_catalog_id(catalog_id);
+    table.finish()
+}
+
+fn avoid_invalid_off<'b>(b: &mut FlatBufferBuilder<'b>) -> WIPOffset<AvoidRect<'b>> {
+    avoid_catalog_off(b, "")
 }
 
 fn inspect_hop_off<'b>(
@@ -3148,12 +3795,16 @@ fn decoded_avoid(row: &Interact<'_>) -> Vec<crate::shim::InspectAvoidWire> {
     };
     rects
         .iter()
-        .map(|rect| crate::shim::InspectAvoidWire::Rect {
-            min_x: rect.min_x(),
-            max_x: rect.max_x(),
-            min_z: rect.min_z(),
-            max_z: rect.max_z(),
-            level: (rect.level() >= 0).then(|| rect.level()),
+        .map(|rect| match rect.catalog_id() {
+            Some("") => crate::shim::InspectAvoidWire::Unsupported,
+            Some(id) => crate::shim::InspectAvoidWire::Catalog(id.to_string()),
+            None => crate::shim::InspectAvoidWire::Rect {
+                min_x: rect.min_x(),
+                max_x: rect.max_x(),
+                min_z: rect.min_z(),
+                max_z: rect.max_z(),
+                level: (rect.level() >= 0).then(|| rect.level()),
+            },
         })
         .collect()
 }
@@ -3241,6 +3892,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
                 x: row.x(),
@@ -3252,6 +3907,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
@@ -3263,6 +3922,41 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 use_zanaris_bank: row.use_zanaris_bank(),
                 request_id: row.request_id(),
             }),
+            "gather-run" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("gather-run has no request_id".into());
+                }
+                let settings = row
+                    .settings()
+                    .map(decode_gather_settings)
+                    .transpose()?
+                    .unwrap_or_default();
+                out.push(crate::shim::InteractReq::GatherRun {
+                    request_id,
+                    settings: Arc::new(settings),
+                });
+            }
+            "gather-stop" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("gather-stop has no request_id".into());
+                }
+                out.push(crate::shim::InteractReq::GatherStop { request_id });
+            }
+            "progress-read" => {
+                let request_id = row.request_id();
+                if request_id == 0 {
+                    return Err("progress-read has no request_id".into());
+                }
+                let name = row
+                    .name()
+                    .ok_or_else(|| "progress-read has no quest id".to_string())?;
+                out.push(crate::shim::InteractReq::ProgressRead {
+                    request_id,
+                    name: name.to_string(),
+                });
+            }
             "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
                 request_id: row.request_id(),
             }),
@@ -3277,6 +3971,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
                 avoid: decoded_avoid(&row),
+                cross: row
+                    .cross()
+                    .map(|names| names.iter().map(str::to_string).collect())
+                    .unwrap_or_default(),
                 request_id: row.request_id(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
@@ -3629,6 +4327,9 @@ fn interact_off<'b>(
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
         InteractReq::SelectBank { .. } => "select-bank",
+        InteractReq::GatherRun { .. } => "gather-run",
+        InteractReq::GatherStop { .. } => "gather-stop",
+        InteractReq::ProgressRead { .. } => "progress-read",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
@@ -3705,6 +4406,7 @@ fn interact_off<'b>(
         | InteractReq::ChannelClose { name, .. }
         | InteractReq::ChannelMessage { sender: name, .. }
         | InteractReq::DuelAccept { partner: name, .. } => Some(b.create_string(name)),
+        InteractReq::ProgressRead { name, .. } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -3758,13 +4460,22 @@ fn interact_off<'b>(
                         max_z,
                         level,
                     } => avoid_rect_off(b, *min_x, *max_x, *min_z, *max_z, *level),
-                    // Inverted sentinel so host validation is invalid-args, not drop.
-                    crate::shim::InspectAvoidWire::Unsupported => {
-                        avoid_rect_off(b, 1, 0, 0, 0, None)
-                    }
+                    crate::shim::InspectAvoidWire::Catalog(id) => avoid_catalog_off(b, id),
+                    crate::shim::InspectAvoidWire::Unsupported => avoid_invalid_off(b),
                 })
                 .collect();
             Some(b.create_vector(&offs))
+        }
+        _ => None,
+    };
+    let cross_off = match req {
+        InteractReq::Walk { cross, .. }
+        | InteractReq::WalkNear { cross, .. }
+        | InteractReq::InspectRoute { cross, .. }
+            if !cross.is_empty() =>
+        {
+            let names: Vec<_> = cross.iter().map(|name| b.create_string(name)).collect();
+            Some(b.create_vector(&names))
         }
         _ => None,
     };
@@ -3774,9 +4485,33 @@ fn interact_off<'b>(
         }
         _ => None,
     };
+    let settings_off = match req {
+        InteractReq::GatherRun { settings, .. } => {
+            assert!(
+                gather_settings_within_limit(settings),
+                "gather-run settings must pass wire validation before encoding"
+            );
+            Some(
+                settings_vector_off(b, settings)
+                    .expect("gather-run settings passed the wire validation"),
+            )
+        }
+        _ => None,
+    };
     let mut table = InteractBuilder::new(b);
     table.add_op(op_off);
     match req {
+        InteractReq::GatherRun { request_id, .. } => {
+            table.add_request_id(*request_id);
+            table.add_settings(settings_off.expect("gather-run settings encoded"));
+        }
+        InteractReq::GatherStop { request_id } => {
+            table.add_request_id(*request_id);
+        }
+        InteractReq::ProgressRead { request_id, .. } => {
+            table.add_request_id(*request_id);
+            table.add_name(name_off.expect("progress-read quest id encoded"));
+        }
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
             table.add_channel_id(*channel_id);
@@ -4205,6 +4940,9 @@ fn interact_off<'b>(
     if let Some(off) = avoid_off {
         table.add_avoid(off);
     }
+    if let Some(off) = cross_off {
+        table.add_cross(off);
+    }
     table.finish()
 }
 
@@ -4286,6 +5024,8 @@ pub(crate) mod tests {
             self_target_kind: 0,
             self_target_index: -1,
             widgets: &[],
+            user_move_intent_seq: 0,
+            walk_outcome_cancel_reason: Default::default(),
         }
     }
 
@@ -4910,6 +5650,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn old_gather_run_without_settings_decodes_as_default_bag() {
+        let mut builder = FlatBufferBuilder::new();
+        let op = builder.create_string("gather-run");
+        let mut row = InteractBuilder::new(&mut builder);
+        row.add_op(op);
+        row.add_request_id(42);
+        let row = row.finish();
+        let reqs = builder.create_vector(&[row]);
+        let mut batch = InteractBatchBuilder::new(&mut builder);
+        batch.add_reqs(reqs);
+        let root = batch.finish();
+        builder.finish(root, None);
+
+        let decoded =
+            decode_interact_batch(builder.finished_data()).expect("older gather-run decodes");
+        let [InteractReq::GatherRun {
+            request_id,
+            settings,
+        }] = decoded.as_slice()
+        else {
+            panic!("older gather-run row retained its operation");
+        };
+        assert_eq!(*request_id, 42);
+        assert!(settings.is_empty());
+    }
+
+    #[test]
+    fn gather_settings_guard_enforces_encoded_size_and_typed_limits() {
+        let mut small = crate::native::SettingsBag::new();
+        small.insert("skill".into(), serde_json::json!("Mining"));
+        assert!(gather_settings_within_limit(&small));
+
+        let mut oversized = crate::native::SettingsBag::new();
+        oversized.insert(
+            "text".into(),
+            serde_json::Value::String("x".repeat(GATHER_SETTINGS_MAX_BYTES * 2)),
+        );
+        assert!(!gather_settings_within_limit(&oversized));
+
+        let mut too_many_items = crate::native::SettingsBag::new();
+        too_many_items.insert("list".into(), serde_json::json!(vec![""; 513]));
+        assert!(!gather_settings_within_limit(&too_many_items));
+
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!(12.5),
+            serde_json::json!({"x": 3200, "z": 3210}),
+        ] {
+            let mut unsupported = crate::native::SettingsBag::new();
+            unsupported.insert("value".into(), value);
+            assert!(!gather_settings_within_limit(&unsupported));
+        }
+    }
+
+    #[test]
+    fn old_snapshot_without_gather_tables_remains_valid() {
+        let mut builder = FlatBufferBuilder::new();
+        let mut snapshot = SnapshotBuilder::new(&mut builder);
+        snapshot.add_tick(3);
+        let root = snapshot.finish();
+        builder.finish(root, None);
+
+        let decoded = Snapshot::from_bytes(builder.finished_data()).expect("old snapshot verifies");
+        assert_eq!(decoded.tick(), 3);
+        assert!(!decoded.has_api_gather());
+        assert!(!decoded.has_api_gather_outcome());
+    }
+
+    #[test]
     fn encode_decode_interact_mouse_center_and_up_round_trips() {
         let reqs = vec![
             InteractReq::Mouse {
@@ -5041,6 +5850,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 9,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 2656,
@@ -5052,6 +5862,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkTo {
                 x: 3,
@@ -5086,6 +5897,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: true,
                 request_id: 11,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3222,
@@ -5097,6 +5909,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: true,
                 request_id: 12,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
         ];
         let bytes = encode_interact_batch(&reqs);
@@ -5145,6 +5958,7 @@ pub(crate) mod tests {
                 allow_bank_fetch: false,
                 request_id: 7,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             }]
         );
     }
@@ -5694,6 +6508,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn unknown_walk_cancel_reason_is_rejected() {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let root = {
+            let mut snapshot = SnapshotBuilder::new(&mut b);
+            snapshot.add_tick(1);
+            snapshot.add_walk_outcome_cancel_reason(WalkCancelReason(2));
+            snapshot.finish()
+        };
+        b.finish(root, None);
+        let error = match Snapshot::from_bytes(b.finished_data()) {
+            Err(error) => error,
+            Ok(_) => panic!("unknown bounded enum was accepted"),
+        };
+        assert!(error.contains("unknown walk outcome cancellation reason"));
+    }
+
+    #[test]
     fn omitted_walk_missing_carry_is_absent_on_an_old_buffer() {
         // A buffer written before slot 254 existed (append-only schema): the
         // slot is absent and the reader reports nothing rather than a clear.
@@ -5707,6 +6538,9 @@ pub(crate) mod tests {
         b.finish(root, None);
         let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(view.has_walk_outcome_seq());
+        assert!(!view.has_user_move_intent_seq());
+        assert!(!view.has_walk_outcome_cancel_reason());
+        assert_eq!(view.walk_outcome_cancel_reason(), WalkCancelReason::None);
         assert!(!view.has_walk_missing_carry());
         assert!(view.walk_missing_carry().is_none());
     }

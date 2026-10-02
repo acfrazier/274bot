@@ -159,6 +159,14 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "bank_approaches", empty_rows)?;
     }
+    if snap.has_user_move_intent_seq() {
+        let seq = num(&mut scope, snap.user_move_intent_seq() as f64);
+        set(&mut scope, obj, "user_move_intent_seq", seq)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "user_move_intent_seq", zero)?;
+    }
+
     if snap.has_walk_outcome_seq() {
         let seq = num(&mut scope, snap.walk_outcome_seq() as f64);
         set(&mut scope, obj, "walk_outcome_seq", seq)?;
@@ -182,6 +190,13 @@ pub(super) fn materialize_snapshot(
             allow.into(),
         )?;
         let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
+        let cancel_reason = match snap.walk_outcome_cancel_reason() {
+            crate::isolate_fb::WalkCancelReason::None => "none",
+            crate::isolate_fb::WalkCancelReason::UserInput => "user-input",
+            _ => return Err("unknown walk outcome cancellation reason".to_string()),
+        };
+        let cancel_reason = js_string(&mut scope, cancel_reason)?;
+        set(&mut scope, obj, "walk_outcome_cancel_reason", cancel_reason)?;
         set(&mut scope, obj, "walk_outcome_request_id", rid)?;
         let carry = carry_array(&mut scope, snap.walk_missing_carry())?;
         set(&mut scope, obj, "walk_missing_carry", carry)?;
@@ -197,6 +212,8 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "walk_outcome_allow_teleports", falsy)?;
         set(&mut scope, obj, "walk_outcome_request_id", zero)?;
         set(&mut scope, obj, "walk_missing_carry", empty_rows)?;
+        let none = js_string(&mut scope, "none")?;
+        set(&mut scope, obj, "walk_outcome_cancel_reason", none)?;
     }
     if snap.has_route_inspect_seq() {
         let seq = num(&mut scope, snap.route_inspect_seq() as f64);
@@ -884,8 +901,76 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "chat_lines", empty_rows)?;
     }
+    if let Some(gather) = snap.api_gather() {
+        let gather = api_gather_object(&mut scope, gather)?;
+        set(&mut scope, obj, "gather", gather)?;
+    } else if !had {
+        set(&mut scope, obj, "gather", none)?;
+    }
     let snapshot = obj.into();
     set(&mut scope, host, "snapshot", snapshot)
+}
+fn api_gather_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    gather: crate::isolate_fb::ApiGather<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if gather.request_id() == 0 {
+        return Ok(v8::null(scope).into());
+    }
+    let phase = match gather.phase() {
+        1 => "preparing",
+        2 => "running",
+        _ => return Ok(v8::null(scope).into()),
+    };
+    let session = v8::Object::new(scope);
+    let token = num(scope, gather.request_id() as f64);
+    set(scope, session, "token", token)?;
+    let phase = js_string(scope, phase)?;
+    set(scope, session, "phase", phase)?;
+    let status: v8::Local<v8::Value> = if gather.has_status() {
+        gather_status_object(scope, gather.fields())?
+    } else {
+        v8::null(scope).into()
+    };
+    set(scope, session, "status", status)?;
+    Ok(session.into())
+}
+
+fn gather_status_object<'s, 'a>(
+    scope: &mut v8::HandleScope<'s>,
+    fields: Option<Vector<'a, ForwardsUOffset<crate::isolate_fb::StatusField<'a>>>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let status = v8::Object::new(scope);
+    for field in fields.into_iter().flat_map(|fields| fields.iter()) {
+        let Some(key) = field.key() else {
+            continue;
+        };
+        let value: Option<v8::Local<'s, v8::Value>> = match field.kind() {
+            1 => field
+                .text()
+                .map(|text| js_string(scope, text))
+                .transpose()?,
+            2 => Some(num(scope, field.integer() as f64)),
+            3 => field
+                .tile()
+                .map(|tile| tile_object(scope, &tile))
+                .transpose()?,
+            4 => {
+                let truth = match field.truth() {
+                    1 => "true",
+                    2 => "false",
+                    3 => "unknown",
+                    _ => continue,
+                };
+                Some(js_string(scope, truth)?)
+            }
+            _ => None,
+        };
+        if let Some(value) = value {
+            set(scope, status, key, value)?;
+        }
+    }
+    Ok(status.into())
 }
 
 /// Install the per-card and profile-global settings as distinct bags, built

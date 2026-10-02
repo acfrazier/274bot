@@ -47,6 +47,12 @@ windows-sys = { version = "0.52", features = [
 name = "panel-play"
 path = "src/main.rs"
 
+# Winit requires the OS main thread on macOS, unlike libtest's worker threads.
+[[test]]
+name = "ime_frame"
+path = "tests/ime_frame.rs"
+harness = false
+
 [features]
 render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
 memory-profile = ["host-play/memory-profile"]
@@ -55,6 +61,7 @@ memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"
 
 [dev-dependencies]
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
+host-play = { path = "../host-play", features = ["live-probe"] }
 proc-macro2 = "1"
 syn = "2"
 parking_lot = "0.12"

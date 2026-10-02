@@ -961,6 +961,21 @@ fn capture_has_death(capture: &CombatCapture) -> bool {
     capture.statuses.iter().any(|status| {
         status["fields"]["combat_end"] == json!("Died")
             || integer(status, "deaths").is_some_and(|count| count > 0)
+    }) || capture.start_baseline.as_ref().is_some_and(|baseline| {
+        let start = baseline["snapshot_tick"]
+            .as_u64()
+            .or_else(|| baseline["tick"].as_u64());
+        capture.frames.iter().any(|frame| {
+            // A parked owner need not publish another status after its abort.
+            // Known zero HP after Start is still a failed live combat cell;
+            // do not hide it behind a later interference or timeout verdict.
+            frame["ingame"] == json!(true)
+                && frame["snapshot_tick"]
+                    .as_u64()
+                    .zip(start)
+                    .is_some_and(|(tick, start)| tick >= start)
+                && matches!(stat_pair(frame, "hitpoints"), Some((base, 0)) if base > 0)
+        })
     })
 }
 
@@ -2892,7 +2907,7 @@ fn run_case(case: Case) {
                 frame_state
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .frame(client, hold);
+                    .frame(client, hold.hold);
             }
         },
     )
@@ -3494,4 +3509,23 @@ fn post_budget_kill_is_separate_and_rejects_late_or_different_npc() {
     capture.frames[0]["tick"] = json!(25);
     capture.frames[0]["nearby_npcs"][0]["index"] = json!(124);
     assert!(!every_imp_corpse_has_outcome(&capture));
+}
+
+#[test]
+fn parked_owner_zero_hp_is_not_hidden_by_missing_death_status() {
+    let mut capture = CombatCapture::default();
+    capture.start_baseline = Some(json!({"snapshot_tick": 20}));
+    capture.frames.push(json!({
+        "ingame": true, "snapshot_tick": 30,
+        "stats": [{"name": "hitpoints", "base": 40, "effective": 0}]
+    }));
+    assert!(capture_has_death(&capture));
+    capture.frames[0]["stats"][0]["effective"] = json!(1);
+    assert!(!capture_has_death(&capture));
+    capture.frames[0]["stats"][0]["effective"] = json!(0);
+    capture.frames[0]["snapshot_tick"] = json!(19);
+    assert!(!capture_has_death(&capture));
+    capture.frames[0]["snapshot_tick"] = json!(30);
+    capture.frames[0]["stats"][0]["base"] = json!(0);
+    assert!(!capture_has_death(&capture));
 }

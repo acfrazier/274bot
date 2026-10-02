@@ -40,18 +40,54 @@ use crate::script_runtime::{
     deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
     reset_script_nav, script_active, script_observe_cached_with_channels, script_paint_of,
-    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot, NavBot,
-    ScriptSlot, ScriptWall,
+    script_running, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
+    take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };
 
-/// Per-slot hook invoked by the slot thread after every mainloop pass.
-/// Per-frame hook: `(client, username, hold)`. `hold` is the guardian's
-/// published hold from the previous frame (same lag as `step_nav_bot`) —
-/// panel/TUI skip scenario follow and WalkArm follow while it is set.
-pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, bool) + Send + Sync>;
+/// Facts delivered before frontend follow and script observation/dispatch.
+/// `hold` retains the guardian/readiness gate; it does not suppress intent.
+/// Each queued manual step counts even if the client later refuses its send.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SlotFrameInput {
+    pub hold: bool,
+    pub manual_move_intent: Option<host::ManualMoveIntent>,
+    pub manual_steps: usize,
+}
+
+impl SlotFrameInput {
+    /// Number of qualifying gestures in this frame, independent of route ownership.
+    pub fn manual_move_count(self) -> usize {
+        usize::from(self.manual_move_intent.is_some()) + self.manual_steps
+    }
+}
+
+pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
+
+pub(super) fn take_slot_frame_input(
+    input: &SlotInput,
+    name: &str,
+    wire_queues: &Mutex<HashMap<String, VecDeque<WireCmd>>>,
+    hold: bool,
+) -> (SlotFrameInput, VecDeque<WireCmd>) {
+    let wires = wire_queues
+        .lock()
+        .unwrap()
+        .get_mut(name)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let frame = SlotFrameInput {
+        hold,
+        manual_move_intent: input.take_manual_move_intent(),
+        manual_steps: wires
+            .iter()
+            .filter(|cmd| matches!(cmd, WireCmd::Walk { .. }))
+            .count(),
+    };
+    (frame, wires)
+}
 /// Slot thread stack: 1 MiB (the Java client thread default).
 const THREAD_STACK: usize = 1024 * 1024;
 /// Per-slot nav latch key: the `(player gen, here)` pair the pump last
@@ -1332,6 +1368,19 @@ fn spawn_slot_thread(
                                 || injected_maze_hold;
                             #[cfg(not(test))]
                             let hold = status.hold || !ready || session_boundary || welcome_step.hold;
+                            // Collect intent before either follow pump or script
+                            // dispatch; this is the shared takeover ordering seam.
+                            // Keep these commands for their normal late send/hold gate.
+                            let (frame_input, wires) =
+                                take_slot_frame_input(&slot_input, name, &slot_wires, hold);
+                            take_manual_walk_ownership(
+                                &slot_scripts,
+                                &slot_navs,
+                                name,
+                                frame_input,
+                                c.ingame && !session_boundary,
+                                *script_tick,
+                            );
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             // The shared memory-mode command lands here for
@@ -1341,7 +1390,7 @@ fn spawn_slot_thread(
                             if let Some(lowmem) = arm_latch_obs.lowmem_handshake() {
                                 c.set_lowmem(lowmem);
                             }
-                            slot_frame(c, name, hold);
+                            slot_frame(c, name, frame_input);
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
                                 mainland_sent = true;
@@ -1483,12 +1532,6 @@ fn spawn_slot_thread(
                             // when it presses a dialog the guardian is
                             // talking through, but a walk while held is
                             // dropped (the hold freezes the follow too).
-                            let wires = {
-                                let mut all = slot_wires.lock().unwrap();
-                                all.get_mut(name)
-                                    .map(std::mem::take)
-                                    .unwrap_or_default()
-                            };
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 for wire in &wires {
@@ -1526,7 +1569,7 @@ fn spawn_slot_thread(
                                     &nav_snapshot,
                                     &slot_navs,
                                     &slot_statuses,
-                                    slot_world.as_deref(),
+                                    slot_world.as_ref(),
                                     hold,
                                     map_members,
                                     || {
@@ -1636,7 +1679,18 @@ fn title_frames<'a>(
     username: &'a str,
     slot_frame: &'a SlotFrame,
 ) -> impl FnMut() -> Duration + 'a {
-    move || wait.frame(client, username, |c| slot_frame(c, username, true))
+    move || {
+        wait.frame(client, username, |c| {
+            slot_frame(
+                c,
+                username,
+                SlotFrameInput {
+                    hold: true,
+                    ..SlotFrameInput::default()
+                },
+            )
+        })
+    }
 }
 
 /// Say on the hosted title why the login waits, in the two Java message

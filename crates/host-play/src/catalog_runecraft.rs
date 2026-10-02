@@ -17,8 +17,8 @@ pub fn runecraft_baseline_ready(
 ) -> bool {
     near(baseline.tile, bank, 6)
         && baseline.level("runecraft") >= rc_level
-        && baseline.item_id(RUNE_ESSENCE_ID) == 0
-        && baseline.item_id(NOTED_ESSENCE_ID) == 0
+        && baseline.item_id(catalog_item_id("blankrune")) == 0
+        && baseline.item_id(catalog_item_id("cert_blankrune")) == 0
         && baseline.item_id(rune) == 0
         && baseline.item_id(wrong_rune) == 0
         && baseline.item_id(talisman) == 0
@@ -55,20 +55,20 @@ impl RuneCrafterCycle {
             bank,
         } = spec;
         self.wrong_product |= now.item_id(wrong_rune) > 0 || now.bank_item_id(wrong_rune) > 0;
-        self.noted |= now.item_id(NOTED_ESSENCE_ID) > 0;
+        self.noted |= now.item_id(catalog_item_id("cert_blankrune")) > 0;
         if self.withdrawn.is_none()
             && overworld(now.tile)
             && near(now.tile, bank, 8)
-            && now.item_id(RUNE_ESSENCE_ID) >= 1
+            && now.item_id(catalog_item_id("blankrune")) >= 1
             && now.item_id(rune) == 0
-            && now.item_id(NOTED_ESSENCE_ID) == 0
+            && now.item_id(catalog_item_id("cert_blankrune")) == 0
         {
             self.withdrawn = Some(now.clone());
         }
         if self.withdrawn.is_some()
             && self.entered.is_none()
             && in_temple(now.tile)
-            && now.item_id(RUNE_ESSENCE_ID) >= 1
+            && now.item_id(catalog_item_id("blankrune")) >= 1
             && now.item_id(rune) == 0
         {
             self.entered = Some(now.clone());
@@ -77,10 +77,10 @@ impl RuneCrafterCycle {
             && self.crafted.is_none()
             && in_temple(now.tile)
             && now.item_id(rune) >= 1
-            && now.item_id(RUNE_ESSENCE_ID) == 0
+            && now.item_id(catalog_item_id("blankrune")) == 0
             && now.skill_xp("runecraft") > baseline.skill_xp("runecraft")
             && now.item_id(wrong_rune) == 0
-            && now.item_id(NOTED_ESSENCE_ID) == 0
+            && now.item_id(catalog_item_id("cert_blankrune")) == 0
         {
             self.crafted = Some(now.clone());
         }
@@ -107,8 +107,9 @@ impl RuneCrafterCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(RUNE_ESSENCE_ID) >= 1
-                && now.bank_item_id(RUNE_ESSENCE_ID) < deposited.bank_item_id(RUNE_ESSENCE_ID)
+                && now.item_id(catalog_item_id("blankrune")) >= 1
+                && now.bank_item_id(catalog_item_id("blankrune"))
+                    < deposited.bank_item_id(catalog_item_id("blankrune"))
             {
                 self.restocked = Some(now.clone());
             }
@@ -124,7 +125,7 @@ impl RuneCrafterCycle {
             self.further |= self.returned
                 && !now.bank_open
                 && now.item_id(rune) >= 1
-                && now.item_id(RUNE_ESSENCE_ID) == 0
+                && now.item_id(catalog_item_id("blankrune")) == 0
                 && now.item_id(wrong_rune) == 0
                 && now.skill_xp("runecraft") > crafted.skill_xp("runecraft");
         }

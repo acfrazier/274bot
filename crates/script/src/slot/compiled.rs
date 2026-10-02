@@ -49,7 +49,7 @@ impl std::ops::DerefMut for ScriptOwner {
     }
 }
 impl ScriptOwner {
-    fn stop(&mut self, reason: StopReason) -> Option<String> {
+    pub(super) fn stop(&mut self, reason: StopReason) -> Option<String> {
         let mut script = self.0.take()?;
         let stopped = catch_unwind(AssertUnwindSafe(|| script.on_stop(reason)));
         let dropped = catch_unwind(AssertUnwindSafe(|| drop(script)));
@@ -68,6 +68,25 @@ impl Drop for ScriptOwner {
 pub(super) struct Preparation {
     generation: u64,
     worker: std::thread::JoinHandle<PreparationResult>,
+}
+
+impl Preparation {
+    pub(super) fn is_finished(&self) -> bool {
+        self.worker.is_finished()
+    }
+
+    pub(super) fn join(self) -> Result<CompiledRun, StartError> {
+        self.worker
+            .join()
+            .map_err(|payload| {
+                StartError::Unavailable(
+                    format!("preparation worker panic: {}", panic_message(&payload)).into(),
+                )
+            })?
+            .0
+            .take()
+            .expect("preparation result")
+    }
 }
 
 /// A detached thread packet may be destroyed on either thread. Never let a
@@ -113,6 +132,18 @@ impl NativeOutput for Output {
         }
     }
     fn log(&mut self, level: api::hostlog::Level, message: &str) {
+        if self.account.is_empty() {
+            api::hostlog::emit(
+                api::hostlog::Emit {
+                    category: api::hostlog::Category::ScriptLifecycle,
+                    level,
+                    slot: None,
+                    always_stderr: false,
+                },
+                format_args!("{message}"),
+            );
+            return;
+        }
         api::hostlog::record(&api::hostlog::Record {
             slot: Some(&self.account),
             tick: api::hostlog::slot_tick(&self.account),
@@ -123,6 +154,37 @@ impl NativeOutput for Output {
     }
     fn settings_applied(&mut self, revision: u64) {
         self.applied = Some(revision);
+    }
+}
+
+/// One frame's native authority/evidence for compiled runs and API reads.
+pub(super) fn frame_context<'a>(
+    ctx: &'a ScriptCtx<'_>,
+    run: RunKey,
+    pin: &'a SelectedPin,
+    retained: &'a mut RetainedMemory,
+    runtime: &'a mut crate::native::ledger::Runtime,
+) -> ActionContext<'a> {
+    let evidence = EvidenceStamp {
+        run,
+        tick: ctx.tick,
+        sequence: ctx.tick,
+    };
+    let now = Instant::now();
+    runtime.budget.observe(ctx.tick);
+    ActionContext {
+        evidence,
+        pin,
+        snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
+            .with_reach(ctx.compiled.reach),
+        retained,
+        action_id: 0,
+        active_now: runtime.clock.now(now),
+        wall_now: now,
+        ledger: &mut runtime.ledger,
+        budget: &mut runtime.budget,
+        eligible: !ctx.compiled.hold,
+        observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
     }
 }
 
@@ -162,29 +224,12 @@ impl CompiledRun {
         retained: &mut RetainedMemory,
         runtime: &mut crate::native::ledger::Runtime,
     ) -> Result<ScriptFlow, ScriptFailure> {
-        let evidence = EvidenceStamp {
-            run: self.run,
-            tick: ctx.tick,
-            sequence: ctx.tick,
-        };
-        let now = Instant::now();
-        runtime.budget.observe(ctx.tick);
+        #[cfg(feature = "load")]
+        let interacts = ctx.compiled.interacts.take();
         let result = {
             let mut tick = NativeTick {
                 actions: &mut self.actions,
-                cx: ActionContext {
-                    evidence,
-                    pin: &self.pin,
-                    snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
-                        .with_reach(ctx.compiled.reach),
-                    retained,
-                    action_id: 0,
-                    active_now: runtime.clock.now(now),
-                    wall_now: now,
-                    ledger: &mut runtime.ledger,
-                    budget: &mut runtime.budget,
-                    eligible: !ctx.compiled.hold,
-                },
+                cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
                 output: &mut self.output,
                 pairs: None,
                 #[cfg(feature = "load")]
@@ -197,7 +242,7 @@ impl CompiledRun {
                         reach: ctx.compiled.reach,
                         hold: ctx.compiled.hold,
                         #[cfg(feature = "load")]
-                        interacts: ctx.compiled.interacts.take(),
+                        interacts,
                     },
                 },
             };
@@ -319,6 +364,63 @@ pub fn prepare_config(
     Ok(config)
 }
 
+/// The single off-pump registration transaction used by Browse and API seats.
+pub(super) fn prepare_run(
+    card: &'static crate::native::CompiledCard,
+    run: RunKey,
+    bag: Arc<SettingsBag>,
+    selected: Arc<api::game_data::SelectedGameData>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+    retained: Arc<Mutex<RetainedMemory>>,
+    account: String,
+) -> Result<Preparation, StartError> {
+    let worker = FamilyPreparation::run(move |worker| {
+        PreparationResult(Some((|| {
+            let config = prepare_config(worker, card.id, 1, bag, Arc::clone(&selected), banks)?;
+            let pin = selected.selected_pin().map_err(StartError::Facts)?;
+            let mut retained = retained
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let script = catch_unwind(AssertUnwindSafe(|| {
+                (card.create)(run, Arc::clone(&config), &mut retained)
+            }))
+            .map_err(|payload| {
+                StartError::Unavailable(
+                    format!("factory panic: {}", panic_message(&payload)).into(),
+                )
+            })??;
+            Ok(CompiledRun {
+                script: ScriptOwner(Some(script)),
+                config,
+                pending: None,
+                run,
+                selected,
+                pin,
+                output: Output {
+                    account,
+                    ..Default::default()
+                },
+                actions: NativeActions { _private: () },
+            })
+        })()))
+    })
+    .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+    Ok(Preparation {
+        generation: run.run,
+        worker,
+    })
+}
+
+pub(super) fn destroy_run(mut run: Box<CompiledRun>, reason: StopReason) -> Option<String> {
+    let stopped = run.script.stop(reason);
+    let dropped = catch_unwind(AssertUnwindSafe(|| drop(run)));
+    stopped.or_else(|| {
+        dropped
+            .err()
+            .map(|payload| format!("script drop panic: {}", panic_message(&payload)))
+    })
+}
+
 impl SlotScript {
     /// Bind once to the owning host worker lifetime. A replaced profile gets a
     /// different incarnation even when its visible name is reused.
@@ -357,40 +459,17 @@ impl SlotScript {
             self.retained
                 .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default()))),
         );
-        let account = account.to_owned();
-        let worker = FamilyPreparation::run(move |worker| {
-            PreparationResult(Some((|| {
-                let config = prepare_config(worker, id, 1, bag, Arc::clone(&selected), banks)?;
-                let pin = selected.selected_pin().map_err(StartError::Facts)?;
-                let mut retained = retained
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let script = catch_unwind(AssertUnwindSafe(|| {
-                    (card.create)(run, Arc::clone(&config), &mut retained)
-                }))
-                .map_err(|payload| {
-                    StartError::Unavailable(
-                        format!("factory panic: {}", panic_message(&payload)).into(),
-                    )
-                })??;
-                Ok(CompiledRun {
-                    script: ScriptOwner(Some(script)),
-                    config,
-                    pending: None,
-                    run,
-                    selected,
-                    pin,
-                    output: Output {
-                        account,
-                        ..Default::default()
-                    },
-                    actions: NativeActions { _private: () },
-                })
-            })()))
-        })
-        .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
+        let job = prepare_run(
+            card,
+            run,
+            bag,
+            selected,
+            banks,
+            retained,
+            account.to_owned(),
+        )?;
         self.control_generation = generation;
-        self.preparing = Some(Box::new(Preparation { generation, worker }));
+        self.preparing = Some(Box::new(job));
         self.want_run = true;
         self.start_pending = true;
         self.start_outcome = None;
@@ -478,36 +557,21 @@ impl SlotScript {
     }
 
     fn poll_compiled(&mut self) {
-        if !self
-            .preparing
-            .as_ref()
-            .is_some_and(|job| job.worker.is_finished())
-        {
+        if !self.preparing.as_ref().is_some_and(|job| job.is_finished()) {
             return;
         }
         let job = self.preparing.take().expect("finished preparation");
         if job.generation != self.control_generation {
             // Joining also avoids leaving a finished packet to JoinHandle::drop.
-            let _ = job.worker.join();
+            let _ = job.join();
             return;
         }
-        match job
-            .worker
-            .join()
-            .map(|mut result| result.0.take().expect("preparation result"))
-        {
-            Ok(Ok(run)) => {
+        match job.join() {
+            Ok(run) => {
                 self.install_compiled(run);
                 self.settle_start(StartOutcome::Ready);
             }
-            outcome => {
-                let error = match outcome {
-                    Ok(Err(error)) => error,
-                    Err(payload) => StartError::Unavailable(
-                        format!("preparation worker panic: {}", panic_message(&payload)).into(),
-                    ),
-                    Ok(Ok(_)) => unreachable!(),
-                };
+            Err(error) => {
                 self.last_error = Some(error.to_string());
                 self.want_run = false;
                 self.state = RunState::Idle;
@@ -538,6 +602,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
+            self.compiled_interact_outcome_seqs.clear();
             self.active_tick_error_generation = None;
         }
         self.state = if self.want_run {
@@ -560,9 +625,13 @@ impl SlotScript {
         self.compiled.as_ref().map(|run| run.run)
     }
     pub fn native_status(&self) -> Option<Arc<ScriptStatus>> {
-        self.compiled
+        let status = self
+            .compiled
             .as_ref()
-            .and_then(|run| run.output.status.clone())
+            .and_then(|run| run.output.status.clone());
+        #[cfg(feature = "load")]
+        let status = status.or_else(|| self.api_status());
+        status
     }
 
     pub fn native_settings_revision(&self) -> Option<u64> {
@@ -659,13 +728,9 @@ impl SlotScript {
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
         self.native_runtime.revoke();
-        if let Some(mut run) = self.compiled.take() {
-            if let Some(error) = run.script.stop(reason) {
+        if let Some(run) = self.compiled.take() {
+            if let Some(error) = destroy_run(run, reason) {
                 self.last_error = Some(error);
-            }
-            // A destructor is user Rust too. Do not unwind into the host pump.
-            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(run))) {
-                self.last_error = Some(format!("script drop panic: {}", panic_message(&payload)));
             }
         }
     }
@@ -675,6 +740,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
+            self.compiled_interact_outcome_seqs.clear();
             self.clue_abort_owed = true;
         }
         self.pending_logs.push(failure.message.to_string());

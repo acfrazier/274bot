@@ -1242,6 +1242,7 @@ impl Script for Walker {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             });
         }
         Ok(crate::native::ScriptFlow::Continue)
@@ -1260,6 +1261,7 @@ fn walker_walk() -> crate::shim::InteractReq {
         allow_bank_fetch: false,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 

@@ -111,6 +111,8 @@ fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
@@ -718,6 +720,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::Walk {
                 x: 1,
@@ -728,6 +731,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::Walk {
                 x: 1,
@@ -738,6 +742,7 @@ export function tick(api) {
                 allow_bank_fetch: true,
                 request_id: 0,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNear {
                 x: 3,
@@ -749,6 +754,7 @@ export function tick(api) {
                 allow_bank_fetch: false,
                 request_id: 99,
                 avoid: Vec::new(),
+                cross: Vec::new(),
             },
             InteractReq::WalkNearestBank,
         ]
@@ -870,6 +876,7 @@ export function tick(api) {
             allow_bank_fetch,
             avoid,
             request_id,
+            ..
         } => {
             assert_eq!((*from_x, *from_z, *from_level), (2763, 3233, 0));
             assert_eq!((*x, *z, *level), (2803, 3208, 0));
@@ -1073,6 +1080,7 @@ fn v2_hold_run_sets_status_and_emits_the_world_walk() {
                 allow_bank_fetch: true,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )),
         "{drained:?}"
@@ -1134,7 +1142,7 @@ fn v2_retreat_settles_without_a_tile_and_walkspot_walks_the_world() {
 }
 
 #[test]
-fn v2_gather_methods_are_named_sync_helper_results_not_a_namespace() {
+fn v2_gather_catalog_helpers_are_named_sync_results() {
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -1159,7 +1167,6 @@ export function tick(api) {
     placementsThen: typeof placements.then,
     placementsRows: placements.value && placements.value.rows.length,
     placementsId: placements.value && placements.value.resource_ids[0].id,
-    namespace: api.gather,
     bestAxe: typeof api.bestAxe,
     bestPickaxe: typeof api.bestPickaxe,
     requested,
@@ -1187,7 +1194,6 @@ export function tick(api) {
     assert_eq!(probe["placementsThen"], "undefined", "{probe:?}");
     assert_eq!(probe["placementsRows"], 2, "{probe:?}");
     assert_eq!(probe["placementsId"], 1281, "{probe:?}");
-    assert!(probe["namespace"].is_null(), "{probe:?}");
     assert_eq!(probe["bestAxe"], "undefined", "{probe:?}");
     assert_eq!(probe["bestPickaxe"], "undefined", "{probe:?}");
     assert!(
@@ -1641,6 +1647,8 @@ fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
     iso.post_snapshot(encode_snapshot_with_native(&input, facts));
@@ -1738,6 +1746,8 @@ export function tick(api) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));
     iso.on_game_tick(1);
@@ -1857,6 +1867,8 @@ export function tick(api) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = 5;
     iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));

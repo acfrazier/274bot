@@ -443,6 +443,7 @@ fn combat_test_run(
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
+        walk_outcome_seq_at_begin: 0,
     }
 }
 
@@ -460,7 +461,18 @@ fn with_step_context<R>(
     tick: u64,
     f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
 ) -> R {
+    with_step_context_at_walk_seq(snapshot, ledger, tick, 0, f)
+}
+
+fn with_step_context_at_walk_seq<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    tick: u64,
+    walk_outcome_seq: u64,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
     super::super::tests::with_tick(snapshot, ledger, tick, |native| {
+        native.cx.observed_walk_outcome_seq = walk_outcome_seq;
         let quests = QuestCatalog::empty();
         let required_after = native.cx.evidence();
         let bank = crate::quester::bank_memo::BankMemo::default();
@@ -474,6 +486,26 @@ fn with_step_context<R>(
             banks: &banks,
         })
     })
+}
+
+fn publish_walk_outcome(seq: u64, cancel_reason: crate::isolate_fb::WalkCancelReason) {
+    crate::observed::replace(seq, true, |post| {
+        post.walk_outcome(crate::observed::WalkOutcome {
+            seq,
+            generation: 1,
+            request_id: 1,
+            failed: cancel_reason == crate::isolate_fb::WalkCancelReason::UserInput,
+            tile: crate::observed::Tile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            radius: 0,
+            allow_teleports: false,
+            blocked: false,
+        })
+        .walk_outcome_cancel_reason(cancel_reason);
+    });
 }
 
 #[test]
@@ -558,6 +590,8 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
             },
             cx,
         )
@@ -603,6 +637,8 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
+                blocked: None,
+                detail: None,
             },
             cx,
         )
@@ -610,6 +646,130 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
     assert_eq!(run.target_gone_restarts, 0);
     assert!(run.action.is_none());
+}
+
+#[test]
+fn target_gone_walk_user_input_parks_without_reengaging() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(report(CombatEnd::TargetGone), cx)
+    })
+    .is_pending());
+
+    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
+        run.on_return_walk(
+            WalkReceipt {
+                request_id: 1,
+                evidence: cx.tick.cx.evidence(),
+                end: WalkEnd::UserInput,
+                blocked: None,
+                detail: None,
+            },
+            cx,
+        )
+    });
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+    assert_eq!(run.target_gone_restarts, 0);
+    assert!(matches!(&run.phase, Phase::ReturningToStand));
+    assert!(run.action.is_none());
+}
+
+#[test]
+fn manual_movement_baseline_covers_return_and_loot_sublegs() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 2632,
+        z: 3222,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        Some(stand),
+        Some(Arc::new(NeverStop)),
+        vec![
+            LootItem {
+                id: 1,
+                name: Arc::from("First drop"),
+            },
+            LootItem {
+                id: 2,
+                name: Arc::from("Second drop"),
+            },
+        ],
+    );
+    run.walk_outcome_seq_at_begin = 40;
+    publish_walk_outcome(40, crate::isolate_fb::WalkCancelReason::None);
+
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut ledger = None;
+    assert!(
+        with_step_context_at_walk_seq(&snapshot, &mut ledger, 12, 40, |cx| {
+            run.on_combat_report(report(CombatEnd::TargetGone), cx)
+        })
+        .is_pending()
+    );
+
+    publish_walk_outcome(41, crate::isolate_fb::WalkCancelReason::None);
+    assert!(
+        with_step_context_at_walk_seq(&snapshot, &mut ledger, 13, 41, |cx| {
+            run.on_return_walk(
+                WalkReceipt {
+                    request_id: 1,
+                    evidence: cx.tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                },
+                cx,
+            )
+        })
+        .is_pending()
+    );
+    assert_eq!(run.target_gone_restarts, 1);
+
+    assert!(
+        with_step_context_at_walk_seq(&snapshot, &mut ledger, 14, 41, |cx| {
+            run.on_combat_report(report(CombatEnd::Killed), cx)
+        })
+        .is_pending()
+    );
+    assert!(
+        with_step_context_at_walk_seq(&snapshot, &mut ledger, 15, 41, |cx| { run.poll(cx) })
+            .is_pending()
+    );
+    assert_eq!(run.loot_index, 1);
+    assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
+
+    publish_walk_outcome(42, crate::isolate_fb::WalkCancelReason::UserInput);
+    let result = with_step_context_at_walk_seq(&snapshot, &mut ledger, 16, 42, |cx| run.poll(cx));
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+    assert_eq!(
+        run.loot_index, 1,
+        "manual movement must not start the next loot leg"
+    );
+    assert!(run.action.is_none());
+    assert!(ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .all(|action| { !matches!(&action.effect, crate::native::HostEffect::Interaction(_)) }));
 }
 
 #[test]

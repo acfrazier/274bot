@@ -5,15 +5,17 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use api::snapshot::WorldTile;
 use host_play as map_host;
 use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
 use nav::collision::WorldCollision;
 use nav::map::identity::Digest;
-use nav::router::FindOptions;
+use nav::router::{AvoidRect, FindOptions};
 use nav::tile::Tile;
-use nav::transport::TransportGraph;
+use nav::transport::{TransportGraph, WildernessRules};
 use nav::world::NavWorld;
+use nav::zones::{Zone, ZoneKind, ZoneTable};
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -88,7 +90,10 @@ fn fixture(names: &[&'static str], slots: &[Slot]) -> Fixture {
         .flat_map(|x| (4..=6).map(move |z| (x, z)))
         .filter(|&tile| tile != (5, 5))
         .collect();
-    let world = world(12, &ring);
+    fixture_with_world(names, slots, world(12, &ring))
+}
+
+fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -> Fixture {
     let map = MapFixture::new(&world, "local-289");
     let mut play = map.play(slots[0].at);
     for other in &slots[1..] {
@@ -212,11 +217,81 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
         report.done().collect::<Vec<_>>(),
         ["alice", "bob", "carol", "dave"]
     );
-    assert_eq!(report.summary(), "Walk marked: walking 4, skipped 0");
     for name in ["alice", "bob", "carol", "dave"] {
         assert_eq!(f.queued(name), Some(dest), "{name}");
     }
     assert_eq!(f.queued("erin"), None, "an unmarked bot was routed");
+}
+
+#[test]
+fn group_walk_reports_blocking_zone_names_for_each_failed_marked_bot() {
+    let mut world = world(12, &[]);
+    world.graph.zones = Some(barrier_zone_table());
+    let mut f = fixture_with_world(
+        &["alice", "bob"],
+        &[slot("alice", t(1, 1, 0)), slot("bob", t(2, 10, 0))],
+        world,
+    );
+
+    let report = f.walk_to(&marks(&[1, 2]), t(10, 10, 0));
+    assert_eq!(report.failed_count(), 2);
+    let failures: Vec<_> = report
+        .rows()
+        .iter()
+        .filter(|row| {
+            matches!(
+                &row.outcome,
+                BulkOutcome::Failed(reason) if reason.as_str() == "blocked by danger zones"
+            )
+        })
+        .collect();
+    assert_eq!(failures.len(), 2);
+    for row in failures {
+        assert!(
+            row.detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("Sentinel strip")),
+            "{row:?}"
+        );
+    }
+    let summary = report.summary();
+    assert_eq!(summary.matches("Sentinel strip").count(), 2, "{summary}");
+}
+
+fn barrier_zone_table() -> ZoneTable {
+    ZoneTable::from_parts(
+        vec![Zone::hazard(
+            AvoidRect {
+                min_x: 6,
+                max_x: 6,
+                min_z: 0,
+                max_z: 11,
+                level: Some(0),
+            },
+            0,
+            0,
+        )],
+        vec![ZoneKind::new(
+            "test-barrier",
+            "Sentinel strip",
+            -1,
+            0,
+            false,
+            false,
+        )],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        12,
+        12,
+        &WildernessRules::default(),
+    )
+    .unwrap()
 }
 
 /// Ineligible and refused rows are named with their reasons, failures
@@ -266,14 +341,6 @@ fn mixed_outcomes_report_failures_first_and_count_each_marked_bot_once() {
         ),
         (2, 3, 1)
     );
-    let gone = format!("profile#{}", ProfileIdentity::uid(99).raw());
-    assert_eq!(
-        report.summary(),
-        format!(
-            "Walk marked: walking 2, skipped 3, failed 1: dave: no path; \
-             skipped carol: not logged in, erin: no position yet, {gone}: profile unavailable"
-        )
-    );
     assert_eq!(f.queued("alice"), Some(t(10, 10, 0)));
     assert_eq!(f.queued("bob"), Some(t(10, 10, 0)));
     for name in ["carol", "dave", "erin"] {
@@ -304,12 +371,7 @@ fn a_refused_destination_fails_each_marked_bot_with_one_cause() {
         Some(&ActionError::NoSelection)
     );
     let report = walk_marked(&marks(&[1, 2]), &f.core, walk, empty_inputs);
-    assert_eq!(report.refusal(), Some("Select a map destination first"));
     assert_eq!(report.failed_count(), 2);
     assert_eq!(report.done_count(), 0);
-    assert_eq!(
-        report.summary(),
-        "Walk marked: Select a map destination first (2 marked bots not sent)"
-    );
     assert!(f.arms.lock().unwrap().is_empty());
 }

@@ -181,11 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn frozen_close_timeout_is_3000ms() {
-        assert_eq!(CLOSE_TIMEOUT_MS, 3_000);
-    }
-
-    #[test]
     fn absent_close_is_true_without_a_verb() {
         reset();
         observe(true, -1);

@@ -377,9 +377,9 @@ pub(super) fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
     out
 }
 
-/// `[<a>,<b>]` blocks in a script text → `(a, b, body)`; the body is the
-/// raw text until the next header. Headers may carry a trailing `//`
-/// comment (the existing parsers' convention).
+/// `[<a>,<b>]` blocks in a script text → `(a, b, body)`, including inline
+/// bodies. Every header ends the preceding block; parameterized proc/label
+/// headers are left to their dedicated parsers, never appended to an op.
 pub(super) fn script_blocks(text: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let mut cur: Option<(String, String)> = None;
@@ -390,11 +390,20 @@ pub(super) fn script_blocks(text: &str) -> Vec<(String, String, String)> {
             Some(i) => line[..i].trim(),
             None => line,
         };
-        if let Some((a, b)) = script_header(header_line) {
+        if header_line.starts_with('[') {
             if let Some(prev) = cur.take() {
                 out.push((prev.0, prev.1, std::mem::take(&mut body)));
             }
-            cur = Some((a.to_string(), b.to_string()));
+            if let Some(end) = header_line.find(']') {
+                if let Some((a, b)) = script_header(&header_line[..=end]) {
+                    let rest = header_line[end + 1..].trim();
+                    if !rest.starts_with('(') {
+                        cur = Some((a.to_string(), b.to_string()));
+                        body.push_str(rest);
+                        body.push('\n');
+                    }
+                }
+            }
         } else if cur.is_some() {
             body.push_str(line);
             body.push('\n');

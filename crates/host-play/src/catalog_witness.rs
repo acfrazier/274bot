@@ -185,8 +185,8 @@ impl CoreWitness {
             self.alcher_defaults_cycle.observe_target(
                 &self.baseline,
                 observation,
-                YEW_LONGBOW_ID,
-                CERT_YEW_LONGBOW_ID,
+                catalog_item_id("yew_longbow"),
+                catalog_item_id("cert_yew_longbow"),
                 YEW_LONGBOW_ALCH_COINS,
             );
         }
@@ -195,15 +195,15 @@ impl CoreWitness {
             CoreCase::AlcherLow | CoreCase::AlcherFireBattlestaff
         ) {
             let expectation = match self.case {
-                CoreCase::AlcherLow => ALCHER_LOW_EXPECTATION,
-                _ => ALCHER_FIRE_BATTLESTAFF_EXPECTATION,
+                CoreCase::AlcherLow => *ALCHER_LOW_EXPECTATION,
+                _ => *ALCHER_FIRE_BATTLESTAFF_EXPECTATION,
             };
             self.alcher_spell_cycle.observe_spelled(
                 expectation,
                 &self.baseline,
                 observation,
-                RUNE_CHAINBODY_ID,
-                CERT_RUNE_CHAINBODY_ID,
+                catalog_item_id("rune_chainbody"),
+                catalog_item_id("cert_rune_chainbody"),
             );
         }
         if matches!(self.case, CoreCase::AlcherSwarmDrain) {
@@ -211,20 +211,20 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::DartFletcher) {
             self.dart_fletcher_cycle.observe(
-                BRONZE_DART_TIP_ID,
-                FEATHER_ID,
-                BRONZE_DART_ID,
-                IRON_DART_ID,
+                catalog_item_id("bronze_dart_tip"),
+                catalog_item_id("feather"),
+                catalog_item_id("bronze_dart"),
+                catalog_item_id("iron_dart"),
                 &self.baseline,
                 observation,
             );
         }
         if matches!(self.case, CoreCase::DartFletcherIron) {
             self.dart_fletcher_cycle.observe(
-                IRON_DART_TIP_ID,
-                FEATHER_ID,
-                IRON_DART_ID,
-                BRONZE_DART_ID,
+                catalog_item_id("iron_dart_tip"),
+                catalog_item_id("feather"),
+                catalog_item_id("iron_dart"),
+                catalog_item_id("bronze_dart"),
                 &self.baseline,
                 observation,
             );
@@ -387,10 +387,10 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
                 SuperheaterSpec {
-                    bar: BRONZE_BAR_ID,
-                    primary: COPPER_ORE_ID,
-                    secondary: TIN_ORE_ID,
-                    staff: STAFF_OF_FIRE_ID,
+                    bar: catalog_item_id("bronze_bar"),
+                    primary: catalog_item_id("copper_ore"),
+                    secondary: catalog_item_id("tin_ore"),
+                    staff: catalog_item_id("staff_of_fire"),
                     steel: false,
                 },
                 &self.baseline,
@@ -400,10 +400,10 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::SuperheaterSteel) {
             self.superheater_cycle.observe(
                 SuperheaterSpec {
-                    bar: STEEL_BAR_ID,
-                    primary: IRON_ORE_ID,
-                    secondary: COAL_ID,
-                    staff: STAFF_OF_FIRE_ID,
+                    bar: catalog_item_id("steel_bar"),
+                    primary: catalog_item_id("iron_ore"),
+                    secondary: catalog_item_id("coal"),
+                    staff: catalog_item_id("staff_of_fire"),
                     steel: true,
                 },
                 &self.baseline,
@@ -413,10 +413,10 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::SuperheaterFireBattlestaff) {
             self.superheater_cycle.observe(
                 SuperheaterSpec {
-                    bar: BRONZE_BAR_ID,
-                    primary: COPPER_ORE_ID,
-                    secondary: TIN_ORE_ID,
-                    staff: FIRE_BATTLESTAFF_ID,
+                    bar: catalog_item_id("bronze_bar"),
+                    primary: catalog_item_id("copper_ore"),
+                    secondary: catalog_item_id("tin_ore"),
+                    staff: catalog_item_id("fire_battlestaff"),
                     steel: false,
                 },
                 &self.baseline,
@@ -427,10 +427,10 @@ impl CoreWitness {
             // Single-ore: primary == secondary so the pair-ratio check is a no-op.
             self.superheater_cycle.observe(
                 SuperheaterSpec {
-                    bar: SILVER_BAR_ID,
-                    primary: SILVER_ORE_ID,
-                    secondary: SILVER_ORE_ID,
-                    staff: STAFF_OF_FIRE_ID,
+                    bar: catalog_item_id("silver_bar"),
+                    primary: catalog_item_id("silver_ore"),
+                    secondary: catalog_item_id("silver_ore"),
+                    staff: catalog_item_id("staff_of_fire"),
                     steel: false,
                 },
                 &self.baseline,
@@ -447,12 +447,12 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::PotionMaker) {
             self.potion_maker_cycle.observe(
                 PotionMakerSpec {
-                    herb: GUAM_LEAF_ID,
-                    unf: GUAM_UNF_ID,
-                    secondary: EYE_OF_NEWT_ID,
-                    finished: ATTACK_POTION_3_ID,
-                    wrong_unf: RANARR_UNF_ID,
-                    wrong_finished: PRAYER_POTION_3_ID,
+                    herb: catalog_item_id("guam_leaf"),
+                    unf: catalog_item_id("guamvial"),
+                    secondary: catalog_item_id("eye_of_newt"),
+                    finished: catalog_item_id("3dose1attack"),
+                    wrong_unf: catalog_item_id("ranarrvial"),
+                    wrong_finished: catalog_item_id("3doseprayerrestore"),
                     named: false,
                 },
                 &self.baseline,
@@ -462,12 +462,12 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::PotionMakerNamed) {
             self.potion_maker_cycle.observe(
                 PotionMakerSpec {
-                    herb: RANARR_WEED_ID,
-                    unf: RANARR_UNF_ID,
-                    secondary: SNAPE_GRASS_ID,
-                    finished: PRAYER_POTION_3_ID,
-                    wrong_unf: GUAM_UNF_ID,
-                    wrong_finished: ATTACK_POTION_3_ID,
+                    herb: catalog_item_id("ranarr_weed"),
+                    unf: catalog_item_id("ranarrvial"),
+                    secondary: catalog_item_id("snape_grass"),
+                    finished: catalog_item_id("3doseprayerrestore"),
+                    wrong_unf: catalog_item_id("guamvial"),
+                    wrong_finished: catalog_item_id("3dose1attack"),
                     named: true,
                 },
                 &self.baseline,
@@ -477,8 +477,8 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::TannerBot) {
             self.tanner_bot_cycle.observe(
                 TannerBotSpec {
-                    product: SOFT_LEATHER_ID,
-                    wrong_product: HARD_LEATHER_ID,
+                    product: catalog_item_id("leather"),
+                    wrong_product: catalog_item_id("hard_leather"),
                     tan_all: SOFT_TAN_ALL_COM,
                 },
                 &self.baseline,
@@ -488,8 +488,8 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::TannerBotHard) {
             self.tanner_bot_cycle.observe(
                 TannerBotSpec {
-                    product: HARD_LEATHER_ID,
-                    wrong_product: SOFT_LEATHER_ID,
+                    product: catalog_item_id("hard_leather"),
+                    wrong_product: catalog_item_id("leather"),
                     tan_all: HARD_TAN_ALL_COM,
                 },
                 &self.baseline,
@@ -499,8 +499,8 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::RuneCrafter) {
             self.rune_crafter_cycle.observe(
                 RuneCrafterSpec {
-                    rune: AIR_RUNE_ID,
-                    wrong_rune: EARTH_RUNE_ID,
+                    rune: catalog_item_id("airrune"),
+                    wrong_rune: catalog_item_id("earthrune"),
                     ruins: RUNECRAFTER_AIR_RUINS,
                     bank: FALADOR_EAST_BANK,
                 },
@@ -511,8 +511,8 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::RuneCrafterEarth) {
             self.rune_crafter_cycle.observe(
                 RuneCrafterSpec {
-                    rune: EARTH_RUNE_ID,
-                    wrong_rune: AIR_RUNE_ID,
+                    rune: catalog_item_id("earthrune"),
+                    wrong_rune: catalog_item_id("airrune"),
                     ruins: RUNECRAFTER_EARTH_RUINS,
                     bank: VARROCK_EAST_BANK,
                 },
@@ -523,8 +523,8 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::MuleCrafter) {
             self.rune_crafter_cycle.observe(
                 RuneCrafterSpec {
-                    rune: AIR_RUNE_ID,
-                    wrong_rune: EARTH_RUNE_ID,
+                    rune: catalog_item_id("airrune"),
+                    wrong_rune: catalog_item_id("earthrune"),
                     ruins: MULECRAFTER_AIR_RUINS,
                     bank: FALADOR_EAST_BANK,
                 },
@@ -554,16 +554,16 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::GnomeFletchShort) {
             self.gnome_fletch_cycle.observe(
-                UNSTRUNG_MAGIC_SHORTBOW_ID,
-                UNSTRUNG_MAGIC_LONGBOW_ID,
+                catalog_item_id("unstrung_magic_shortbow"),
+                catalog_item_id("unstrung_magic_longbow"),
                 &self.baseline,
                 observation,
             );
         }
         if matches!(self.case, CoreCase::GnomeFletchLong) {
             self.gnome_fletch_cycle.observe(
-                UNSTRUNG_MAGIC_LONGBOW_ID,
-                UNSTRUNG_MAGIC_SHORTBOW_ID,
+                catalog_item_id("unstrung_magic_longbow"),
+                catalog_item_id("unstrung_magic_shortbow"),
                 &self.baseline,
                 observation,
             );

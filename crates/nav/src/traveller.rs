@@ -752,7 +752,8 @@ impl FollowRun {
                                 TransportTarget::Loc(_) => false,
                             })
                     } else {
-                        cheb(here, approach_at) > 1
+                        loc_transport_ready(snapshot, edge, here)
+                            .map_or(cheb(here, approach_at) > 1, |ready| !ready)
                     };
                     if needs_approach {
                         if self
@@ -764,9 +765,23 @@ impl FollowRun {
                         }
                         self.settle_until = None;
                         let Some(approach) = selected_stand.or_else(|| {
-                            (!npc_backed(edge))
-                                .then(|| approach_tile(snapshot, approach_at, here))
-                                .flatten()
+                            if npc_backed(edge) {
+                                return None;
+                            }
+                            if loc_transport_ready(snapshot, edge, here).is_some() {
+                                if let Some(loc) = find_transport_loc(snapshot, edge) {
+                                    let flood = SceneQuery::new(snapshot.scene(), Some(here))
+                                        .flood_reach()?;
+                                    return api::query::loc_approach::booth_approach(
+                                        loc,
+                                        snapshot.scene(),
+                                        here,
+                                        &flood,
+                                    )?
+                                    .dest;
+                                }
+                            }
+                            approach_tile(snapshot, approach_at, here)
                         }) else {
                             // No standable tile adjacent to the target in
                             // the loaded scene: keep waiting, bounded by
@@ -779,7 +794,7 @@ impl FollowRun {
                                     at: here,
                                     leg: self.leg_index,
                                     detail: format!(
-                                        "no standable tile within 1 of transport {} {} at ({}, {}, {}) in the loaded scene",
+                                        "no flood-reachable operable stand for transport {} {} at ({}, {}, {}) in the loaded scene",
                                         target_word(edge),
                                         edge.loc_id,
                                         edge.at.x,
@@ -854,10 +869,32 @@ impl FollowRun {
                     match find_transport_target_instance(snapshot, edge, selected_npc_index) {
                         Some(target) => {
                             let to = edge.to;
+                            let action = if edge.is_slashable_web() {
+                                match current_web_action(snapshot, edge, options.edges) {
+                                    Ok(action) => action,
+                                    Err(reason) => {
+                                        fire_leg(options, &leg, LegPhase::Failed);
+                                        return Some(web_action_failure(
+                                            here,
+                                            self.leg_index,
+                                            edge,
+                                            reason,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                edge
+                            };
                             let chat_seq_at_send = chat_seq(snapshot);
                             let arrival_footprint = target.footprint();
                             let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(snapshot, &mut ix, target, edge, options) {
+                            match interact_transport(
+                                snapshot,
+                                &mut ix,
+                                target,
+                                action,
+                                &mut options.on_event,
+                            ) {
                                 SendResult::Sent { .. } => {
                                     // Already-open trapdoor: this interact is
                                     // Climb-down. Mark tries so poll_transport
@@ -1038,9 +1075,9 @@ impl WalkHop {
 /// arrival target and the stall clock. `troll` marks the automatic
 /// door-troll fallback: the hop re-reads the door's state and re-sends
 /// while closed, probes after Open, and walks when open after
-/// the cheap one-interact hop lapsed its budget. `chat_seq` is the chat
-/// watermark for fresh "I can't reach that!" evidence; NPC-backed hops
-/// refresh it at every interaction and recover only before fare dialogue.
+/// the cheap one-interact hop lapsed its budget. `chat_seq` is the watermark
+/// for fresh "I can't reach that!" and web cut-failure evidence; NPC-backed
+/// hops refresh it at every interaction and recover only before fare dialogue.
 struct TransportHop {
     leg: Leg,
     to: WorldTile,

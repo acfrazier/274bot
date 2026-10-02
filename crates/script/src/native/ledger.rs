@@ -12,6 +12,7 @@ pub(crate) struct Runtime {
     pub ledger: Option<Box<Ledger>>,
     pub budget: TickBudget,
     pub clock: ActiveClock,
+    pub observed_walk_outcome_seq: u64,
 }
 
 impl Runtime {
@@ -28,6 +29,7 @@ pub struct HostAction {
     pub request_id: NonZeroU64,
     pub batch: u64,
     pub effect: HostEffect,
+    pub observed_walk_outcome_seq: u64,
 }
 
 pub enum HostEffect {
@@ -343,6 +345,7 @@ mod tests {
                 sequence: 4,
             },
             accepted: true,
+            chat_since: 0,
         };
         ledger.complete_interaction(
             &old,

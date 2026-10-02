@@ -10,7 +10,7 @@ use script::canvas::{self, CanvasOp};
 use script::shim::ScriptPaint;
 
 use crate::game_view::{FrameGpu, APPLET_H, APPLET_W};
-use crate::theme::{ACCENT, BG_DEEP, TEXT, TEXT_DIM};
+use crate::theme::{ui_scale, ACCENT, BG_DEEP, PANEL_FONT_SIZE, TEXT, TEXT_DIM};
 
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
 /// chat on the 765×503 stage.
@@ -323,11 +323,12 @@ impl PaintOverlay {
         let paint = structured?;
         let s = paint_uniform_scale(size);
         let [x, y, w, h] = chatbox_rect(min, size);
-        let row_h = (ui.frame_height().max(ROW_H_FLOOR) * s).max(1.0);
+        let scale = ui_scale(ui);
+        let row_h = (ui.frame_height() / scale).max(ROW_H_FLOOR) * s;
+        let line_step = LINE_STEP * s;
         let pad = PAD_X * s;
         let header_y = HEADER_Y * s;
-        let line_step = (LINE_STEP * s).max(1.0);
-        let font_sz = (ui.current_font_size() * s).max(1.0);
+        let font_sz = (PANEL_FONT_SIZE * s).max(1.0);
         let title_h = (TITLE_H_1X * s).max(1.0);
         let tab_row_h = ((TAB_INSET_1X + TAB_H_1X + TAB_TRAIL_1X) * s).max(1.0);
         let footer_h = if paint.footer.is_some() {
@@ -582,8 +583,8 @@ impl PaintOverlay {
             let _font = ui.push_font_with_size(None, font_sz);
             let fp = ui.clone_style().frame_padding();
             let _pad = ui.push_style_var(StyleVar::FramePadding([
-                (fp[0] * s).max(0.0),
-                (fp[1] * s).max(0.0),
+                (fp[0] / scale * s).max(0.0),
+                (fp[1] / scale * s).max(0.0),
             ]));
             for btn in &paint.buttons {
                 self.button_labels.push(btn.label.clone());

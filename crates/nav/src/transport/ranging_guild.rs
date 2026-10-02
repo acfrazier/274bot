@@ -70,6 +70,7 @@ pub(super) fn rangingguild_door_edges(
     ] {
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at,
             to,
             loc_id,

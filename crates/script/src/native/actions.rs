@@ -64,6 +64,7 @@ impl ActionContext<'_> {
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -103,6 +104,7 @@ impl ActionContext<'_> {
                 request_id,
                 batch: first_id.get(),
                 effect: HostEffect::Interaction(request),
+                observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             });
         }
         Ok(first_id.get())
@@ -144,6 +146,7 @@ impl ActionContext<'_> {
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -164,6 +167,7 @@ impl ActionContext<'_> {
             request_id,
             batch: 0,
             effect: HostEffect::BankPick(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -200,6 +204,7 @@ impl ActionContext<'_> {
             request_id,
             batch: 0,
             effect: HostEffect::Walk(request),
+            observed_walk_outcome_seq: self.observed_walk_outcome_seq,
         });
         Ok(request_id.get())
     }
@@ -272,31 +277,19 @@ impl ActionContext<'_> {
 
 /// Whether `emit` may queue `request`: a game interaction the host dispatches
 /// once, not a route (the typed walk owns those), broker channel, script
-/// mouse, host run policy or isolate lifecycle marker.
+/// mouse, inspect request/ack, SetCameraYaw, host run policy, GatherRun,
+/// GatherStop, ProgressRead or isolate lifecycle marker.
 fn native_interaction(request: &InteractReq) -> bool {
-    !matches!(
-        request,
-        InteractReq::Walk { .. }
-            | InteractReq::WalkNear { .. }
-            | InteractReq::WalkNearestBank
-            | InteractReq::SelectBank { .. }
-            | InteractReq::AbortWalk { .. }
-            | InteractReq::InspectRoute { .. }
-            | InteractReq::InspectAck { .. }
-            | InteractReq::ChannelOpen { .. }
-            | InteractReq::ChannelPost { .. }
-            | InteractReq::ChannelClose { .. }
-            | InteractReq::ChannelMessage { .. }
-            | InteractReq::ChannelStatus { .. }
-            | InteractReq::Mouse { .. }
-            | InteractReq::RunPolicyOverride { .. }
-            | InteractReq::NoteProgress
-            | InteractReq::LoopSettled
-            | InteractReq::WaitEnqueued
-            | InteractReq::WaitSettled
-            | InteractReq::RecoveryAnchor { .. }
-            | InteractReq::RecoveryAnchorNone
-    )
+    request.is_game()
+        && !matches!(
+            request,
+            InteractReq::Walk { .. }
+                | InteractReq::WalkNear { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::SelectBank { .. }
+                | InteractReq::AbortWalk { .. }
+                | InteractReq::Mouse { .. }
+        )
 }
 
 fn not_an_interaction() -> ActionError {
@@ -631,6 +624,7 @@ mod tests {
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
+            observed_walk_outcome_seq: 0,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -697,6 +691,15 @@ mod tests {
         active_now: Duration,
         f: impl FnOnce(&mut ActionContext<'_>) -> R,
     ) -> R {
+        with_snapshot_frame(ledger, active_now, None, f)
+    }
+
+    fn with_snapshot_frame<R>(
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        active_now: Duration,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+        f: impl FnOnce(&mut ActionContext<'_>) -> R,
+    ) -> R {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let pin = selected.selected_pin().unwrap();
         let evidence = EvidenceStamp {
@@ -714,9 +717,10 @@ mod tests {
         let mut cx = ActionContext {
             evidence,
             pin: &pin,
-            snapshot: SnapshotView::new(None, evidence),
+            snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,
+            observed_walk_outcome_seq: 0,
             active_now,
             wall_now: Instant::now(),
             ledger,
@@ -1116,6 +1120,8 @@ mod tests {
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
+                loc_id: None,
+                cross: Box::new([]),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
             assert_no_batch_change(cx, &owner, first + 1, 4, 1);
@@ -1126,6 +1132,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: true,
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -1264,6 +1271,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: index != 2,
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -1414,6 +1422,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: action.request_id.get() != requests[1],
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -1510,6 +1519,7 @@ mod tests {
                     request_id: action.request_id.get(),
                     evidence: cx.evidence(),
                     accepted: true,
+                    chat_since: 0,
                 };
                 cx.ledger
                     .as_mut()
@@ -1581,6 +1591,7 @@ mod tests {
                     allow_bank_fetch: false,
                     request_id: 0,
                     avoid: Vec::new(),
+                    cross: Vec::new(),
                 },
                 InteractReq::WalkNearestBank,
                 InteractReq::AbortWalk { request_id: 0 },
@@ -1611,10 +1622,12 @@ mod tests {
                     z: 9,
                     level: 0,
                 },
+                loc_id: None,
                 radius: 0,
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
+                cross: Vec::new().into_boxed_slice(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
@@ -1639,5 +1652,112 @@ mod tests {
             );
         });
         assert!(!authority.live(), "the expired walk's follow is revoked");
+    }
+    fn walking_snapshot(tile: api::WorldTile, moving: bool) -> api::snapshot::GameSnapshot {
+        use api::snapshot::{ActorView, GameSnapshot, LocalPlayerView, PlayerView};
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(LocalPlayerView {
+            player: PlayerView {
+                index: 0,
+                actor: ActorView {
+                    name: Some("alice".into()),
+                    actions: Vec::new(),
+                    tile,
+                    distance: 0,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: 0,
+                    health: 10,
+                    total_health: 10,
+                    face_entity: -1,
+                    target: None,
+                    moving,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 3,
+                skill_level: 3,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+        });
+        snapshot
+    }
+
+    #[test]
+    fn route_ended_waits_for_final_movement_without_widening_radius() {
+        let target = api::WorldTile {
+            x: 3185,
+            z: 3440,
+            level: 0,
+        };
+        for radius in [0, 1] {
+            for final_end in [WalkEnd::Arrived, WalkEnd::RouteEnded, WalkEnd::Failed] {
+                let mut actions = NativeActions { _private: () };
+                let mut ledger = None;
+                let short = api::WorldTile {
+                    x: target.x - i32::from(radius) - 1,
+                    ..target
+                };
+                let moving = walking_snapshot(short, true);
+                let (handle, authority) = with_snapshot_frame(
+                    &mut ledger,
+                    Duration::ZERO,
+                    Some(&moving),
+                    |cx| {
+                        let request = WalkRequest {
+                            target,
+                            loc_id: None,
+                            radius,
+                            options: FindOptions::default(),
+                            required_after: cx.evidence(),
+                            evidence: None,
+                            cross: Vec::new().into_boxed_slice(),
+                        };
+                        let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
+                        let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
+                        cx.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: cx.evidence(),
+                            end: WalkEnd::RouteEnded,
+                            blocked: None,
+                            detail: None,
+                        });
+                        assert!(actions.poll(&handle, cx).is_pending(),
+                        "radius {radius}: a still-moving final segment is not a stationary route end");
+                        (handle, authority)
+                    },
+                );
+                assert!(
+                    authority.live(),
+                    "pending movement retains its action authority"
+                );
+                let (tile, still_moving, now) = match final_end {
+                    WalkEnd::Arrived => (target, true, Duration::from_secs(1)),
+                    WalkEnd::RouteEnded => (short, false, Duration::from_secs(1)),
+                    WalkEnd::Failed => (short, true, super::walk::WALK_DEADLINE),
+                    _ => unreachable!(),
+                };
+                let final_snapshot = walking_snapshot(tile, still_moving);
+                with_snapshot_frame(&mut ledger, now, Some(&final_snapshot), |cx| {
+                    let result = actions.poll(&handle, cx);
+                    assert!(
+                        matches!(&result, Poll::Ready(Ok(receipt)) if receipt.end == final_end),
+                        "radius {radius}, expected {final_end:?}, got {result:?}"
+                    );
+                });
+                assert!(
+                    !authority.live(),
+                    "settled or expired movement revokes its authority"
+                );
+            }
+        }
     }
 }

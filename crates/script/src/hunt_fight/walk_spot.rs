@@ -27,6 +27,7 @@ pub(super) struct WalkRuntime {
     leg_kind: WalkLeg,
     walk_token: Option<u64>,
     after_sustain: bool,
+    intent_baseline: u64,
 }
 
 impl WalkRuntime {
@@ -41,6 +42,7 @@ impl WalkRuntime {
             leg_kind: WalkLeg::Dest,
             walk_token: None,
             after_sustain: false,
+            intent_baseline: observation().user_move_intent_seq,
         }
     }
 
@@ -76,6 +78,17 @@ impl WalkRuntime {
 
 fn with_walk<T>(token: u64, f: impl FnOnce(&mut WalkRuntime) -> T) -> Option<T> {
     WALK_RUNTIMES.with(|m| m.borrow_mut().get_mut(&token).map(f))
+}
+
+pub(super) fn set_intent_baseline(token: u64, baseline: u64) {
+    WALK_RUNTIMES.with(|runtimes| {
+        if let Some(runtime) = runtimes.borrow_mut().get_mut(&token) {
+            runtime.intent_baseline = baseline;
+            if let Some(walk_token) = runtime.walk_token {
+                crate::walk_wait::update_baseline(walk_token, baseline);
+            }
+        }
+    });
 }
 
 fn walk_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
@@ -225,6 +238,9 @@ fn walk_next_effect(rt: &mut WalkRuntime, proj: &Projection, reply: Option<&Valu
     if rt.mode == WalkMode::Aborted {
         return rt.aborted("aborted");
     }
+    if observation().user_move_intent_seq > rt.intent_baseline {
+        return rt.aborted("user input");
+    }
     if reply.is_some_and(|r| r.get("eatOk").is_some()) {
         return rt.aborted("unexpected eatOk");
     }
@@ -337,6 +353,10 @@ impl HuntKind for WalkSpotKind {
     const WORLD_WALK: bool = true;
     type Proj = Projection;
 
+    fn set_user_move_intent_baseline(token: u64, baseline: u64) {
+        set_intent_baseline(token, baseline);
+    }
+
     fn parse(site: &Value) -> Projection {
         parse_projection(site)
     }
@@ -371,5 +391,29 @@ impl HuntKind for WalkSpotKind {
 
     fn validate(_token: u64, proj: &Projection) -> bool {
         walk_validate_inner(proj, &observation())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_input_aborts_walkspot_without_reissuing_a_walk() {
+        crate::observed::on_reset();
+        set_observation(FightObservation::ready());
+        let mut runtime = WalkRuntime::new(7);
+
+        let mut moved = FightObservation::ready();
+        moved.user_move_intent_seq = 1;
+        set_observation(moved);
+
+        let projection = parse_projection(&serde_json::json!({}));
+        let effect = walk_next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "aborted");
+        assert_eq!(effect["reason"], "user input");
+
+        let following = walk_next_effect(&mut runtime, &projection, None);
+        assert_eq!(following["kind"], "aborted");
     }
 }

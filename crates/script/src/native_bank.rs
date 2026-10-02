@@ -1400,6 +1400,7 @@ mod tests {
                     sequence: tick,
                 },
                 accepted: true,
+                chat_since: 0,
             },
         );
         action.effect

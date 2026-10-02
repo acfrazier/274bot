@@ -144,6 +144,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }
 
@@ -255,6 +257,7 @@ fn walk_near_dest() -> InteractReq {
         allow_bank_fetch: true,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 
@@ -581,6 +584,7 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
             allow_bank_fetch: true,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }]
     );
 
@@ -884,6 +888,7 @@ export default class T extends LoopingBot {
             allow_bank_fetch: true,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
         "Chebyshev 1 across a wall is not arrived"
     );

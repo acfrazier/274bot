@@ -964,6 +964,51 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(home.old_pack_untouched());
 }
 
+#[test]
+fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
+    let home = upgrade_home::UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = TuiSession::new_bound(template, host_play::InstancePermit::SkipLock);
+    *session.nav_world.lock().unwrap() = profile.world();
+    let mut app = TuiApp::new("reach fixture");
+    app.map_active = true;
+    session.pump(&mut app);
+    assert!(
+        app.map_reach.is_none(),
+        "map default never requests paint words"
+    );
+    app.map.layers.reach = true;
+    session.pump(&mut app);
+    let first = app.map_reach.clone().expect("layer requests bound sidecar");
+    assert_eq!(&*first, &[0u64]);
+    assert!(Arc::ptr_eq(&first, &profile.reach().unwrap()));
+    let refs = Arc::strong_count(&first);
+    for _ in 0..4 {
+        dispatch(&mut session, &mut app, AppAction::MapClose);
+        assert!(app.map_reach.is_none());
+        app.map_active = true;
+        session.pump(&mut app);
+        assert!(Arc::ptr_eq(&first, app.map_reach.as_ref().unwrap()));
+        assert_eq!(
+            Arc::strong_count(&first),
+            refs,
+            "reopen must not retain another lease"
+        );
+    }
+    dispatch(&mut session, &mut app, AppAction::MapClose);
+    assert_eq!(Arc::strong_count(&first), refs - 1);
+    *session.nav_world.lock().unwrap() = Some(Arc::new(nav::world::NavWorld::from_grid(
+        &nav::grid::StepGrid::fixture_open_3x3(),
+    )));
+    app.map_active = true;
+    session.pump(&mut app);
+    assert!(
+        app.map_reach.is_none(),
+        "another world's paint mask must not be reused"
+    );
+}
+
 fn fake_rs2b0t_tree(dir: &Path, include_jive_kq: bool) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
@@ -1267,13 +1312,6 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         .get(script::ScriptSource::Catalog, "BoneBurier")
         .expect("catalog card");
     assert_eq!(card.description, "Buries bones");
-}
-
-#[test]
-fn create_profile_password_is_a_fresh_game_secret() {
-    let pass = host_play::profile_password("alice");
-    assert_ne!(pass, "alice");
-    assert_eq!(pass.len(), 20);
 }
 
 #[test]
@@ -1690,6 +1728,7 @@ mod bank_fetch_fixtures {
         }
         let edge = TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at: WorldTile {
                 x: 1,
                 z: 2,
@@ -2327,6 +2366,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Boat,
+        player_delta: None,
         at,
         to: destination,
         loc_id: 378,

@@ -15,6 +15,7 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 pub struct Walk {
     key: WalkKey,
+    loc_id: Option<i32>,
     request_id: u64,
     required_after: EvidenceStamp,
     deadline: Duration,
@@ -24,6 +25,7 @@ pub struct Walk {
 struct Frame<'a> {
     snapshot: SnapshotView<'a>,
     outcome: HostOutcome,
+    loc_id: Option<i32>,
 }
 
 impl Observation for Frame<'_> {
@@ -39,11 +41,12 @@ impl Observation for Frame<'_> {
         let Some(here) = self.snapshot.here() else {
             return false;
         };
-        let unavailable = api::query::ReachQueryView::unavailable();
-        let reach = self.snapshot.reach();
-        api::query::is_arrived(here.value, key.tile, key.radius, || {
-            reach.map_or(&unavailable, |observed| observed.value)
-        })
+        match self.loc_id {
+            Some(id) => self
+                .snapshot
+                .walk_loc_arrived(here.value, key.tile, key.radius, id),
+            None => self.snapshot.walk_arrived(here.value, key.tile, key.radius),
+        }
     }
 }
 
@@ -57,6 +60,7 @@ impl NativeMachine for Walk {
             radius: i32::from(request.radius),
             allow_teleports: request.options.allow_teleports,
         };
+        let loc_id = request.loc_id;
         let required_after = request.required_after;
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
@@ -67,6 +71,7 @@ impl NativeMachine for Walk {
         );
         Ok(Self {
             key,
+            loc_id,
             request_id,
             required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -75,12 +80,20 @@ impl NativeMachine for Walk {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(receipt) = cx
+            .walk_receipt(self.request_id)
+            .filter(|receipt| receipt.end == WalkEnd::UserInput)
+        {
+            return Poll::Ready(Ok(receipt.clone()));
+        }
         if cx.active_now() >= self.deadline {
             cx.cancel_request(self.request_id);
             return Poll::Ready(Ok(WalkReceipt {
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Failed,
+                blocked: None,
+                detail: None,
             }));
         }
         if !cx.evidence().meets(self.required_after) {
@@ -103,6 +116,7 @@ impl NativeMachine for Walk {
         let frame = Frame {
             snapshot: cx.snapshot(),
             outcome,
+            loc_id: self.loc_id,
         };
         if !self.wait.poll(self.request_id, &frame) {
             return Poll::Pending;
@@ -112,9 +126,23 @@ impl NativeMachine for Walk {
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
             }));
         }
         match receipt {
+            Some(receipt)
+                if receipt.end == WalkEnd::RouteEnded
+                    && frame
+                        .snapshot
+                        .local_player()
+                        .is_some_and(|player| player.value.player.actor.moving) =>
+            {
+                // A host route terminal can precede the observed final step.
+                // Keep the owner until arrival, a stationary end, or the
+                // existing active deadline; do not widen the goal radius.
+                Poll::Pending
+            }
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
             None => Poll::Pending,
         }
@@ -122,5 +150,64 @@ impl NativeMachine for Walk {
 
     fn cancel(&mut self) {
         self.wait.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quester::families::tests::{local_player, post_user_input_walk_receipt, with_tick};
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::RunKey;
+    use api::snapshot::{GameSnapshot, WorldTile};
+
+    #[test]
+    fn user_input_receipt_precedes_arrival_deadline_and_required_evidence() {
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut initial = GameSnapshot::new();
+        initial.seed_ingame(2);
+        let mut at_target = GameSnapshot::new();
+        at_target.seed_ingame(2);
+        at_target.seed_local_player(local_player(target));
+
+        let mut ledger = None;
+        let handle = with_tick(&initial, &mut ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        target,
+                        1,
+                        None,
+                        EvidenceStamp {
+                            run,
+                            tick: 1002,
+                            sequence: 1002,
+                        },
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        let request_id = post_user_input_walk_receipt(&mut ledger, 1001);
+        let result = with_tick(&at_target, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("correlated user input must finish the walk: {result:?}");
+        };
+        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(receipt.end, WalkEnd::UserInput);
+        assert!(receipt.blocked.is_none());
+        assert!(receipt.detail.is_none());
     }
 }

@@ -3,6 +3,9 @@
 //! (`on_is_up`). `tick` runs on the caller's pump at a game-tick edge and
 //! must return; panics are caught, never abort the process.
 
+#[cfg(feature = "load")]
+#[path = "slot/api.rs"]
+mod api_seat;
 pub(crate) mod compiled;
 mod pending;
 use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
@@ -143,6 +146,8 @@ pub struct SlotScript {
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
     preparing: Option<Box<Preparation>>,
+    #[cfg(feature = "load")]
+    api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
     incarnation: u64,
@@ -152,6 +157,8 @@ pub struct SlotScript {
     /// slot runs a compiled script XOR a Load isolate.
     #[cfg(feature = "load")]
     compiled_interacts: Vec<crate::shim::InteractReq>,
+    #[cfg(feature = "load")]
+    compiled_interact_outcome_seqs: Vec<u64>,
     /// A compiled clue-machine session abort is owed to the pump thread.
     /// `reset_session_work` may run on the control thread and must not touch
     /// the slot thread's TLS machine, so it marks here and
@@ -240,6 +247,11 @@ pub struct SlotScript {
     /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
     #[cfg(feature = "load")]
     recovery_hints: Arc<crate::load::RecoveryHintsCell>,
+    /// Test-only spawn failure seam: when set, the next `spawn_isolate`
+    /// returns a deterministic thread-spawn diagnostic instead of spawning.
+    /// Never set outside `#[cfg(test)]`; production builds have no field.
+    #[cfg(all(test, feature = "load"))]
+    fail_spawn_for_test: bool,
 }
 
 impl Default for SlotScript {
@@ -255,12 +267,16 @@ impl SlotScript {
             state: RunState::Idle,
             compiled: None,
             preparing: None,
+            #[cfg(feature = "load")]
+            api: None,
             retained: None,
             native_runtime: Default::default(),
             incarnation: 0,
             control_generation: 0,
             #[cfg(feature = "load")]
             compiled_interacts: Vec::new(),
+            #[cfg(feature = "load")]
+            compiled_interact_outcome_seqs: Vec::new(),
             #[cfg(feature = "load")]
             clue_abort_owed: false,
             #[cfg(feature = "load")]
@@ -313,6 +329,8 @@ impl SlotScript {
             native_input: NativeInputAuthority::new(),
             #[cfg(feature = "load")]
             recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
+            #[cfg(all(test, feature = "load"))]
+            fail_spawn_for_test: false,
         }
     }
 
@@ -500,6 +518,10 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_spawn_for_test) {
+            return Err("isolate thread: test-injected spawn failure".to_string());
+        }
         let isolate = LoadIsolate::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
@@ -531,12 +553,36 @@ impl SlotScript {
         }
         Ok(())
     }
+    /// Test-only: arm the spawn-failure seam, then drive the real typed
+    /// Start producer. Lets a test assert the `Idle|Error` branch maps a
+    /// spawn failure to `RuntimeLoad` (not `Refused`) without spawning.
+    #[cfg(all(test, feature = "load"))]
+    pub(crate) fn start_with_injected_spawn_failure_for_test(
+        &mut self,
+        source: String,
+        shape: crate::load::LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartLoadError> {
+        self.fail_spawn_for_test = true;
+        self.start_load_with_loadouts_and_game_data_typed(
+            source,
+            shape,
+            siblings,
+            loadouts,
+            game_data,
+            named_banks,
+        )
+    }
 
     #[cfg(feature = "load")]
     fn begin_async_stop(&mut self, after: AfterStop) -> bool {
         let Some(isolate) = self.load.take() else {
             return false;
         };
+        self.teardown_api(StopReason::Replaced);
         let (tx, rx) = std::sync::mpsc::channel();
         isolate.join_detached(tx);
         self.stop_rx = Some(rx);
@@ -557,9 +603,12 @@ impl SlotScript {
     fn finish_idle_stop(&mut self) {
         self.teardown_compiled(StopReason::Operator);
         #[cfg(feature = "load")]
+        self.teardown_api(StopReason::Operator);
+        #[cfg(feature = "load")]
         self.compiled_interacts.clear();
         #[cfg(feature = "load")]
         {
+            self.compiled_interact_outcome_seqs.clear();
             self.last_snapshot = None;
             self.last_world_id = None;
             self.ipc = IsolateBuf::new();
@@ -604,6 +653,7 @@ impl SlotScript {
                     }
                     Ready::Failed(e) => {
                         let isolate = self.load.take().expect("failed setup still owns isolate");
+                        self.teardown_api(StopReason::Replaced);
                         let (tx, rx) = std::sync::mpsc::channel();
                         isolate.join_detached(tx);
                         self.stop_rx = Some(rx);
@@ -691,6 +741,7 @@ impl SlotScript {
             AfterStop::Idle => {
                 self.teardown_compiled(StopReason::Operator);
                 self.compiled_interacts.clear();
+                self.compiled_interact_outcome_seqs.clear();
                 self.watchdog.cancel_clear();
                 self.want_run = false;
                 self.state = RunState::Idle;
@@ -746,6 +797,8 @@ impl SlotScript {
         self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
+        #[cfg(feature = "load")]
+        self.interrupt_api(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
         }
@@ -774,6 +827,8 @@ impl SlotScript {
             return;
         }
         self.interrupt_compiled(Interrupt::Resume);
+        #[cfg(feature = "load")]
+        self.interrupt_api(Interrupt::Resume);
         if self.state == RunState::Error {
             return;
         }
@@ -834,6 +889,8 @@ impl SlotScript {
         }
         self.control_generation = self.control_generation.saturating_add(1);
         self.preparing = None;
+        #[cfg(feature = "load")]
+        self.teardown_api(reason);
         self.native_runtime.revoke();
         self.retained = None;
         self.revoke_native_input();
@@ -946,6 +1003,8 @@ impl SlotScript {
         if let Some(run) = self.compiled.as_mut() {
             run.rekey_session(self.work_epoch);
         }
+        #[cfg(feature = "load")]
+        self.api_session_boundary(reconnect);
         #[cfg(feature = "load")]
         if !self.load_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
@@ -1086,11 +1145,12 @@ impl SlotScript {
         Arc::clone(&self.native_input)
     }
 
-    /// The selected-revision facts this compiled Start pinned — what the host
-    /// copies into the ctx as `ScriptCtx::compiled.selected`. `None` for a
-    /// Load slot, an idle slot, or a `Play` with no generated facts.
+    /// Selected-revision facts pinned by a compiled run or a live Load seat.
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
-        self.compiled.as_ref().map(|run| Arc::clone(&run.selected))
+        let selected = self.compiled.as_ref().map(|run| Arc::clone(&run.selected));
+        #[cfg(feature = "load")]
+        let selected = selected.or_else(|| self.api_game_data());
+        selected
     }
 
     /// Pump-thread sync of the compiled clue machine: the owed abort or
@@ -1287,6 +1347,13 @@ impl SlotScript {
         native: crate::isolate_fb::NativeFactsInput<'_>,
         force_banks: bool,
     ) -> Vec<u8> {
+        let mut native = native;
+        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
+        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_delta_with_native(
             self.last_snapshot.as_ref(),
             input,
@@ -1305,6 +1372,13 @@ impl SlotScript {
         force_banks: bool,
         preserve_inv: bool,
     ) -> Vec<u8> {
+        let mut native = native;
+        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
+        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
+        native.api_progress = self
+            .api
+            .as_ref()
+            .and_then(|seat| seat.progress_page.as_ref());
         let (bytes, fp) = self.ipc.encode_snapshot_wake_with_native(
             self.last_snapshot.as_mut(),
             input,
@@ -1359,6 +1433,65 @@ impl SlotScript {
         {
             false
         }
+    }
+
+    /// Live walk ownership, not a retained destination or reconnect carry.
+    pub fn live_walking_operation(&self) -> bool {
+        if self.native_runtime.ledger.as_ref().is_some_and(|ledger| {
+            ledger
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.active_walk().is_some())
+                && !ledger
+                    .walk
+                    .as_ref()
+                    .is_some_and(|receipt| receipt.end == crate::native::WalkEnd::UserInput)
+        }) {
+            return true;
+        }
+        #[cfg(feature = "load")]
+        if let Some(isolate) = &self.load {
+            return isolate.live_walking_operation();
+        }
+        false
+    }
+
+    pub fn note_manual_walk_takeover(&mut self, intent_seq: u64, tick: u64) {
+        #[cfg(feature = "load")]
+        if let Some(isolate) = &self.load {
+            isolate.note_manual_walk_takeover(intent_seq);
+        }
+        #[cfg(not(feature = "load"))]
+        let _ = intent_seq;
+        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+            return;
+        };
+        // A queued native walk has not reached NavBot yet; settle the same
+        // owned request directly and leave its owner live to consume UserInput.
+        if let Some(action) = ledger.outbox.iter().find(|action| {
+            action.live() && matches!(action.effect, crate::native::HostEffect::Walk(_))
+        }) {
+            let request_id = action.request_id.get();
+            ledger.walk = Some(crate::native::WalkReceipt {
+                request_id,
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: action.run(),
+                    tick,
+                    sequence: tick,
+                },
+                end: crate::native::WalkEnd::UserInput,
+                blocked: None,
+                detail: None,
+            });
+            ledger
+                .outbox
+                .retain(|action| action.request_id.get() != request_id);
+        }
+    }
+
+    /// Only observations update this; queued work keeps its original stamp.
+    pub fn observe_walk_outcome_seq(&mut self, seq: u64) {
+        self.native_runtime.observed_walk_outcome_seq = seq;
     }
 
     /// Queued native work the host may dispatch now. Work queued before a
@@ -1428,21 +1561,39 @@ impl SlotScript {
         }
     }
 
-    /// Drain the interact requests this slot's script queued, in tick order:
-    /// the Load isolate's forwarded queue (the shim Bank/Banking queue), or
-    /// the compiled card's own queue. The two are exclusive by construction —
-    /// a slot runs a compiled script XOR a Load isolate — and the debug
-    /// assertion is what keeps a future third path from silently merging
-    /// them. Empty for a slot with neither.
+    /// Diagnostic/test drain without the observed-outcome stamp. Production
+    /// host dispatch uses [`Self::drain_host_interacts`] so pre-takeover walking
+    /// decisions cannot become fresh merely by passing through a raw queue.
     #[cfg(feature = "load")]
     pub fn drain_interacts(&mut self) -> Vec<crate::shim::InteractReq> {
+        self.drain_interacts_stamped()
+            .into_iter()
+            .map(|queued| queued.req)
+            .collect()
+    }
+
+    #[cfg(feature = "load")]
+    fn drain_interacts_stamped(&mut self) -> Vec<crate::load::QueuedInteract> {
         debug_assert!(
             !(self.compiled.is_some() && self.load.is_some()),
             "a slot never owns both a compiled script and a Load isolate"
         );
         match &self.load {
-            Some(isolate) => isolate.drain_interacts(),
-            None => std::mem::take(&mut self.compiled_interacts),
+            Some(isolate) => isolate.drain_interacts_stamped(),
+            None => {
+                let reqs = std::mem::take(&mut self.compiled_interacts);
+                let stamps = std::mem::take(&mut self.compiled_interact_outcome_seqs);
+                debug_assert_eq!(reqs.len(), stamps.len());
+                reqs.into_iter()
+                    .zip(stamps)
+                    .map(
+                        |(req, observed_walk_outcome_seq)| crate::load::QueuedInteract {
+                            req,
+                            observed_walk_outcome_seq,
+                        },
+                    )
+                    .collect()
+            }
         }
     }
 
@@ -1454,26 +1605,45 @@ impl SlotScript {
         &mut self,
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
-        Vec<crate::shim::InteractReq>,
+        Vec<crate::load::QueuedInteract>,
+        bool,
     ) {
-        let mut reqs = self.drain_interacts();
+        let mut reqs = self.drain_interacts_stamped();
         let mut policy = None;
-        reqs.retain(|req| {
-            if let crate::shim::InteractReq::RunPolicyOverride { policy: update } = req {
+        let mut owned = self.api_owns_foreground();
+        reqs.retain(|queued| match &queued.req {
+            crate::shim::InteractReq::RunPolicyOverride { policy: update } => {
                 policy = Some(*update);
                 false
-            } else {
-                true
             }
+            crate::shim::InteractReq::GatherRun { .. }
+            | crate::shim::InteractReq::GatherStop { .. }
+            | crate::shim::InteractReq::ProgressRead { .. } => {
+                self.consume_api_control(&queued.req);
+                owned |= self.api_owns_foreground();
+                false
+            }
+            _ => true,
         });
-        (policy, reqs)
+        if owned {
+            let before = reqs.len();
+            reqs.retain(|queued| !queued.req.is_game());
+            // Reconnect rows are script game work too; discard them at this
+            // admission edge rather than replaying an old route after the seat.
+            let held = self.take_held_host_walks();
+            self.record_api_dropped_rows(before - reqs.len() + held.len());
+        }
+        if !self.api_owns_foreground() {
+            self.log_api_drop_total();
+        }
+        (policy, reqs, owned)
     }
 
-    /// Restore a batch drained by the host when Pause wins the final
-    /// dispatch fence. The drained rows precede anything queued since the
-    /// drain, preserving the script's original request order.
+    /// Diagnostic/test injection: stamps raw rows with the runtime's current
+    /// observed outcome. Production Pause/restoration must retain the original
+    /// stamp through [`Self::restore_host_interacts`].
     #[cfg(feature = "load")]
-    pub fn restore_interacts(&mut self, mut drained: Vec<crate::shim::InteractReq>) {
+    pub fn restore_interacts(&mut self, drained: Vec<crate::shim::InteractReq>) {
         debug_assert!(
             !(self.compiled.is_some() && self.load.is_some()),
             "a slot never owns both a compiled script and a Load isolate"
@@ -1481,14 +1651,46 @@ impl SlotScript {
         match &self.load {
             Some(isolate) => isolate.restore_interacts(drained),
             None => {
-                drained.append(&mut self.compiled_interacts);
-                self.compiled_interacts = drained;
+                let seq = self.native_runtime.observed_walk_outcome_seq;
+                self.restore_host_interacts(
+                    drained
+                        .into_iter()
+                        .map(|req| crate::load::QueuedInteract {
+                            req,
+                            observed_walk_outcome_seq: seq,
+                        })
+                        .collect(),
+                );
             }
         }
     }
 
-    /// Walk requests a reconnect kept from the dropped connection, once
-    /// ([`LoadIsolate::take_held_walks`]).
+    #[cfg(feature = "load")]
+    pub fn restore_host_interacts(&mut self, drained: Vec<crate::load::QueuedInteract>) {
+        match &self.load {
+            Some(isolate) => isolate.restore_interacts_stamped(drained),
+            None => {
+                let (mut reqs, mut stamps): (Vec<_>, Vec<_>) = drained
+                    .into_iter()
+                    .map(|queued| (queued.req, queued.observed_walk_outcome_seq))
+                    .unzip();
+                reqs.append(&mut self.compiled_interacts);
+                stamps.append(&mut self.compiled_interact_outcome_seqs);
+                self.compiled_interacts = reqs;
+                self.compiled_interact_outcome_seqs = stamps;
+            }
+        }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn take_held_host_walks(&self) -> Vec<crate::load::QueuedInteract> {
+        self.load
+            .as_ref()
+            .map_or_else(Vec::new, |isolate| isolate.take_held_walks_stamped())
+    }
+
+    /// Diagnostic/test reconnect drain that discards stamps. Production replay
+    /// uses [`Self::take_held_host_walks`] to retain the original decision fence.
     #[cfg(feature = "load")]
     pub fn take_held_walks(&self) -> Vec<crate::shim::InteractReq> {
         match &self.load {
@@ -1603,6 +1805,14 @@ impl SlotScript {
                         return WatchdogAction::None;
                     }
                 };
+                return self.watchdog.on_anchor(
+                    now,
+                    here.map(|(x, z, level)| WatchdogTile { x, z, level }),
+                    anchor,
+                );
+            }
+            #[cfg(feature = "load")]
+            if let Some(anchor) = self.api_recovery_anchor() {
                 return self.watchdog.on_anchor(
                     now,
                     here.map(|(x, z, level)| WatchdogTile { x, z, level }),
@@ -1797,6 +2007,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
+            self.tick_api(ctx);
             return;
         }
         let Some(run) = self.compiled.as_mut() else {
@@ -1833,6 +2044,10 @@ impl SlotScript {
         #[cfg(feature = "load")]
         {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
+            self.compiled_interact_outcome_seqs.resize(
+                self.compiled_interacts.len(),
+                self.native_runtime.observed_walk_outcome_seq,
+            );
         }
         match result {
             Ok(ScriptFlow::Continue) => {}
@@ -1843,7 +2058,10 @@ impl SlotScript {
                 self.native_runtime.revoke();
                 self.revoke_native_input();
                 #[cfg(feature = "load")]
-                self.compiled_interacts.clear();
+                {
+                    self.compiled_interacts.clear();
+                    self.compiled_interact_outcome_seqs.clear();
+                }
                 if let Some(run) = &mut self.compiled {
                     run.output.status = Some(Arc::new(crate::native::ScriptStatus {
                         run: run.run,
@@ -1863,7 +2081,10 @@ impl SlotScript {
             Ok(ScriptFlow::Complete) => {
                 self.revoke_native_input();
                 #[cfg(feature = "load")]
-                self.compiled_interacts.clear();
+                {
+                    self.compiled_interacts.clear();
+                    self.compiled_interact_outcome_seqs.clear();
+                }
                 self.teardown_compiled(StopReason::Completed);
                 self.watchdog.cancel_clear();
                 self.state = RunState::Idle;
@@ -2039,6 +2260,8 @@ impl Drop for SlotScript {
     fn drop(&mut self) {
         self.preparing = None;
         self.teardown_compiled(StopReason::Removed);
+        #[cfg(feature = "load")]
+        self.teardown_api(StopReason::Removed);
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();

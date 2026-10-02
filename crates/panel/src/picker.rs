@@ -31,6 +31,7 @@ use nav::world::NavWorld;
 
 use crate::game_view::FrameGpu;
 use crate::session::Session;
+use crate::theme::scale_px;
 use crate::walk_map::{
     overlay_colors, snap_tile, view_from_canvas, OverlayLayers, WalkMapRenderer, MAX_LABELS,
     NSEW_PPT,
@@ -60,6 +61,8 @@ static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// True while the picker window was drawn last frame; drives the view reset
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
+const ROUTE_THROUGH_ZONES_LABEL: &str = "Route through danger zones";
+const ROUTE_THROUGH_ZONES_TOOLTIP: &str = "Allows routes past monsters that may kill your bot.";
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
 /// `None` detaches when the play is dropped. The picker never decodes the
@@ -424,8 +427,8 @@ struct ReachCache {
 
 enum ReachBinding {
     Unbound,
-    Bundled {
-        bits: Arc<[u64]>,
+    Bound {
+        source: Option<Arc<host_play::profile::DeferredReach>>,
         origin: WorldTile,
         width: usize,
         height: usize,
@@ -435,20 +438,26 @@ enum ReachBinding {
 static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 
-/// Bind the process paint-reach bitset. Bundled provenance supplies the
-/// decoded sidecar. The map never bakes; 3D paint may still one-time bake
-/// when unbound.
+/// Bind a lazy verified paint-reach source from either navigation origin. A failed
+/// sidecar stays unavailable rather than being replaced by a runtime flood.
+/// Only a legacy unbound 3D paint may still one-time bake; the map never bakes.
 pub(crate) fn set_reach_binding(
-    bits: Option<Arc<[u64]>>,
+    source: Option<Arc<host_play::profile::DeferredReach>>,
     origin: WorldTile,
     width: usize,
     height: usize,
-    trusted_bundled: bool,
+    verified_identity: bool,
 ) {
     let _nav = lock_nav_statics();
-    *lock_data(&REACH_BINDING) = match (trusted_bundled, bits) {
-        (true, Some(bits)) => ReachBinding::Bundled {
-            bits,
+    *lock_data(&REACH_BINDING) = match (verified_identity, source) {
+        (_, Some(source)) => ReachBinding::Bound {
+            source: Some(source),
+            origin,
+            width,
+            height,
+        },
+        (true, None) => ReachBinding::Bound {
+            source: None,
             origin,
             width,
             height,
@@ -460,22 +469,23 @@ pub(crate) fn set_reach_binding(
 
 fn bound_reach(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
-    let binding = lock_data(&REACH_BINDING);
-    match &*binding {
-        ReachBinding::Bundled {
-            bits,
-            origin,
-            width,
-            height,
-        } if *origin == c.origin && *width == c.width && *height == c.height => {
-            Some(Arc::clone(bits))
+    let source = {
+        let binding = lock_data(&REACH_BINDING);
+        match &*binding {
+            ReachBinding::Bound {
+                source,
+                origin,
+                width,
+                height,
+            } if *origin == c.origin && *width == c.width && *height == c.height => source.clone(),
+            _ => None,
         }
-        _ => None,
-    }
+    };
+    source.and_then(|source| source.get())
 }
 
-fn reach_binding_is_bundled() -> bool {
-    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bundled { .. })
+fn reach_binding_is_bound() -> bool {
+    matches!(*lock_data(&REACH_BINDING), ReachBinding::Bound { .. })
 }
 
 /// Bound `.navreach` bits matching `world`, or `None` (the map then shows
@@ -485,15 +495,15 @@ pub(crate) fn map_reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     bound_reach(world)
 }
 
-/// 3D paint-reach: bound sidecar, else one cached `bake_reach` on the
-/// external path. A bundled sidecar for a different world is not replaced
-/// by a runtime flood. The map must not call this.
+/// 3D paint-reach: verified sidecar, else one cached legacy `bake_reach`.
+/// A sidecar for a different world or a failed sidecar is never replaced by a
+/// runtime flood. The map must not call this.
 pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     let _nav = lock_nav_statics();
     if let Some(bits) = bound_reach(world) {
         return Some(bits);
     }
-    if reach_binding_is_bundled() {
+    if reach_binding_is_bound() {
         return None;
     }
     let c = &world.collision;
@@ -913,7 +923,9 @@ fn draw_walkto_toolbar(
         header_max_x: 0.0,
         search_max_x: 0.0,
     };
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    let combo_w = scale_px(ui, TOOLBAR_COMBO_W);
+    let search_min_w = scale_px(ui, TOOLBAR_SEARCH_MIN_W);
+    ui.set_next_item_width(combo_w);
     if ui.combo("##walkto-level", lvl_idx, levels, |l: &i32| {
         Cow::Owned(format!("level {l}"))
     }) {
@@ -923,11 +935,11 @@ fn draw_walkto_toolbar(
         }
     }
     note_toolbar_item(&mut geom, ui);
-    toolbar_continue(ui, TOOLBAR_COMBO_W);
+    toolbar_continue(ui, combo_w);
     let mut zoom = ZOOM
         .load(Ordering::Relaxed)
         .clamp(0, ZOOMS.len() as i32 - 1) as usize;
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    ui.set_next_item_width(combo_w);
     if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
         Cow::Owned(if *z < 1.0 {
             format!("{z}px/tile")
@@ -939,11 +951,11 @@ fn draw_walkto_toolbar(
     }
     note_toolbar_item(&mut geom, ui);
     let search_remain = remaining_on_row(ui);
-    if search_remain >= TOOLBAR_SEARCH_MIN_W {
+    if search_remain >= search_min_w {
         ui.same_line();
         ui.set_next_item_width(search_remain);
     } else {
-        ui.set_next_item_width(ui.content_region_avail()[0].max(TOOLBAR_SEARCH_MIN_W));
+        ui.set_next_item_width(ui.content_region_avail()[0].max(search_min_w));
     }
     ui.input_text("##walkto-search", &mut map.search)
         .hint("search / x,z,plane")
@@ -981,6 +993,7 @@ struct PickerLayout {
     canvas_inner_min: [f32; 2],
     canvas_inner_max: [f32; 2],
     canvas_item_max: [f32; 2],
+    route_zones_rect: [[f32; 2]; 2],
     footer_max: [f32; 2],
     footer_reserve: f32,
 }
@@ -993,6 +1006,7 @@ fn record_picker_layout(
     toolbar: &ToolbarGeom,
     canvas_inner: Option<([f32; 2], [f32; 2])>,
     canvas_item_max: [f32; 2],
+    route_zones_rect: [[f32; 2]; 2],
     footer_reserve: f32,
 ) {
     #[cfg(test)]
@@ -1008,13 +1022,21 @@ fn record_picker_layout(
             canvas_inner_min: inner_min,
             canvas_inner_max: inner_max,
             canvas_item_max,
+            route_zones_rect,
             footer_max: ui.item_rect_max(),
             footer_reserve,
         });
     }
     #[cfg(not(test))]
     {
-        let _ = (ui, toolbar, canvas_inner, canvas_item_max, footer_reserve);
+        let _ = (
+            ui,
+            toolbar,
+            canvas_inner,
+            canvas_item_max,
+            route_zones_rect,
+            footer_reserve,
+        );
     }
 }
 
@@ -1567,6 +1589,7 @@ fn picker_map_body(
     // Reset the view when the picker opens fresh and restore the persisted
     // map-layer choice.
     if !PREV_OPEN.swap(true, Ordering::Relaxed) {
+        session.route_through_zones = false;
         map.show_special_areas = session.ui.nav.show_special_areas;
         let observed = session
             .focused_tile()
@@ -1618,14 +1641,20 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
+    let route_checkbox = checkbox_w(ui, ROUTE_THROUGH_ZONES_LABEL);
+    let controls = route_checkbox + spacing + cluster;
     let status_text = format_walkto_status(
         walkto_selection_caption(session.map_model.pending(), teleport),
         &status,
     );
-    let status_max = (ui.content_region_avail()[0] - cluster - spacing).max(0.0);
+    let status_max = (ui.content_region_avail()[0] - controls - spacing).max(0.0);
     ui.text_disabled(ellipsize_to_width(ui, &status_text, status_max));
-    let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
+    let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], controls);
     ui.same_line_with_pos(x);
+    ui.checkbox(ROUTE_THROUGH_ZONES_LABEL, &mut session.route_through_zones);
+    let route_zones_rect = [ui.item_rect_min(), ui.item_rect_max()];
+    ui.set_item_tooltip(ROUTE_THROUGH_ZONES_TOOLTIP);
+    ui.same_line();
     if ui.button("recentre") {
         let observed = session
             .focused_tile()
@@ -1671,7 +1700,14 @@ fn picker_map_body(
             session.map_model.close();
         }
     }
-    record_picker_layout(ui, &toolbar, canvas_inner, canvas_item_max, footer_h);
+    record_picker_layout(
+        ui,
+        &toolbar,
+        canvas_inner,
+        canvas_item_max,
+        route_zones_rect,
+        footer_h,
+    );
 }
 
 fn draw_walk_send_popup(ui: &Ui, session: &mut Session) {

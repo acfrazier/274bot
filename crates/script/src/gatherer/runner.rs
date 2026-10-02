@@ -587,15 +587,25 @@ impl Gatherer {
         self.target = Some(selected.plan.clone());
         // Observed NPC ops own their client-side approach. Their occupied water
         // tile is not a navigation destination (and can move before arrival).
-        if selected.class == PlacementClass::Unloaded
-            || (selected.plan.npc_index < 0
-                && !adjacent(
-                    tick.cx.snapshot().here().map(|here| here.value),
-                    selected.plan.tile,
-                ))
-        {
+        let loc_id = match selected.plan.entity {
+            api::selected::EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let needs_walk = if selected.class == PlacementClass::Unloaded {
+            true
+        } else if selected.plan.npc_index >= 0 {
+            false
+        } else {
+            let snapshot = tick.cx.snapshot();
+            !snapshot.here().is_some_and(|here| match loc_id {
+                Some(id) => snapshot.walk_loc_arrived(here.value, selected.plan.tile, 1, id),
+                None => snapshot.walk_arrived(here.value, selected.plan.tile, 1),
+            })
+        };
+        if needs_walk {
             let request = WalkRequest {
                 target: selected.plan.tile,
+                loc_id,
                 radius: 1,
                 options: FindOptions {
                     allow_teleports: self.settings().allow_teleports,
@@ -604,6 +614,7 @@ impl Gatherer {
                 },
                 required_after: tick.cx.evidence(),
                 evidence: None,
+                cross: Vec::new().into_boxed_slice(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
@@ -753,6 +764,11 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt) {
+        if result.end == WalkEnd::UserInput {
+            self.target = None;
+            self.fail("manual-movement", "cancelled by user input", true);
+            return;
+        }
         if result.end != WalkEnd::Arrived {
             self.target = None;
             self.fail(
@@ -988,6 +1004,7 @@ impl Gatherer {
                 z: here.z.saturating_add(dz),
                 level: here.level,
             },
+            loc_id: None,
             radius: 0,
             options: FindOptions {
                 allow_teleports: false,
@@ -996,6 +1013,7 @@ impl Gatherer {
             },
             required_after: tick.cx.evidence(),
             evidence: None,
+            cross: Vec::new().into_boxed_slice(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
@@ -1305,12 +1323,6 @@ fn tool_gate_met(tool: &ToolUse, skill: Skill, stat: &StatView) -> bool {
     }
 }
 
-fn adjacent(here: Option<WorldTile>, target: WorldTile) -> bool {
-    here.is_some_and(|here| {
-        here.level == target.level && (here.x - target.x).abs().max((here.z - target.z).abs()) <= 1
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1409,5 +1421,76 @@ mod tests {
             size_of::<OneOp>(),
             size_of::<GatherRetained>()
         );
+    }
+    #[test]
+    fn user_input_walk_parks_gatherer_until_retry() {
+        use crate::quester::families::tests::with_tick;
+        use api::snapshot::GameSnapshot;
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut bag = crate::native::SettingsBag::new();
+        bag.insert("location".into(), serde_json::json!("Auto"));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut gatherer = Gatherer::new(
+            run,
+            Arc::clone(&config),
+            Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+            GatherRetained::default(),
+        );
+        gatherer.handle_walk(WalkReceipt {
+            request_id: 7,
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::UserInput,
+            blocked: None,
+            detail: None,
+        });
+        let failure = gatherer.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "manual-movement");
+        assert_eq!(failure.message.as_ref(), "cancelled by user input");
+        assert!(failure.retryable);
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        let mut ledger = None;
+        for tick in 1..=3 {
+            assert!(matches!(
+                with_tick(&snapshot, &mut ledger, tick, |native| {
+                    gatherer.tick(native).unwrap()
+                }),
+                ScriptFlow::Blocked(failure)
+                    if failure.code.as_ref() == "manual-movement"
+                        && failure.message.as_ref() == "cancelled by user input"
+                        && failure.retryable
+            ));
+        }
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+        gatherer.retry().unwrap();
+        assert!(gatherer.failure.is_none());
     }
 }

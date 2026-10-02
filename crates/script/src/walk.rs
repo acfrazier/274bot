@@ -207,10 +207,13 @@ struct WalkResilientOpts {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkPolicy,
-    /// Frozen `avoidZones`: rectangles route around; a catalog zone id is
-    /// refused ([`avoid_refusal`]).
+    /// Frozen `avoidZones`: rectangles and the known frozen catalog ids are
+    /// resolved by the host at the walk's arm-time endpoints.
     #[serde(default)]
     avoid_zones: Vec<InspectAvoidWire>,
+    /// Per-walk named danger-zone exemptions.
+    #[serde(default)]
+    cross_zones: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,17 +227,27 @@ pub(crate) struct WalkResilientArgs {
 /// bound, `route_inspect::MAX_AVOID`).
 const MAX_AVOID: usize = 16;
 
-/// Why `avoid` cannot route, if it cannot: a catalog zone id (frozen
-/// `KNOWN_DANGER_ZONES` is not a host table), a rectangle with inverted
-/// bounds or a level off 0–3, or more than [`MAX_AVOID`] rectangles.
-pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<&'static str> {
+/// Frozen ids accepted for compat `avoidZones`; their geometry is resolved
+/// by host-play once the walk's endpoints and combat level are known.
+pub(crate) fn known_avoid_catalog_id(id: &str) -> bool {
+    nav::zones::AVOID_CATALOG_IDS.contains(&id)
+}
+
+/// Why `avoid` cannot route, if it cannot: an unknown catalog id, a
+/// rectangle with inverted bounds or a level off 0–3, or more than
+/// [`MAX_AVOID`] raw entries. The host rechecks the expanded rectangle bound.
+pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<String> {
     if avoid.len() > MAX_AVOID {
-        return Some("avoidZones: more than 16 rectangles");
+        return Some("avoidZones: more than 16 entries".into());
     }
     avoid.iter().find_map(|zone| match zone {
         InspectAvoidWire::Unsupported => {
-            Some("avoidZones: only rectangles route; catalog zone ids are not a host table")
+            Some("avoidZones: expected a rectangle or a known catalog zone id".into())
         }
+        InspectAvoidWire::Catalog(id) if !known_avoid_catalog_id(id) => {
+            Some(format!("avoidZones: unknown zone {id:?}"))
+        }
+        InspectAvoidWire::Catalog(_) => None,
         InspectAvoidWire::Rect {
             min_x,
             max_x,
@@ -243,7 +256,7 @@ pub(crate) fn avoid_refusal(avoid: &[InspectAvoidWire]) -> Option<&'static str> 
             level,
         } => {
             (min_x > max_x || min_z > max_z || level.is_some_and(|level| !(0..=3).contains(&level)))
-                .then_some("avoidZones: a rectangle with inverted bounds or a level off 0-3")
+                .then(|| "avoidZones: a rectangle with inverted bounds or a level off 0-3".into())
         }
     })
 }
@@ -285,15 +298,18 @@ pub(crate) fn here() -> Option<WorldTile> {
     })
 }
 
-/// Frozen `EventSignal.pending()` for an owned random. Guardian `hold`
-/// freezes the row (`machine::on_hold`) instead of aborting the walk.
-pub(crate) fn interrupted() -> bool {
+/// Whether this walking operation has a runtime event or user-movement
+/// intent pending. Guardian `hold` freezes the row rather than interrupting.
+pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
     crate::event_signal::pending()
         || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
+        || cx.user_move_intent_interrupted()
 }
 
-/// Frozen `isArrived` over the cached reach view — the same helper
-/// `walk_wait` uses (`posted_here` + flood origin + `canReachAdjacent`).
+/// Frozen `isArrived` over the cached reach view — the compatibility ladder
+/// has no loc identity, so its arrival gate intentionally remains tile-anchored.
+/// This is the same helper `walk_wait` uses (`posted_here` + flood origin +
+/// `canReachAdjacent`).
 fn arrived(dest: WorldTile, radius: i32) -> bool {
     crate::load::reach_query::arrived(dest, radius)
 }
@@ -713,7 +729,6 @@ pub(crate) struct Walk {
     dest: WorldTile,
     radius: i32,
     allow_teleports: bool,
-    avoid: Vec<InspectAvoidWire>,
 }
 
 impl Walk {
@@ -725,17 +740,25 @@ impl Walk {
         allow_teleports: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
-        Self::begin_avoiding(dest, radius, timeout_ms, allow_teleports, Vec::new(), cx)
+        Self::begin_avoiding(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            Vec::new(),
+            Vec::new(),
+            cx,
+        )
     }
 
-    /// [`Self::begin`] for a route that keeps out of `avoid` (frozen
-    /// `WalkOptions.avoidZones`; validated by [`avoid_refusal`]).
+    /// [`Self::begin`] with rectangle/catalog avoids and named zone exemptions.
     pub(crate) fn begin_avoiding(
         dest: WorldTile,
         radius: i32,
         timeout_ms: u64,
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
+        cross: Vec<String>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         if here().is_none() {
@@ -753,6 +776,7 @@ impl Walk {
             "level": dest.level,
             "radius": radius,
             "allow_teleports": allow_teleports,
+            "intent_baseline": cx.user_move_intent_baseline(),
         }))
         .as_u64()
         .unwrap_or(0);
@@ -761,9 +785,8 @@ impl Walk {
             dest,
             radius,
             allow_teleports,
-            avoid,
         };
-        cx.emit(walk.request());
+        cx.emit(walk.request(avoid, cross));
         cx.clock().arm(timeout_ms);
         Ok(walk)
     }
@@ -773,6 +796,7 @@ impl Walk {
     /// stopped its walker). The bool is the wait's value, not `isArrived`:
     /// a closest terminal is true here and the ladder re-checks arrival.
     pub(crate) fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
+        walk_wait::update_baseline(self.token, cx.user_move_intent_baseline());
         let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
             .as_bool()
             .unwrap_or(false);
@@ -795,7 +819,7 @@ impl Walk {
     }
 
     /// The native walk this wait is for.
-    fn request(&self) -> InteractReq {
+    fn request(&self, avoid: Vec<InspectAvoidWire>, cross: Vec<String>) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
         if self.radius > 0 {
             InteractReq::WalkNear {
@@ -807,7 +831,8 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
-                avoid: self.avoid.clone(),
+                cross,
+                avoid,
             }
         } else {
             InteractReq::Walk {
@@ -818,7 +843,8 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
-                avoid: self.avoid.clone(),
+                avoid,
+                cross,
             }
         }
     }
@@ -903,6 +929,9 @@ pub(crate) struct Resilient {
     /// Frozen `avoidZones` rectangles: every baked walk and the verify
     /// probe keep out of them (`WalkExecutor.ts:245, 701`).
     avoid: Vec<InspectAvoidWire>,
+    /// Per-walk zone names are preserved across repaths, but apply only to
+    /// this request.
+    cross: Box<[String]>,
     logs: VecDeque<String>,
 }
 
@@ -933,6 +962,7 @@ impl Resilient {
             recover: true,
             avoid: Vec::new(),
             logs: VecDeque::new(),
+            cross: Box::default(),
         }
     }
 
@@ -946,6 +976,10 @@ impl Resilient {
     /// Frozen `opts.avoidZones` (`Traversal.ts:34, 166`).
     pub(crate) fn with_avoid(mut self, avoid: Vec<InspectAvoidWire>) -> Self {
         self.avoid = avoid;
+        self
+    }
+    pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
+        self.cross = cross.into_boxed_slice();
         self
     }
 
@@ -981,7 +1015,7 @@ impl Resilient {
 
     /// Issue the first baked walk. `Err(done)` if no walk was needed.
     pub(crate) fn start(mut self, cx: &mut Cx<'_>) -> Result<Self, bool> {
-        if interrupted() {
+        if interrupted(cx) {
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Err(false);
@@ -1006,7 +1040,7 @@ impl Resilient {
     pub(crate) fn step(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen: EventSignal.pending before isArrived (Traversal.ts:131,
         // walkLadder.ts:48–52).
-        if interrupted() {
+        if interrupted(cx) {
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1156,6 +1190,7 @@ impl Resilient {
             self.timeout_ms,
             allow_teleports,
             self.avoid.clone(),
+            self.cross.to_vec(),
             cx,
         ) {
             Ok(walk) => {
@@ -1209,7 +1244,7 @@ impl Resilient {
 
     fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
-        if interrupted() {
+        if interrupted(cx) {
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
@@ -1369,6 +1404,8 @@ impl Resilient {
             "allow_teleports": false,
             "allow_wilderness": true,
             "allow_bank_fetch": false,
+            "avoid": self.avoid,
+            "cross": self.cross.as_ref(),
             "timeout_ms": PROBE_TIMEOUT_MS,
         }))
         .as_u64()
@@ -1384,6 +1421,7 @@ impl Resilient {
             allow_wilderness: true,
             allow_bank_fetch: false,
             avoid: self.avoid.clone(),
+            cross: self.cross.to_vec(),
             request_id: token,
         });
         self.phase = Phase::Verify { token };
@@ -1447,15 +1485,19 @@ impl Family for WalkResilient {
     const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first baked walk goes out in the caller's turn.
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = true;
     type Args = WalkResilientArgs;
     type Output = bool;
 
     fn begin(args: WalkResilientArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
         let opts = args.opts;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
-            return Begin::Refuse(reason.into());
+            return Begin::Refuse(reason);
         }
-        if interrupted() {
+        if opts.cross_zones.len() > 8 {
+            return Begin::Refuse("crossZones: more than 8 zone ids".into());
+        }
+        if interrupted(_cx) {
             return Begin::Done(false);
         }
         let dest = args.tile.world();
@@ -1475,6 +1517,7 @@ impl Family for WalkResilient {
         )
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
+        .with_cross(opts.cross_zones)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
             drive,
@@ -1489,6 +1532,12 @@ impl Family for WalkResilient {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            if let Some(stop) = self.drive.release() {
+                cx.emit(stop);
+            }
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1580,7 +1629,7 @@ impl WalkOpening {
         }
     }
 
-    fn abort_walk(&self, cx: &mut Cx<'_>) {
+    pub(crate) fn abort_walk(&self, cx: &mut Cx<'_>) {
         match &self.phase {
             OpeningPhase::Walking(walk) | OpeningPhase::Approach { walk, .. } => walk.abort(cx),
             _ => {}
@@ -1593,7 +1642,7 @@ impl WalkOpening {
 
     /// `Some(result)` once the frozen `walkOpening` returned; `None` waits.
     pub(crate) fn advance(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
-        if interrupted() {
+        if interrupted(cx) {
             self.abort_walk(cx);
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
@@ -1703,11 +1752,12 @@ impl Family for WalkOpening {
     const CALLBACKS: &'static [&'static str] = &["log"];
     const SYNC_HOOKS: &'static [usize] = &[LOG];
     const KICK_ON_START: bool = true;
+    const WALKING_OPERATION: bool = true;
     type Args = WalkOpeningArgs;
     type Output = bool;
 
     fn begin(args: WalkOpeningArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        if interrupted() {
+        if interrupted(_cx) {
             return Begin::Done(false);
         }
         let dest = args.dest.world();
@@ -1721,6 +1771,10 @@ impl Family for WalkOpening {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            self.abort_walk(cx);
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1865,10 +1919,14 @@ impl DirectWalk {
 
 impl Family for DirectWalk {
     const NAME: &'static str = "direct-walk";
+    const WALKING_OPERATION: bool = true;
     type Args = DirectWalkArgs;
     type Output = bool;
 
     fn begin(args: DirectWalkArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if interrupted(cx) {
+            return Begin::Done(false);
+        }
         // `while (performance.now() < deadline)` never runs a zero bound.
         if args.timeout_ms == 0 {
             return Begin::Done(false);
@@ -1888,6 +1946,9 @@ impl Family for DirectWalk {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if interrupted(cx) {
+            return Step::Done(false);
+        }
         if self.delay_left > 1 {
             self.delay_left -= 1;
             return Step::Wait;
@@ -2274,6 +2335,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn stalled_verify_probe_carries_cross_zone_opt_out_over_flatbuffer() {
+        reset();
+        post_here(0, 0);
+        let h = start_with(json!({
+            "radius": 0,
+            "crossZones": ["test-barrier"],
+        }));
+        no_progress_passes(h, 1, UNREACHABLE_PASSES);
+
+        let ops = machine::merge_ops(Vec::new());
+        let bytes = crate::isolate_fb::encode_interact_batch(&ops);
+        let batch = crate::isolate_fb::InteractBatch::from_bytes(&bytes)
+            .expect("the stalled walk emits a valid interact batch");
+        let requests = batch.reqs().expect("one verify request");
+        assert_eq!(requests.len(), 1);
+        let probe = requests.get(0);
+        assert_eq!(probe.op(), Some("inspect-route"));
+        let cross = probe
+            .cross()
+            .map(|names| names.iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert_eq!(cross, vec!["test-barrier"]);
+    }
+
+    #[test]
     fn a_routed_verify_probe_keeps_walking_until_its_terminal_repeats() {
         reset();
         post_here(0, 0);
@@ -2395,17 +2481,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn avoid_zone_ids_are_refused_and_rects_ride_the_walk() {
+    fn avoid_zone_rects_ride_the_walk() {
         reset();
         post_here(0, 0);
-        let args = json!({
-            "tile": { "x": 10, "z": 0, "level": 0 },
-            "opts": { "radius": 0, "avoidZones": ["white-wolf-mountain"] },
-        });
-        assert!(matches!(
-            machine::start("walk-resilient", args, Vec::new(), 0),
-            Started::Refused(_)
-        ));
         let rect = json!({ "minX": 4, "maxX": 6, "minZ": -2, "maxZ": 2, "level": 0 });
         let args = json!({
             "tile": { "x": 10, "z": 0, "level": 0 },
@@ -3347,6 +3425,154 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn manual_takeover_aborts_walk_opening_before_its_route_less_phase() {
+        reset();
+        post_walled_scene(vec![door_loc(1530, 2, 0)]);
+        let h = start_opening(&["door", "gate"]);
+        machine::step(&mut NoJs);
+        let token = opening_walk_token(10);
+
+        machine::on_manual_walk_takeover(2);
+        machine::on_pause();
+        machine::on_resume();
+        machine::step(&mut NoJs);
+
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
+        );
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
+
+    #[test]
+    fn operator_paused_walk_rebaselines_first_observation_after_resume() {
+        reset();
+        post_walled_scene(vec![door_loc(1530, 2, 0)]);
+        let h = start_opening(&["door", "gate"]);
+        machine::step(&mut NoJs);
+        let _token = opening_walk_token(10);
+
+        machine::on_pause();
+        machine::on_resume();
+        // The host posts no snapshot while Paused. Resume is queued first.
+        crate::observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        machine::step(&mut NoJs);
+
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+        assert_eq!(machine::take(h), Take::Pending);
+    }
+
+    #[test]
+    fn resumed_walk_click_before_resume_applies_cancels_once() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let token = walk_token();
+
+        machine::on_pause();
+        // Host Resume is queued before the click, but the click's atomic
+        // notice is visible before the isolate dequeues that Resume.
+        publication.note_takeover(1);
+        machine::on_resume();
+        machine::on_manual_walk_takeover(1);
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk { request_id: token }]
+        );
+        machine::step(&mut NoJs);
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn in_flight_tick_new_walk_before_takeover_snapshot_settles_without_timeout() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        // The tick still reads the pre-takeover snapshot. Its action stamp is
+        // therefore stale; seeing the atomic must cancel, not bless a new walk
+        // that the host will fence without ever delivering a route outcome.
+        publication.note_takeover(1);
+        let started = machine::start(
+            "walk-resilient",
+            json!({ "tile": { "x": 10, "z": 0, "level": 0 }, "opts": { "radius": 0 } }),
+            Vec::new(),
+            0,
+        );
+        let outcome = match started {
+            Started::Settled(outcome) => Take::Settled(outcome),
+            Started::Running(h) => {
+                machine::step(&mut NoJs);
+                machine::take(h)
+            }
+            Started::Refused(reason) => panic!("walk refused instead of settling: {reason}"),
+        };
+        assert_eq!(outcome, Take::Settled(Outcome::Done(json!(false))));
+        assert!(
+            machine::merge_ops(Vec::new())
+                .iter()
+                .all(|req| matches!(req, InteractReq::AbortWalk { .. })),
+            "no automatic walk may escape before its takeover snapshot"
+        );
+        observed::post(2, |post| {
+            post.user_move_intent_seq(1);
+        });
+        let fresh = start(None);
+        machine::step(&mut NoJs);
+        let _fresh_request = walk_token();
+        assert_eq!(
+            machine::take(fresh),
+            Take::Pending,
+            "a new decision after observing the takeover can still walk"
+        );
+    }
+    #[test]
+    fn walking_owner_survives_guardian_hold_but_cannot_revive_after_takeover() {
+        reset();
+        let publication = std::sync::Arc::new(machine::WalkingOwnership::default());
+        machine::set_walking_publication(std::sync::Arc::clone(&publication));
+        post_here(0, 0);
+        let h = start(None);
+        assert!(publication.live());
+
+        machine::on_pause();
+        assert!(machine::walking_live());
+        machine::on_resume();
+        machine::on_hold(true);
+        assert!(
+            publication.live(),
+            "guardian hold freezes sends, not ownership"
+        );
+
+        machine::on_session_hold(true);
+        assert!(!publication.live(), "reconnect work is carried, not active");
+        machine::on_session_hold(false);
+        assert!(publication.live());
+
+        // The host signal arrives before the ordered isolate command. A later
+        // hold/phase publication must not resurrect the interrupted row.
+        publication.note_takeover(1);
+        assert!(!publication.live());
+        machine::on_hold(false);
+        machine::on_pause();
+        machine::on_resume();
+        assert!(!publication.live());
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert!(!publication.live());
     }
 
     #[test]

@@ -365,7 +365,7 @@ impl Pages {
             return Some(modal == -1);
         }
         self.pages += 1;
-        if self.strict && interrupted() {
+        if self.strict && interrupted(cx) {
             return Some(false);
         }
         if cont {
@@ -931,7 +931,7 @@ impl Recover {
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Self, bool> {
-        if RECOVERING.with(Cell::get) || interrupted() || !missing_boat_fare(dest) {
+        if RECOVERING.with(Cell::get) || interrupted(cx) || !missing_boat_fare(dest) {
             return Err(false);
         }
         if inventory_full() && held(BANANA) == 0 {
@@ -949,7 +949,7 @@ impl Recover {
 
     /// Frozen `talk()` (`karamjaRecovery.ts:36–41`).
     fn talk(second: bool, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Result<Stage, bool> {
-        if interrupted() {
+        if interrupted(cx) {
             return Err(false);
         }
         match Walk::begin(LUTHAS_ANCHOR, 2, TALK_WALK_MS, false, cx) {
@@ -987,7 +987,7 @@ impl Recover {
 
     /// `Some(fare_held)` once the recovery ended.
     pub(crate) fn step(&mut self, cx: &mut Cx<'_>, logs: &mut VecDeque<String>) -> Option<bool> {
-        if interrupted() {
+        if interrupted(cx) {
             if let Some(stop) = self.release() {
                 cx.emit(stop);
             }
@@ -1013,7 +1013,7 @@ impl Recover {
                 if *second || held(COINS) >= BOAT_FARE {
                     return Some(held(COINS) >= BOAT_FARE);
                 }
-                if interrupted() {
+                if interrupted(cx) {
                     return Some(false);
                 }
                 match Fill::start(cx, logs) {
@@ -1079,10 +1079,13 @@ pub(crate) struct WalkToArgs {
     use_teleport_catalog: Option<bool>,
     #[serde(default)]
     policy: WalkToPolicy,
-    /// Frozen `avoidZones`: rectangles route around; a catalog zone id is
-    /// refused ([`avoid_refusal`]).
+    /// Frozen `avoidZones`: rectangles and known catalog ids are resolved
+    /// at the host arm site with the endpoints and combat level.
     #[serde(default)]
     avoid_zones: Vec<InspectAvoidWire>,
+    /// Per-walk named danger-zone exemptions.
+    #[serde(default)]
+    cross_zones: Vec<String>,
     /// Whether the caller passed `pathFollow` overrides.
     #[serde(default)]
     path_follow: bool,
@@ -1096,22 +1099,25 @@ const WALK_TO_RADIUS: i32 = 2;
 const WALK_TO_MS: u64 = 300_000;
 
 impl WalkToArgs {
-    /// Options the host walk has no wire for, refused loud (never dropped).
-    fn refusal(&self) -> Option<&'static str> {
+    /// Options the host walk cannot honor are refused, never dropped.
+    fn refusal(&self) -> Option<String> {
         if let Some(reason) = avoid_refusal(&self.avoid_zones) {
             return Some(reason);
         }
+        if self.cross_zones.len() > 8 {
+            return Some("crossZones: more than 8 zone ids".into());
+        }
         if self.policy.allow_teleport_ids > 0 || self.policy.deny_teleport_ids > 0 {
-            return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter");
+            return Some("policy.allowTeleportIds/denyTeleportIds: the host router has no teleport id filter".into());
         }
         if self.policy.use_ships == Some(false) || self.policy.use_shortcuts == Some(false) {
-            return Some("policy.useShips/useShortcuts false: the host router cannot exclude ships or shortcuts");
+            return Some("policy.useShips/useShortcuts false: the host router cannot exclude ships or shortcuts".into());
         }
         if self.path_follow {
-            return Some("pathFollow: the host follow has no stall/deviation overrides");
+            return Some("pathFollow: the host follow has no stall/deviation overrides".into());
         }
         if self.force_repath {
-            return Some("forceRepath: the host walk has no forced repath of a live route");
+            return Some("forceRepath: the host walk has no forced repath of a live route".into());
         }
         None
     }
@@ -1139,6 +1145,7 @@ pub(crate) struct WalkTo {
     timeout_ms: u64,
     allow_teleports: bool,
     avoid: Vec<InspectAvoidWire>,
+    cross: Vec<String>,
     phase: WalkToPhase,
     logs: VecDeque<String>,
     result: Option<bool>,
@@ -1151,6 +1158,7 @@ const SUSTAIN: usize = 1;
 
 impl Family for WalkTo {
     const NAME: &'static str = "walk-to";
+    const WALKING_OPERATION: bool = true;
     const CALLBACKS: &'static [&'static str] = &["log", "sustain"];
     /// Frozen `log(...)` is not awaited; `await Sustain.run()` is.
     const SYNC_HOOKS: &'static [usize] = &[LOG];
@@ -1159,7 +1167,7 @@ impl Family for WalkTo {
 
     fn begin(args: WalkToArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         if let Some(reason) = args.refusal() {
-            return Begin::Refuse(reason.into());
+            return Begin::Refuse(reason);
         }
         let dest = WorldTile {
             x: args.tile.x,
@@ -1170,13 +1178,23 @@ impl Family for WalkTo {
         let timeout_ms = args.timeout_ms.unwrap_or(WALK_TO_MS);
         let allow_teleports = args.allow_teleports(dest);
         let avoid = args.avoid_zones;
-        match Walk::begin_avoiding(dest, radius, timeout_ms, allow_teleports, avoid.clone(), cx) {
+        let cross = args.cross_zones;
+        match Walk::begin_avoiding(
+            dest,
+            radius,
+            timeout_ms,
+            allow_teleports,
+            avoid.clone(),
+            cross.clone(),
+            cx,
+        ) {
             Ok(walk) => Begin::Run(Self {
                 dest,
                 radius,
                 timeout_ms,
                 allow_teleports,
                 avoid,
+                cross,
                 phase: WalkToPhase::Walking {
                     walk,
                     retried: false,
@@ -1191,6 +1209,12 @@ impl Family for WalkTo {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if cx.user_move_intent_interrupted() {
+            if let Some(stop) = Family::release(self) {
+                cx.emit(stop);
+            }
+            return Step::Done(false);
+        }
         if let Some(Reply::Threw(thrown)) = cx.reply() {
             return Step::Fail(thrown);
         }
@@ -1214,7 +1238,7 @@ impl Family for WalkTo {
             // Frozen follow pass: `EventSignal.pending()` ends the walk
             // before `Sustain.run()` (`WalkExecutor.ts:844–853, 359–362`),
             // the re-walk and the recovery included; the host route stops.
-            if interrupted() {
+            if interrupted(cx) {
                 self.interrupt(cx);
                 continue;
             }
@@ -1285,6 +1309,7 @@ impl WalkTo {
                     self.timeout_ms,
                     self.allow_teleports,
                     self.avoid.clone(),
+                    self.cross.clone(),
                     cx,
                 ) {
                     Ok(walk) => {

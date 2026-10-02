@@ -33,6 +33,7 @@ pub use options::{
 };
 #[path = "profile_binding.rs"]
 mod binding;
+pub use binding::DeferredReach;
 #[path = "profile_selection.rs"]
 mod selection;
 
@@ -297,7 +298,7 @@ pub struct ServerProfile {
     nav_identity: Option<NavManifest>,
     nav_load: NavLoadCounters,
     world: SharedWorld,
-    reach: Option<Arc<[u64]>>,
+    reach: Option<Arc<binding::DeferredReach>>,
     canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
@@ -384,18 +385,29 @@ impl ServerProfile {
         self.nav_identity.as_ref()
     }
     pub fn nav_load_counters(&self) -> NavLoadCounters {
-        self.nav_load
+        let mut counters = self.nav_load;
+        if let Some(reach) = &self.reach {
+            let (reads, hashes) = reach.load_counts();
+            counters.reach_reads += reads;
+            counters.reach_hashes += hashes;
+        }
+        counters
     }
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.0.clone()
     }
-    /// Bundled paint-reach bitset decoded at bind. `None` on the external
-    /// path, which keeps its one-time `bake_reach`.
+    /// Verified paint-reach sidecar, decoded once on the first paint request.
+    /// Routing never requests these words. Missing legacy identities or a file
+    /// changed after preparation return `None`; no unverified bits are exposed.
     pub fn reach(&self) -> Option<Arc<[u64]>> {
+        self.reach.as_ref().and_then(|reach| reach.get())
+    }
+    /// Lazy verified reach handle. Binding a paint consumer does not decode it.
+    pub fn reach_source(&self) -> Option<Arc<DeferredReach>> {
         self.reach.clone()
     }
-    /// Bundled static canlight bitset decoded at bind. `None` on the external
-    /// / legacy path (Fire fail-closed; no runtime bake).
+    /// Verified static canlight plane shared by both navigation origins.
+    /// Legacy packs without a sidecar identity keep Fire explicitly unavailable.
     pub fn canlight(&self) -> Option<Arc<[u64]>> {
         self.canlight.clone()
     }

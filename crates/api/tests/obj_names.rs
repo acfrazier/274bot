@@ -102,7 +102,7 @@ fn name_and_by_name_still_resolve_off_the_view_table() {
 /// footprint, block flags, active, force approach.
 #[test]
 fn loc_defs_maps_name_ops_and_flags() {
-    let mut locs = vec![LocType::default(), LocType::default()];
+    let mut locs = vec![LocType::default(), LocType::default(), LocType::default()];
     locs[0].id = 0;
     locs[0].name = "Gate".into();
     locs[0].op = vec![Some("Open".into()), None, Some("Pick-lock".into())];
@@ -113,6 +113,8 @@ fn loc_defs_maps_name_ops_and_flags() {
     locs[0].active = true;
     locs[0].forceapproach = 1;
     locs[1].id = 1; // default: empty name, no ops
+    locs[2].id = 2;
+    locs[2].op = vec![Some("Close".into())];
     let defs = api::obj_names::LocDefs::from_locs(&locs);
     let gate = defs.loc(0).expect("id 0 present");
     assert_eq!(gate.name.as_deref(), Some("Gate"));
@@ -121,6 +123,11 @@ fn loc_defs_maps_name_ops_and_flags() {
         vec!["Open", "Pick-lock"],
         "Some ops kept in order, None filtered out"
     );
+    assert_eq!(defs.op_at(0, 1), Some("Open"));
+    assert_eq!(defs.op_at(0, 2), None, "empty cache option stays empty");
+    assert_eq!(defs.op_at(0, 3), Some("Pick-lock"));
+    assert_eq!(defs.op_at(0, 4), None, "out-of-range option is absent");
+    assert_eq!(defs.op_at(2, 1), Some("Close"));
     assert_eq!(gate.width, 2);
     assert_eq!(gate.length, 1);
     assert!(gate.block_walk);

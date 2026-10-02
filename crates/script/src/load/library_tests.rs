@@ -255,3 +255,81 @@ fn persisting_a_relative_catalog_root_stores_it_absolute() {
     assert_eq!(stored, expected.to_string_lossy());
     assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(expected)));
 }
+
+#[test]
+fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not() {
+    let dir = scratch("start-result-stage");
+    let mut lib = library(&dir);
+    let path = bot_script(&dir, "bot.ts");
+    let card = lib.load(&path).expect("bot loads");
+    // Drive the real Start producer with a deterministic spawn failure,
+    // then assert it classifies as RuntimeLoad (not Refused).
+    let mut slot = crate::slot::SlotScript::new();
+    let producer_err = slot
+        .start_with_injected_spawn_failure_for_test(
+            "export function tick() {}".into(),
+            crate::load::LoadShape::NativeTick,
+            vec![],
+            &[],
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+        .expect_err("injected spawn failure must err");
+    let diagnostic = match &producer_err {
+        crate::StartLoadError::RuntimeLoad(diagnostic) => diagnostic.clone(),
+        crate::StartLoadError::Refused(diagnostic) => {
+            panic!("producer must map spawn failure to RuntimeLoad, got Refused({diagnostic})")
+        }
+    };
+    assert!(
+        diagnostic.contains("isolate thread"),
+        "spawn diagnostic reaches the caller: {diagnostic}"
+    );
+    // A runtime setup failure is recorded against the attempted card with
+    // the RuntimeLoad stage, and the diagnostic reaches the caller.
+    let err = lib
+        .record_start_result(&card, Err(producer_err))
+        .expect_err("runtime failure propagates");
+    assert!(err.contains("isolate thread"), "{err}");
+    let failures = lib.load_failures();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].stage, LoadStage::RuntimeLoad);
+    assert_eq!(failures[0].identity_key, card.identity_key());
+    // A refusal carries its diagnostic back without touching the record.
+    let err = lib
+        .record_start_result(&card, Err(crate::StartLoadError::Refused("busy".into())))
+        .expect_err("refusal propagates");
+    assert_eq!(err, "busy");
+    assert_eq!(
+        lib.load_failures().len(),
+        1,
+        "refusals leave diagnostics untouched"
+    );
+    // Success clears the recorded failure.
+    lib.record_start_result(&card, Ok(()))
+        .expect("success clears");
+    assert!(lib.load_failures().is_empty());
+}
+
+#[test]
+fn start_load_reports_runtime_spawn_failure_not_refusal() {
+    let mut slot = crate::slot::SlotScript::new();
+    let err = slot
+        .start_with_injected_spawn_failure_for_test(
+            "export function tick() {}".into(),
+            crate::load::LoadShape::NativeTick,
+            vec![],
+            &[],
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+        .expect_err("injected spawn failure must err");
+    match err {
+        crate::StartLoadError::RuntimeLoad(diagnostic) => {
+            assert!(diagnostic.contains("isolate thread"), "{diagnostic}")
+        }
+        crate::StartLoadError::Refused(diagnostic) => {
+            panic!("spawn failure must be RuntimeLoad, not Refused({diagnostic})")
+        }
+    }
+}

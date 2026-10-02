@@ -66,7 +66,8 @@ impl NavWorld {
         ));
         self.named_banks
             .set(facts)
-            .map_err(|_| "bank facts already bound")
+            .map_err(|_| "bank facts already bound")?;
+        Ok(())
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world
@@ -182,6 +183,7 @@ impl NavWorld {
             let i = graph.edges.len();
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: WorldTile {
                     x: d.from.x,
                     z: d.from.z,

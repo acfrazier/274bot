@@ -69,8 +69,8 @@ pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool 
         BRIMHAVEN_INSPECT_BANK,
         BRIMHAVEN_INSPECT_BANK_RADIUS,
     ) && empty_pack(baseline)
-        && baseline.item_id(LOBSTER_ID) == 0
-        && baseline.item_id(COINS_ID) == 0
+        && baseline.item_id(catalog_item_id("lobster")) == 0
+        && baseline.item_id(catalog_item_id("coins")) == 0
         && baseline.level("agility") >= 30
         && baseline.ingame
         && baseline.scene_state == 2
@@ -99,10 +99,10 @@ impl BrimhavenMossInspectCycle {
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(LOBSTER_ID) >= BRIMHAVEN_INSPECT_FOOD_WITHDRAW
-            && now.item_id(COINS_ID) >= BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP
-            && baseline.item_id(LOBSTER_ID) == 0
-            && baseline.item_id(COINS_ID) == 0
+            && now.item_id(catalog_item_id("lobster")) >= BRIMHAVEN_INSPECT_FOOD_WITHDRAW
+            && now.item_id(catalog_item_id("coins")) >= BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP
+            && baseline.item_id(catalog_item_id("lobster")) == 0
+            && baseline.item_id(catalog_item_id("coins")) == 0
         {
             self.restocked = true;
         }

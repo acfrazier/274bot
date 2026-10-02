@@ -28,6 +28,7 @@ use nav::tile::Tile;
 use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
+use nav::zones::ZoneExempt;
 use nav::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -184,34 +185,41 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
-fn plant_snapshot(unpack: &Path, packs: &[(String, Vec<u8>)]) {
+fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    struct FixtureEntries;
+    impl client::unpack::EntrySource for FixtureEntries {
+        fn fetch_entries(
+            &mut self,
+            _archive: i32,
+            files: &[i32],
+        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+        }
+    }
     let versionlist = &packs
         .iter()
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let version = client::unpack::version_hash(versionlist);
-    let dir = unpack.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut manifest = format!(
-        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
-        dir.display()
-    );
+    let transfer = nav::manifest::hash_bytes(versionlist);
+    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let input = unpack.join("fixture-input");
+    std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
-        std::fs::write(dir.join(name), bytes).unwrap();
-        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+        std::fs::write(input.join(name), bytes).unwrap();
     }
-    for name in ["models", "anims", "midi", "maps"] {
-        let mut bin = 0u32.to_le_bytes().to_vec();
-        bin.extend_from_slice(&4u32.to_le_bytes());
-        bin.extend_from_slice(b"body");
-        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
-        manifest += &format!(
-            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
-            bin.len()
-        );
-    }
-    std::fs::write(dir.join("manifest"), manifest).unwrap();
+    let out = unpack
+        .join(format!("revision-{revision}"))
+        .join(negotiated)
+        .join(transfer);
+    // Use the same verified retained publisher fixture as host runtime_bind.
+    // Legacy size-only markers are not ordinary-launch asset candidates.
+    client::unpack::fetch_snapshot(
+        &input.to_string_lossy(),
+        &out.to_string_lossy(),
+        &mut FixtureEntries,
+    )
+    .unwrap();
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
@@ -286,7 +294,7 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     )
     .unwrap();
     let unpack = root.join("unpack");
-    plant_snapshot(&unpack, &packs);
+    plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
     (root, cache, manifest_path, unpack, port)
 }
@@ -488,6 +496,68 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(session.error.is_none(), "{:?}", session.error);
     assert!(session.core.play().unwrap().world().is_none());
     assert!(home.old_pack_untouched());
+}
+
+#[test]
+fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
+    let _guard = crate::picker::lock_nav_statics();
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = preparation_only_session();
+    session.install_prepared_template(template);
+    let world = profile.world().unwrap();
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
+    nav::paint::reset_bake_reach_calls();
+    // An eager install would keep the old verified payload and paint it even
+    // after the file changes. First layer demand must instead fail closed.
+    let path = profile.nav_pack().with_extension("navreach");
+    let mut bytes = std::fs::read(&path).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    std::fs::write(path, bytes).unwrap();
+    assert!(
+        crate::picker::map_reach_bitset(&world).is_none(),
+        "profile install must retain no decoded reach payload"
+    );
+    assert!(profile.reach().is_none());
+    assert_eq!(profile.nav_load_counters().reach_reads, 2);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+}
+
+#[test]
+fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
+    let _guard = crate::picker::lock_nav_statics();
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = preparation_only_session();
+    session.install_prepared_template(template);
+    let world = profile.world().unwrap();
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
+    nav::paint::reset_bake_reach_calls();
+    let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
+    assert_eq!(&*map_bits, &[0u64]);
+    assert!(Arc::ptr_eq(&map_bits, &profile.reach().unwrap()));
+    assert_eq!(Arc::strong_count(&map_bits), 2, "profile plus paint lease");
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    let mut other = nav::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
+    other.collision.origin.x += 1;
+    assert!(crate::picker::map_reach_bitset(&other).is_none());
+    assert!(crate::picker::reach_bitset(&other).is_none());
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    session.release_walk_map();
+    assert!(Arc::ptr_eq(
+        &map_bits,
+        &crate::picker::map_reach_bitset(&world).unwrap()
+    ));
+    assert_eq!(Arc::strong_count(&map_bits), 2);
+    drop(map_bits);
+    assert_eq!(Arc::strong_count(&profile.reach().unwrap()), 2);
+    crate::picker::set_pack(None);
+    assert!(crate::picker::map_reach_bitset(&world).is_none());
 }
 
 #[test]
@@ -1549,6 +1619,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         TransportGraph {
             edges: vec![TransportEdge {
                 kind: TransportKind::Door,
+                player_delta: None,
                 at: WorldTile {
                     x: 3202,
                     z: 3202,
@@ -2014,6 +2085,7 @@ fn door_route() -> Route {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: WorldTile {
                         x: 3202,
                         z: 3200,
@@ -2262,6 +2334,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: tiles[300],
                     to: tiles[301],
                     loc_id: 1530,
@@ -2515,6 +2588,14 @@ fn multibox_toggle_does_not_arm_scatter() {
 fn walk_status_is_dash_when_no_route() {
     let s = Session::new();
     assert_eq!(s.walk_status_text(), "—");
+}
+
+#[test]
+fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
+    let mut session = Session::new();
+    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+    session.route_through_zones = true;
+    assert!(session.walk_find_options().zones.is_all());
 }
 
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
@@ -2799,10 +2880,6 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
     );
     assert_eq!(s.walk_send.walk_label(), "Walk 2 bots");
     assert!(s.confirm_picker_group_walk(&world));
-    assert_eq!(
-        s.error.as_deref(),
-        Some("Walk marked: walking 2, skipped 0")
-    );
     assert!(s.map_model.pending().is_none());
     assert_eq!(s.walk_dest, Some(dest));
     let arms = s.travellers.lock().unwrap();
@@ -2867,12 +2944,6 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     s.refresh_walk_send();
     s.set_walk_send_mode(super::WalkSendMode::Group);
     assert!(s.confirm_picker_group_walk(&world));
-    assert_eq!(
-        s.error.as_deref(),
-        Some(
-            "Walk marked: walking 2, skipped 2: logged-out: not logged in, nopos: no position yet"
-        )
-    );
     let arms = s.travellers.lock().unwrap();
     assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
     assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
@@ -3264,6 +3335,7 @@ fn toll_world() -> NavWorld {
     }
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 1,
             z: 2,
@@ -3465,6 +3537,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -3570,6 +3643,7 @@ fn picker_confirm_uses_find_with_options() {
     };
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,

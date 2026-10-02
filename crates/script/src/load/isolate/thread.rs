@@ -100,6 +100,9 @@ fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> boo
 fn record_tick(runtime: &mut Runtime, n: u64) {
     set_host_field(runtime, "tick", HostValue::Number(n as f64));
 }
+fn current_observed_walk_outcome_seq() -> u64 {
+    crate::observed::with(|scene| scene.latest().walk_outcome_seq().unwrap_or(0))
+}
 
 /// `!!globalThis[name]`, read through V8 without compiling a script.
 fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
@@ -152,6 +155,7 @@ pub(super) fn isolate_main(
     out: Sender<ThreadMsg>,
     setup: Sender<SetupMessage>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
     compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
@@ -188,6 +192,7 @@ pub(super) fn isolate_main(
     // Declared after `runtime`, so a failed wire (whose module code may
     // have started a machine) drops the rows before the isolate.
     let _machines = MachinesStop;
+    crate::machine::set_walking_publication(walking_ownership);
     #[cfg(feature = "memory-profile")]
     counters
         .heap_live
@@ -1168,6 +1173,7 @@ fn tick_loop(
                             let _ = out.send(ThreadMsg::Interact {
                                 bytes: ipc.encode_interact_batch(&[req]),
                                 generation,
+                                observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
                             });
                         }
                         crate::reach::on_snapshot(&snap);
@@ -1300,6 +1306,7 @@ fn tick_loop(
                     continue;
                 }
                 let start = Instant::now();
+                let walk_outcome_seq_at_tick = current_observed_walk_outcome_seq();
                 // Every shape records the tick first, so machine callbacks,
                 // listeners and waits all see this tick's number.
                 if !wait_only {
@@ -1487,6 +1494,7 @@ fn tick_loop(
                         let _ = out.send(ThreadMsg::Interact {
                             bytes: ipc.encode_interact_batch(&lifecycle),
                             generation,
+                            observed_walk_outcome_seq: walk_outcome_seq_at_tick,
                         });
                     }
                     if let Some(reason) = stop {
@@ -1649,6 +1657,7 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&reqs),
                         generation,
+                        observed_walk_outcome_seq: walk_outcome_seq_at_tick,
                     });
                 }
                 // The tick's one onPaint pass and everything else it left
@@ -1839,6 +1848,7 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&facts),
                         generation: reset_generation,
+                        observed_walk_outcome_seq: current_observed_walk_outcome_seq(),
                     });
                 }
                 // Every tick of the dropped connection has finished.
@@ -1851,6 +1861,9 @@ fn tick_loop(
                 let _ = event_producer.set_paused(true);
                 sync_work_freeze(&mut work_frozen, true);
                 clear_unconsumed_paint_click(&mut runtime);
+            }
+            IsolateCmd::ManualWalkTakeover(seq) => {
+                crate::machine::on_manual_walk_takeover(seq);
             }
             IsolateCmd::Resume => {
                 paused = false;
@@ -1903,6 +1916,7 @@ fn tick_loop(
                     continue;
                 }
                 let start = Instant::now();
+                let observed_walk_outcome_seq = current_observed_walk_outcome_seq();
                 let req = match call_interruptible(&mut runtime, &teardown, |runtime| {
                     Ok::<_, rustyscript::Error>(eval_recovery_anchor(runtime))
                 })
@@ -1928,6 +1942,7 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&[req]),
                         generation,
+                        observed_walk_outcome_seq,
                     });
                 }
                 let _ = out.send(ThreadMsg::InFlightDone {

@@ -68,6 +68,7 @@ impl Runtime {
             ledger: &mut self.ledger,
             budget: &mut self.budget,
             eligible: true,
+            observed_walk_outcome_seq: 0,
         };
         f(&mut actions, &mut cx)
     }
@@ -198,6 +199,7 @@ impl Harness {
                             sequence: evidence.sequence,
                         },
                         accepted,
+                        chat_since: 0,
                     },
                 );
             }
@@ -527,6 +529,28 @@ fn fight(scene: &mut Scene) -> Harness {
     assert_eq!(harness.machine.phase, Phase::Fight);
     harness
 }
+fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
+    let request_id = harness
+        .machine
+        .pending_walk
+        .expect("combat walk request was issued")
+        .get();
+    harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence: tick.saturating_add(1),
+        },
+        end: crate::native::WalkEnd::UserInput,
+        blocked: None,
+        detail: None,
+    });
+}
 
 #[test]
 fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
@@ -799,6 +823,38 @@ fn case44_lone_karambwan_uses_the_reachable_danger_four_gate() {
     }
     attack(harness.pending(&scene, 7));
     assert_eq!(harness.machine.counters.locked, 3);
+}
+
+#[test]
+fn unsafe_combo_only_food_does_not_hide_no_food_abort() {
+    let mut scene = Scene::new("khazard_warlord");
+    let mut request = scene.request();
+    request.fallback = Fallback::Abort;
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    scene.install();
+    scene.refresh();
+    assert!(harness.pending(&scene, 2).is_none());
+    assert_eq!(harness.machine.phase, Phase::Fight);
+    scene.face_us();
+    scene.stat(3, 15, 40);
+    scene.inventory.push(scene.held("tbwt_cooked_karambwan", 0));
+    scene.refresh();
+
+    let held_only_combo = harness.pending_batch(&scene, 3);
+    assert_len(&held_only_combo, 0);
+    assert_eq!(harness.machine.end, None);
+
+    scene.stat(3, 9, 40);
+    scene.refresh();
+    assert!(matches!(
+        harness.poll(&scene.snapshot, 4),
+        Poll::Ready(Ok(CombatReport {
+            end: CombatEnd::Aborted(AbortReason::Unprotected(Unprotected::NoFood)),
+            ..
+        }))
+    ));
+    assert_len(&harness.drain(None), 0);
 }
 
 #[test]
@@ -1550,6 +1606,8 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
             sequence: 4,
         },
         end: crate::native::WalkEnd::Blocked,
+        blocked: None,
+        detail: None,
     });
     assert_eq!(
         harness.ready(&scene, 4).end,
@@ -2775,4 +2833,96 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
     scene.npcs[0].health = 0;
     scene.refresh();
     assert_eq!(harness.ready(&scene, 4).end, CombatEnd::Killed);
+}
+
+#[test]
+fn user_input_ends_combat_approach_without_rewalk_or_attack() {
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.actor.tile;
+    let stand = tile(here.x + 20, here.z);
+    scene.npcs[0].tile = tile(stand.x + 10, stand.z);
+    scene.npcs[0].distance = 30;
+    scene.refresh();
+    let mut request = scene.request();
+    request.stand = Some(stand);
+    request.engage_radius = 1;
+    let mut harness = Harness::new(&scene, request);
+
+    assert!(matches!(
+        harness.pending(&scene, 1),
+        Some(HostEffect::Walk(walk)) if walk.target == stand
+    ));
+    user_input_walk_receipt(&mut harness, 1);
+    assert!(matches!(
+        harness.poll_stamp(&scene.snapshot, 1, 2),
+        Poll::Ready(Err(ActionError::UserInput))
+    ));
+    assert_len(&harness.drain(None), 0);
+}
+
+#[test]
+fn user_input_ends_combat_retreat_without_relatching_failure_or_rewalking() {
+    let mut scene = Scene::new("khazard_warlord");
+    let here = scene.local.player.actor.tile;
+    let goal = tile(here.x + 20, here.z);
+    let mut request = scene.request();
+    request.fallback = Fallback::Retreat { tile: goal };
+    let mut harness = Harness::new(&scene, request);
+    attack(harness.pending(&scene, 1));
+    scene.install();
+    scene.face_us();
+    scene.stat(3, 9, 40);
+    scene.refresh();
+
+    assert!(matches!(
+        harness.pending(&scene, 2),
+        Some(HostEffect::Interaction(InteractReq::SetRetaliate {
+            on: false
+        }))
+    ));
+    scene
+        .varps
+        .iter_mut()
+        .find(|row| row.index == super::super::OPTION_NODEF)
+        .unwrap()
+        .value = 1;
+    scene.refresh();
+    assert!(matches!(
+        harness.pending(&scene, 3),
+        Some(HostEffect::Walk(walk)) if walk.target == goal
+    ));
+    user_input_walk_receipt(&mut harness, 3);
+    assert!(matches!(
+        harness.poll_stamp(&scene.snapshot, 3, 4),
+        Poll::Ready(Err(ActionError::UserInput))
+    ));
+    assert_len(&harness.drain(None), 0);
+}
+
+#[test]
+fn user_input_ends_combat_leash_walk_without_retarget_or_rewalk() {
+    let mut scene = Scene::new("imp");
+    let stand = scene.local.player.actor.tile;
+    let mut harness = leash_fight(&mut scene, 50);
+    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].distance = 13;
+    scene.refresh();
+
+    let walk_tick = (3..=5).find(|tick| match harness.pending(&scene, *tick) {
+        Some(HostEffect::Walk(walk)) => {
+            assert_eq!(walk.target, tile(stand.x - 2, stand.z));
+            true
+        }
+        Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack" => {
+            panic!("an out-of-leash target must not receive another Attack");
+        }
+        _ => false,
+    });
+    let tick = walk_tick.expect("lost leash cancels the chase with a walk");
+    user_input_walk_receipt(&mut harness, tick);
+    assert!(matches!(
+        harness.poll_stamp(&scene.snapshot, tick, tick.saturating_add(1)),
+        Poll::Ready(Err(ActionError::UserInput))
+    ));
+    assert_len(&harness.drain(None), 0);
 }

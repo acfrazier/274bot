@@ -134,6 +134,7 @@ pub(super) fn toll_edges(
                 };
                 let edge = |item_req, quest_req| TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at,
                     to,
                     loc_id: id,
@@ -231,6 +232,7 @@ pub(super) fn toll_shantay_henge_edges(
         };
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at,
             to: SHANTAY_NORTH_TO,
             loc_id: henge_id,
@@ -249,6 +251,7 @@ pub(super) fn toll_shantay_henge_edges(
         });
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
+            player_delta: None,
             at: WorldTile {
                 x: p.x,
                 z: p.z - 1,

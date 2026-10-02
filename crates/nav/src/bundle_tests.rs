@@ -204,9 +204,15 @@ fn fingerprints_cover_the_tree_and_detect_edits() {
     assert!(first.iter().any(|row| row.path.ends_with("m1.jm2")));
     assert!(first.iter().any(|row| row.path.ends_with("outside.loc")));
 
-    // Same bytes, newer mtime: still a change.
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    // Same bytes, newer mtime: still a change (explicit mtime, no sleep).
     std::fs::write(&map, b"one").unwrap();
+    let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::options()
+        .write(true)
+        .open(&map)
+        .unwrap()
+        .set_modified(bumped)
+        .unwrap();
     let second = fingerprints(&nested, &[&extra]).unwrap();
     assert_ne!(first, second);
 

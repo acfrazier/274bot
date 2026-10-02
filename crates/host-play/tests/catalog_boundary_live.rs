@@ -20,13 +20,22 @@ use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("fixtures/catalog-support-matrix.json");
 const GNOME_WEST_MAGICS: (i32, i32, i32) = GNOME_SOUTH_BANK_MAGIC_STAND;
-const STEEL_PICKAXE_ID: i32 = RUNE_PICKAXE_ID;
+fn steel_pickaxe_id() -> i32 {
+    r289_item_id("rune_pickaxe")
+}
 /// The frozen 96410ec5 reference catalog. `ClimbingBoots` was introduced there
 /// and is absent from the two historical catalogs the support matrix freezes
 /// (100ad/8e7), so this card's frozen-schema checks read 964 directly instead
 /// of asserting the card into an older ledger.
 const REFERENCE_COMMIT_964: &str = "96410ec5c779f3d8fe537268cae1a21c0174d16c";
 
+fn r289_item_id(alias: &str) -> i32 {
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("selected R289 game data")
+        .item_by_alias(alias)
+        .unwrap_or_else(|| panic!("selected R289 game data lacks item alias {alias:?}"))
+        .id
+}
 #[derive(Debug, Deserialize)]
 struct SupportMatrix {
     catalogs: Vec<CatalogLedger>,
@@ -616,7 +625,8 @@ fn run_cell() -> Result<(), String> {
         mainland,
         vec![],
         |_| (None, None),
-        move |client, username, hold| {
+        move |client, username, frame| {
+            let hold = frame.hold;
             let mut state = frame_state.lock().unwrap();
             if username == state.account {
                 state.frame(client, hold);
@@ -1029,14 +1039,17 @@ mod tests {
         baseline.levels.insert("strength".into(), 30);
         validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).unwrap();
 
-        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 5)], &[], 104);
-        let mut deposited = chicken_bank_obs((3012, 3355, 0), &[], &[(FEATHER_ID, 5)], 104);
+        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 5)], &[], 104);
+        let mut deposited =
+            chicken_bank_obs((3012, 3355, 0), &[], &[(r289_item_id("feather"), 5)], 104);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        let mut returned = chicken_bank_obs(FALADOR_CHICKENS, &[], &[(FEATHER_ID, 5)], 104);
+        let mut returned =
+            chicken_bank_obs(FALADOR_CHICKENS, &[], &[(r289_item_id("feather"), 5)], 104);
         returned.bank_generation = 2;
-        let mut further = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 3)], &[], 108);
+        let mut further =
+            chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 3)], &[], 108);
         further.bank_generation = 2;
 
         assert!(witness(
@@ -1112,7 +1125,7 @@ mod tests {
         .qualify()
         .is_err());
 
-        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(FEATHER_ID, 5)], 104);
+        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(r289_item_id("feather"), 5)], 104);
         far.bank_generation = 2;
         let mut further_far = further.clone();
         further_far.tile = Some((3185, 3440, 0));
@@ -1125,7 +1138,7 @@ mod tests {
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(FEATHER_ID, 1);
+        seeded.item_ids.insert(r289_item_id("feather"), 1);
         assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &seeded).is_err());
 
         let lumbridge = chicken_bank_obs((3235, 3295, 0), &[], &[], 100);
@@ -1139,6 +1152,8 @@ mod tests {
         let after = observation(&[("Coins", 25)], &[("thieving", 108)], &[]);
         let changed = witness(CoreCase::Thiever, &baseline, [&after]);
         assert!(changed.qualify().is_ok());
+        let stalled = witness(CoreCase::Thiever, &baseline, [&baseline]);
+        assert!(stalled.qualify().is_err(), "no progress must not qualify");
     }
 
     #[test]
@@ -1164,6 +1179,8 @@ mod tests {
         );
         let changed = witness(CoreCase::Alcher, &baseline, [&stocked, &after]);
         assert!(changed.qualify().is_ok());
+        let stalled = witness(CoreCase::Alcher, &baseline, [&baseline]);
+        assert!(stalled.qualify().is_err(), "no progress must not qualify");
     }
 
     #[test]
@@ -1506,9 +1523,10 @@ mod tests {
         let mut baseline = alcher_generated_obs(&[], 10_000);
         baseline.bank_generation = 1;
         validate_case_baseline(defaults, &baseline).unwrap();
-        let mut withdrawn = alcher_generated_obs(&[(856, 1), (NATURE_RUNE_ID, 1)], 10_000);
+        let mut withdrawn =
+            alcher_generated_obs(&[(856, 1), (r289_item_id("naturerune"), 1)], 10_000);
         withdrawn.bank_generation = 2;
-        let mut consumed = alcher_generated_obs(&[(COINS_ID, 768)], 10_065);
+        let mut consumed = alcher_generated_obs(&[(r289_item_id("coins"), 768)], 10_065);
         consumed.bank_generation = 2;
         assert!(witness(defaults, &baseline, [&withdrawn, &consumed])
             .qualify()
@@ -1593,7 +1611,10 @@ mod tests {
     #[test]
     fn coal_trucks_requires_the_documented_native_combat_level() {
         let mut baseline = observation_ids(
-            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, COAL_BALLAST_KNIVES)],
+            &[
+                (steel_pickaxe_id(), 1),
+                (r289_item_id("knife"), COAL_BALLAST_KNIVES),
+            ],
             &[],
             0,
         );
@@ -1613,7 +1634,7 @@ mod tests {
             .insert("mining".into(), 59);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &low_effective_mining).is_err());
         let mut steel_pickaxe = baseline.clone();
-        steel_pickaxe.item_ids.remove(&RUNE_PICKAXE_ID);
+        steel_pickaxe.item_ids.remove(&r289_item_id("rune_pickaxe"));
         steel_pickaxe.item_ids.insert(1269, 1);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &steel_pickaxe).is_err());
     }
@@ -1634,12 +1655,17 @@ mod tests {
             validate_case_baseline(case, &baseline).unwrap();
 
             let mut withdrawn = alcher_generated_obs(
-                &[(CERT_ADAMANT_SCIMITAR_ID, 1), (NATURE_RUNE_ID, 1)],
+                &[
+                    (r289_item_id("cert_adamant_scimitar"), 1),
+                    (r289_item_id("naturerune"), 1),
+                ],
                 10_000,
             );
             withdrawn.bank_generation = 2;
-            let mut consumed =
-                alcher_generated_obs(&[(COINS_ID, ADAMANT_SCIMITAR_ALCH_COINS)], 10_065);
+            let mut consumed = alcher_generated_obs(
+                &[(r289_item_id("coins"), ADAMANT_SCIMITAR_ALCH_COINS)],
+                10_065,
+            );
             consumed.bank_generation = 2;
 
             assert!(witness(case, &baseline, [&withdrawn, &consumed])
@@ -1657,17 +1683,20 @@ mod tests {
                 .is_err());
 
             let mut unnoted = withdrawn.clone();
-            unnoted.item_ids.remove(&CERT_ADAMANT_SCIMITAR_ID);
-            unnoted.item_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+            unnoted
+                .item_ids
+                .remove(&r289_item_id("cert_adamant_scimitar"));
+            unnoted.item_ids.insert(r289_item_id("adamant_scimitar"), 1);
             assert!(witness(case, &baseline, [&unnoted, &consumed])
                 .qualify()
                 .is_err());
 
-            let mut chainbody = alcher_generated_obs(&[(NATURE_RUNE_ID, 1)], 10_000);
+            let mut chainbody = alcher_generated_obs(&[(r289_item_id("naturerune"), 1)], 10_000);
             chainbody.items.insert("Rune chainbody".into(), 1);
             chainbody.items.insert("Nature rune".into(), 1);
             chainbody.bank_generation = 2;
-            let mut chainbody_after = alcher_generated_obs(&[(COINS_ID, 30_000)], 10_065);
+            let mut chainbody_after =
+                alcher_generated_obs(&[(r289_item_id("coins"), 30_000)], 10_065);
             chainbody_after.items.insert("Coins".into(), 30_000);
             chainbody_after.bank_generation = 2;
             assert!(witness(case, &baseline, [&chainbody, &chainbody_after])
@@ -1675,7 +1704,7 @@ mod tests {
                 .is_err());
 
             let mut wrong_coins = consumed.clone();
-            wrong_coins.item_ids.insert(COINS_ID, 30_000);
+            wrong_coins.item_ids.insert(r289_item_id("coins"), 30_000);
             assert!(witness(case, &baseline, [&withdrawn, &wrong_coins])
                 .qualify()
                 .is_err());
@@ -1687,12 +1716,14 @@ mod tests {
                 .is_err());
 
             let mut seeded_notes = baseline.clone();
-            seeded_notes.item_ids.insert(CERT_ADAMANT_SCIMITAR_ID, 1);
+            seeded_notes
+                .item_ids
+                .insert(r289_item_id("cert_adamant_scimitar"), 1);
             assert!(validate_case_baseline(case, &seeded_notes).is_err());
             let mut seeded_coins = baseline.clone();
             seeded_coins
                 .item_ids
-                .insert(COINS_ID, ADAMANT_SCIMITAR_ALCH_COINS);
+                .insert(r289_item_id("coins"), ADAMANT_SCIMITAR_ALCH_COINS);
             assert!(validate_case_baseline(case, &seeded_coins).is_err());
         }
     }
@@ -1718,7 +1749,10 @@ mod tests {
         validate_case_baseline(CoreCase::AlcherLow, &low_base).unwrap();
 
         let mut withdrawn = alcher_spell_obs(
-            &[(CERT_RUNE_CHAINBODY_ID, 10), (NATURE_RUNE_ID, 10)],
+            &[
+                (r289_item_id("cert_rune_chainbody"), 10),
+                (r289_item_id("naturerune"), 10),
+            ],
             &[],
             10_000,
             25,
@@ -1727,11 +1761,11 @@ mod tests {
         withdrawn.bank_generation = 2;
         let mut low_cast = alcher_spell_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 9),
-                (NATURE_RUNE_ID, 9),
-                (COINS_ID, RUNE_CHAINBODY_LOW_ALCH_COINS),
+                (r289_item_id("cert_rune_chainbody"), 9),
+                (r289_item_id("naturerune"), 9),
+                (r289_item_id("coins"), RUNE_CHAINBODY_LOW_ALCH_COINS),
             ],
-            &[(STAFF_OF_FIRE_ID, 1)],
+            &[(r289_item_id("staff_of_fire"), 1)],
             10_000 + LOW_ALCH_MAGIC_XP,
             25,
             1,
@@ -1745,11 +1779,11 @@ mod tests {
 
         let mut high_cast = alcher_spell_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 9),
-                (NATURE_RUNE_ID, 9),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+                (r289_item_id("cert_rune_chainbody"), 9),
+                (r289_item_id("naturerune"), 9),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS),
             ],
-            &[(STAFF_OF_FIRE_ID, 1)],
+            &[(r289_item_id("staff_of_fire"), 1)],
             10_000 + HIGH_ALCH_MAGIC_XP,
             25,
             1,
@@ -1769,13 +1803,17 @@ mod tests {
             .is_err());
 
         let mut seeded = low_base.clone();
-        seeded.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 10);
-        seeded.item_ids.insert(NATURE_RUNE_ID, 10);
         seeded
             .item_ids
-            .insert(COINS_ID, RUNE_CHAINBODY_LOW_ALCH_COINS);
+            .insert(r289_item_id("cert_rune_chainbody"), 10);
+        seeded.item_ids.insert(r289_item_id("naturerune"), 10);
+        seeded
+            .item_ids
+            .insert(r289_item_id("coins"), RUNE_CHAINBODY_LOW_ALCH_COINS);
         seeded.xp.insert("magic".into(), 10_000 + LOW_ALCH_MAGIC_XP);
-        seeded.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        seeded
+            .equipment_ids
+            .insert(r289_item_id("staff_of_fire"), 1);
         assert!(validate_case_baseline(CoreCase::AlcherLow, &seeded).is_err());
         assert!(
             witness(CoreCase::AlcherLow, &seeded, [&seeded])
@@ -1788,7 +1826,10 @@ mod tests {
         staff_base.bank_generation = 1;
         validate_case_baseline(CoreCase::AlcherFireBattlestaff, &staff_base).unwrap();
         let mut staff_withdrawn = alcher_spell_obs(
-            &[(CERT_RUNE_CHAINBODY_ID, 8), (NATURE_RUNE_ID, 8)],
+            &[
+                (r289_item_id("cert_rune_chainbody"), 8),
+                (r289_item_id("naturerune"), 8),
+            ],
             &[],
             10_000,
             70,
@@ -1797,11 +1838,11 @@ mod tests {
         staff_withdrawn.bank_generation = 2;
         let mut staff_cast = alcher_spell_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 7),
-                (NATURE_RUNE_ID, 7),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+                (r289_item_id("cert_rune_chainbody"), 7),
+                (r289_item_id("naturerune"), 7),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS),
             ],
-            &[(FIRE_BATTLESTAFF_ID, 1)],
+            &[(r289_item_id("fire_battlestaff"), 1)],
             10_000 + HIGH_ALCH_MAGIC_XP,
             70,
             40,
@@ -1817,7 +1858,9 @@ mod tests {
 
         let mut wrong_staff = staff_cast.clone();
         wrong_staff.equipment_ids.clear();
-        wrong_staff.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        wrong_staff
+            .equipment_ids
+            .insert(r289_item_id("staff_of_fire"), 1);
         assert!(
             witness(
                 CoreCase::AlcherFireBattlestaff,
@@ -1839,7 +1882,9 @@ mod tests {
         .is_err());
 
         let mut worn_at_start = staff_base.clone();
-        worn_at_start.equipment_ids.insert(FIRE_BATTLESTAFF_ID, 1);
+        worn_at_start
+            .equipment_ids
+            .insert(r289_item_id("fire_battlestaff"), 1);
         assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &worn_at_start).is_err());
         let mut low_magic = staff_base.clone();
         low_magic.levels.insert("magic".into(), 54);
@@ -1848,7 +1893,9 @@ mod tests {
         low_attack.levels.insert("attack".into(), 29);
         assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &low_attack).is_err());
         let mut banked_staff = staff_base.clone();
-        banked_staff.item_ids.insert(FIRE_BATTLESTAFF_ID, 1);
+        banked_staff
+            .item_ids
+            .insert(r289_item_id("fire_battlestaff"), 1);
         assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &banked_staff).is_err());
     }
 
@@ -1873,7 +1920,13 @@ mod tests {
         targeting: bool,
         hold: bool,
     ) -> Observation {
-        let mut observation = alcher_spell_obs(item_ids, &[(STAFF_OF_FIRE_ID, 1)], magic_xp, 70, 1);
+        let mut observation = alcher_spell_obs(
+            item_ids,
+            &[(r289_item_id("staff_of_fire"), 1)],
+            magic_xp,
+            70,
+            1,
+        );
         observation.taking_damage = taking_damage;
         if targeting {
             observation.npc_facts = vec![swarm_npc(true)];
@@ -1915,7 +1968,10 @@ mod tests {
         let bank = VARROCK_WEST_BANK;
         let flee = (bank.0, bank.1 - 12, bank.2);
         let mut withdrawn = swarm_obs(
-            &[(CERT_RUNE_CHAINBODY_ID, 20), (NATURE_RUNE_ID, 20)],
+            &[
+                (r289_item_id("cert_rune_chainbody"), 20),
+                (r289_item_id("naturerune"), 20),
+            ],
             10_000,
             false,
             false,
@@ -1925,9 +1981,9 @@ mod tests {
         withdrawn.bank_generation = 2;
         let first = swarm_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 19),
-                (NATURE_RUNE_ID, 19),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+                (r289_item_id("cert_rune_chainbody"), 19),
+                (r289_item_id("naturerune"), 19),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS),
             ],
             10_000 + HIGH_ALCH_MAGIC_XP,
             false,
@@ -1951,9 +2007,9 @@ mod tests {
         released.guardian = BoundedGuardian::default();
         let further = swarm_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 0),
-                (NATURE_RUNE_ID, 0),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 20),
+                (r289_item_id("cert_rune_chainbody"), 0),
+                (r289_item_id("naturerune"), 0),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS * 20),
             ],
             10_000 + HIGH_ALCH_MAGIC_XP * 20,
             false,
@@ -1967,13 +2023,17 @@ mod tests {
         let mut poor_out = retired.clone();
         poor_out.bank_open = false;
         poor_out.bank_loaded = false;
-        poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
-        poor_out.item_ids.insert(NATURE_RUNE_ID, 8);
+        poor_out
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 8);
+        poor_out.item_ids.insert(r289_item_id("naturerune"), 8);
         let mut poor_cast = poor_out.clone();
-        poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
-        poor_cast.item_ids.insert(NATURE_RUNE_ID, 7);
+        poor_cast
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 7);
+        poor_cast.item_ids.insert(r289_item_id("naturerune"), 7);
         poor_cast.item_ids.insert(
-            COINS_ID,
+            r289_item_id("coins"),
             RUNE_CHAINBODY_HIGH_ALCH_COINS * 20 + YEW_LONGBOW_ALCH_COINS,
         );
         poor_cast.xp.insert(
@@ -2021,26 +2081,32 @@ mod tests {
         );
 
         let mut notes_first = retired.clone();
-        notes_first.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
-        notes_first.item_ids.remove(&NATURE_RUNE_ID);
-        notes_first.item_ids.remove(&COINS_ID);
-        notes_first.bank_ids.insert(NATURE_RUNE_ID, 180);
+        notes_first
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 8);
+        notes_first.item_ids.remove(&r289_item_id("naturerune"));
+        notes_first.item_ids.remove(&r289_item_id("coins"));
+        notes_first.bank_ids.insert(r289_item_id("naturerune"), 180);
         notes_first
             .bank_ids
-            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 20);
+            .insert(r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS * 20);
         let mut runes_second = notes_first.clone();
-        runes_second.item_ids.insert(NATURE_RUNE_ID, 8);
-        runes_second.bank_ids.insert(NATURE_RUNE_ID, 172);
+        runes_second.item_ids.insert(r289_item_id("naturerune"), 8);
+        runes_second
+            .bank_ids
+            .insert(r289_item_id("naturerune"), 172);
         let mut restock_closed = runes_second.clone();
         restock_closed.bank_open = false;
         restock_closed.bank_loaded = false;
         restock_closed.bank_ids.clear();
         let mut staged_cast = restock_closed.clone();
-        staged_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
-        staged_cast.item_ids.insert(NATURE_RUNE_ID, 7);
         staged_cast
             .item_ids
-            .insert(COINS_ID, YEW_LONGBOW_ALCH_COINS);
+            .insert(r289_item_id("cert_yew_longbow"), 7);
+        staged_cast.item_ids.insert(r289_item_id("naturerune"), 7);
+        staged_cast
+            .item_ids
+            .insert(r289_item_id("coins"), YEW_LONGBOW_ALCH_COINS);
         staged_cast.xp.insert(
             "magic".into(),
             10_000 + HIGH_ALCH_MAGIC_XP * 20 + HIGH_ALCH_MAGIC_XP,
@@ -2189,10 +2255,12 @@ mod tests {
         fuel_missing_closed.bank_loaded = false;
         fuel_missing_closed.bank_ids.clear();
         let mut fuel_missing_cast = fuel_missing_closed.clone();
-        fuel_missing_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
         fuel_missing_cast
             .item_ids
-            .insert(COINS_ID, YEW_LONGBOW_ALCH_COINS);
+            .insert(r289_item_id("cert_yew_longbow"), 7);
+        fuel_missing_cast
+            .item_ids
+            .insert(r289_item_id("coins"), YEW_LONGBOW_ALCH_COINS);
         fuel_missing_cast.xp.insert(
             "magic".into(),
             10_000 + HIGH_ALCH_MAGIC_XP * 20 + HIGH_ALCH_MAGIC_XP,
@@ -2220,7 +2288,7 @@ mod tests {
             "noted poor without Nature fuel must not freeze a consumption baseline"
         );
         let mut dropped = restock_closed.clone();
-        dropped.item_ids.insert(CERT_YEW_LONGBOW_ID, 0);
+        dropped.item_ids.insert(r289_item_id("cert_yew_longbow"), 0);
         assert!(
             witness(
                 case,
@@ -2245,8 +2313,12 @@ mod tests {
             "dropping restocked poor notes must not qualify as a cast"
         );
         let mut deposited = runes_second.clone();
-        deposited.item_ids.insert(CERT_YEW_LONGBOW_ID, 0);
-        deposited.bank_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        deposited
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 0);
+        deposited
+            .bank_ids
+            .insert(r289_item_id("cert_yew_longbow"), 8);
         assert!(
             witness(
                 case,
@@ -2272,11 +2344,13 @@ mod tests {
         let mut further_before_release = first.clone();
         further_before_release
             .item_ids
-            .insert(CERT_RUNE_CHAINBODY_ID, 18);
-        further_before_release.item_ids.insert(NATURE_RUNE_ID, 18);
+            .insert(r289_item_id("cert_rune_chainbody"), 18);
         further_before_release
             .item_ids
-            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2);
+            .insert(r289_item_id("naturerune"), 18);
+        further_before_release
+            .item_ids
+            .insert(r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS * 2);
         further_before_release
             .xp
             .insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP * 2);
@@ -2293,9 +2367,9 @@ mod tests {
 
         let extra_before_hit = swarm_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 18),
-                (NATURE_RUNE_ID, 18),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+                (r289_item_id("cert_rune_chainbody"), 18),
+                (r289_item_id("naturerune"), 18),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
             ],
             10_000 + HIGH_ALCH_MAGIC_XP * 2,
             false,
@@ -2320,17 +2394,27 @@ mod tests {
         extra_retired.bank_open = true;
         extra_retired.bank_loaded = true;
         extra_retired.bank_generation = 3;
-        extra_retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
-        extra_retired.item_ids.insert(NATURE_RUNE_ID, 18);
+        extra_retired
+            .item_ids
+            .insert(r289_item_id("cert_rune_chainbody"), 0);
+        extra_retired
+            .item_ids
+            .insert(r289_item_id("naturerune"), 18);
         let mut extra_poor_out = extra_retired.clone();
         extra_poor_out.bank_open = false;
         extra_poor_out.bank_loaded = false;
-        extra_poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        extra_poor_out
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 8);
         let mut extra_poor_cast = extra_poor_out.clone();
-        extra_poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
-        extra_poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        extra_poor_cast
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 7);
+        extra_poor_cast
+            .item_ids
+            .insert(r289_item_id("naturerune"), 17);
         extra_poor_cast.item_ids.insert(
-            COINS_ID,
+            r289_item_id("coins"),
             RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
         );
         extra_poor_cast.xp.insert(
@@ -2425,7 +2509,9 @@ mod tests {
         );
 
         let mut drop_notes = released.clone();
-        drop_notes.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        drop_notes
+            .item_ids
+            .insert(r289_item_id("cert_rune_chainbody"), 0);
         let mut drop_retired = drop_notes.clone();
         drop_retired.bank_open = true;
         drop_retired.bank_loaded = true;
@@ -2454,9 +2540,9 @@ mod tests {
 
         let partial = swarm_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 18),
-                (NATURE_RUNE_ID, 18),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+                (r289_item_id("cert_rune_chainbody"), 18),
+                (r289_item_id("naturerune"), 18),
+                (r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
             ],
             10_000 + HIGH_ALCH_MAGIC_XP * 2,
             false,
@@ -2467,17 +2553,27 @@ mod tests {
         partial_retired.bank_open = true;
         partial_retired.bank_loaded = true;
         partial_retired.bank_generation = 3;
-        partial_retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        partial_retired
+            .item_ids
+            .insert(r289_item_id("cert_rune_chainbody"), 0);
         let mut partial_poor_out = partial_retired.clone();
         partial_poor_out.bank_open = false;
         partial_poor_out.bank_loaded = false;
-        partial_poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
-        partial_poor_out.item_ids.insert(NATURE_RUNE_ID, 18);
+        partial_poor_out
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 8);
+        partial_poor_out
+            .item_ids
+            .insert(r289_item_id("naturerune"), 18);
         let mut partial_poor_cast = partial_poor_out.clone();
-        partial_poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
-        partial_poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        partial_poor_cast
+            .item_ids
+            .insert(r289_item_id("cert_yew_longbow"), 7);
+        partial_poor_cast
+            .item_ids
+            .insert(r289_item_id("naturerune"), 17);
         partial_poor_cast.item_ids.insert(
-            COINS_ID,
+            r289_item_id("coins"),
             RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
         );
         partial_poor_cast.xp.insert(
@@ -2507,15 +2603,19 @@ mod tests {
         );
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 20);
-        seeded.item_ids.insert(NATURE_RUNE_ID, 20);
         seeded
             .item_ids
-            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS);
+            .insert(r289_item_id("cert_rune_chainbody"), 20);
+        seeded.item_ids.insert(r289_item_id("naturerune"), 20);
+        seeded
+            .item_ids
+            .insert(r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS);
         seeded
             .xp
             .insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP);
-        seeded.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        seeded
+            .equipment_ids
+            .insert(r289_item_id("staff_of_fire"), 1);
         assert!(validate_case_baseline(case, &seeded).is_err());
         assert!(
             witness(case, &seeded, [&seeded]).qualify().is_err(),
@@ -2605,29 +2705,35 @@ export default class NativeStop extends LoopingBot {{
         for (case, tips, product, wrong) in [
             (
                 CoreCase::DartFletcher,
-                BRONZE_DART_TIP_ID,
-                BRONZE_DART_ID,
-                IRON_DART_ID,
+                r289_item_id("bronze_dart_tip"),
+                r289_item_id("bronze_dart"),
+                r289_item_id("iron_dart"),
             ),
             (
                 CoreCase::DartFletcherIron,
-                IRON_DART_TIP_ID,
-                IRON_DART_ID,
-                BRONZE_DART_ID,
+                r289_item_id("iron_dart_tip"),
+                r289_item_id("iron_dart"),
+                r289_item_id("bronze_dart"),
             ),
         ] {
-            let baseline = dart_obs(&[(tips, 100), (FEATHER_ID, 100)], 10_000);
+            let baseline = dart_obs(&[(tips, 100), (r289_item_id("feather"), 100)], 10_000);
             validate_case_baseline(case, &baseline).unwrap();
 
-            let first = dart_obs(&[(tips, 90), (FEATHER_ID, 90), (product, 10)], 10_018);
-            let further = dart_obs(&[(tips, 80), (FEATHER_ID, 80), (product, 20)], 10_036);
+            let first = dart_obs(
+                &[(tips, 90), (r289_item_id("feather"), 90), (product, 10)],
+                10_018,
+            );
+            let further = dart_obs(
+                &[(tips, 80), (r289_item_id("feather"), 80), (product, 20)],
+                10_036,
+            );
             assert!(witness(case, &baseline, [&first, &further])
                 .qualify()
                 .is_ok());
             assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
             assert!(witness(case, &baseline, [&first]).qualify().is_err());
 
-            let xp_only = dart_obs(&[(tips, 100), (FEATHER_ID, 100)], 10_018);
+            let xp_only = dart_obs(&[(tips, 100), (r289_item_id("feather"), 100)], 10_018);
             assert!(witness(case, &baseline, [&xp_only, &xp_only])
                 .qualify()
                 .is_err());
@@ -2643,14 +2749,26 @@ export default class NativeStop extends LoopingBot {{
                 .qualify()
                 .is_err());
 
-            let wrong_tier = dart_obs(&[(tips, 90), (FEATHER_ID, 90), (wrong, 10)], 10_018);
-            let wrong_further = dart_obs(&[(tips, 80), (FEATHER_ID, 80), (wrong, 20)], 10_036);
+            let wrong_tier = dart_obs(
+                &[(tips, 90), (r289_item_id("feather"), 90), (wrong, 10)],
+                10_018,
+            );
+            let wrong_further = dart_obs(
+                &[(tips, 80), (r289_item_id("feather"), 80), (wrong, 20)],
+                10_036,
+            );
             assert!(witness(case, &baseline, [&wrong_tier, &wrong_further])
                 .qualify()
                 .is_err());
 
-            let no_tips = dart_obs(&[(tips, 100), (FEATHER_ID, 90), (product, 10)], 10_018);
-            let no_tips_further = dart_obs(&[(tips, 100), (FEATHER_ID, 80), (product, 20)], 10_036);
+            let no_tips = dart_obs(
+                &[(tips, 100), (r289_item_id("feather"), 90), (product, 10)],
+                10_018,
+            );
+            let no_tips_further = dart_obs(
+                &[(tips, 100), (r289_item_id("feather"), 80), (product, 20)],
+                10_036,
+            );
             assert!(witness(case, &baseline, [&no_tips, &no_tips_further])
                 .qualify()
                 .is_err());
@@ -2667,19 +2785,24 @@ export default class NativeStop extends LoopingBot {{
             (CoreCase::HerbCleaner, false),
             (CoreCase::HerbCleanerNamed, true),
         ] {
-            let mut baseline = herb_obs(&[], &[(UNIDENTIFIED_GUAM_ID, 30)], 1_000);
+            let mut baseline = herb_obs(&[], &[(r289_item_id("unidentified_guam"), 30)], 1_000);
             if named {
-                baseline.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 4);
+                baseline
+                    .bank_ids
+                    .insert(r289_item_id("unidentified_marentill"), 4);
             }
             validate_case_baseline(case, &baseline).unwrap();
 
-            let first = herb_obs(&[(GUAM_LEAF_ID, 28)], &[], 1_070);
+            let first = herb_obs(&[(r289_item_id("guam_leaf"), 28)], &[], 1_070);
             let mut deposited = herb_obs(
                 &[],
                 &[
-                    (GUAM_LEAF_ID, 28),
-                    (UNIDENTIFIED_GUAM_ID, 2),
-                    (UNIDENTIFIED_MARENTILL_ID, if named { 4 } else { 0 }),
+                    (r289_item_id("guam_leaf"), 28),
+                    (r289_item_id("unidentified_guam"), 2),
+                    (
+                        r289_item_id("unidentified_marentill"),
+                        if named { 4 } else { 0 },
+                    ),
                 ],
                 1_070,
             );
@@ -2687,17 +2810,20 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
             let mut withdrawn = herb_obs(
-                &[(UNIDENTIFIED_GUAM_ID, 2)],
+                &[(r289_item_id("unidentified_guam"), 2)],
                 &[
-                    (GUAM_LEAF_ID, 28),
-                    (UNIDENTIFIED_MARENTILL_ID, if named { 4 } else { 0 }),
+                    (r289_item_id("guam_leaf"), 28),
+                    (
+                        r289_item_id("unidentified_marentill"),
+                        if named { 4 } else { 0 },
+                    ),
                 ],
                 1_070,
             );
             withdrawn.bank_open = true;
             withdrawn.bank_loaded = true;
             withdrawn.bank_generation = 1;
-            let cleaned = herb_obs(&[(GUAM_LEAF_ID, 2)], &[], 1_075);
+            let cleaned = herb_obs(&[(r289_item_id("guam_leaf"), 2)], &[], 1_075);
 
             assert!(
                 witness(case, &baseline, [&first, &deposited, &withdrawn, &cleaned])
@@ -2747,8 +2873,12 @@ export default class NativeStop extends LoopingBot {{
 
             if named {
                 let mut took_filter = withdrawn.clone();
-                took_filter.item_ids.insert(UNIDENTIFIED_MARENTILL_ID, 4);
-                took_filter.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 0);
+                took_filter
+                    .item_ids
+                    .insert(r289_item_id("unidentified_marentill"), 4);
+                took_filter
+                    .bank_ids
+                    .insert(r289_item_id("unidentified_marentill"), 0);
                 assert!(witness(
                     case,
                     &baseline,
@@ -2759,7 +2889,7 @@ export default class NativeStop extends LoopingBot {{
             }
 
             let mut seeded = baseline.clone();
-            seeded.item_ids.insert(GUAM_LEAF_ID, 28);
+            seeded.item_ids.insert(r289_item_id("guam_leaf"), 28);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
     }
@@ -2767,7 +2897,7 @@ export default class NativeStop extends LoopingBot {{
     #[test]
     fn herb_cleaner_empty_bank_requires_cleaning_fresh_exhaustion_and_script_stop() {
         let case = CoreCase::parse("herb_cleaner_empty_bank").expect("empty-bank core case");
-        let mut baseline = herb_obs(&[], &[(UNIDENTIFIED_GUAM_ID, 20)], 1_000);
+        let mut baseline = herb_obs(&[], &[(r289_item_id("unidentified_guam"), 20)], 1_000);
         baseline.levels.insert("herblore".into(), 20);
         baseline.bank_open = true;
         baseline.bank_loaded = true;
@@ -2781,7 +2911,7 @@ export default class NativeStop extends LoopingBot {{
         closed_without_receipt.bank_generation = 8;
         assert!(validate_case_baseline(case, &closed_without_receipt).is_err());
 
-        let cleaned = herb_obs(&[(GUAM_LEAF_ID, 20)], &[], 1_050);
+        let cleaned = herb_obs(&[(r289_item_id("guam_leaf"), 20)], &[], 1_050);
         let mut exhausted = cleaned.clone();
         exhausted.bank_open = true;
         exhausted.bank_loaded = true;
@@ -2829,7 +2959,9 @@ export default class NativeStop extends LoopingBot {{
         assert!(stale_witness.qualify().is_err());
 
         let mut guam_remains = exhausted.clone();
-        guam_remains.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 1);
+        guam_remains
+            .bank_ids
+            .insert(r289_item_id("unidentified_guam"), 1);
         let mut stocked_witness = witness(case, &baseline, [&cleaned, &guam_remains]);
         stocked_witness.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(stocked_witness.qualify().is_err());
@@ -2837,7 +2969,7 @@ export default class NativeStop extends LoopingBot {{
         let mut marrentill_remains = exhausted.clone();
         marrentill_remains
             .bank_ids
-            .insert(UNIDENTIFIED_MARENTILL_ID, 1);
+            .insert(r289_item_id("unidentified_marentill"), 1);
         let mut marrentill_witness = witness(case, &baseline, [&cleaned, &marrentill_remains]);
         marrentill_witness.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(marrentill_witness.qualify().is_err());
@@ -2876,19 +3008,30 @@ export default class NativeStop extends LoopingBot {{
             (CoreCase::GemCutter, false),
             (CoreCase::GemCutterNamed, true),
         ] {
-            let mut baseline = gem_obs(&[], &[(CHISEL_ID, 1), (UNCUT_SAPPHIRE_ID, 28)], 20_000);
+            let mut baseline = gem_obs(
+                &[],
+                &[
+                    (r289_item_id("chisel"), 1),
+                    (r289_item_id("uncut_sapphire"), 28),
+                ],
+                20_000,
+            );
             if named {
-                baseline.bank_ids.insert(UNCUT_OPAL_ID, 4);
+                baseline.bank_ids.insert(r289_item_id("uncut_opal"), 4);
             }
             validate_case_baseline(case, &baseline).unwrap();
 
-            let first = gem_obs(&[(CHISEL_ID, 1), (SAPPHIRE_ID, 27)], &[], 33_500);
+            let first = gem_obs(
+                &[(r289_item_id("chisel"), 1), (r289_item_id("sapphire"), 27)],
+                &[],
+                33_500,
+            );
             let mut deposited = gem_obs(
-                &[(CHISEL_ID, 1)],
+                &[(r289_item_id("chisel"), 1)],
                 &[
-                    (SAPPHIRE_ID, 27),
-                    (UNCUT_SAPPHIRE_ID, 1),
-                    (UNCUT_OPAL_ID, if named { 4 } else { 0 }),
+                    (r289_item_id("sapphire"), 27),
+                    (r289_item_id("uncut_sapphire"), 1),
+                    (r289_item_id("uncut_opal"), if named { 4 } else { 0 }),
                 ],
                 33_500,
             );
@@ -2896,17 +3039,24 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
             let mut withdrawn = gem_obs(
-                &[(CHISEL_ID, 1), (UNCUT_SAPPHIRE_ID, 1)],
                 &[
-                    (SAPPHIRE_ID, 27),
-                    (UNCUT_OPAL_ID, if named { 4 } else { 0 }),
+                    (r289_item_id("chisel"), 1),
+                    (r289_item_id("uncut_sapphire"), 1),
+                ],
+                &[
+                    (r289_item_id("sapphire"), 27),
+                    (r289_item_id("uncut_opal"), if named { 4 } else { 0 }),
                 ],
                 33_500,
             );
             withdrawn.bank_open = true;
             withdrawn.bank_loaded = true;
             withdrawn.bank_generation = 1;
-            let cut = gem_obs(&[(CHISEL_ID, 1), (SAPPHIRE_ID, 1)], &[], 34_000);
+            let cut = gem_obs(
+                &[(r289_item_id("chisel"), 1), (r289_item_id("sapphire"), 1)],
+                &[],
+                34_000,
+            );
 
             assert!(
                 witness(case, &baseline, [&first, &deposited, &withdrawn, &cut])
@@ -2930,7 +3080,11 @@ export default class NativeStop extends LoopingBot {{
             );
 
             let crushed = gem_obs(
-                &[(CHISEL_ID, 1), (SAPPHIRE_ID, 27), (CRUSHED_GEMSTONE_ID, 1)],
+                &[
+                    (r289_item_id("chisel"), 1),
+                    (r289_item_id("sapphire"), 27),
+                    (r289_item_id("crushed_gemstone"), 1),
+                ],
                 &[],
                 33_500,
             );
@@ -2941,7 +3095,7 @@ export default class NativeStop extends LoopingBot {{
             );
 
             let mut no_chisel = first.clone();
-            no_chisel.item_ids.remove(&CHISEL_ID);
+            no_chisel.item_ids.remove(&r289_item_id("chisel"));
             assert!(
                 witness(case, &baseline, [&no_chisel, &deposited, &withdrawn, &cut])
                     .qualify()
@@ -2963,8 +3117,8 @@ export default class NativeStop extends LoopingBot {{
 
             if named {
                 let mut took_opal = withdrawn.clone();
-                took_opal.item_ids.insert(UNCUT_OPAL_ID, 4);
-                took_opal.bank_ids.insert(UNCUT_OPAL_ID, 0);
+                took_opal.item_ids.insert(r289_item_id("uncut_opal"), 4);
+                took_opal.bank_ids.insert(r289_item_id("uncut_opal"), 0);
                 assert!(
                     witness(case, &baseline, [&first, &deposited, &took_opal, &cut])
                         .qualify()
@@ -2973,7 +3127,7 @@ export default class NativeStop extends LoopingBot {{
             }
 
             let mut seeded = baseline.clone();
-            seeded.item_ids.insert(SAPPHIRE_ID, 27);
+            seeded.item_ids.insert(r289_item_id("sapphire"), 27);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
     }
@@ -3004,12 +3158,18 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn wildy_agility_is_a_registered_catalog_core_case() {
-        assert!(CoreCase::parse("wildy_agility").is_ok());
+        assert_eq!(
+            CoreCase::parse("wildy_agility").unwrap().card_name(),
+            "WildyAgility"
+        );
     }
 
     #[test]
     fn brimhaven_agility_is_a_registered_catalog_core_case() {
-        assert!(CoreCase::parse("brimhaven_agility").is_ok());
+        assert_eq!(
+            CoreCase::parse("brimhaven_agility").unwrap().card_name(),
+            "BrimhavenAgility"
+        );
     }
 
     fn wildy_obs(tile: (i32, i32, i32), agility_xp: i32) -> Observation {
@@ -3022,13 +3182,13 @@ export default class NativeStop extends LoopingBot {{
     fn wildy_agility_requires_the_ordered_lap_bonus_and_second_pipe() {
         let mut baseline = wildy_obs(WILDY_START, 1_000);
         baseline.levels.insert("agility".into(), 52);
-        baseline.item_ids.insert(LOBSTER_ID, 5);
+        baseline.item_ids.insert(r289_item_id("lobster"), 5);
         validate_case_baseline(CoreCase::WildyAgility, &baseline).unwrap();
         let mut under_level = baseline.clone();
         under_level.levels.insert("agility".into(), 51);
         assert!(validate_case_baseline(CoreCase::WildyAgility, &under_level).is_err());
         let mut under_food = baseline.clone();
-        under_food.item_ids.insert(LOBSTER_ID, 4);
+        under_food.item_ids.insert(r289_item_id("lobster"), 4);
         assert!(validate_case_baseline(CoreCase::WildyAgility, &under_food).is_err());
         let mut low_base_hp = baseline.clone();
         low_base_hp.levels.insert("hitpoints".into(), 39);
@@ -3150,9 +3310,9 @@ export default class NativeStop extends LoopingBot {{
         let mut observation = observation(&[], &[("agility", agility_xp)], chat);
         observation.tile = Some(tile);
         observation.item_ids = [
-            (COINS_ID, coins),
-            (LOBSTER_ID, 10),
-            (BRIMHAVEN_TICKET_ID, tickets),
+            (r289_item_id("coins"), coins),
+            (r289_item_id("lobster"), 10),
+            (r289_item_id("agilityarena_ticket"), tickets),
         ]
         .into_iter()
         .collect();
@@ -3177,10 +3337,12 @@ export default class NativeStop extends LoopingBot {{
         pre_paid.varps.insert(BRIMHAVEN_ARENA_VARP, 2);
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &pre_paid).is_err());
         let mut seeded_ticket = baseline.clone();
-        seeded_ticket.item_ids.insert(BRIMHAVEN_TICKET_ID, 1);
+        seeded_ticket
+            .item_ids
+            .insert(r289_item_id("agilityarena_ticket"), 1);
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &seeded_ticket).is_err());
         let mut underfunded = baseline.clone();
-        underfunded.item_ids.insert(COINS_ID, 199);
+        underfunded.item_ids.insert(r289_item_id("coins"), 199);
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underfunded).is_err());
         let mut underqualified = baseline.clone();
         underqualified.levels.insert("agility".into(), 51);
@@ -3366,14 +3528,14 @@ export default class NativeStop extends LoopingBot {{
         let baseline = flax_obs(FLAX_FIELD, &[], &[]);
         validate_case_baseline(CoreCase::FlaxPicker, &baseline).unwrap();
 
-        let first = flax_obs(FLAX_FIELD, &[(FLAX_ID, 28)], &[]);
-        let mut deposited = flax_obs(FLAX_FIELD, &[], &[(FLAX_ID, 28)]);
+        let first = flax_obs(FLAX_FIELD, &[(r289_item_id("flax"), 28)], &[]);
+        let mut deposited = flax_obs(FLAX_FIELD, &[], &[(r289_item_id("flax"), 28)]);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
         let mut returned = flax_obs(FLAX_FIELD, &[], &[]);
         returned.bank_generation = 2;
-        let mut further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        let mut further = flax_obs(FLAX_FIELD, &[(r289_item_id("flax"), 1)], &[]);
         further.bank_generation = 2;
         assert!(witness(
             CoreCase::FlaxPicker,
@@ -3418,7 +3580,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(FLAX_ID, 28);
+        seeded.item_ids.insert(r289_item_id("flax"), 28);
         assert!(validate_case_baseline(CoreCase::FlaxPicker, &seeded).is_err());
     }
 
@@ -3455,28 +3617,28 @@ export default class NativeStop extends LoopingBot {{
         for (case, bar, primary, secondary, staff, steel, smithing) in [
             (
                 CoreCase::Superheater,
-                BRONZE_BAR_ID,
-                COPPER_ORE_ID,
-                TIN_ORE_ID,
-                STAFF_OF_FIRE_ID,
+                r289_item_id("bronze_bar"),
+                r289_item_id("copper_ore"),
+                r289_item_id("tin_ore"),
+                r289_item_id("staff_of_fire"),
                 false,
                 1,
             ),
             (
                 CoreCase::SuperheaterSteel,
-                STEEL_BAR_ID,
-                IRON_ORE_ID,
-                COAL_ID,
-                STAFF_OF_FIRE_ID,
+                r289_item_id("steel_bar"),
+                r289_item_id("iron_ore"),
+                r289_item_id("coal"),
+                r289_item_id("staff_of_fire"),
                 true,
                 30,
             ),
             (
                 CoreCase::SuperheaterFireBattlestaff,
-                BRONZE_BAR_ID,
-                COPPER_ORE_ID,
-                TIN_ORE_ID,
-                FIRE_BATTLESTAFF_ID,
+                r289_item_id("bronze_bar"),
+                r289_item_id("copper_ore"),
+                r289_item_id("tin_ore"),
+                r289_item_id("fire_battlestaff"),
                 false,
                 1,
             ),
@@ -3491,7 +3653,7 @@ export default class NativeStop extends LoopingBot {{
             let primary_n = 9;
             let secondary_n = if steel { 18 } else { 9 };
             let first = superheater_obs(
-                &[(bar, 9), (NATURE_RUNE_ID, 41)],
+                &[(bar, 9), (r289_item_id("naturerune"), 41)],
                 &[],
                 &[(staff, 1)],
                 10_053,
@@ -3499,7 +3661,7 @@ export default class NativeStop extends LoopingBot {{
                 smithing,
             );
             let mut deposited = superheater_obs(
-                &[(NATURE_RUNE_ID, 41)],
+                &[(r289_item_id("naturerune"), 41)],
                 &[
                     (bar, 9),
                     (primary, 91),
@@ -3517,7 +3679,7 @@ export default class NativeStop extends LoopingBot {{
                 &[
                     (primary, primary_n),
                     (secondary, secondary_n),
-                    (NATURE_RUNE_ID, 41),
+                    (r289_item_id("naturerune"), 41),
                 ],
                 &[
                     (bar, 9),
@@ -3537,7 +3699,7 @@ export default class NativeStop extends LoopingBot {{
                     (bar, 1),
                     (primary, primary_n - 1),
                     (secondary, secondary_n - if steel { 2 } else { 1 }),
-                    (NATURE_RUNE_ID, 40),
+                    (r289_item_id("naturerune"), 40),
                 ],
                 &[],
                 &[(staff, 1)],
@@ -3558,7 +3720,7 @@ export default class NativeStop extends LoopingBot {{
                 .is_err());
 
             let xp_only = superheater_obs(
-                &[(NATURE_RUNE_ID, 50)],
+                &[(r289_item_id("naturerune"), 50)],
                 &[],
                 &[(staff, 1)],
                 10_053,
@@ -3621,14 +3783,14 @@ export default class NativeStop extends LoopingBot {{
 
             if steel {
                 let mut one_coal = withdrawn.clone();
-                one_coal.item_ids.insert(COAL_ID, 9);
+                one_coal.item_ids.insert(r289_item_id("coal"), 9);
                 assert!(
                     witness(case, &baseline, [&first, &deposited, &one_coal, &further])
                         .qualify()
                         .is_err()
                 );
                 let mut iron_bar = first.clone();
-                iron_bar.item_ids.insert(IRON_BAR_ID, 1);
+                iron_bar.item_ids.insert(r289_item_id("iron_bar"), 1);
                 assert!(witness(
                     case,
                     &baseline,
@@ -3638,7 +3800,7 @@ export default class NativeStop extends LoopingBot {{
                 .is_err());
             } else {
                 let mut steel_bar = first.clone();
-                steel_bar.item_ids.insert(STEEL_BAR_ID, 1);
+                steel_bar.item_ids.insert(r289_item_id("steel_bar"), 1);
                 assert!(witness(
                     case,
                     &baseline,
@@ -3651,7 +3813,9 @@ export default class NativeStop extends LoopingBot {{
             if case == CoreCase::SuperheaterFireBattlestaff {
                 let mut default_staff = first.clone();
                 default_staff.equipment_ids.clear();
-                default_staff.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+                default_staff
+                    .equipment_ids
+                    .insert(r289_item_id("staff_of_fire"), 1);
                 assert!(witness(
                     case,
                     &baseline,
@@ -3688,18 +3852,29 @@ export default class NativeStop extends LoopingBot {{
             let baseline = vial_obs(bank, &[], &[]);
             validate_case_baseline(case, &baseline).unwrap();
 
-            let filled = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 28)], &[]);
-            let mut deposited = vial_obs(bank, &[], &[(VIAL_OF_WATER_ID, 28), (EMPTY_VIAL_ID, 28)]);
+            let filled = vial_obs(FALADOR_FOUNTAIN, &[(r289_item_id("vial_water"), 28)], &[]);
+            let mut deposited = vial_obs(
+                bank,
+                &[],
+                &[
+                    (r289_item_id("vial_water"), 28),
+                    (r289_item_id("vial_empty"), 28),
+                ],
+            );
             deposited.bank_open = true;
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
-            let mut withdrawn = vial_obs(bank, &[(EMPTY_VIAL_ID, 28)], &[(VIAL_OF_WATER_ID, 28)]);
+            let mut withdrawn = vial_obs(
+                bank,
+                &[(r289_item_id("vial_empty"), 28)],
+                &[(r289_item_id("vial_water"), 28)],
+            );
             withdrawn.bank_open = true;
             withdrawn.bank_loaded = true;
             withdrawn.bank_generation = 1;
-            let mut returned = vial_obs(FALADOR_FOUNTAIN, &[(EMPTY_VIAL_ID, 28)], &[]);
+            let mut returned = vial_obs(FALADOR_FOUNTAIN, &[(r289_item_id("vial_empty"), 28)], &[]);
             returned.bank_generation = 2;
-            let mut further = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 1)], &[]);
+            let mut further = vial_obs(FALADOR_FOUNTAIN, &[(r289_item_id("vial_water"), 1)], &[]);
             further.bank_generation = 2;
 
             assert!(witness(
@@ -3770,7 +3945,7 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
             let mut seeded = baseline.clone();
-            seeded.item_ids.insert(VIAL_OF_WATER_ID, 1);
+            seeded.item_ids.insert(r289_item_id("vial_water"), 1);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
     }
@@ -3803,30 +3978,30 @@ export default class NativeStop extends LoopingBot {{
         for (case, herb, unf, secondary, finished, wrong_unf, wrong_finished, named, level) in [
             (
                 CoreCase::PotionMaker,
-                GUAM_LEAF_ID,
-                GUAM_UNF_ID,
-                EYE_OF_NEWT_ID,
-                ATTACK_POTION_3_ID,
-                RANARR_UNF_ID,
-                PRAYER_POTION_3_ID,
+                r289_item_id("guam_leaf"),
+                r289_item_id("guamvial"),
+                r289_item_id("eye_of_newt"),
+                r289_item_id("3dose1attack"),
+                r289_item_id("ranarrvial"),
+                r289_item_id("3doseprayerrestore"),
                 false,
                 3,
             ),
             (
                 CoreCase::PotionMakerNamed,
-                RANARR_WEED_ID,
-                RANARR_UNF_ID,
-                SNAPE_GRASS_ID,
-                PRAYER_POTION_3_ID,
-                GUAM_UNF_ID,
-                ATTACK_POTION_3_ID,
+                r289_item_id("ranarr_weed"),
+                r289_item_id("ranarrvial"),
+                r289_item_id("snape_grass"),
+                r289_item_id("3doseprayerrestore"),
+                r289_item_id("guamvial"),
+                r289_item_id("3dose1attack"),
                 true,
                 38,
             ),
         ] {
             let mut baseline = potion_obs(&[], &[], 1_000, level);
             if named {
-                baseline.bank_ids.insert(GUAM_LEAF_ID, 14);
+                baseline.bank_ids.insert(r289_item_id("guam_leaf"), 14);
             }
             validate_case_baseline(case, &baseline).unwrap();
 
@@ -3835,11 +4010,11 @@ export default class NativeStop extends LoopingBot {{
             let mut deposited_bank = vec![
                 (finished, 14),
                 (herb, 28),
-                (VIAL_OF_WATER_ID, 28),
+                (r289_item_id("vial_water"), 28),
                 (secondary, 28),
             ];
             if named {
-                deposited_bank.push((GUAM_LEAF_ID, 14));
+                deposited_bank.push((r289_item_id("guam_leaf"), 14));
             }
             let mut deposited = potion_obs(&[], &deposited_bank, 1_025, level);
             deposited.bank_open = true;
@@ -3848,14 +4023,14 @@ export default class NativeStop extends LoopingBot {{
             let mut withdrawn_bank = vec![
                 (finished, 14),
                 (herb, 14),
-                (VIAL_OF_WATER_ID, 14),
+                (r289_item_id("vial_water"), 14),
                 (secondary, 28),
             ];
             if named {
-                withdrawn_bank.push((GUAM_LEAF_ID, 14));
+                withdrawn_bank.push((r289_item_id("guam_leaf"), 14));
             }
             let mut withdrawn = potion_obs(
-                &[(herb, 14), (VIAL_OF_WATER_ID, 14)],
+                &[(herb, 14), (r289_item_id("vial_water"), 14)],
                 &withdrawn_bank,
                 1_025,
                 level,
@@ -3863,7 +4038,12 @@ export default class NativeStop extends LoopingBot {{
             withdrawn.bank_open = true;
             withdrawn.bank_loaded = true;
             withdrawn.bank_generation = 1;
-            let further = potion_obs(&[(unf, 14), (VIAL_OF_WATER_ID, 0)], &[], 1_025, level);
+            let further = potion_obs(
+                &[(unf, 14), (r289_item_id("vial_water"), 0)],
+                &[],
+                1_025,
+                level,
+            );
 
             assert!(witness(
                 case,
@@ -3927,8 +4107,8 @@ export default class NativeStop extends LoopingBot {{
 
             if named {
                 let mut took_guam = withdrawn.clone();
-                took_guam.item_ids.insert(GUAM_LEAF_ID, 14);
-                took_guam.bank_ids.insert(GUAM_LEAF_ID, 0);
+                took_guam.item_ids.insert(r289_item_id("guam_leaf"), 14);
+                took_guam.bank_ids.insert(r289_item_id("guam_leaf"), 0);
                 assert!(witness(
                     case,
                     &baseline,
@@ -3977,14 +4157,14 @@ export default class NativeStop extends LoopingBot {{
         for (case, product, wrong, tan_all) in [
             (
                 CoreCase::TannerBot,
-                SOFT_LEATHER_ID,
-                HARD_LEATHER_ID,
+                r289_item_id("leather"),
+                r289_item_id("hard_leather"),
                 SOFT_TAN_ALL_COM,
             ),
             (
                 CoreCase::TannerBotHard,
-                HARD_LEATHER_ID,
-                SOFT_LEATHER_ID,
+                r289_item_id("hard_leather"),
+                r289_item_id("leather"),
                 HARD_TAN_ALL_COM,
             ),
         ] {
@@ -3993,22 +4173,29 @@ export default class NativeStop extends LoopingBot {{
 
             let widget = tanner_obs(
                 TANNER_STAND,
-                &[(COW_HIDE_ID, 27), (COINS_ID, 2000)],
+                &[
+                    (r289_item_id("cow_hide"), 27),
+                    (r289_item_id("coins"), 2000),
+                ],
                 &[],
                 TANNER_IF,
                 &[tan_all],
             );
             let tanned = tanner_obs(
                 TANNER_STAND,
-                &[(product, 27), (COINS_ID, 1973)],
+                &[(product, 27), (r289_item_id("coins"), 1973)],
                 &[],
                 TANNER_IF,
                 &[tan_all],
             );
             let mut deposited = tanner_obs(
                 AL_KHARID_BANK,
-                &[(COINS_ID, 1973)],
-                &[(product, 27), (COW_HIDE_ID, 1), (COINS_ID, 3000)],
+                &[(r289_item_id("coins"), 1973)],
+                &[
+                    (product, 27),
+                    (r289_item_id("cow_hide"), 1),
+                    (r289_item_id("coins"), 3000),
+                ],
                 -1,
                 &[],
             );
@@ -4017,8 +4204,8 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_generation = 1;
             let mut withdrawn = tanner_obs(
                 AL_KHARID_BANK,
-                &[(COW_HIDE_ID, 1), (COINS_ID, 1973)],
-                &[(product, 27), (COINS_ID, 3000)],
+                &[(r289_item_id("cow_hide"), 1), (r289_item_id("coins"), 1973)],
+                &[(product, 27), (r289_item_id("coins"), 3000)],
                 -1,
                 &[],
             );
@@ -4027,7 +4214,7 @@ export default class NativeStop extends LoopingBot {{
             withdrawn.bank_generation = 1;
             let mut returned = tanner_obs(
                 TANNER_STAND,
-                &[(COW_HIDE_ID, 1), (COINS_ID, 1973)],
+                &[(r289_item_id("cow_hide"), 1), (r289_item_id("coins"), 1973)],
                 &[],
                 -1,
                 &[],
@@ -4035,7 +4222,7 @@ export default class NativeStop extends LoopingBot {{
             returned.bank_generation = 2;
             let mut further = tanner_obs(
                 TANNER_STAND,
-                &[(product, 1), (COINS_ID, 1972)],
+                &[(product, 1), (r289_item_id("coins"), 1972)],
                 &[],
                 -1,
                 &[],
@@ -4198,9 +4385,9 @@ export default class NativeStop extends LoopingBot {{
                 FALADOR_EAST_BANK,
                 RUNECRAFTER_AIR_RUINS,
                 AIR_ALTAR,
-                AIR_RUNE_ID,
-                EARTH_RUNE_ID,
-                AIR_TALISMAN_ID,
+                r289_item_id("airrune"),
+                r289_item_id("earthrune"),
+                r289_item_id("air_talisman"),
                 1,
             ),
             (
@@ -4208,9 +4395,9 @@ export default class NativeStop extends LoopingBot {{
                 VARROCK_EAST_BANK,
                 RUNECRAFTER_EARTH_RUINS,
                 EARTH_ALTAR,
-                EARTH_RUNE_ID,
-                AIR_RUNE_ID,
-                EARTH_TALISMAN_ID,
+                r289_item_id("earthrune"),
+                r289_item_id("airrune"),
+                r289_item_id("earth_talisman"),
                 9,
             ),
             (
@@ -4218,9 +4405,9 @@ export default class NativeStop extends LoopingBot {{
                 FALADOR_EAST_BANK,
                 MULECRAFTER_AIR_RUINS,
                 AIR_ALTAR,
-                AIR_RUNE_ID,
-                EARTH_RUNE_ID,
-                AIR_TALISMAN_ID,
+                r289_item_id("airrune"),
+                r289_item_id("earthrune"),
+                r289_item_id("air_talisman"),
                 1,
             ),
         ] {
@@ -4229,14 +4416,14 @@ export default class NativeStop extends LoopingBot {{
 
             let withdrawn = runecraft_obs(
                 bank,
-                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[(r289_item_id("blankrune"), 27), (talisman, 1)],
                 &[],
                 0,
                 rc_level,
             );
             let entered = runecraft_obs(
                 altar,
-                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[(r289_item_id("blankrune"), 27), (talisman, 1)],
                 &[],
                 0,
                 rc_level,
@@ -4246,7 +4433,7 @@ export default class NativeStop extends LoopingBot {{
             let mut deposited = runecraft_obs(
                 bank,
                 &[(talisman, 1)],
-                &[(rune, 27), (RUNE_ESSENCE_ID, 173)],
+                &[(rune, 27), (r289_item_id("blankrune"), 173)],
                 5,
                 rc_level,
             );
@@ -4255,8 +4442,8 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_generation = 1;
             let mut restocked = runecraft_obs(
                 bank,
-                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
-                &[(rune, 27), (RUNE_ESSENCE_ID, 146)],
+                &[(r289_item_id("blankrune"), 27), (talisman, 1)],
+                &[(rune, 27), (r289_item_id("blankrune"), 146)],
                 5,
                 rc_level,
             );
@@ -4265,7 +4452,7 @@ export default class NativeStop extends LoopingBot {{
             restocked.bank_generation = 1;
             let mut returned = runecraft_obs(
                 ruins,
-                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[(r289_item_id("blankrune"), 27), (talisman, 1)],
                 &[],
                 5,
                 rc_level,
@@ -4389,8 +4576,8 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
             let mut noted = withdrawn.clone();
-            noted.item_ids.insert(NOTED_ESSENCE_ID, 27);
-            noted.item_ids.remove(&RUNE_ESSENCE_ID);
+            noted.item_ids.insert(r289_item_id("cert_blankrune"), 27);
+            noted.item_ids.remove(&r289_item_id("blankrune"));
             assert!(witness(
                 case,
                 &baseline,
@@ -4418,21 +4605,30 @@ export default class NativeStop extends LoopingBot {{
         let baseline = runecraft_obs(VARROCK_EAST_BANK, &[], &[], 0, 9);
         let withdrawn = runecraft_obs(
             VARROCK_EAST_BANK,
-            &[(RUNE_ESSENCE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[
+                (r289_item_id("blankrune"), 27),
+                (r289_item_id("earth_talisman"), 1),
+            ],
             &[],
             0,
             9,
         );
         let entered = runecraft_obs(
             EARTH_ALTAR,
-            &[(RUNE_ESSENCE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[
+                (r289_item_id("blankrune"), 27),
+                (r289_item_id("earth_talisman"), 1),
+            ],
             &[],
             0,
             9,
         );
         let crafted = runecraft_obs(
             EARTH_ALTAR,
-            &[(EARTH_RUNE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[
+                (r289_item_id("earthrune"), 27),
+                (r289_item_id("earth_talisman"), 1),
+            ],
             &[],
             5,
             9,
@@ -4488,7 +4684,7 @@ export default class NativeStop extends LoopingBot {{
     fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal_checks() {
         let baseline = ardy_obs(
             ARDY_CAKES_STAND,
-            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
+            &[(r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES)],
             &[],
             0,
             5,
@@ -4498,9 +4694,9 @@ export default class NativeStop extends LoopingBot {{
         let stolen = ardy_obs(
             ARDY_CAKES_STAND,
             &[
-                (KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES),
-                (CAKE_ID, 4),
-                (BREAD_ID, 2),
+                (r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES),
+                (r289_item_id("cake"), 4),
+                (r289_item_id("bread"), 2),
             ],
             &[],
             64,
@@ -4510,9 +4706,9 @@ export default class NativeStop extends LoopingBot {{
             ARDY_BANK,
             &[],
             &[
-                (KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES),
-                (CAKE_ID, 4),
-                (BREAD_ID, 2),
+                (r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES),
+                (r289_item_id("cake"), 4),
+                (r289_item_id("bread"), 2),
             ],
             64,
             5,
@@ -4522,7 +4718,13 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_generation = 1;
         let mut returned = ardy_obs(ARDY_CAKES_STAND, &[], &[], 64, 5);
         returned.bank_generation = 2;
-        let mut further = ardy_obs(ARDY_CAKES_STAND, &[(CHOCOLATE_SLICE_ID, 1)], &[], 80, 5);
+        let mut further = ardy_obs(
+            ARDY_CAKES_STAND,
+            &[(r289_item_id("chocolate_slice"), 1)],
+            &[],
+            80,
+            5,
+        );
         further.bank_generation = 2;
 
         assert!(witness(
@@ -4598,7 +4800,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut wrong = stolen.clone();
-        wrong.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+        wrong.item_ids.insert(r289_item_id("chocolate_cake"), 1);
         assert!(witness(
             CoreCase::ArdyCakes,
             &baseline,
@@ -4608,7 +4810,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut noted = stolen.clone();
-        noted.item_ids.insert(NOTED_CAKE_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_cake"), 1);
         assert!(witness(
             CoreCase::ArdyCakes,
             &baseline,
@@ -4618,15 +4820,17 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(CAKE_ID, 1);
+        seeded.item_ids.insert(r289_item_id("cake"), 1);
         assert!(validate_case_baseline(CoreCase::ArdyCakes, &seeded).is_err());
         let mut wrong_ballast = baseline.clone();
         wrong_ballast
             .item_ids
-            .insert(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES - 1);
+            .insert(r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES - 1);
         assert!(validate_case_baseline(CoreCase::ArdyCakes, &wrong_ballast).is_err());
         let mut missing_banked_ballast = deposited.clone();
-        missing_banked_ballast.bank_ids.remove(&KNIFE_ID);
+        missing_banked_ballast
+            .bank_ids
+            .remove(&r289_item_id("knife"));
         assert!(witness(
             CoreCase::ArdyCakes,
             &baseline,
@@ -4658,24 +4862,41 @@ export default class NativeStop extends LoopingBot {{
             let baseline = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, thieving);
             validate_case_baseline(case, &baseline).unwrap();
 
-            let cakes_only = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 16, thieving);
+            let cakes_only = ardy_obs(
+                ARDY_THIEVER_STAND,
+                &[(r289_item_id("cake"), 1)],
+                &[],
+                16,
+                thieving,
+            );
             let pickpocketed = ardy_obs(
                 ARDY_THIEVER_STAND,
-                &[(COINS_ID, 30), (CAKE_ID, 1)],
+                &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
                 &[],
                 484,
                 thieving,
             );
-            let mut deposited =
-                ardy_obs(ARDY_BANK, &[(CAKE_ID, 1)], &[(COINS_ID, 30)], 484, thieving);
+            let mut deposited = ardy_obs(
+                ARDY_BANK,
+                &[(r289_item_id("cake"), 1)],
+                &[(r289_item_id("coins"), 30)],
+                484,
+                thieving,
+            );
             deposited.bank_open = true;
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
-            let mut returned = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 484, thieving);
+            let mut returned = ardy_obs(
+                ARDY_THIEVER_STAND,
+                &[(r289_item_id("cake"), 1)],
+                &[],
+                484,
+                thieving,
+            );
             returned.bank_generation = 2;
             let mut further = ardy_obs(
                 ARDY_THIEVER_STAND,
-                &[(COINS_ID, 30), (CAKE_ID, 1)],
+                &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
                 &[],
                 952,
                 thieving,
@@ -4745,14 +4966,26 @@ export default class NativeStop extends LoopingBot {{
             .qualify()
             .is_err());
 
-            let xp_only = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 484, thieving);
+            let xp_only = ardy_obs(
+                ARDY_THIEVER_STAND,
+                &[(r289_item_id("cake"), 1)],
+                &[],
+                484,
+                thieving,
+            );
             assert!(
                 witness(case, &baseline, [&xp_only, &deposited, &returned, &further])
                     .qualify()
                     .is_err()
             );
 
-            let mut far = ardy_obs((3185, 3440, 0), &[(CAKE_ID, 1)], &[], 484, thieving);
+            let mut far = ardy_obs(
+                (3185, 3440, 0),
+                &[(r289_item_id("cake"), 1)],
+                &[],
+                484,
+                thieving,
+            );
             far.bank_generation = 2;
             let mut further_far = further.clone();
             further_far.tile = Some((3185, 3440, 0));
@@ -4765,7 +4998,7 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
             let mut seeded = baseline.clone();
-            seeded.item_ids.insert(COINS_ID, 1);
+            seeded.item_ids.insert(r289_item_id("coins"), 1);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
 
@@ -4838,7 +5071,14 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn flax_pick_failure_facts_include_all_scoped_locs_and_native_reachability() {
-        let mut failure = resource_obs(SEERS_BANK, &[], &[(FLAX_ID, 28)], &[], &[], &[]);
+        let mut failure = resource_obs(
+            SEERS_BANK,
+            &[],
+            &[(r289_item_id("flax"), 28)],
+            &[],
+            &[],
+            &[],
+        );
         failure.bank_open = true;
         failure.bank_loaded = true;
         failure.bank_generation = 7;
@@ -4900,7 +5140,10 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("woodcutting", 75), ("fletching", 1)];
         let baseline = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -4914,9 +5157,9 @@ export default class NativeStop extends LoopingBot {{
         let chopped = resource_obs(
             GNOME_WEST_MAGICS,
             &[
-                (RUNE_AXE_ID, 1),
-                (KNIFE_ID, GNOME_BALLAST_KNIVES),
-                (MAGIC_LOGS_ID, 1),
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                (r289_item_id("magic_logs"), 1),
             ],
             &[],
             &[],
@@ -4925,8 +5168,11 @@ export default class NativeStop extends LoopingBot {{
         );
         let mut deposited = resource_obs(
             GNOME_BANK_STAND,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
-            &[(MAGIC_LOGS_ID, 1)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
+            &[(r289_item_id("magic_logs"), 1)],
             &[],
             &[("woodcutting", 250)],
             &levels,
@@ -4936,7 +5182,10 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_generation = 1;
         let mut returned = resource_obs(
             GNOME_BANK_STAIR_SOUTH,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 250)],
@@ -4946,9 +5195,9 @@ export default class NativeStop extends LoopingBot {{
         let mut further = resource_obs(
             GNOME_WEST_MAGICS,
             &[
-                (RUNE_AXE_ID, 1),
-                (KNIFE_ID, GNOME_BALLAST_KNIVES),
-                (MAGIC_LOGS_ID, 1),
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                (r289_item_id("magic_logs"), 1),
             ],
             &[],
             &[],
@@ -4965,7 +5214,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut missing_tool = chopped.clone();
-        missing_tool.item_ids.remove(&RUNE_AXE_ID);
+        missing_tool.item_ids.remove(&r289_item_id("rune_axe"));
         assert!(witness(
             CoreCase::GnomeChop,
             &baseline,
@@ -4976,7 +5225,7 @@ export default class NativeStop extends LoopingBot {{
         let mut lost_ballast = chopped.clone();
         lost_ballast
             .item_ids
-            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+            .insert(r289_item_id("knife"), GNOME_BALLAST_KNIVES - 1);
         assert!(witness(
             CoreCase::GnomeChop,
             &baseline,
@@ -5042,7 +5291,10 @@ export default class NativeStop extends LoopingBot {{
 
         let xp_only = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 250)],
@@ -5057,7 +5309,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut wrong = chopped.clone();
-        wrong.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+        wrong.item_ids.insert(r289_item_id("magic_shortbow"), 1);
         assert!(witness(
             CoreCase::GnomeChop,
             &baseline,
@@ -5067,7 +5319,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut noted = chopped.clone();
-        noted.item_ids.insert(NOTED_MAGIC_LOGS_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_magic_logs"), 1);
         assert!(witness(
             CoreCase::GnomeChop,
             &baseline,
@@ -5077,11 +5329,14 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(MAGIC_LOGS_ID, 1);
+        seeded.item_ids.insert(r289_item_id("magic_logs"), 1);
         assert!(validate_case_baseline(CoreCase::GnomeChop, &seeded).is_err());
         let low = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -5099,30 +5354,33 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(CoreCase::GnomeChop, &no_axe).is_err());
         let wielded = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[(r289_item_id("knife"), GNOME_BALLAST_KNIVES)],
             &[],
-            &[(RUNE_AXE_ID, 1)],
+            &[(r289_item_id("rune_axe"), 1)],
             &[("woodcutting", 0)],
             &levels,
         );
         validate_case_baseline(CoreCase::GnomeChop, &wielded).unwrap();
         let mut wrong_axe = baseline.clone();
-        wrong_axe.item_ids.remove(&RUNE_AXE_ID);
-        wrong_axe.item_ids.insert(STEEL_AXE_ID, 1);
+        wrong_axe.item_ids.remove(&r289_item_id("rune_axe"));
+        wrong_axe.item_ids.insert(r289_item_id("steel_axe"), 1);
         assert!(validate_case_baseline(CoreCase::GnomeChop, &wrong_axe).is_err());
         let mut too_few_knives = baseline.clone();
         too_few_knives
             .item_ids
-            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+            .insert(r289_item_id("knife"), GNOME_BALLAST_KNIVES - 1);
         assert!(validate_case_baseline(CoreCase::GnomeChop, &too_few_knives).is_err());
         let mut too_many_knives = baseline.clone();
         too_many_knives
             .item_ids
-            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES + 1);
+            .insert(r289_item_id("knife"), GNOME_BALLAST_KNIVES + 1);
         assert!(validate_case_baseline(CoreCase::GnomeChop, &too_many_knives).is_err());
         let flax = resource_obs(
             FLAX_FIELD,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -5137,20 +5395,23 @@ export default class NativeStop extends LoopingBot {{
             (
                 CoreCase::GnomeFletchShort,
                 80,
-                UNSTRUNG_MAGIC_SHORTBOW_ID,
-                UNSTRUNG_MAGIC_LONGBOW_ID,
+                r289_item_id("unstrung_magic_shortbow"),
+                r289_item_id("unstrung_magic_longbow"),
             ),
             (
                 CoreCase::GnomeFletchLong,
                 85,
-                UNSTRUNG_MAGIC_LONGBOW_ID,
-                UNSTRUNG_MAGIC_SHORTBOW_ID,
+                r289_item_id("unstrung_magic_longbow"),
+                r289_item_id("unstrung_magic_shortbow"),
             ),
         ] {
             let levels = [("woodcutting", 75), ("fletching", fletching)];
             let baseline = resource_obs(
                 GNOME_WEST_MAGICS,
-                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+                &[
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                ],
                 &[],
                 &[],
                 &[("woodcutting", 0), ("fletching", 0)],
@@ -5161,9 +5422,9 @@ export default class NativeStop extends LoopingBot {{
             let chopped = resource_obs(
                 GNOME_WEST_MAGICS,
                 &[
-                    (RUNE_AXE_ID, 1),
-                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
-                    (MAGIC_LOGS_ID, 1),
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                    (r289_item_id("magic_logs"), 1),
                 ],
                 &[],
                 &[],
@@ -5173,8 +5434,8 @@ export default class NativeStop extends LoopingBot {{
             let fletched = resource_obs(
                 GNOME_WEST_MAGICS,
                 &[
-                    (RUNE_AXE_ID, 1),
-                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
                     (product, 1),
                 ],
                 &[],
@@ -5184,7 +5445,10 @@ export default class NativeStop extends LoopingBot {{
             );
             let mut deposited = resource_obs(
                 GNOME_BANK_STAND,
-                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+                &[
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                ],
                 &[(product, 1)],
                 &[],
                 &[("woodcutting", 250), ("fletching", 168)],
@@ -5195,7 +5459,10 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_generation = 1;
             let mut returned = resource_obs(
                 GNOME_BANK_STAIR_SOUTH,
-                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+                &[
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                ],
                 &[],
                 &[],
                 &[("woodcutting", 250), ("fletching", 168)],
@@ -5205,9 +5472,9 @@ export default class NativeStop extends LoopingBot {{
             let mut further = resource_obs(
                 GNOME_WEST_MAGICS,
                 &[
-                    (RUNE_AXE_ID, 1),
-                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
-                    (MAGIC_LOGS_ID, 1),
+                    (r289_item_id("rune_axe"), 1),
+                    (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+                    (r289_item_id("magic_logs"), 1),
                 ],
                 &[],
                 &[],
@@ -5226,7 +5493,7 @@ export default class NativeStop extends LoopingBot {{
             let mut lost_ballast = fletched.clone();
             lost_ballast
                 .item_ids
-                .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+                .insert(r289_item_id("knife"), GNOME_BALLAST_KNIVES - 1);
             assert!(witness(
                 case,
                 &baseline,
@@ -5248,7 +5515,7 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
             let mut strung = fletched.clone();
-            strung.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+            strung.item_ids.insert(r289_item_id("magic_shortbow"), 1);
             assert!(witness(
                 case,
                 &baseline,
@@ -5268,18 +5535,21 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
             let mut no_knife = baseline.clone();
-            no_knife.item_ids.remove(&KNIFE_ID);
+            no_knife.item_ids.remove(&r289_item_id("knife"));
             assert!(validate_case_baseline(case, &no_knife).is_err());
             let mut wrong_knife_count = baseline.clone();
             wrong_knife_count
                 .item_ids
-                .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+                .insert(r289_item_id("knife"), GNOME_BALLAST_KNIVES - 1);
             assert!(validate_case_baseline(case, &wrong_knife_count).is_err());
         }
 
         let short_high = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 0), ("fletching", 0)],
@@ -5289,7 +5559,10 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::GnomeFletchLong, &short_high).unwrap();
         let long_low = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[
+                (r289_item_id("rune_axe"), 1),
+                (r289_item_id("knife"), GNOME_BALLAST_KNIVES),
+            ],
             &[],
             &[],
             &[("woodcutting", 0), ("fletching", 0)],
@@ -5304,7 +5577,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("mining", 60)];
         let mut baseline = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26)],
+            &[(steel_pickaxe_id(), 1), (r289_item_id("knife"), 26)],
             &[],
             &[],
             &[("mining", 0)],
@@ -5315,7 +5588,11 @@ export default class NativeStop extends LoopingBot {{
 
         let mined = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26), (COAL_ID, 1)],
+            &[
+                (steel_pickaxe_id(), 1),
+                (r289_item_id("knife"), 26),
+                (r289_item_id("coal"), 1),
+            ],
             &[],
             &[],
             &[("mining", 1350)],
@@ -5323,7 +5600,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let trucked = resource_obs(
             COAL_MINE_TRUCK_STAND,
-            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26)],
+            &[(steel_pickaxe_id(), 1), (r289_item_id("knife"), 26)],
             &[],
             &[],
             &[("mining", 1350)],
@@ -5331,7 +5608,11 @@ export default class NativeStop extends LoopingBot {{
         );
         let further = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26), (COAL_ID, 1)],
+            &[
+                (steel_pickaxe_id(), 1),
+                (r289_item_id("knife"), 26),
+                (r289_item_id("coal"), 1),
+            ],
             &[],
             &[],
             &[("mining", 1400)],
@@ -5368,7 +5649,7 @@ export default class NativeStop extends LoopingBot {{
 
         let xp_only = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1)],
+            &[(steel_pickaxe_id(), 1)],
             &[],
             &[],
             &[("mining", 1350)],
@@ -5386,7 +5667,7 @@ export default class NativeStop extends LoopingBot {{
         banked.bank_open = true;
         banked.bank_loaded = true;
         banked.bank_generation = 1;
-        banked.bank_ids.insert(COAL_ID, 27);
+        banked.bank_ids.insert(r289_item_id("coal"), 27);
         banked.tile = Some(SEERS_BANK);
         assert!(
             witness(CoreCase::CoalTrucks, &baseline, [&mined, &banked, &further])
@@ -5395,7 +5676,7 @@ export default class NativeStop extends LoopingBot {{
         );
 
         let mut noted = mined.clone();
-        noted.item_ids.insert(NOTED_COAL_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_coal"), 1);
         assert!(witness(
             CoreCase::CoalTrucks,
             &baseline,
@@ -5407,7 +5688,7 @@ export default class NativeStop extends LoopingBot {{
         let mut lost_ballast = mined.clone();
         lost_ballast
             .item_ids
-            .insert(KNIFE_ID, COAL_BALLAST_KNIVES - 1);
+            .insert(r289_item_id("knife"), COAL_BALLAST_KNIVES - 1);
         assert!(witness(
             CoreCase::CoalTrucks,
             &baseline,
@@ -5417,17 +5698,17 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(COAL_ID, 1);
+        seeded.item_ids.insert(r289_item_id("coal"), 1);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &seeded).is_err());
         let mut missing_ballast = baseline.clone();
-        missing_ballast.item_ids.insert(KNIFE_ID, 25);
+        missing_ballast.item_ids.insert(r289_item_id("knife"), 25);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &missing_ballast).is_err());
         let mut excess_ballast = baseline.clone();
-        excess_ballast.item_ids.insert(KNIFE_ID, 27);
+        excess_ballast.item_ids.insert(r289_item_id("knife"), 27);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &excess_ballast).is_err());
         let low = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1)],
+            &[(steel_pickaxe_id(), 1)],
             &[],
             &[],
             &[("mining", 0)],
@@ -5438,7 +5719,7 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &no_pick).is_err());
         let wrong_stand = resource_obs(
             SEERS_BANK,
-            &[(STEEL_PICKAXE_ID, 1)],
+            &[(steel_pickaxe_id(), 1)],
             &[],
             &[],
             &[("mining", 0)],
@@ -5471,16 +5752,16 @@ export default class NativeStop extends LoopingBot {{
 
         let withdrawn = resource_obs(
             CATHERBY_BANK,
-            &[(RAW_SALMON_ID, 28)],
-            &[(RAW_SALMON_ID, 28)],
+            &[(r289_item_id("raw_salmon"), 28)],
+            &[(r289_item_id("raw_salmon"), 28)],
             &[],
             &[("cooking", 0)],
             &cook_levels,
         );
         let produced = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(SALMON_ID, 28)],
-            &[(RAW_SALMON_ID, 28)],
+            &[(r289_item_id("salmon"), 28)],
+            &[(r289_item_id("raw_salmon"), 28)],
             &[],
             &[("cooking", 250)],
             &cook_levels,
@@ -5488,7 +5769,10 @@ export default class NativeStop extends LoopingBot {{
         let mut deposited = resource_obs(
             CATHERBY_BANK,
             &[],
-            &[(SALMON_ID, 28), (RAW_SALMON_ID, 28)],
+            &[
+                (r289_item_id("salmon"), 28),
+                (r289_item_id("raw_salmon"), 28),
+            ],
             &[],
             &[("cooking", 250)],
             &cook_levels,
@@ -5498,8 +5782,8 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_generation = 1;
         let mut restocked = resource_obs(
             CATHERBY_BANK,
-            &[(RAW_SALMON_ID, 28)],
-            &[(SALMON_ID, 28)],
+            &[(r289_item_id("raw_salmon"), 28)],
+            &[(r289_item_id("salmon"), 28)],
             &[],
             &[("cooking", 250)],
             &cook_levels,
@@ -5509,7 +5793,7 @@ export default class NativeStop extends LoopingBot {{
         restocked.bank_generation = 1;
         let mut returned = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(RAW_SALMON_ID, 28)],
+            &[(r289_item_id("raw_salmon"), 28)],
             &[],
             &[],
             &[("cooking", 250)],
@@ -5518,7 +5802,7 @@ export default class NativeStop extends LoopingBot {{
         returned.bank_generation = 2;
         let mut further = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(SALMON_ID, 1)],
+            &[(r289_item_id("salmon"), 1)],
             &[],
             &[],
             &[("cooking", 500)],
@@ -5619,7 +5903,10 @@ export default class NativeStop extends LoopingBot {{
 
         let no_consume = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(RAW_SALMON_ID, 28), (SALMON_ID, 1)],
+            &[
+                (r289_item_id("raw_salmon"), 28),
+                (r289_item_id("salmon"), 1),
+            ],
             &[],
             &[],
             &[("cooking", 250)],
@@ -5641,7 +5928,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut wrong = produced.clone();
-        wrong.item_ids.insert(LOBSTER_ID, 1);
+        wrong.item_ids.insert(r289_item_id("lobster"), 1);
         assert!(witness(
             CoreCase::CookBot,
             &baseline,
@@ -5651,7 +5938,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut noted = produced.clone();
-        noted.item_ids.insert(NOTED_SALMON_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_salmon"), 1);
         assert!(witness(
             CoreCase::CookBot,
             &baseline,
@@ -5661,7 +5948,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut burnt = produced.clone();
-        burnt.item_ids.insert(BURNT_FISH_2_ID, 1);
+        burnt.item_ids.insert(r289_item_id("burntfish2"), 1);
         assert!(witness(
             CoreCase::CookBot,
             &baseline,
@@ -5671,7 +5958,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(SALMON_ID, 1);
+        seeded.item_ids.insert(r289_item_id("salmon"), 1);
         assert!(validate_case_baseline(CoreCase::CookBot, &seeded).is_err());
         let low = resource_obs(
             CATHERBY_BANK,
@@ -5704,7 +5991,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::CookBotLobster, &lobster_baseline).unwrap();
         let lobster_withdrawn = resource_obs(
             CATHERBY_BANK,
-            &[(RAW_LOBSTER_ID, 28)],
+            &[(r289_item_id("raw_lobster"), 28)],
             &[],
             &[],
             &[("cooking", 0)],
@@ -5712,7 +5999,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let lobster_produced = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(LOBSTER_ID, 28)],
+            &[(r289_item_id("lobster"), 28)],
             &[],
             &[],
             &[("cooking", 250)],
@@ -5721,7 +6008,10 @@ export default class NativeStop extends LoopingBot {{
         let mut lobster_deposited = resource_obs(
             CATHERBY_BANK,
             &[],
-            &[(LOBSTER_ID, 28), (RAW_LOBSTER_ID, 28)],
+            &[
+                (r289_item_id("lobster"), 28),
+                (r289_item_id("raw_lobster"), 28),
+            ],
             &[],
             &[("cooking", 250)],
             &lobster_levels,
@@ -5731,8 +6021,8 @@ export default class NativeStop extends LoopingBot {{
         lobster_deposited.bank_generation = 1;
         let mut lobster_restocked = resource_obs(
             CATHERBY_BANK,
-            &[(RAW_LOBSTER_ID, 28)],
-            &[(LOBSTER_ID, 28)],
+            &[(r289_item_id("raw_lobster"), 28)],
+            &[(r289_item_id("lobster"), 28)],
             &[],
             &[("cooking", 250)],
             &lobster_levels,
@@ -5742,7 +6032,7 @@ export default class NativeStop extends LoopingBot {{
         lobster_restocked.bank_generation = 1;
         let mut lobster_returned = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(RAW_LOBSTER_ID, 28)],
+            &[(r289_item_id("raw_lobster"), 28)],
             &[],
             &[],
             &[("cooking", 250)],
@@ -5751,7 +6041,7 @@ export default class NativeStop extends LoopingBot {{
         lobster_returned.bank_generation = 2;
         let mut lobster_further = resource_obs(
             CATHERBY_RANGE_STAND,
-            &[(LOBSTER_ID, 1)],
+            &[(r289_item_id("lobster"), 1)],
             &[],
             &[],
             &[("cooking", 500)],
@@ -5773,7 +6063,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut lobster_cross = lobster_produced.clone();
-        lobster_cross.item_ids.insert(SALMON_ID, 1);
+        lobster_cross.item_ids.insert(r289_item_id("salmon"), 1);
         assert!(witness(
             CoreCase::CookBotLobster,
             &lobster_baseline,
@@ -5801,7 +6091,10 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::SmelterBot, &bronze_baseline).unwrap();
         let bronze_withdrawn = resource_obs(
             AL_KHARID_BANK,
-            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
+            &[
+                (r289_item_id("copper_ore"), 14),
+                (r289_item_id("tin_ore"), 14),
+            ],
             &[],
             &[],
             &[("smithing", 0)],
@@ -5809,7 +6102,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let bronze_produced = resource_obs(
             AL_KHARID_FURNACE,
-            &[(BRONZE_BAR_ID, 14)],
+            &[(r289_item_id("bronze_bar"), 14)],
             &[],
             &[],
             &[("smithing", 87)],
@@ -5818,7 +6111,11 @@ export default class NativeStop extends LoopingBot {{
         let mut bronze_deposited = resource_obs(
             AL_KHARID_BANK,
             &[],
-            &[(BRONZE_BAR_ID, 14), (COPPER_ORE_ID, 42), (TIN_ORE_ID, 42)],
+            &[
+                (r289_item_id("bronze_bar"), 14),
+                (r289_item_id("copper_ore"), 42),
+                (r289_item_id("tin_ore"), 42),
+            ],
             &[],
             &[("smithing", 87)],
             &bronze_levels,
@@ -5828,8 +6125,15 @@ export default class NativeStop extends LoopingBot {{
         bronze_deposited.bank_generation = 1;
         let mut bronze_restocked = resource_obs(
             AL_KHARID_BANK,
-            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
-            &[(BRONZE_BAR_ID, 14), (COPPER_ORE_ID, 28), (TIN_ORE_ID, 28)],
+            &[
+                (r289_item_id("copper_ore"), 14),
+                (r289_item_id("tin_ore"), 14),
+            ],
+            &[
+                (r289_item_id("bronze_bar"), 14),
+                (r289_item_id("copper_ore"), 28),
+                (r289_item_id("tin_ore"), 28),
+            ],
             &[],
             &[("smithing", 87)],
             &bronze_levels,
@@ -5839,7 +6143,10 @@ export default class NativeStop extends LoopingBot {{
         bronze_restocked.bank_generation = 1;
         let mut bronze_returned = resource_obs(
             AL_KHARID_FURNACE,
-            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
+            &[
+                (r289_item_id("copper_ore"), 14),
+                (r289_item_id("tin_ore"), 14),
+            ],
             &[],
             &[],
             &[("smithing", 87)],
@@ -5848,7 +6155,7 @@ export default class NativeStop extends LoopingBot {{
         bronze_returned.bank_generation = 2;
         let mut bronze_further = resource_obs(
             AL_KHARID_FURNACE,
-            &[(BRONZE_BAR_ID, 1)],
+            &[(r289_item_id("bronze_bar"), 1)],
             &[],
             &[],
             &[("smithing", 93)],
@@ -5870,7 +6177,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut bronze_wrong = bronze_produced.clone();
-        bronze_wrong.item_ids.insert(STEEL_BAR_ID, 1);
+        bronze_wrong.item_ids.insert(r289_item_id("steel_bar"), 1);
         assert!(witness(
             CoreCase::SmelterBot,
             &bronze_baseline,
@@ -5910,7 +6217,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::SmelterBotSteel, &steel_baseline).unwrap();
         let steel_withdrawn = resource_obs(
             AL_KHARID_BANK,
-            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
+            &[(r289_item_id("iron_ore"), 9), (r289_item_id("coal"), 18)],
             &[],
             &[],
             &[("smithing", 0)],
@@ -5918,7 +6225,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let steel_produced = resource_obs(
             AL_KHARID_FURNACE,
-            &[(STEEL_BAR_ID, 9)],
+            &[(r289_item_id("steel_bar"), 9)],
             &[],
             &[],
             &[("smithing", 157)],
@@ -5927,7 +6234,11 @@ export default class NativeStop extends LoopingBot {{
         let mut steel_deposited = resource_obs(
             AL_KHARID_BANK,
             &[],
-            &[(STEEL_BAR_ID, 9), (IRON_ORE_ID, 47), (COAL_ID, 94)],
+            &[
+                (r289_item_id("steel_bar"), 9),
+                (r289_item_id("iron_ore"), 47),
+                (r289_item_id("coal"), 94),
+            ],
             &[],
             &[("smithing", 157)],
             &steel_levels,
@@ -5937,8 +6248,12 @@ export default class NativeStop extends LoopingBot {{
         steel_deposited.bank_generation = 1;
         let mut steel_restocked = resource_obs(
             AL_KHARID_BANK,
-            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
-            &[(STEEL_BAR_ID, 9), (IRON_ORE_ID, 38), (COAL_ID, 76)],
+            &[(r289_item_id("iron_ore"), 9), (r289_item_id("coal"), 18)],
+            &[
+                (r289_item_id("steel_bar"), 9),
+                (r289_item_id("iron_ore"), 38),
+                (r289_item_id("coal"), 76),
+            ],
             &[],
             &[("smithing", 157)],
             &steel_levels,
@@ -5948,7 +6263,7 @@ export default class NativeStop extends LoopingBot {{
         steel_restocked.bank_generation = 1;
         let mut steel_returned = resource_obs(
             AL_KHARID_FURNACE,
-            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
+            &[(r289_item_id("iron_ore"), 9), (r289_item_id("coal"), 18)],
             &[],
             &[],
             &[("smithing", 157)],
@@ -5957,7 +6272,7 @@ export default class NativeStop extends LoopingBot {{
         steel_returned.bank_generation = 2;
         let mut steel_further = resource_obs(
             AL_KHARID_FURNACE,
-            &[(STEEL_BAR_ID, 1)],
+            &[(r289_item_id("steel_bar"), 1)],
             &[],
             &[],
             &[("smithing", 175)],
@@ -5991,7 +6306,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::FlaxSpinner, &spin_baseline).unwrap();
         let spin_withdrawn = resource_obs(
             FLAX_SPINNER_BANK,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 0)],
@@ -5999,7 +6314,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let spin_produced = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6008,7 +6323,7 @@ export default class NativeStop extends LoopingBot {{
         let mut spin_deposited = resource_obs(
             FLAX_SPINNER_BANK,
             &[],
-            &[(BOW_STRING_ID, 28), (FLAX_ID, 28)],
+            &[(r289_item_id("bow_string"), 28), (r289_item_id("flax"), 28)],
             &[],
             &[("crafting", 420)],
             &spin_levels,
@@ -6018,8 +6333,8 @@ export default class NativeStop extends LoopingBot {{
         spin_deposited.bank_generation = 1;
         let mut spin_restocked = resource_obs(
             FLAX_SPINNER_BANK,
-            &[(FLAX_ID, 28)],
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[("crafting", 420)],
             &spin_levels,
@@ -6029,7 +6344,7 @@ export default class NativeStop extends LoopingBot {{
         spin_restocked.bank_generation = 1;
         let mut spin_returned = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6038,7 +6353,7 @@ export default class NativeStop extends LoopingBot {{
         spin_returned.bank_generation = 2;
         let mut spin_further = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(BOW_STRING_ID, 1)],
+            &[(r289_item_id("bow_string"), 1)],
             &[],
             &[],
             &[("crafting", 435)],
@@ -6060,7 +6375,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut wool = spin_produced.clone();
-        wool.item_ids.insert(BALL_OF_WOOL_ID, 1);
+        wool.item_ids.insert(r289_item_id("ball_of_wool"), 1);
         assert!(witness(
             CoreCase::FlaxSpinner,
             &spin_baseline,
@@ -6077,7 +6392,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
         let mut ground_return = resource_obs(
             FLAX_SPINNER_BANK,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6086,7 +6401,7 @@ export default class NativeStop extends LoopingBot {{
         ground_return.bank_generation = 2;
         let mut ground_further = resource_obs(
             FLAX_SPINNER_BANK,
-            &[(BOW_STRING_ID, 1)],
+            &[(r289_item_id("bow_string"), 1)],
             &[],
             &[],
             &[("crafting", 435)],
@@ -6108,7 +6423,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut seeded_string = spin_baseline.clone();
-        seeded_string.item_ids.insert(BOW_STRING_ID, 1);
+        seeded_string.item_ids.insert(r289_item_id("bow_string"), 1);
         assert!(validate_case_baseline(CoreCase::FlaxSpinner, &seeded_string).is_err());
     }
 
@@ -6130,7 +6445,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::FlaxAio, &aio_baseline).unwrap();
         let picked = resource_obs(
             FLAX_FIELD,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 0)],
@@ -6138,7 +6453,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let produced = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6147,7 +6462,7 @@ export default class NativeStop extends LoopingBot {{
         let mut deposited = resource_obs(
             FLAX_AIO_BANK,
             &[],
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[("crafting", 420)],
             &craft,
@@ -6159,7 +6474,7 @@ export default class NativeStop extends LoopingBot {{
         returned.bank_generation = 2;
         let mut further = resource_obs(
             FLAX_FIELD,
-            &[(FLAX_ID, 1)],
+            &[(r289_item_id("flax"), 1)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6210,7 +6525,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
         let no_consume = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(FLAX_ID, 28), (BOW_STRING_ID, 1)],
+            &[(r289_item_id("flax"), 28), (r289_item_id("bow_string"), 1)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6239,7 +6554,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut wool = produced.clone();
-        wool.item_ids.insert(BALL_OF_WOOL_ID, 1);
+        wool.item_ids.insert(r289_item_id("ball_of_wool"), 1);
         assert!(witness(
             CoreCase::FlaxAio,
             &aio_baseline,
@@ -6248,7 +6563,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut noted = produced.clone();
-        noted.item_ids.insert(NOTED_BOW_STRING_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_bow_string"), 1);
         assert!(witness(
             CoreCase::FlaxAio,
             &aio_baseline,
@@ -6267,19 +6582,19 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut seeded = aio_baseline.clone();
-        seeded.item_ids.insert(BOW_STRING_ID, 1);
+        seeded.item_ids.insert(r289_item_id("bow_string"), 1);
         assert!(validate_case_baseline(CoreCase::FlaxAio, &seeded).is_err());
 
         let pick_baseline = flax_obs(FLAX_FIELD, &[], &[]);
         validate_case_baseline(CoreCase::FlaxAioPick, &pick_baseline).unwrap();
-        let first = flax_obs(FLAX_FIELD, &[(FLAX_ID, 28)], &[]);
-        let mut pick_deposited = flax_obs(FLAX_AIO_BANK, &[], &[(FLAX_ID, 28)]);
+        let first = flax_obs(FLAX_FIELD, &[(r289_item_id("flax"), 28)], &[]);
+        let mut pick_deposited = flax_obs(FLAX_AIO_BANK, &[], &[(r289_item_id("flax"), 28)]);
         pick_deposited.bank_open = true;
         pick_deposited.bank_loaded = true;
         pick_deposited.bank_generation = 1;
         let mut pick_returned = flax_obs(FLAX_FIELD, &[], &[]);
         pick_returned.bank_generation = 2;
-        let mut pick_further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        let mut pick_further = flax_obs(FLAX_FIELD, &[(r289_item_id("flax"), 1)], &[]);
         pick_further.bank_generation = 2;
         assert!(witness(
             CoreCase::FlaxAioPick,
@@ -6289,7 +6604,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut spun = first.clone();
-        spun.item_ids.insert(BOW_STRING_ID, 1);
+        spun.item_ids.insert(r289_item_id("bow_string"), 1);
         assert!(witness(
             CoreCase::FlaxAioPick,
             &pick_baseline,
@@ -6298,14 +6613,14 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut seeded_pick = pick_baseline.clone();
-        seeded_pick.item_ids.insert(FLAX_ID, 28);
+        seeded_pick.item_ids.insert(r289_item_id("flax"), 28);
         assert!(validate_case_baseline(CoreCase::FlaxAioPick, &seeded_pick).is_err());
 
         let spin_baseline = resource_obs(FLAX_AIO_BANK, &[], &[], &[], &[("crafting", 0)], &craft);
         validate_case_baseline(CoreCase::FlaxAioSpin, &spin_baseline).unwrap();
         let spin_withdrawn = resource_obs(
             FLAX_AIO_BANK,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 0)],
@@ -6313,7 +6628,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let spin_produced = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6322,7 +6637,7 @@ export default class NativeStop extends LoopingBot {{
         let mut spin_deposited = resource_obs(
             FLAX_AIO_BANK,
             &[],
-            &[(BOW_STRING_ID, 28), (FLAX_ID, 28)],
+            &[(r289_item_id("bow_string"), 28), (r289_item_id("flax"), 28)],
             &[],
             &[("crafting", 420)],
             &craft,
@@ -6332,8 +6647,8 @@ export default class NativeStop extends LoopingBot {{
         spin_deposited.bank_generation = 1;
         let mut spin_restocked = resource_obs(
             FLAX_AIO_BANK,
-            &[(FLAX_ID, 28)],
-            &[(BOW_STRING_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
+            &[(r289_item_id("bow_string"), 28)],
             &[],
             &[("crafting", 420)],
             &craft,
@@ -6343,7 +6658,7 @@ export default class NativeStop extends LoopingBot {{
         spin_restocked.bank_generation = 1;
         let mut spin_returned = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6352,7 +6667,7 @@ export default class NativeStop extends LoopingBot {{
         spin_returned.bank_generation = 2;
         let mut spin_further = resource_obs(
             FLAX_SPINNER_WHEEL,
-            &[(BOW_STRING_ID, 1)],
+            &[(r289_item_id("bow_string"), 1)],
             &[],
             &[],
             &[("crafting", 435)],
@@ -6375,7 +6690,7 @@ export default class NativeStop extends LoopingBot {{
         .is_ok());
         let mut ground_return = resource_obs(
             FLAX_AIO_BANK,
-            &[(FLAX_ID, 28)],
+            &[(r289_item_id("flax"), 28)],
             &[],
             &[],
             &[("crafting", 420)],
@@ -6384,7 +6699,7 @@ export default class NativeStop extends LoopingBot {{
         ground_return.bank_generation = 2;
         let mut ground_further = resource_obs(
             FLAX_AIO_BANK,
-            &[(BOW_STRING_ID, 1)],
+            &[(r289_item_id("bow_string"), 1)],
             &[],
             &[],
             &[("crafting", 435)],
@@ -6408,14 +6723,14 @@ export default class NativeStop extends LoopingBot {{
 
         let egg_baseline = flax_obs(EGG_FIELD, &[], &[]);
         validate_case_baseline(CoreCase::HerbloreSecondaries, &egg_baseline).unwrap();
-        let taken = flax_obs(EGG_FIELD, &[(RED_SPIDERS_EGGS_ID, 18)], &[]);
-        let mut egg_deposited = flax_obs(EGG_FIELD, &[], &[(RED_SPIDERS_EGGS_ID, 18)]);
+        let taken = flax_obs(EGG_FIELD, &[(r289_item_id("red_spiders_eggs"), 18)], &[]);
+        let mut egg_deposited = flax_obs(EGG_FIELD, &[], &[(r289_item_id("red_spiders_eggs"), 18)]);
         egg_deposited.bank_open = true;
         egg_deposited.bank_loaded = true;
         egg_deposited.bank_generation = 1;
         let mut egg_returned = flax_obs(EGG_FIELD, &[], &[]);
         egg_returned.bank_generation = 2;
-        let mut egg_further = flax_obs(EGG_FIELD, &[(RED_SPIDERS_EGGS_ID, 1)], &[]);
+        let mut egg_further = flax_obs(EGG_FIELD, &[(r289_item_id("red_spiders_eggs"), 1)], &[]);
         egg_further.bank_generation = 2;
         assert!(witness(
             CoreCase::HerbloreSecondaries,
@@ -6430,7 +6745,7 @@ export default class NativeStop extends LoopingBot {{
                 .is_err()
         );
         let mut mixed = taken.clone();
-        mixed.item_ids.insert(EYE_OF_NEWT_ID, 1);
+        mixed.item_ids.insert(r289_item_id("eye_of_newt"), 1);
         assert!(witness(
             CoreCase::HerbloreSecondaries,
             &egg_baseline,
@@ -6439,7 +6754,9 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut noted_egg = taken.clone();
-        noted_egg.item_ids.insert(NOTED_RED_SPIDERS_EGGS_ID, 1);
+        noted_egg
+            .item_ids
+            .insert(r289_item_id("cert_red_spiders_eggs"), 1);
         assert!(witness(
             CoreCase::HerbloreSecondaries,
             &egg_baseline,
@@ -6448,20 +6765,40 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut seeded_egg = egg_baseline.clone();
-        seeded_egg.item_ids.insert(RED_SPIDERS_EGGS_ID, 1);
+        seeded_egg
+            .item_ids
+            .insert(r289_item_id("red_spiders_eggs"), 1);
         assert!(validate_case_baseline(CoreCase::HerbloreSecondaries, &seeded_egg).is_err());
 
         let newt_baseline = flax_obs(BETTY_SHOP, &[], &[]);
         validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &newt_baseline).unwrap();
-        let coins_held = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[]);
-        let bought = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900), (EYE_OF_NEWT_ID, 10)], &[]);
-        let mut newt_deposited = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900)], &[(EYE_OF_NEWT_ID, 10)]);
+        let coins_held = flax_obs(BETTY_SHOP, &[(r289_item_id("coins"), 5000)], &[]);
+        let bought = flax_obs(
+            BETTY_SHOP,
+            &[
+                (r289_item_id("coins"), 4900),
+                (r289_item_id("eye_of_newt"), 10),
+            ],
+            &[],
+        );
+        let mut newt_deposited = flax_obs(
+            BETTY_SHOP,
+            &[(r289_item_id("coins"), 4900)],
+            &[(r289_item_id("eye_of_newt"), 10)],
+        );
         newt_deposited.bank_open = true;
         newt_deposited.bank_loaded = true;
         newt_deposited.bank_generation = 1;
-        let mut newt_returned = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900)], &[]);
+        let mut newt_returned = flax_obs(BETTY_SHOP, &[(r289_item_id("coins"), 4900)], &[]);
         newt_returned.bank_generation = 2;
-        let mut newt_further = flax_obs(BETTY_SHOP, &[(COINS_ID, 4800), (EYE_OF_NEWT_ID, 1)], &[]);
+        let mut newt_further = flax_obs(
+            BETTY_SHOP,
+            &[
+                (r289_item_id("coins"), 4800),
+                (r289_item_id("eye_of_newt"), 1),
+            ],
+            &[],
+        );
         newt_further.bank_generation = 2;
         assert!(witness(
             CoreCase::HerbloreSecondariesNewt,
@@ -6476,16 +6813,32 @@ export default class NativeStop extends LoopingBot {{
         )
         .qualify()
         .is_ok());
-        let no_spend = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000), (EYE_OF_NEWT_ID, 10)], &[]);
-        let mut no_spend_deposited =
-            flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[(EYE_OF_NEWT_ID, 10)]);
+        let no_spend = flax_obs(
+            BETTY_SHOP,
+            &[
+                (r289_item_id("coins"), 5000),
+                (r289_item_id("eye_of_newt"), 10),
+            ],
+            &[],
+        );
+        let mut no_spend_deposited = flax_obs(
+            BETTY_SHOP,
+            &[(r289_item_id("coins"), 5000)],
+            &[(r289_item_id("eye_of_newt"), 10)],
+        );
         no_spend_deposited.bank_open = true;
         no_spend_deposited.bank_loaded = true;
         no_spend_deposited.bank_generation = 1;
-        let mut no_spend_returned = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[]);
+        let mut no_spend_returned = flax_obs(BETTY_SHOP, &[(r289_item_id("coins"), 5000)], &[]);
         no_spend_returned.bank_generation = 2;
-        let mut no_spend_further =
-            flax_obs(BETTY_SHOP, &[(COINS_ID, 5000), (EYE_OF_NEWT_ID, 1)], &[]);
+        let mut no_spend_further = flax_obs(
+            BETTY_SHOP,
+            &[
+                (r289_item_id("coins"), 5000),
+                (r289_item_id("eye_of_newt"), 1),
+            ],
+            &[],
+        );
         no_spend_further.bank_generation = 2;
         assert!(witness(
             CoreCase::HerbloreSecondariesNewt,
@@ -6501,7 +6854,9 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut mixed_buy = bought.clone();
-        mixed_buy.item_ids.insert(RED_SPIDERS_EGGS_ID, 1);
+        mixed_buy
+            .item_ids
+            .insert(r289_item_id("red_spiders_eggs"), 1);
         assert!(witness(
             CoreCase::HerbloreSecondariesNewt,
             &newt_baseline,
@@ -6516,7 +6871,7 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
         let mut seeded_newt = newt_baseline.clone();
-        seeded_newt.item_ids.insert(EYE_OF_NEWT_ID, 1);
+        seeded_newt.item_ids.insert(r289_item_id("eye_of_newt"), 1);
         assert!(validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &seeded_newt).is_err());
     }
 
@@ -6542,7 +6897,13 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(green_bank_spec.loot, CombatLoot::DragonBonesOrHide);
         let green_trip = combat_bank_spec(green_bank).unwrap();
         assert!(green_trip.require_combat);
-        assert_eq!(green_trip.deposit, &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID]);
+        assert_eq!(
+            green_trip.deposit,
+            &[
+                r289_item_id("dragon_bones"),
+                r289_item_id("dragonhide_green")
+            ]
+        );
         assert_eq!(green_trip.restock_count, None);
 
         let green_default = CoreCase::parse("green_dragon_bank_default_prepared").unwrap();
@@ -6552,7 +6913,10 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(green_default_spec.loot, CombatLoot::DragonBonesAndHide);
         let green_default_trip = combat_bank_spec(green_default).unwrap();
         assert!(green_default_trip.require_combat);
-        assert_eq!(green_default_trip.deposit, &[GREEN_DRAGONHIDE_ID]);
+        assert_eq!(
+            green_default_trip.deposit,
+            &[r289_item_id("dragonhide_green")]
+        );
         assert_eq!(
             green_default_trip.restock_count,
             Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK)
@@ -6562,15 +6926,15 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(moss_prepared.card_name(), "MossGiant");
         let moss_spec = combat_spec(moss_prepared).unwrap();
         assert_eq!(moss_spec.food_count, MOSS_GIANT_FOOD);
-        assert_eq!(moss_spec.weapon_id, RUNE_SCIMITAR_ID);
+        assert_eq!(moss_spec.weapon_id, r289_item_id("rune_scimitar"));
         assert_eq!(moss_spec.loot, CombatLoot::BigBones);
         assert!(combat_bank_spec(moss_prepared).is_none());
 
         let moss_dart = CoreCase::parse("moss_giant_dart").unwrap();
         assert_eq!(moss_dart.card_name(), "MossGiant");
         let dart_spec = combat_spec(moss_dart).unwrap();
-        assert_eq!(dart_spec.weapon_id, BRONZE_DART_ID);
-        assert_eq!(dart_spec.projectile, Some(BRONZE_DART_ID));
+        assert_eq!(dart_spec.weapon_id, r289_item_id("bronze_dart"));
+        assert_eq!(dart_spec.projectile, Some(r289_item_id("bronze_dart")));
         assert_eq!(dart_spec.style, CombatStyleWitness::Ranged);
         assert_eq!(dart_spec.loot, CombatLoot::None);
         assert!(combat_bank_spec(moss_dart).is_none());
@@ -6579,7 +6943,7 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(mage.card_name(), "GreenDragon");
         let mage_spec = combat_spec(mage).unwrap();
         assert_eq!(mage_spec.style, CombatStyleWitness::FireStrike);
-        assert_eq!(mage_spec.weapon_id, STAFF_OF_FIRE_ID);
+        assert_eq!(mage_spec.weapon_id, r289_item_id("staff_of_fire"));
         assert_eq!(mage_spec.food_count, GREEN_DRAGON_FOOD);
         assert_eq!(mage_spec.extra, CombatExtra::WornShield);
         assert_eq!(mage_spec.loot, CombatLoot::None);
@@ -6610,11 +6974,14 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(hill_prepared.card_name(), "HillGiant");
         let hill_spec = combat_spec(hill_prepared).unwrap();
         assert_eq!(hill_spec.food_count, HILL_GIANT_FOOD);
-        assert_eq!(hill_spec.weapon_id, ADAMANT_SCIMITAR_ID);
+        assert_eq!(hill_spec.weapon_id, r289_item_id("adamant_scimitar"));
         assert_eq!(hill_spec.loot, CombatLoot::BigBonesOrLimpwurt);
         let hill_trip = combat_bank_spec(hill_prepared).unwrap();
         assert!(hill_trip.require_combat);
-        assert_eq!(hill_trip.deposit, &[BIG_BONES_ID, LIMPWURT_ROOT_ID]);
+        assert_eq!(
+            hill_trip.deposit,
+            &[r289_item_id("big_bones"), r289_item_id("limpwurt_root")]
+        );
         assert_eq!(
             hill_trip.restock_count,
             Some(HILL_GIANT_BANK_PREPARED_RESTOCK)
@@ -6631,8 +6998,6 @@ export default class NativeStop extends LoopingBot {{
 
         let fire_bank = CoreCase::parse("fire_giant_bank_prepared").unwrap();
         assert_eq!(fire_bank.card_name(), "FireGiant");
-        assert_eq!(FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD, 1);
-        assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK, 25);
         let fire_spec = combat_spec(fire_bank).unwrap();
         assert_eq!(fire_spec.food_count, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD);
         assert_eq!(fire_spec.loot, CombatLoot::BigBones);
@@ -6644,9 +7009,9 @@ export default class NativeStop extends LoopingBot {{
     #[test]
     fn prepared_remaining_combat_baselines_fail_closed_on_exact_profile_and_branch_trigger() {
         let armour = [
-            (RUNE_CHAINBODY_ID, 1),
-            (RUNE_PLATELEGS_ID, 1),
-            (RUNE_FULL_HELM_ID, 1),
+            (r289_item_id("rune_chainbody"), 1),
+            (r289_item_id("rune_platelegs"), 1),
+            (r289_item_id("rune_full_helm"), 1),
         ];
         let levels = [
             ("attack", 70),
@@ -6661,14 +7026,14 @@ export default class NativeStop extends LoopingBot {{
             ("hitpoints", 99),
         ];
         let mut potions_gear = armour.to_vec();
-        potions_gear.push((DRAGONFIRE_SHIELD_ID, 1));
+        potions_gear.push((r289_item_id("antidragonbreathshield"), 1));
         let potions = branch_obs(
             GREEN_DRAGON_FIELD,
             &[
-                (LOBSTER_ID, 12),
-                (RUNE_SCIMITAR_ID, 1),
-                (SUPER_ATTACK_3_ID, 1),
-                (SUPER_STRENGTH_3_ID, 1),
+                (r289_item_id("lobster"), 12),
+                (r289_item_id("rune_scimitar"), 1),
+                (r289_item_id("3dose2attack"), 1),
+                (r289_item_id("3dose2strength"), 1),
             ],
             &potions_gear,
             &[("strength", 0)],
@@ -6681,16 +7046,21 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &potions).unwrap();
         let mut missing_potion = potions.clone();
-        missing_potion.item_ids.remove(&SUPER_ATTACK_3_ID);
+        missing_potion
+            .item_ids
+            .remove(&r289_item_id("3dose2attack"));
         assert!(
             validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &missing_potion).is_err()
         );
 
         let mut green_gear = armour.to_vec();
-        green_gear.extend([(RUNE_SCIMITAR_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)]);
+        green_gear.extend([
+            (r289_item_id("rune_scimitar"), 1),
+            (r289_item_id("antidragonbreathshield"), 1),
+        ]);
         let green_bank = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, 26)],
+            &[(r289_item_id("lobster"), 26)],
             &green_gear,
             &[("strength", 0)],
             &bank_levels,
@@ -6703,7 +7073,9 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::GreenDragonBankPrepared, &green_bank).unwrap();
         validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &green_bank).unwrap();
         let mut seeded_dragon_loot = green_bank.clone();
-        seeded_dragon_loot.item_ids.insert(DRAGON_BONES_ID, 1);
+        seeded_dragon_loot
+            .item_ids
+            .insert(r289_item_id("dragon_bones"), 1);
         assert!(
             validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
         );
@@ -6716,7 +7088,9 @@ export default class NativeStop extends LoopingBot {{
             "default-loot Green rejects seeded bones as earned hide"
         );
         let mut seeded_hide = green_bank.clone();
-        seeded_hide.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        seeded_hide
+            .item_ids
+            .insert(r289_item_id("dragonhide_green"), 1);
         assert!(
             validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &seeded_hide).is_err(),
             "default-loot Green rejects seeded hide"
@@ -6726,7 +7100,11 @@ export default class NativeStop extends LoopingBot {{
         tele_levels.push(("magic", 25));
         let tele = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &[
+                (r289_item_id("lawrune"), 3),
+                (r289_item_id("airrune"), 9),
+                (r289_item_id("firerune"), 3),
+            ],
             &green_gear,
             &[("strength", 0), ("magic", 0)],
             &tele_levels,
@@ -6738,7 +7116,7 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::GreenDragonTelePrepared, &tele).unwrap();
         let mut fed = tele.clone();
-        fed.item_ids.insert(LOBSTER_ID, 1);
+        fed.item_ids.insert(r289_item_id("lobster"), 1);
         assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fed).is_err());
         let mut fragile = tele.clone();
         fragile.effective_levels.insert("hitpoints".into(), 1);
@@ -6757,13 +7135,16 @@ export default class NativeStop extends LoopingBot {{
         );
 
         let mut fire_gear = armour.to_vec();
-        fire_gear.push((RUNE_SCIMITAR_ID, 1));
+        fire_gear.push((r289_item_id("rune_scimitar"), 1));
         let fire_bank = branch_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
+                (
+                    r289_item_id("lobster"),
+                    FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+                ),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
             ],
             &fire_gear,
             &[("strength", 0)],
@@ -6776,26 +7157,30 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::FireGiantBankPrepared, &fire_bank).unwrap();
         let mut seeded_big_bones = fire_bank.clone();
-        seeded_big_bones.item_ids.insert(BIG_BONES_ID, 1);
+        seeded_big_bones
+            .item_ids
+            .insert(r289_item_id("big_bones"), 1);
         assert!(
             validate_case_baseline(CoreCase::FireGiantBankPrepared, &seeded_big_bones).is_err()
         );
         let mut full_initial_pack = fire_bank.clone();
         full_initial_pack
             .item_ids
-            .insert(LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_RESTOCK);
+            .insert(r289_item_id("lobster"), FIRE_GIANT_BANK_PREPARED_RESTOCK);
         assert!(
             validate_case_baseline(CoreCase::FireGiantBankPrepared, &full_initial_pack).is_err(),
             "the 25-Lobster restock is not the one-Lobster Start baseline"
         );
         let mut no_amulet = fire_bank.clone();
-        no_amulet.item_ids.remove(&GLARIALS_AMULET_ID);
+        no_amulet
+            .item_ids
+            .remove(&r289_item_id("glarials_amulet_waterfall_quest"));
         assert!(
             validate_case_baseline(CoreCase::FireGiantBankPrepared, &no_amulet).is_err(),
             "prepared FireGiant still requires Glarial's amulet"
         );
         let mut no_rope = fire_bank.clone();
-        no_rope.item_ids.remove(&ROPE_ID);
+        no_rope.item_ids.remove(&r289_item_id("rope"));
         assert!(
             validate_case_baseline(CoreCase::FireGiantBankPrepared, &no_rope).is_err(),
             "prepared FireGiant still requires rope"
@@ -6809,12 +7194,12 @@ export default class NativeStop extends LoopingBot {{
         ];
         let moss = branch_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[
-                (RUNE_SCIMITAR_ID, 1),
-                (RUNE_CHAINBODY_ID, 1),
-                (RUNE_PLATELEGS_ID, 1),
-                (RUNE_FULL_HELM_ID, 1),
+                (r289_item_id("rune_scimitar"), 1),
+                (r289_item_id("rune_chainbody"), 1),
+                (r289_item_id("rune_platelegs"), 1),
+                (r289_item_id("rune_full_helm"), 1),
             ],
             &[("strength", 0)],
             &moss_levels,
@@ -6832,17 +7217,20 @@ export default class NativeStop extends LoopingBot {{
             "prepared Moss does not reuse the original Defence-1 fixture"
         );
         let mut moss_seeded = moss.clone();
-        moss_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        moss_seeded.item_ids.insert(r289_item_id("big_bones"), 1);
         assert!(validate_case_baseline(CoreCase::MossGiantPrepared, &moss_seeded).is_err());
 
         let hill = branch_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
             &[
-                (ADAMANT_SCIMITAR_ID, 1),
-                (RUNE_CHAINBODY_ID, 1),
-                (RUNE_PLATELEGS_ID, 1),
-                (RUNE_FULL_HELM_ID, 1),
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+            ],
+            &[
+                (r289_item_id("adamant_scimitar"), 1),
+                (r289_item_id("rune_chainbody"), 1),
+                (r289_item_id("rune_platelegs"), 1),
+                (r289_item_id("rune_full_helm"), 1),
             ],
             &[("strength", 0)],
             &moss_levels,
@@ -6854,10 +7242,12 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill).unwrap();
         let mut hill_seeded = hill.clone();
-        hill_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        hill_seeded.item_ids.insert(r289_item_id("big_bones"), 1);
         assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_seeded).is_err());
         let mut hill_limpwurt = hill.clone();
-        hill_limpwurt.item_ids.insert(LIMPWURT_ROOT_ID, 1);
+        hill_limpwurt
+            .item_ids
+            .insert(r289_item_id("limpwurt_root"), 1);
         assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_limpwurt).is_err());
 
         for (case, baseline) in [
@@ -6873,7 +7263,9 @@ export default class NativeStop extends LoopingBot {{
             wrong_level.levels.insert("defence".into(), 69);
             assert!(validate_case_baseline(case, &wrong_level).is_err());
             let mut missing_armour = baseline;
-            missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
+            missing_armour
+                .equipment_ids
+                .remove(&r289_item_id("rune_chainbody"));
             assert!(validate_case_baseline(case, &missing_armour).is_err());
         }
     }
@@ -6894,8 +7286,8 @@ export default class NativeStop extends LoopingBot {{
             MOSS_GIANT_BANK,
             &[],
             &[
-                (BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY),
-                (LOBSTER_ID, MOSS_GIANT_DART_BANK_FOOD),
+                (r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY),
+                (r289_item_id("lobster"), MOSS_GIANT_DART_BANK_FOOD),
             ],
             &[],
             &[("ranged", 0)],
@@ -6910,8 +7302,10 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(dart_case, &dart_baseline).unwrap();
 
         let mut worn_start = dart_baseline.clone();
-        worn_start.equipment_ids.insert(BRONZE_DART_ID, 80);
-        worn_start.bank_ids.remove(&BRONZE_DART_ID);
+        worn_start
+            .equipment_ids
+            .insert(r289_item_id("bronze_dart"), 80);
+        worn_start.bank_ids.remove(&r289_item_id("bronze_dart"));
         assert!(
             validate_case_baseline(dart_case, &worn_start).is_err(),
             "worn-gear combat_baseline_ready must not qualify bank-only dart Start"
@@ -6925,7 +7319,9 @@ export default class NativeStop extends LoopingBot {{
             "closed snapshots drop bank_ids and cannot prove the dart fixture"
         );
         let mut wrong_ammo_bank = dart_baseline.clone();
-        wrong_ammo_bank.bank_ids.insert(RUNE_ARROW_ID, 1);
+        wrong_ammo_bank
+            .bank_ids
+            .insert(r289_item_id("rune_arrow"), 1);
         assert!(validate_case_baseline(dart_case, &wrong_ammo_bank).is_err());
 
         let dart_spec = combat_spec(dart_case).unwrap();
@@ -6935,17 +7331,17 @@ export default class NativeStop extends LoopingBot {{
         dart_pack.bank_loaded = false;
         dart_pack
             .item_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY);
         let mut dart_worn = dart_pack.clone();
-        dart_worn.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn.item_ids.remove(&r289_item_id("bronze_dart"));
         dart_worn
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY);
         dart_worn.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
         let mut dart_field = dart_worn.clone();
         dart_field
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY - 1);
         dart_field.xp.insert("ranged".into(), 12);
         dart_field.npc_facts = vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
         dart_field.local_in_combat = true;
@@ -6968,23 +7364,27 @@ export default class NativeStop extends LoopingBot {{
         dart_bank_pull.bank_loaded = true;
         dart_bank_pull
             .bank_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
-        dart_bank_pull.item_ids.insert(BRONZE_DART_ID, 1);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY - 1);
+        dart_bank_pull
+            .item_ids
+            .insert(r289_item_id("bronze_dart"), 1);
         let mut dart_worn_from_bank = dart_bank_pull.clone();
         dart_worn_from_bank.bank_open = false;
         dart_worn_from_bank.bank_loaded = false;
         dart_worn_from_bank.bank_ids.clear();
-        dart_worn_from_bank.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn_from_bank
+            .item_ids
+            .remove(&r289_item_id("bronze_dart"));
         dart_worn_from_bank
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY);
         dart_worn_from_bank
             .varps
             .insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
         let mut dart_field_from_bank = dart_worn_from_bank.clone();
         dart_field_from_bank
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY - 1);
         dart_field_from_bank.xp.insert("ranged".into(), 12);
         dart_field_from_bank.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
@@ -7004,11 +7404,11 @@ export default class NativeStop extends LoopingBot {{
         dart_worn_only.bank_loaded = true;
         dart_worn_only
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY);
         let mut dart_worn_only_field = dart_worn_only.clone();
         dart_worn_only_field
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY - 1);
         dart_worn_only_field.xp.insert("ranged".into(), 12);
         dart_worn_only_field.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
@@ -7032,11 +7432,11 @@ export default class NativeStop extends LoopingBot {{
         dart_closed_bank_worn.bank_ids.clear();
         dart_closed_bank_worn
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY);
         let mut dart_closed_field = dart_closed_bank_worn.clone();
         dart_closed_field
             .equipment_ids
-            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+            .insert(r289_item_id("bronze_dart"), MOSS_GIANT_DART_SUPPLY - 1);
         dart_closed_field.xp.insert("ranged".into(), 12);
         dart_closed_field.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
@@ -7059,7 +7459,9 @@ export default class NativeStop extends LoopingBot {{
             .qualify()
             .is_err());
         let mut wrong_ammo_live = dart_field.clone();
-        wrong_ammo_live.item_ids.insert(RUNE_ARROW_ID, 1);
+        wrong_ammo_live
+            .item_ids
+            .insert(r289_item_id("rune_arrow"), 1);
         assert!(witness(
             dart_case,
             &dart_baseline,
@@ -7072,11 +7474,14 @@ export default class NativeStop extends LoopingBot {{
         let mage_baseline = branch_obs(
             GREEN_DRAGON_FIELD,
             &[
-                (LOBSTER_ID, GREEN_DRAGON_FOOD),
-                (MIND_RUNE_ID, AUTO_FIGHTER_MAGE_CASTS),
-                (AIR_RUNE_ID, AUTO_FIGHTER_MAGE_AIR_RUNES),
+                (r289_item_id("lobster"), GREEN_DRAGON_FOOD),
+                (r289_item_id("mindrune"), AUTO_FIGHTER_MAGE_CASTS),
+                (r289_item_id("airrune"), AUTO_FIGHTER_MAGE_AIR_RUNES),
             ],
-            &[(STAFF_OF_FIRE_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[
+                (r289_item_id("staff_of_fire"), 1),
+                (r289_item_id("antidragonbreathshield"), 1),
+            ],
             &[("magic", 100)],
             &[
                 ("magic", REMAINING_COMBAT_PREPARED_LEVEL),
@@ -7091,19 +7496,21 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(mage_case, &mage_baseline).unwrap();
         let mut armoured = mage_baseline.clone();
-        armoured.equipment_ids.insert(RUNE_CHAINBODY_ID, 1);
+        armoured
+            .equipment_ids
+            .insert(r289_item_id("rune_chainbody"), 1);
         assert!(
             validate_case_baseline(mage_case, &armoured).is_err(),
             "mage prepared must refuse rune armour"
         );
         let mut short_mind = mage_baseline.clone();
-        short_mind.item_ids.insert(MIND_RUNE_ID, 149);
+        short_mind.item_ids.insert(r289_item_id("mindrune"), 149);
         assert!(validate_case_baseline(mage_case, &short_mind).is_err());
 
         let mage_spec = combat_spec(mage_case).unwrap();
         let mut mage_hit = mage_baseline.clone();
-        mage_hit.item_ids.insert(MIND_RUNE_ID, 149);
-        mage_hit.item_ids.insert(AIR_RUNE_ID, 298);
+        mage_hit.item_ids.insert(r289_item_id("mindrune"), 149);
+        mage_hit.item_ids.insert(r289_item_id("airrune"), 298);
         mage_hit.xp.insert("magic".into(), 106);
         mage_hit.varps.insert(AUTOCAST_MAGIC_VARP, 3);
         mage_hit.npc_facts = vec![combat_npc(8, "Green dragon", 80, true, GREEN_DRAGON_FIELD)];
@@ -7117,14 +7524,18 @@ export default class NativeStop extends LoopingBot {{
         );
         assert!(mage_ok.qualify().is_ok());
         let mut no_shield = mage_hit.clone();
-        no_shield.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        no_shield
+            .equipment_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
         assert!(witness(mage_case, &mage_baseline, [&no_shield])
             .qualify()
             .is_err());
 
         let mage_precombat = mage_baseline.clone();
         let mut mage_cast_bare = mage_hit.clone();
-        mage_cast_bare.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        mage_cast_bare
+            .equipment_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
         let mixed_shield = witness(
             mage_case,
             &mage_baseline,
@@ -7163,17 +7574,20 @@ export default class NativeStop extends LoopingBot {{
         let camelot_baseline = branch_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
-                (ROPE_ID, 1),
-                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
-                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+                (
+                    r289_item_id("lobster"),
+                    FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+                ),
+                (r289_item_id("rope"), 1),
+                (r289_item_id("airrune"), CAMELOT_AIR_CARRY),
+                (r289_item_id("lawrune"), CAMELOT_LAW_CARRY),
             ],
             &[
-                (RUNE_SCIMITAR_ID, 1),
-                (RUNE_CHAINBODY_ID, 1),
-                (RUNE_PLATELEGS_ID, 1),
-                (RUNE_FULL_HELM_ID, 1),
-                (GLARIALS_AMULET_ID, 1),
+                (r289_item_id("rune_scimitar"), 1),
+                (r289_item_id("rune_chainbody"), 1),
+                (r289_item_id("rune_platelegs"), 1),
+                (r289_item_id("rune_full_helm"), 1),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
             ],
             &[("strength", 0), ("magic", 0)],
             &[
@@ -7191,15 +7605,19 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(camelot_case, &camelot_baseline).unwrap();
         let mut seeded_bones = camelot_baseline.clone();
-        seeded_bones.item_ids.insert(BIG_BONES_ID, 1);
+        seeded_bones.item_ids.insert(r289_item_id("big_bones"), 1);
         assert!(validate_case_baseline(camelot_case, &seeded_bones).is_err());
         let mut no_magic = camelot_baseline.clone();
         no_magic.levels.insert("magic".into(), 1);
         no_magic.effective_levels.insert("magic".into(), 1);
         assert!(validate_case_baseline(camelot_case, &no_magic).is_err());
         let mut packed_amulet = camelot_baseline.clone();
-        packed_amulet.equipment_ids.remove(&GLARIALS_AMULET_ID);
-        packed_amulet.item_ids.insert(GLARIALS_AMULET_ID, 1);
+        packed_amulet
+            .equipment_ids
+            .remove(&r289_item_id("glarials_amulet_waterfall_quest"));
+        packed_amulet
+            .item_ids
+            .insert(r289_item_id("glarials_amulet_waterfall_quest"), 1);
         assert!(
             validate_case_baseline(camelot_case, &packed_amulet).is_err(),
             "Camelot restock slot math needs the amulet worn"
@@ -7215,13 +7633,13 @@ export default class NativeStop extends LoopingBot {{
 
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_BANK_PREPARED_FOOD)],
             &[
-                (RUNE_SCIMITAR_ID, 1),
-                (DRAGONFIRE_SHIELD_ID, 1),
-                (RUNE_CHAINBODY_ID, 1),
-                (RUNE_PLATELEGS_ID, 1),
-                (RUNE_FULL_HELM_ID, 1),
+                (r289_item_id("rune_scimitar"), 1),
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("rune_chainbody"), 1),
+                (r289_item_id("rune_platelegs"), 1),
+                (r289_item_id("rune_full_helm"), 1),
             ],
             &[("strength", 0)],
             &[
@@ -7237,9 +7655,9 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         let mut bones_only = baseline.clone();
-        bones_only.item_ids.insert(DRAGON_BONES_ID, 1);
+        bones_only.item_ids.insert(r289_item_id("dragon_bones"), 1);
         let mut both = bones_only.clone();
-        both.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        both.item_ids.insert(r289_item_id("dragonhide_green"), 1);
 
         let mut or_cycle = CombatCoreCycle::default();
         or_cycle.observe(or_spec, &baseline, &bones_only);
@@ -7281,15 +7699,19 @@ export default class NativeStop extends LoopingBot {{
             ("magic", 25),
         ];
         let gear = [
-            (RUNE_CHAINBODY_ID, 1),
-            (RUNE_PLATELEGS_ID, 1),
-            (RUNE_FULL_HELM_ID, 1),
-            (RUNE_SCIMITAR_ID, 1),
-            (DRAGONFIRE_SHIELD_ID, 1),
+            (r289_item_id("rune_chainbody"), 1),
+            (r289_item_id("rune_platelegs"), 1),
+            (r289_item_id("rune_full_helm"), 1),
+            (r289_item_id("rune_scimitar"), 1),
+            (r289_item_id("antidragonbreathshield"), 1),
         ];
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &[
+                (r289_item_id("lawrune"), 3),
+                (r289_item_id("airrune"), 9),
+                (r289_item_id("firerune"), 3),
+            ],
             &gear,
             &[("strength", 0), ("magic", 0)],
             &levels,
@@ -7309,12 +7731,12 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.bank_ids.insert(LOBSTER_ID, 40);
+        deposited.bank_ids.insert(r289_item_id("lobster"), 40);
         let mut restocked = deposited.clone();
         restocked
             .item_ids
-            .insert(LOBSTER_ID, GREEN_DRAGON_BANK_RESTOCK);
-        restocked.bank_ids.insert(LOBSTER_ID, 20);
+            .insert(r289_item_id("lobster"), GREEN_DRAGON_BANK_RESTOCK);
+        restocked.bank_ids.insert(r289_item_id("lobster"), 20);
         let mut closed = restocked.clone();
         closed.bank_open = false;
         closed.bank_loaded = false;
@@ -7340,10 +7762,10 @@ export default class NativeStop extends LoopingBot {{
     fn prepared_fire_giant_keeps_strict_earned_trip_gates_and_exact_restock_space() {
         let case = CoreCase::FireGiantBankPrepared;
         let armour_and_weapon = [
-            (RUNE_CHAINBODY_ID, 1),
-            (RUNE_PLATELEGS_ID, 1),
-            (RUNE_FULL_HELM_ID, 1),
-            (RUNE_SCIMITAR_ID, 1),
+            (r289_item_id("rune_chainbody"), 1),
+            (r289_item_id("rune_platelegs"), 1),
+            (r289_item_id("rune_full_helm"), 1),
+            (r289_item_id("rune_scimitar"), 1),
         ];
         let levels = [
             ("attack", BANK_PRESSURE_PREPARED_LEVEL),
@@ -7354,9 +7776,12 @@ export default class NativeStop extends LoopingBot {{
         let baseline = branch_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
+                (
+                    r289_item_id("lobster"),
+                    FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+                ),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
             ],
             &armour_and_weapon,
             &[("strength", 0)],
@@ -7376,8 +7801,8 @@ export default class NativeStop extends LoopingBot {{
             first.local_target_npc = Some(2);
 
             let mut earned = baseline.clone();
-            earned.item_ids.remove(&LOBSTER_ID);
-            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.item_ids.remove(&r289_item_id("lobster"));
+            earned.item_ids.insert(r289_item_id("big_bones"), 1);
             earned.xp.insert("strength".into(), 10);
             earned.npc_facts = vec![
                 combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
@@ -7397,16 +7822,20 @@ export default class NativeStop extends LoopingBot {{
 
             let mut deposited = washed.clone();
             deposited.tile = Some(FIRE_GIANT_BANK);
-            deposited.item_ids.remove(&BIG_BONES_ID);
-            deposited.bank_ids.insert(BIG_BONES_ID, 1);
-            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.item_ids.remove(&r289_item_id("big_bones"));
+            deposited.bank_ids.insert(r289_item_id("big_bones"), 1);
+            deposited.bank_ids.insert(r289_item_id("lobster"), 50);
             deposited.bank_open = true;
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
 
             let mut restocked = deposited.clone();
-            restocked.item_ids.insert(LOBSTER_ID, restock_count);
-            restocked.bank_ids.insert(LOBSTER_ID, 50 - restock_count);
+            restocked
+                .item_ids
+                .insert(r289_item_id("lobster"), restock_count);
+            restocked
+                .bank_ids
+                .insert(r289_item_id("lobster"), 50 - restock_count);
 
             let mut closed = restocked.clone();
             closed.bank_open = false;
@@ -7464,11 +7893,11 @@ export default class NativeStop extends LoopingBot {{
         );
 
         let armour_and_weapon = [
-            (RUNE_CHAINBODY_ID, 1),
-            (RUNE_PLATELEGS_ID, 1),
-            (RUNE_FULL_HELM_ID, 1),
-            (RUNE_SCIMITAR_ID, 1),
-            (GLARIALS_AMULET_ID, 1),
+            (r289_item_id("rune_chainbody"), 1),
+            (r289_item_id("rune_platelegs"), 1),
+            (r289_item_id("rune_full_helm"), 1),
+            (r289_item_id("rune_scimitar"), 1),
+            (r289_item_id("glarials_amulet_waterfall_quest"), 1),
         ];
         let levels = [
             ("attack", BANK_PRESSURE_PREPARED_LEVEL),
@@ -7480,10 +7909,13 @@ export default class NativeStop extends LoopingBot {{
         let baseline = branch_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
-                (ROPE_ID, 1),
-                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
-                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+                (
+                    r289_item_id("lobster"),
+                    FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+                ),
+                (r289_item_id("rope"), 1),
+                (r289_item_id("airrune"), CAMELOT_AIR_CARRY),
+                (r289_item_id("lawrune"), CAMELOT_LAW_CARRY),
             ],
             &armour_and_weapon,
             &[("strength", 0), ("magic", 0)],
@@ -7503,8 +7935,8 @@ export default class NativeStop extends LoopingBot {{
             first.local_target_npc = Some(2);
 
             let mut earned = baseline.clone();
-            earned.item_ids.remove(&LOBSTER_ID);
-            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.item_ids.remove(&r289_item_id("lobster"));
+            earned.item_ids.insert(r289_item_id("big_bones"), 1);
             earned.xp.insert("strength".into(), 10);
             earned.npc_facts = vec![
                 combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
@@ -7525,16 +7957,20 @@ export default class NativeStop extends LoopingBot {{
 
             let mut deposited = landed.clone();
             deposited.tile = Some(SEERS_BANK);
-            deposited.item_ids.remove(&BIG_BONES_ID);
-            deposited.bank_ids.insert(BIG_BONES_ID, 1);
-            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.item_ids.remove(&r289_item_id("big_bones"));
+            deposited.bank_ids.insert(r289_item_id("big_bones"), 1);
+            deposited.bank_ids.insert(r289_item_id("lobster"), 50);
             deposited.bank_open = true;
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
 
             let mut restocked = deposited.clone();
-            restocked.item_ids.insert(LOBSTER_ID, restock_count);
-            restocked.bank_ids.insert(LOBSTER_ID, 50 - restock_count);
+            restocked
+                .item_ids
+                .insert(r289_item_id("lobster"), restock_count);
+            restocked
+                .bank_ids
+                .insert(r289_item_id("lobster"), 50 - restock_count);
 
             let mut closed = restocked.clone();
             closed.bank_open = false;
@@ -7582,8 +8018,8 @@ export default class NativeStop extends LoopingBot {{
             first.local_in_combat = true;
             first.local_target_npc = Some(2);
             let mut earned = baseline.clone();
-            earned.item_ids.remove(&LOBSTER_ID);
-            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.item_ids.remove(&r289_item_id("lobster"));
+            earned.item_ids.insert(r289_item_id("big_bones"), 1);
             earned.xp.insert("strength".into(), 10);
             earned.npc_facts = vec![
                 combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
@@ -7601,19 +8037,20 @@ export default class NativeStop extends LoopingBot {{
             landed.local_target_npc = None;
             let mut deposited = landed.clone();
             deposited.tile = Some(SEERS_BANK);
-            deposited.item_ids.remove(&BIG_BONES_ID);
-            deposited.bank_ids.insert(BIG_BONES_ID, 1);
-            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.item_ids.remove(&r289_item_id("big_bones"));
+            deposited.bank_ids.insert(r289_item_id("big_bones"), 1);
+            deposited.bank_ids.insert(r289_item_id("lobster"), 50);
             deposited.bank_open = true;
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
             let mut restocked = deposited.clone();
             restocked
                 .item_ids
-                .insert(LOBSTER_ID, FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
-            restocked
-                .bank_ids
-                .insert(LOBSTER_ID, 50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+                .insert(r289_item_id("lobster"), FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            restocked.bank_ids.insert(
+                r289_item_id("lobster"),
+                50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK,
+            );
             let mut closed = restocked.clone();
             closed.bank_open = false;
             closed.bank_loaded = false;
@@ -7662,8 +8099,14 @@ export default class NativeStop extends LoopingBot {{
         local_in_combat: bool,
         local_target_npc: Option<usize>,
     ) -> Observation {
-        let mut observation =
-            resource_obs(tile, item_ids, &[], &[(ADAMANT_SCIMITAR_ID, 1)], xp, levels);
+        let mut observation = resource_obs(
+            tile,
+            item_ids,
+            &[],
+            &[(r289_item_id("adamant_scimitar"), 1)],
+            xp,
+            levels,
+        );
         observation.npc_facts = npcs.to_vec();
         observation.local_in_combat = local_in_combat;
         observation.local_target_npc = local_target_npc;
@@ -7693,7 +8136,9 @@ export default class NativeStop extends LoopingBot {{
             local_target_npc,
         );
         observation.equipment_ids.clear();
-        observation.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        observation
+            .equipment_ids
+            .insert(r289_item_id("staff_of_fire"), 1);
         observation.varps.insert(AUTOCAST_MAGIC_VARP, autocast_varp);
         observation
     }
@@ -7705,7 +8150,11 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(case.card_name(), "AutoFighter");
 
         let baseline = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 300),
+            ],
             &[("magic", 100)],
             &[],
             false,
@@ -7715,7 +8164,11 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(case, &baseline).unwrap();
 
         let first = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 149),
+                (r289_item_id("airrune"), 298),
+            ],
             &[("magic", 106)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7723,7 +8176,11 @@ export default class NativeStop extends LoopingBot {{
             3,
         );
         let death_and_respawn = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 148), (AIR_RUNE_ID, 296)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 148),
+                (r289_item_id("airrune"), 296),
+            ],
             &[("magic", 112)],
             &[
                 combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -7750,20 +8207,28 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(case, &wrong_staff).is_err());
         let mut staff_only_in_inventory = baseline.clone();
         staff_only_in_inventory.equipment_ids.clear();
-        staff_only_in_inventory.item_ids.insert(STAFF_OF_FIRE_ID, 1);
+        staff_only_in_inventory
+            .item_ids
+            .insert(r289_item_id("staff_of_fire"), 1);
         assert!(validate_case_baseline(case, &staff_only_in_inventory).is_err());
         let mut short_runes = baseline.clone();
-        short_runes.item_ids.insert(MIND_RUNE_ID, 149);
+        short_runes.item_ids.insert(r289_item_id("mindrune"), 149);
         assert!(validate_case_baseline(case, &short_runes).is_err());
         let mut surplus_runes = baseline.clone();
-        surplus_runes.item_ids.insert(MIND_RUNE_ID, 151);
+        surplus_runes.item_ids.insert(r289_item_id("mindrune"), 151);
         assert!(validate_case_baseline(case, &surplus_runes).is_err());
         let mut short_air_runes = baseline.clone();
-        short_air_runes.item_ids.insert(AIR_RUNE_ID, 298);
+        short_air_runes
+            .item_ids
+            .insert(r289_item_id("airrune"), 298);
         assert!(validate_case_baseline(case, &short_air_runes).is_err());
 
         let selected_only = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 300),
+            ],
             &[("magic", 100)],
             &[],
             false,
@@ -7775,7 +8240,11 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
 
         let selected_not_armed = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (MIND_RUNE_ID, 149), (AIR_RUNE_ID, 298)],
+            &[
+                (r289_item_id("trout"), 8),
+                (r289_item_id("mindrune"), 149),
+                (r289_item_id("airrune"), 298),
+            ],
             &[("magic", 106)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7783,7 +8252,11 @@ export default class NativeStop extends LoopingBot {{
             2,
         );
         let selected_not_armed_death = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (MIND_RUNE_ID, 148), (AIR_RUNE_ID, 296)],
+            &[
+                (r289_item_id("trout"), 8),
+                (r289_item_id("mindrune"), 148),
+                (r289_item_id("airrune"), 296),
+            ],
             &[("magic", 112)],
             &[
                 combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -7806,7 +8279,11 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let direct_staff_melee = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 300),
+            ],
             &[("magic", 100), ("strength", 108)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7814,7 +8291,11 @@ export default class NativeStop extends LoopingBot {{
             3,
         );
         let direct_staff_death = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 300),
+            ],
             &[("magic", 100), ("strength", 112)],
             &[
                 combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -7837,7 +8318,11 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let unchanged_xp = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 149),
+                (r289_item_id("airrune"), 298),
+            ],
             &[("magic", 100)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7845,7 +8330,11 @@ export default class NativeStop extends LoopingBot {{
             3,
         );
         let unchanged_xp_death = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 148), (AIR_RUNE_ID, 296)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 148),
+                (r289_item_id("airrune"), 296),
+            ],
             &[("magic", 100)],
             &[
                 combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -7864,7 +8353,11 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let missing_rune_use = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 298)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 298),
+            ],
             &[("magic", 106)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7872,7 +8365,11 @@ export default class NativeStop extends LoopingBot {{
             3,
         );
         let missing_rune_death = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 296)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 150),
+                (r289_item_id("airrune"), 296),
+            ],
             &[("magic", 112)],
             &[
                 combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -7891,7 +8388,11 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
 
         let wrong_target = auto_fighter_mage_obs(
-            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[
+                (r289_item_id("trout"), 8),
+                (558, 149),
+                (r289_item_id("airrune"), 298),
+            ],
             &[("magic", 106)],
             &[combat_npc(5, "Knight", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -7908,7 +8409,7 @@ export default class NativeStop extends LoopingBot {{
     fn combat_observer_does_not_turn_unknown_zero_health_into_a_sticky_death() {
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[],
@@ -7919,7 +8420,7 @@ export default class NativeStop extends LoopingBot {{
         unknown.total_health = 0;
         let unknown = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[unknown],
@@ -7928,7 +8429,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let selected = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 84)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -7951,7 +8452,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &levels,
             &[],
@@ -7960,7 +8461,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let selected = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 84)],
             &levels,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -7969,7 +8470,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let missing = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 84)],
             &levels,
             &[],
@@ -7991,7 +8492,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 100)],
             &levels,
             &[],
@@ -8002,7 +8503,7 @@ export default class NativeStop extends LoopingBot {{
         other_actor_npc.targeting_local = false;
         let other_actor = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 100)],
             &levels,
             &[other_actor_npc],
@@ -8011,7 +8512,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let selected = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 104)],
             &levels,
             &[combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)],
@@ -8020,7 +8521,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let stale_loot = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("lobster"), MOSS_GIANT_FOOD),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 104)],
             &levels,
             &[],
@@ -8042,7 +8546,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 100)],
             &levels,
             &[],
@@ -8051,7 +8555,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let selected = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 104)],
             &levels,
             &[combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)],
@@ -8059,7 +8563,7 @@ export default class NativeStop extends LoopingBot {{
             Some(4),
         );
         let drop = BoundedGround {
-            id: BIG_BONES_ID,
+            id: r289_item_id("big_bones"),
             count: 1,
             tile: MOSS_GIANT_SAFESPOT,
             distance: 1,
@@ -8091,7 +8595,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &levels,
             &[],
@@ -8100,7 +8604,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let first = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 84)],
             &levels,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -8109,7 +8613,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let death = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 88)],
             &levels,
             &[combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND)],
@@ -8118,7 +8622,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let respawn = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 88)],
             &levels,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -8159,7 +8663,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &levels,
             &[],
@@ -8168,7 +8672,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let first = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 84)],
             &levels,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -8180,7 +8684,7 @@ export default class NativeStop extends LoopingBot {{
         corpse_npc.animation = 401;
         let death = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 88)],
             &levels,
             &[corpse_npc.clone()],
@@ -8189,7 +8693,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let corpse_still_selected = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 88)],
             &levels,
             &[corpse_npc],
@@ -8227,7 +8731,7 @@ export default class NativeStop extends LoopingBot {{
         // Genuine continued work: second living target after the defeat.
         let second_life = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 92)],
             &levels,
             &[
@@ -8258,7 +8762,7 @@ export default class NativeStop extends LoopingBot {{
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let chaos_base = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 50)],
             &levels,
             &[],
@@ -8268,7 +8772,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::ChaosDruid, &chaos_base).unwrap();
         let mut chaos_first = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 50)],
             &levels,
             &[combat_npc(1, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
@@ -8277,7 +8781,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let mut chaos_second = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("unidentified_guam"), 1),
+            ],
             &[("strength", 54)],
             &levels,
             &[
@@ -8288,7 +8795,7 @@ export default class NativeStop extends LoopingBot {{
             Some(8),
         );
         let drop = BoundedGround {
-            id: UNIDENTIFIED_GUAM_ID,
+            id: r289_item_id("unidentified_guam"),
             count: 2,
             tile: CHAOS_DRUID_FIELD,
             distance: 1,
@@ -8315,7 +8822,7 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(
             receipt["combat_core_cycle"]["previous_ground"],
             json!([{
-                "id": UNIDENTIFIED_GUAM_ID, "x": CHAOS_DRUID_FIELD.0,
+                "id": r289_item_id("unidentified_guam"), "x": CHAOS_DRUID_FIELD.0,
                 "z": CHAOS_DRUID_FIELD.1, "level": CHAOS_DRUID_FIELD.2, "count": 2
             }])
         );
@@ -8330,7 +8837,7 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(
             receipt["witness"]["combat_core_cycle"]["previous_ground"],
             json!([{
-                "id": UNIDENTIFIED_GUAM_ID, "x": CHAOS_DRUID_FIELD.0,
+                "id": r289_item_id("unidentified_guam"), "x": CHAOS_DRUID_FIELD.0,
                 "z": CHAOS_DRUID_FIELD.1, "level": CHAOS_DRUID_FIELD.2, "count": 2
             }])
         );
@@ -8507,7 +9014,7 @@ export default class NativeStop extends LoopingBot {{
         ];
         let moss_base = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 100), ("attack", 100)],
             &levels,
             &[],
@@ -8518,7 +9025,7 @@ export default class NativeStop extends LoopingBot {{
 
         let first = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 100), ("attack", 100)],
             &levels,
             &[combat_npc(4, "Moss giant", 50, true, MOSS_GIANT_SAFESPOT)],
@@ -8527,7 +9034,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let second = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 104), ("attack", 100)],
             &levels,
             &[
@@ -8538,7 +9045,7 @@ export default class NativeStop extends LoopingBot {{
             Some(7),
         );
         let mut looted = second.clone();
-        looted.item_ids.insert(BIG_BONES_ID, 1);
+        looted.item_ids.insert(r289_item_id("big_bones"), 1);
         looted.npc_facts = vec![combat_npc(7, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
         assert!(
             witness(CoreCase::MossGiant, &moss_base, [&first, &second, &looted])
@@ -8554,7 +9061,7 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
         let xp_only = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 108), ("attack", 100)],
             &levels,
             &[],
@@ -8566,7 +9073,10 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
         let attack_only = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("lobster"), MOSS_GIANT_FOOD),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 100), ("attack", 108)],
             &levels,
             &[
@@ -8583,7 +9093,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let despawn = combat_obs(
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_FOOD)],
             &[("strength", 104), ("attack", 100)],
             &levels,
             &[],
@@ -8594,19 +9104,22 @@ export default class NativeStop extends LoopingBot {{
             .qualify()
             .is_err());
         let mut noted = looted.clone();
-        noted.item_ids.insert(NOTED_BIG_BONES_ID, 1);
+        noted.item_ids.insert(r289_item_id("cert_big_bones"), 1);
         assert!(
             witness(CoreCase::MossGiant, &moss_base, [&first, &second, &noted])
                 .qualify()
                 .is_err()
         );
         let mut seeded = moss_base.clone();
-        seeded.item_ids.insert(BIG_BONES_ID, 1);
+        seeded.item_ids.insert(r289_item_id("big_bones"), 1);
         assert!(validate_case_baseline(CoreCase::MossGiant, &seeded).is_err());
 
         let hill_base = combat_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+            ],
             &[("strength", 100)],
             &levels,
             &[],
@@ -8615,11 +9128,13 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::HillGiant, &hill_base).unwrap();
         let mut hill_without_key = hill_base.clone();
-        hill_without_key.item_ids.remove(&BRASS_KEY_ID);
+        hill_without_key
+            .item_ids
+            .remove(&r289_item_id("edgevilledungeonkey"));
         assert!(validate_case_baseline(CoreCase::HillGiant, &hill_without_key).is_err());
         let hill_first = combat_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD)],
+            &[(r289_item_id("trout"), HILL_GIANT_FOOD)],
             &[("strength", 100)],
             &levels,
             &[combat_npc(2, "Giant", 35, true, HILL_GIANT_PIT)],
@@ -8628,7 +9143,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let hill_second = combat_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 110)],
             &levels,
             &[
@@ -8647,7 +9165,10 @@ export default class NativeStop extends LoopingBot {{
         .is_ok());
         let alias = combat_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 110)],
             &levels,
             &[
@@ -8663,7 +9184,7 @@ export default class NativeStop extends LoopingBot {{
 
         let chaos_base = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 50)],
             &levels,
             &[],
@@ -8673,7 +9194,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::ChaosDruid, &chaos_base).unwrap();
         let chaos_first = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 50)],
             &levels,
             &[combat_npc(1, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
@@ -8682,7 +9203,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let chaos_second = combat_obs(
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("unidentified_guam"), 1),
+            ],
             &[("strength", 54)],
             &levels,
             &[
@@ -8700,7 +9224,9 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut noted_herb = chaos_second.clone();
-        noted_herb.item_ids.insert(NOTED_HERB_ID, 1);
+        noted_herb
+            .item_ids
+            .insert(r289_item_id("cert_unidentified_guam"), 1);
         assert!(witness(
             CoreCase::ChaosDruid,
             &chaos_base,
@@ -8711,7 +9237,7 @@ export default class NativeStop extends LoopingBot {{
 
         let auto_base = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &levels,
             &[],
@@ -8721,7 +9247,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::AutoFighter, &auto_base).unwrap();
         let auto_first = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 80)],
             &levels,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -8730,7 +9256,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let auto_second = combat_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &[("strength", 88)],
             &levels,
             &[
@@ -8750,7 +9276,7 @@ export default class NativeStop extends LoopingBot {{
 
         let mut rock_base = combat_obs(
             ROCK_CRAB_SAFE_STAND,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &[("strength", 40)],
             &levels,
             &[],
@@ -8764,7 +9290,7 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(CoreCase::RockCrab, &awake_only).is_err());
         let rocks = combat_obs(
             ROCK_CRAB_SPOT,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &[("strength", 40)],
             &levels,
             &[combat_npc(3, "Rocks", 50, false, ROCK_CRAB_SPOT)],
@@ -8773,7 +9299,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let woke = combat_obs(
             ROCK_CRAB_SPOT,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &[("strength", 40)],
             &levels,
             &[combat_npc(3, "Rock Crab", 50, true, ROCK_CRAB_SPOT)],
@@ -8782,7 +9308,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let rock_second = combat_obs(
             ROCK_CRAB_SPOT,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &[("strength", 48)],
             &levels,
             &[
@@ -8806,7 +9332,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let crab_alias = combat_obs(
             ROCK_CRAB_SPOT,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &[("strength", 48)],
             &levels,
             &[
@@ -8825,8 +9351,8 @@ export default class NativeStop extends LoopingBot {{
         let mut dragon_base = combat_obs(
             GREEN_DRAGON_FIELD,
             &[
-                (LOBSTER_ID, GREEN_DRAGON_BASE_FOOD),
-                (DRAGONFIRE_SHIELD_ID, 1),
+                (r289_item_id("lobster"), GREEN_DRAGON_BASE_FOOD),
+                (r289_item_id("antidragonbreathshield"), 1),
             ],
             &[("strength", 90)],
             &levels,
@@ -8835,21 +9361,29 @@ export default class NativeStop extends LoopingBot {{
             None,
         );
         dragon_base.equipment_ids.clear();
-        dragon_base.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        dragon_base
+            .equipment_ids
+            .insert(r289_item_id("rune_scimitar"), 1);
         assert!(validate_case_baseline(CoreCase::GreenDragon, &dragon_base).is_err());
         let mut worn_start = dragon_base.clone();
-        worn_start.item_ids.remove(&DRAGONFIRE_SHIELD_ID);
-        worn_start.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        worn_start
+            .item_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
+        worn_start
+            .equipment_ids
+            .insert(r289_item_id("antidragonbreathshield"), 1);
         validate_case_baseline(CoreCase::GreenDragon, &worn_start).unwrap();
         let mut no_shield = dragon_base.clone();
-        no_shield.item_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        no_shield
+            .item_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
         assert!(validate_case_baseline(CoreCase::GreenDragon, &no_shield).is_err());
         let mut worn_eq = dragon_base.equipment_ids.clone();
-        worn_eq.insert(DRAGONFIRE_SHIELD_ID, 1);
+        worn_eq.insert(r289_item_id("antidragonbreathshield"), 1);
         let dragon_first = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD)],
+                &[(r289_item_id("lobster"), GREEN_DRAGON_BASE_FOOD)],
                 &[("strength", 90)],
                 &levels,
                 &[combat_npc(2, "Green dragon", 80, true, GREEN_DRAGON_FIELD)],
@@ -8862,7 +9396,10 @@ export default class NativeStop extends LoopingBot {{
         let dragon_second = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (DRAGON_BONES_ID, 1)],
+                &[
+                    (r289_item_id("lobster"), GREEN_DRAGON_BASE_FOOD),
+                    (r289_item_id("dragon_bones"), 1),
+                ],
                 &[("strength", 110)],
                 &levels,
                 &[
@@ -8883,8 +9420,8 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut hide_ok = dragon_second.clone();
-        hide_ok.item_ids.remove(&DRAGON_BONES_ID);
-        hide_ok.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        hide_ok.item_ids.remove(&r289_item_id("dragon_bones"));
+        hide_ok.item_ids.insert(r289_item_id("dragonhide_green"), 1);
         assert!(witness(
             CoreCase::GreenDragon,
             &worn_start,
@@ -8893,7 +9430,9 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_ok());
         let mut wrong_hide = dragon_second.clone();
-        wrong_hide.item_ids.insert(BLACK_DRAGONHIDE_ID, 1);
+        wrong_hide
+            .item_ids
+            .insert(r289_item_id("dragonhide_black"), 1);
         assert!(witness(
             CoreCase::GreenDragon,
             &dragon_base,
@@ -8904,7 +9443,10 @@ export default class NativeStop extends LoopingBot {{
         let dragon_alias = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (DRAGON_BONES_ID, 1)],
+                &[
+                    (r289_item_id("lobster"), GREEN_DRAGON_BASE_FOOD),
+                    (r289_item_id("dragon_bones"), 1),
+                ],
                 &[("strength", 110)],
                 &levels,
                 &[
@@ -8923,10 +9465,16 @@ export default class NativeStop extends LoopingBot {{
                 .is_err()
         );
         let mut unworn = dragon_second.clone();
-        unworn.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
-        unworn.item_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        unworn
+            .equipment_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
+        unworn
+            .item_ids
+            .insert(r289_item_id("antidragonbreathshield"), 1);
         let mut unworn_first = dragon_first.clone();
-        unworn_first.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        unworn_first
+            .equipment_ids
+            .remove(&r289_item_id("antidragonbreathshield"));
         assert!(witness(
             CoreCase::GreenDragon,
             &dragon_base,
@@ -8938,9 +9486,9 @@ export default class NativeStop extends LoopingBot {{
         let fire_base = combat_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
+                (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
             ],
             &[("strength", 70)],
             &levels,
@@ -8950,14 +9498,16 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(CoreCase::FireGiant, &fire_base).unwrap();
         let mut no_amulet = fire_base.clone();
-        no_amulet.item_ids.remove(&GLARIALS_AMULET_ID);
+        no_amulet
+            .item_ids
+            .remove(&r289_item_id("glarials_amulet_waterfall_quest"));
         assert!(validate_case_baseline(CoreCase::FireGiant, &no_amulet).is_err());
         let fire_first = combat_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
+                (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
             ],
             &[("strength", 70)],
             &levels,
@@ -8968,10 +9518,10 @@ export default class NativeStop extends LoopingBot {{
         let fire_second = combat_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
-                (BIG_BONES_ID, 1),
+                (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
+                (r289_item_id("big_bones"), 1),
             ],
             &[("strength", 86)],
             &levels,
@@ -8992,10 +9542,10 @@ export default class NativeStop extends LoopingBot {{
         let fire_alias = combat_obs(
             FIRE_GIANT_ROOM,
             &[
-                (LOBSTER_ID, FIRE_GIANT_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
-                (BIG_BONES_ID, 1),
+                (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
+                (r289_item_id("big_bones"), 1),
             ],
             &[("strength", 86)],
             &levels,
@@ -9022,12 +9572,12 @@ export default class NativeStop extends LoopingBot {{
         ardy_base.levels.insert("thieving".into(), 5);
         validate_case_baseline(CoreCase::ArdyFighter, &ardy_base).unwrap();
         let mut seeded_cake = ardy_base.clone();
-        seeded_cake.item_ids.insert(CAKE_ID, 1);
+        seeded_cake.item_ids.insert(r289_item_id("cake"), 1);
         assert!(validate_case_baseline(CoreCase::ArdyFighter, &seeded_cake).is_err());
         let stolen = {
             let mut observation = combat_obs(
                 ARDY_THIEVER_STAND,
-                &[(CAKE_ID, 1)],
+                &[(r289_item_id("cake"), 1)],
                 &[("strength", 60)],
                 &levels,
                 &[],
@@ -9040,7 +9590,7 @@ export default class NativeStop extends LoopingBot {{
         let ardy_first = {
             let mut observation = combat_obs(
                 ARDY_THIEVER_STAND,
-                &[(CAKE_ID, 1)],
+                &[(r289_item_id("cake"), 1)],
                 &[("strength", 60)],
                 &levels,
                 &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -9053,7 +9603,7 @@ export default class NativeStop extends LoopingBot {{
         let ardy_second = {
             let mut observation = combat_obs(
                 ARDY_THIEVER_STAND,
-                &[(CAKE_ID, 1)],
+                &[(r289_item_id("cake"), 1)],
                 &[("strength", 72)],
                 &levels,
                 &[
@@ -9111,7 +9661,9 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
         let chocolate = {
             let mut observation = ardy_second.clone();
-            observation.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+            observation
+                .item_ids
+                .insert(r289_item_id("chocolate_cake"), 1);
             observation
         };
         assert!(witness(
@@ -9129,16 +9681,19 @@ export default class NativeStop extends LoopingBot {{
             "green_dragon_prepared" => (
                 GREEN_DRAGON_FIELD,
                 GREEN_DRAGON_BASE_FOOD,
-                vec![(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (RUNE_SCIMITAR_ID, 1)],
+                vec![
+                    (r289_item_id("lobster"), GREEN_DRAGON_BASE_FOOD),
+                    (r289_item_id("rune_scimitar"), 1),
+                ],
                 false,
             ),
             "fire_giant_prepared" => (
                 FIRE_GIANT_ROOM,
                 FIRE_GIANT_FOOD,
                 vec![
-                    (LOBSTER_ID, FIRE_GIANT_FOOD),
-                    (GLARIALS_AMULET_ID, 1),
-                    (ROPE_ID, 1),
+                    (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                    (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                    (r289_item_id("rope"), 1),
                 ],
                 true,
             ),
@@ -9159,28 +9714,36 @@ export default class NativeStop extends LoopingBot {{
             None,
         );
         baseline.equipment_ids.clear();
-        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+        for id in [
+            r289_item_id("rune_chainbody"),
+            r289_item_id("rune_platelegs"),
+            r289_item_id("rune_full_helm"),
+        ] {
             baseline.equipment_ids.insert(id, 1);
         }
         if worn_weapon {
-            baseline.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+            baseline
+                .equipment_ids
+                .insert(r289_item_id("rune_scimitar"), 1);
         } else {
-            baseline.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+            baseline
+                .equipment_ids
+                .insert(r289_item_id("antidragonbreathshield"), 1);
         }
-        assert_eq!(baseline.item_id(LOBSTER_ID), food);
+        assert_eq!(baseline.item_id(r289_item_id("lobster")), food);
         (case, baseline)
     }
 
     fn prepared_special_baseline() -> Observation {
         branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
             &[
-                (DRAGONFIRE_SHIELD_ID, 1),
-                (DRAGON_DAGGER_ID, 1),
-                (RUNE_CHAINBODY_ID, 1),
-                (RUNE_PLATELEGS_ID, 1),
-                (RUNE_FULL_HELM_ID, 1),
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("dragon_dagger"), 1),
+                (r289_item_id("rune_chainbody"), 1),
+                (r289_item_id("rune_platelegs"), 1),
+                (r289_item_id("rune_full_helm"), 1),
             ],
             &[("strength", 0)],
             &[
@@ -9212,7 +9775,11 @@ export default class NativeStop extends LoopingBot {{
             );
             validate_case_baseline(case, &baseline).unwrap();
 
-            for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+            for id in [
+                r289_item_id("rune_chainbody"),
+                r289_item_id("rune_platelegs"),
+                r289_item_id("rune_full_helm"),
+            ] {
                 let mut missing = baseline.clone();
                 missing.equipment_ids.remove(&id);
                 assert!(
@@ -9230,7 +9797,7 @@ export default class NativeStop extends LoopingBot {{
             }
             for delta in [-1, 1] {
                 let mut wrong = baseline.clone();
-                *wrong.item_ids.get_mut(&LOBSTER_ID).unwrap() += delta;
+                *wrong.item_ids.get_mut(&r289_item_id("lobster")).unwrap() += delta;
                 assert!(
                     validate_case_baseline(case, &wrong).is_err(),
                     "{name} rejects an inexact food count"
@@ -9238,9 +9805,13 @@ export default class NativeStop extends LoopingBot {{
             }
 
             let mut wrong_weapon = baseline.clone();
-            wrong_weapon.item_ids.remove(&RUNE_SCIMITAR_ID);
-            wrong_weapon.equipment_ids.remove(&RUNE_SCIMITAR_ID);
-            wrong_weapon.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+            wrong_weapon.item_ids.remove(&r289_item_id("rune_scimitar"));
+            wrong_weapon
+                .equipment_ids
+                .remove(&r289_item_id("rune_scimitar"));
+            wrong_weapon
+                .equipment_ids
+                .insert(r289_item_id("adamant_scimitar"), 1);
             assert!(
                 validate_case_baseline(case, &wrong_weapon).is_err(),
                 "{name} requires Rune scimitar 1333 in its declared slot"
@@ -9249,9 +9820,9 @@ export default class NativeStop extends LoopingBot {{
             let mut seeded_loot = baseline.clone();
             seeded_loot.item_ids.insert(
                 if name.starts_with("green") {
-                    DRAGON_BONES_ID
+                    r289_item_id("dragon_bones")
                 } else {
-                    BIG_BONES_ID
+                    r289_item_id("big_bones")
                 },
                 1,
             );
@@ -9294,18 +9865,18 @@ export default class NativeStop extends LoopingBot {{
         }
         for count in [GREEN_DRAGON_FOOD - 1, GREEN_DRAGON_FOOD + 1] {
             let mut wrong = baseline.clone();
-            wrong.item_ids.insert(LOBSTER_ID, count);
+            wrong.item_ids.insert(r289_item_id("lobster"), count);
             assert!(
                 validate_case_baseline(case, &wrong).is_err(),
                 "prepared special rejects Lobster count {count}"
             );
         }
         for id in [
-            RUNE_CHAINBODY_ID,
-            RUNE_PLATELEGS_ID,
-            RUNE_FULL_HELM_ID,
-            DRAGON_DAGGER_ID,
-            DRAGONFIRE_SHIELD_ID,
+            r289_item_id("rune_chainbody"),
+            r289_item_id("rune_platelegs"),
+            r289_item_id("rune_full_helm"),
+            r289_item_id("dragon_dagger"),
+            r289_item_id("antidragonbreathshield"),
         ] {
             let mut missing = baseline.clone();
             missing.equipment_ids.remove(&id);
@@ -9325,7 +9896,11 @@ export default class NativeStop extends LoopingBot {{
 
         let mut original = baseline.clone();
         original.levels.insert("defence".into(), 1);
-        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+        for id in [
+            r289_item_id("rune_chainbody"),
+            r289_item_id("rune_platelegs"),
+            r289_item_id("rune_full_helm"),
+        ] {
             original.equipment_ids.remove(&id);
         }
         validate_case_baseline(CoreCase::GreenDragonSpecial, &original).unwrap();
@@ -9336,11 +9911,11 @@ export default class NativeStop extends LoopingBot {{
         let case = CoreCase::GreenDragonSpecialPrepared;
         let baseline = prepared_special_baseline();
         let gear = [
-            (DRAGONFIRE_SHIELD_ID, 1),
-            (DRAGON_DAGGER_ID, 1),
-            (RUNE_CHAINBODY_ID, 1),
-            (RUNE_PLATELEGS_ID, 1),
-            (RUNE_FULL_HELM_ID, 1),
+            (r289_item_id("antidragonbreathshield"), 1),
+            (r289_item_id("dragon_dagger"), 1),
+            (r289_item_id("rune_chainbody"), 1),
+            (r289_item_id("rune_platelegs"), 1),
+            (r289_item_id("rune_full_helm"), 1),
         ];
         let levels = [
             ("attack", 70),
@@ -9350,7 +9925,7 @@ export default class NativeStop extends LoopingBot {{
         ];
         let engaged = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
             &gear,
             &[("strength", 60)],
             &levels,
@@ -9362,7 +9937,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let spent = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
             &gear,
             &[("strength", 120)],
             &levels,
@@ -9423,8 +9998,16 @@ export default class NativeStop extends LoopingBot {{
     #[test]
     fn prepared_combat_reuses_strict_defeat_loot_and_further_work_qualification() {
         for (name, target, loot) in [
-            ("green_dragon_prepared", "Green dragon", DRAGON_BONES_ID),
-            ("fire_giant_prepared", "Fire giant", BIG_BONES_ID),
+            (
+                "green_dragon_prepared",
+                "Green dragon",
+                r289_item_id("dragon_bones"),
+            ),
+            (
+                "fire_giant_prepared",
+                "Fire giant",
+                r289_item_id("big_bones"),
+            ),
         ] {
             let (case, baseline) = prepared_combat_baseline(name);
             let tile = baseline.tile.unwrap();
@@ -9649,7 +10232,10 @@ export default class NativeStop extends LoopingBot {{
     }
 
     fn bow_gear() -> Vec<(i32, i32)> {
-        vec![(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 200)]
+        vec![
+            (r289_item_id("maple_shortbow"), 1),
+            (r289_item_id("bronze_arrow"), 200),
+        ]
     }
 
     #[test]
@@ -9663,14 +10249,14 @@ export default class NativeStop extends LoopingBot {{
             assert_eq!(case.card_name(), card);
             let spec = combat_spec(case).expect("range spec");
             assert_eq!(spec.style, CombatStyleWitness::Ranged);
-            assert_eq!(spec.projectile, Some(BRONZE_ARROW_ID));
+            assert_eq!(spec.projectile, Some(r289_item_id("bronze_arrow")));
         }
 
         // A melee loadout, a low Ranged level, or a missing half of the ranged
         // pair must all refuse the Start baseline.
         let crab_baseline = branch_obs(
             ROCK_CRAB_SAFE_STAND,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
             &bow_gear(),
             &[("ranged", 0)],
             &[("ranged", 40), ("hitpoints", 40)],
@@ -9684,14 +10270,20 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(crab_case, &crab_baseline).unwrap();
         let mut melee_kit = crab_baseline.clone();
         melee_kit.equipment_ids.clear();
-        melee_kit.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+        melee_kit
+            .equipment_ids
+            .insert(r289_item_id("adamant_scimitar"), 1);
         assert!(validate_case_baseline(crab_case, &melee_kit).is_err());
         let mut bag_bow = crab_baseline.clone();
-        bag_bow.equipment_ids.remove(&MAPLE_SHORTBOW_ID);
-        bag_bow.item_ids.insert(MAPLE_SHORTBOW_ID, 1);
+        bag_bow
+            .equipment_ids
+            .remove(&r289_item_id("maple_shortbow"));
+        bag_bow.item_ids.insert(r289_item_id("maple_shortbow"), 1);
         assert!(validate_case_baseline(crab_case, &bag_bow).is_err());
         let mut no_arrows = crab_baseline.clone();
-        no_arrows.equipment_ids.remove(&BRONZE_ARROW_ID);
+        no_arrows
+            .equipment_ids
+            .remove(&r289_item_id("bronze_arrow"));
         assert!(validate_case_baseline(crab_case, &no_arrows).is_err());
         let mut low_ranged = crab_baseline.clone();
         low_ranged.levels.insert("ranged".into(), 1);
@@ -9705,8 +10297,11 @@ export default class NativeStop extends LoopingBot {{
         let rocks = ROCK_CRAB_SPOT;
         let first = branch_obs(
             ROCK_CRAB_SAFE_STAND,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
-            &[(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 199)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
+            &[
+                (r289_item_id("maple_shortbow"), 1),
+                (r289_item_id("bronze_arrow"), 199),
+            ],
             &[("ranged", 12)],
             &[("ranged", 40), ("hitpoints", 40)],
             &[],
@@ -9720,8 +10315,11 @@ export default class NativeStop extends LoopingBot {{
         );
         let defeat = branch_obs(
             ROCK_CRAB_SAFE_STAND,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
-            &[(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 196)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
+            &[
+                (r289_item_id("maple_shortbow"), 1),
+                (r289_item_id("bronze_arrow"), 196),
+            ],
             &[("ranged", 34)],
             &[("ranged", 40), ("hitpoints", 40)],
             &[],
@@ -9771,7 +10369,9 @@ export default class NativeStop extends LoopingBot {{
             .is_err());
         // A stack that never shrinks is carried ammunition, not an arrow fired.
         let no_spend = flawed(&first, &defeat, &|frame| {
-            frame.equipment_ids.insert(BRONZE_ARROW_ID, 200);
+            frame
+                .equipment_ids
+                .insert(r289_item_id("bronze_arrow"), 200);
         });
         assert!(witness(crab_case, &crab_baseline, no_spend.iter())
             .qualify()
@@ -9780,7 +10380,7 @@ export default class NativeStop extends LoopingBot {{
         // AutoFighter's Guard branch shares the ranged witness, not the crab one.
         let guard_baseline = branch_obs(
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
             &bow_gear(),
             &[("ranged", 0)],
             &[("ranged", 40), ("hitpoints", 40)],
@@ -9801,8 +10401,11 @@ export default class NativeStop extends LoopingBot {{
         let case = CoreCase::GreenDragonSpecial;
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
-            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("dragon_dagger"), 1),
+            ],
             &[("strength", 0)],
             &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
             &[],
@@ -9817,8 +10420,12 @@ export default class NativeStop extends LoopingBot {{
         // cannot start this branch.
         let mut scimitar = baseline.clone();
         scimitar.equipment_ids.clear();
-        scimitar.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
-        scimitar.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        scimitar
+            .equipment_ids
+            .insert(r289_item_id("antidragonbreathshield"), 1);
+        scimitar
+            .equipment_ids
+            .insert(r289_item_id("rune_scimitar"), 1);
         assert!(validate_case_baseline(case, &scimitar).is_err());
         let mut armed_start = baseline.clone();
         armed_start.varps.insert(SA_ARMED_VARP, SA_ARMED_VALUE);
@@ -9827,8 +10434,11 @@ export default class NativeStop extends LoopingBot {{
         let dragon = GREEN_DRAGON_FIELD;
         let engaged = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
-            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("dragon_dagger"), 1),
+            ],
             &[("strength", 60)],
             &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
             &[],
@@ -9839,8 +10449,11 @@ export default class NativeStop extends LoopingBot {{
         );
         let spent = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
-            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("dragon_dagger"), 1),
+            ],
             &[("strength", 120)],
             &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
             &[],
@@ -9897,11 +10510,14 @@ export default class NativeStop extends LoopingBot {{
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
             &[
-                (LOBSTER_ID, GREEN_DRAGON_FOOD),
-                (SUPER_ATTACK_3_ID, 1),
-                (SUPER_STRENGTH_3_ID, 1),
+                (r289_item_id("lobster"), GREEN_DRAGON_FOOD),
+                (r289_item_id("3dose2attack"), 1),
+                (r289_item_id("3dose2strength"), 1),
             ],
-            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("rune_scimitar"), 1),
+            ],
             &[("strength", 0)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[("attack", 40), ("strength", 40)],
@@ -9915,25 +10531,28 @@ export default class NativeStop extends LoopingBot {{
         // A seeded two-dose flask, a pre-existing boost, or a mage kit is not a
         // prepared potion branch.
         let mut seeded_dose = baseline.clone();
-        seeded_dose.item_ids.insert(SUPER_ATTACK_2_ID, 1);
+        seeded_dose.item_ids.insert(r289_item_id("2dose2attack"), 1);
         assert!(validate_case_baseline(case, &seeded_dose).is_err());
         let mut preboosted = baseline.clone();
         preboosted.effective_levels.insert("attack".into(), 47);
         assert!(validate_case_baseline(case, &preboosted).is_err());
         let mut bag_potions = baseline.clone();
-        bag_potions.item_ids.remove(&SUPER_ATTACK_3_ID);
+        bag_potions.item_ids.remove(&r289_item_id("3dose2attack"));
         assert!(validate_case_baseline(case, &bag_potions).is_err());
 
         let dragon = GREEN_DRAGON_FIELD;
         let fight = [
-            (LOBSTER_ID, GREEN_DRAGON_FOOD),
-            (SUPER_ATTACK_2_ID, 1),
-            (SUPER_STRENGTH_3_ID, 1),
+            (r289_item_id("lobster"), GREEN_DRAGON_FOOD),
+            (r289_item_id("2dose2attack"), 1),
+            (r289_item_id("3dose2strength"), 1),
         ];
         let sip = branch_obs(
             GREEN_DRAGON_FIELD,
             &fight,
-            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("rune_scimitar"), 1),
+            ],
             &[("strength", 60)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[("attack", 47), ("strength", 40)],
@@ -9945,7 +10564,10 @@ export default class NativeStop extends LoopingBot {{
         let boosted = branch_obs(
             GREEN_DRAGON_FIELD,
             &fight,
-            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[
+                (r289_item_id("antidragonbreathshield"), 1),
+                (r289_item_id("rune_scimitar"), 1),
+            ],
             &[("strength", 120)],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[("attack", 47), ("strength", 40)],
@@ -9977,8 +10599,8 @@ export default class NativeStop extends LoopingBot {{
                 .is_err()
         );
         let unswapped = |frame: &mut Observation| {
-            frame.item_ids.insert(SUPER_ATTACK_3_ID, 1);
-            frame.item_ids.remove(&SUPER_ATTACK_2_ID);
+            frame.item_ids.insert(r289_item_id("3dose2attack"), 1);
+            frame.item_ids.remove(&r289_item_id("2dose2attack"));
         };
         let mut carried_sip = sip.clone();
         unswapped(&mut carried_sip);
@@ -9998,8 +10620,11 @@ export default class NativeStop extends LoopingBot {{
         let case = CoreCase::GreenDragon;
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
-            &[(RUNE_SCIMITAR_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[(r289_item_id("lobster"), GREEN_DRAGON_FOOD)],
+            &[
+                (r289_item_id("rune_scimitar"), 1),
+                (r289_item_id("antidragonbreathshield"), 1),
+            ],
             &[],
             &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
             &[],
@@ -10034,7 +10659,9 @@ export default class NativeStop extends LoopingBot {{
         observation
             .levels
             .insert("hitpoints".into(), COMBAT_ATTACK_LEVEL);
-        observation.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+        observation
+            .equipment_ids
+            .insert(r289_item_id("adamant_scimitar"), 1);
         observation.npc_facts = npcs.to_vec();
         observation.local_in_combat = local_in_combat;
         observation.local_target_npc = local_target_npc;
@@ -10053,7 +10680,7 @@ export default class NativeStop extends LoopingBot {{
         ];
         let tower_base = combat_obs(
             CHAOS_DRUID_TOWER_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 0)],
             &levels,
             &[],
@@ -10070,7 +10697,7 @@ export default class NativeStop extends LoopingBot {{
 
         let tower_first = combat_obs(
             CHAOS_DRUID_TOWER_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 12)],
             &levels,
             &[combat_npc(
@@ -10085,7 +10712,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let tower_second = combat_obs(
             CHAOS_DRUID_TOWER_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("unidentified_guam"), 1),
+            ],
             &[("strength", 40)],
             &levels,
             &[
@@ -10125,7 +10755,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
         // Style XP without selected loot cannot qualify the tower cell.
         let mut no_loot = tower_second.clone();
-        no_loot.item_ids.remove(&UNIDENTIFIED_GUAM_ID);
+        no_loot.item_ids.remove(&r289_item_id("unidentified_guam"));
         assert!(witness(
             CoreCase::ChaosDruidTower,
             &tower_base,
@@ -10143,7 +10773,7 @@ export default class NativeStop extends LoopingBot {{
         ];
         let yanille_base = combat_obs(
             CHAOS_DRUID_YANILLE_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 0)],
             &yanille_levels,
             &[],
@@ -10160,7 +10790,7 @@ export default class NativeStop extends LoopingBot {{
 
         let yanille_first = combat_obs(
             CHAOS_DRUID_YANILLE_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 12)],
             &yanille_levels,
             &[combat_npc(
@@ -10175,7 +10805,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let yanille_second = combat_obs(
             CHAOS_DRUID_YANILLE_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (NATURE_RUNE_ID, 1)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("naturerune"), 1),
+            ],
             &[("strength", 44)],
             &yanille_levels,
             &[
@@ -10242,7 +10875,7 @@ export default class NativeStop extends LoopingBot {{
     fn fight_guard_response_checks() {
         let cakes_base = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
+            &[(r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES)],
             &[],
             0,
             0,
@@ -10261,7 +10894,10 @@ export default class NativeStop extends LoopingBot {{
 
         let stolen = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[
+                (r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES),
+                (r289_item_id("cake"), 1),
+            ],
             &[],
             16,
             0,
@@ -10272,7 +10908,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let engaged = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[
+                (r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES),
+                (r289_item_id("cake"), 1),
+            ],
             &[],
             16,
             12,
@@ -10283,7 +10922,10 @@ export default class NativeStop extends LoopingBot {{
         );
         let killed = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[
+                (r289_item_id("knife"), ARDY_CAKES_BALLAST_KNIVES),
+                (r289_item_id("cake"), 1),
+            ],
             &[],
             16,
             40,
@@ -10315,7 +10957,7 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
         // Chocolate cake is not stall food.
         let mut wrong = stolen.clone();
-        wrong.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+        wrong.item_ids.insert(r289_item_id("chocolate_cake"), 1);
         assert!(witness(
             CoreCase::ArdyCakesFight,
             &cakes_base,
@@ -10328,7 +10970,7 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(CoreCase::ArdyThieverFight, &thiever_base).unwrap();
         let pickpocketed = ardy_fight_obs(
             ARDY_THIEVER_STAND,
-            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
             &[],
             484,
             0,
@@ -10339,7 +10981,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let fight = ardy_fight_obs(
             ARDY_THIEVER_STAND,
-            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
             &[],
             484,
             20,
@@ -10350,7 +10992,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let killed_guard = ardy_fight_obs(
             ARDY_THIEVER_STAND,
-            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
             &[],
             484,
             48,
@@ -10361,8 +11003,8 @@ export default class NativeStop extends LoopingBot {{
         );
         let mut deposited = ardy_fight_obs(
             ARDY_BANK,
-            &[(CAKE_ID, 1)],
-            &[(COINS_ID, 30)],
+            &[(r289_item_id("cake"), 1)],
+            &[(r289_item_id("coins"), 30)],
             484,
             48,
             40,
@@ -10375,7 +11017,7 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_generation = 1;
         let mut returned = ardy_fight_obs(
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 1)],
+            &[(r289_item_id("cake"), 1)],
             &[],
             484,
             48,
@@ -10387,7 +11029,7 @@ export default class NativeStop extends LoopingBot {{
         returned.bank_generation = 2;
         let mut further = ardy_fight_obs(
             ARDY_THIEVER_STAND,
-            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
             &[],
             952,
             48,
@@ -10441,7 +11083,7 @@ export default class NativeStop extends LoopingBot {{
         // coins: the kill counts from Start.
         let stall_fight = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(CAKE_ID, 1)],
+            &[(r289_item_id("cake"), 1)],
             &[],
             16,
             20,
@@ -10452,7 +11094,7 @@ export default class NativeStop extends LoopingBot {{
         );
         let stall_kill = ardy_fight_obs(
             ARDY_CAKES_STAND,
-            &[(CAKE_ID, 1)],
+            &[(r289_item_id("cake"), 1)],
             &[],
             16,
             48,
@@ -10502,7 +11144,7 @@ export default class NativeStop extends LoopingBot {{
         // Coins from the dead Guard's drop, picked up with no Thieving XP, are
         // not a pickpocket: the bank cycle on them does not qualify.
         let mut looted = stall_kill.clone();
-        looted.item_ids.insert(COINS_ID, 30);
+        looted.item_ids.insert(r289_item_id("coins"), 30);
         assert!(witness(
             CoreCase::ArdyThieverFight,
             &thiever_base,
@@ -10692,7 +11334,7 @@ export default class NativeStop extends LoopingBot {{
             let baseline = bank_obs(
                 case,
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+                &[(r289_item_id("lobster"), GREEN_DRAGON_BANK_PREPARED_FOOD)],
                 baseline_bank,
                 &[("strength", 0)],
                 &[],
@@ -10704,11 +11346,11 @@ export default class NativeStop extends LoopingBot {{
             let deposited = bank_obs(
                 case,
                 GREEN_DRAGON_BANK,
-                &[(LOBSTER_ID, 25)],
+                &[(r289_item_id("lobster"), 25)],
                 &[
-                    (LOBSTER_ID, 40),
-                    (DRAGON_BONES_ID, 1),
-                    (GREEN_DRAGONHIDE_ID, 2),
+                    (r289_item_id("lobster"), 40),
+                    (r289_item_id("dragon_bones"), 1),
+                    (r289_item_id("dragonhide_green"), 2),
                 ],
                 &[("strength", 40)],
                 &[],
@@ -10720,11 +11362,11 @@ export default class NativeStop extends LoopingBot {{
             let mut candidate = bank_obs(
                 case,
                 GREEN_DRAGON_BANK,
-                &[(LOBSTER_ID, candidate_food)],
+                &[(r289_item_id("lobster"), candidate_food)],
                 &[
-                    (LOBSTER_ID, candidate_bank_food),
-                    (DRAGON_BONES_ID, 1),
-                    (GREEN_DRAGONHIDE_ID, 2),
+                    (r289_item_id("lobster"), candidate_bank_food),
+                    (r289_item_id("dragon_bones"), 1),
+                    (r289_item_id("dragonhide_green"), 2),
                 ],
                 &[("strength", 40)],
                 &[],
@@ -10751,7 +11393,7 @@ export default class NativeStop extends LoopingBot {{
             "a real withdrawal must qualify when the pre-Start bank was unloaded"
         );
 
-        let loaded_baseline = observe_candidate(&[(LOBSTER_ID, 40)], 27, 38, 1, true);
+        let loaded_baseline = observe_candidate(&[(r289_item_id("lobster"), 40)], 27, 38, 1, true);
         assert!(
             loaded_baseline.restocked,
             "the existing loaded-baseline withdrawal remains accepted"
@@ -10799,8 +11441,8 @@ export default class NativeStop extends LoopingBot {{
         let baseline = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20)],
             &[("strength", 0)],
             &[],
             false,
@@ -10812,20 +11454,22 @@ export default class NativeStop extends LoopingBot {{
         // The class item has to be a looted Guard drop: seeded Bones fail the
         // baseline (mirrors moss_giant_bank's seeded bones).
         let mut seeded_loot = baseline.clone();
-        seeded_loot.item_ids.insert(BONES_ID, 1);
+        seeded_loot.item_ids.insert(r289_item_id("bones"), 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
         let mut carried_weapon_only = baseline.clone();
         carried_weapon_only.equipment_ids.clear();
         assert!(validate_case_baseline(case, &carried_weapon_only).is_err());
         let mut short_food = baseline.clone();
-        short_food.item_ids.insert(TROUT_ID, AUTO_FIGHTER_FOOD - 1);
+        short_food
+            .item_ids
+            .insert(r289_item_id("trout"), AUTO_FIGHTER_FOOD - 1);
         assert!(validate_case_baseline(case, &short_food).is_err());
 
         let first = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20)],
             &[("strength", 12)],
             &[combat_npc(1, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
@@ -10836,8 +11480,8 @@ export default class NativeStop extends LoopingBot {{
         let defeat = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20)],
             &[("strength", 40)],
             &[
                 combat_npc(1, "Guard", 0, false, ARDY_THIEVER_STAND),
@@ -10854,8 +11498,11 @@ export default class NativeStop extends LoopingBot {{
         let looted = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
-            &[(TROUT_ID, 20)],
+            &[
+                (r289_item_id("trout"), AUTO_FIGHTER_FOOD),
+                (r289_item_id("bones"), 1),
+            ],
+            &[(r289_item_id("trout"), 20)],
             &[("strength", 40)],
             &[],
             false,
@@ -10866,8 +11513,8 @@ export default class NativeStop extends LoopingBot {{
         let deposited = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10878,8 +11525,8 @@ export default class NativeStop extends LoopingBot {{
         let restocked = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(r289_item_id("trout"), 18), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10890,8 +11537,8 @@ export default class NativeStop extends LoopingBot {{
         let closed = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(r289_item_id("trout"), 18), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10902,8 +11549,8 @@ export default class NativeStop extends LoopingBot {{
         let returned = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(r289_item_id("trout"), 18), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10914,8 +11561,8 @@ export default class NativeStop extends LoopingBot {{
         let further = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(r289_item_id("trout"), 18), (r289_item_id("bones"), 1)],
             &[("strength", 60)],
             &[combat_npc(3, "Guard", 20, true, ARDY_THIEVER_STAND)],
             true,
@@ -10949,8 +11596,8 @@ export default class NativeStop extends LoopingBot {{
         let phantom_bank = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10978,8 +11625,11 @@ export default class NativeStop extends LoopingBot {{
         let open_only = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
-            &[(TROUT_ID, 20)],
+            &[
+                (r289_item_id("trout"), AUTO_FIGHTER_FOOD),
+                (r289_item_id("bones"), 1),
+            ],
+            &[(r289_item_id("trout"), 20)],
             &[("strength", 40)],
             &[],
             false,
@@ -10998,8 +11648,8 @@ export default class NativeStop extends LoopingBot {{
         let wrong_bank = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (BONES_ID, 1)],
+            &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
+            &[(r289_item_id("trout"), 20), (r289_item_id("bones"), 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -11035,11 +11685,11 @@ export default class NativeStop extends LoopingBot {{
         // trip's loot: looting and banking iron ore cannot stand in for it.
         let with_ore = |obs: &Observation| {
             let mut obs = obs.clone();
-            if let Some(count) = obs.item_ids.remove(&BONES_ID) {
-                obs.item_ids.insert(IRON_ORE_ID, count);
+            if let Some(count) = obs.item_ids.remove(&r289_item_id("bones")) {
+                obs.item_ids.insert(r289_item_id("iron_ore"), count);
             }
-            if let Some(count) = obs.bank_ids.remove(&BONES_ID) {
-                obs.bank_ids.insert(IRON_ORE_ID, count);
+            if let Some(count) = obs.bank_ids.remove(&r289_item_id("bones")) {
+                obs.bank_ids.insert(r289_item_id("iron_ore"), count);
             }
             obs
         };
@@ -11058,8 +11708,8 @@ export default class NativeStop extends LoopingBot {{
         let baseline = bank_obs(
             case,
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_FOOD)],
-            &[(LOBSTER_ID, 24)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_FOOD)],
+            &[(r289_item_id("lobster"), 24)],
             &[("strength", 0)],
             &[],
             false,
@@ -11069,10 +11719,12 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded_loot = baseline.clone();
-        seeded_loot.item_ids.insert(BIG_BONES_ID, 1);
+        seeded_loot.item_ids.insert(r289_item_id("big_bones"), 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
         let mut full_pack = baseline.clone();
-        full_pack.item_ids.insert(LOBSTER_ID, MOSS_GIANT_FOOD + 1);
+        full_pack
+            .item_ids
+            .insert(r289_item_id("lobster"), MOSS_GIANT_FOOD + 1);
         assert!(validate_case_baseline(case, &full_pack).is_err());
         let mut foreign_stand = baseline.clone();
         foreign_stand.tile = Some(HILL_GIANT_PIT);
@@ -11081,8 +11733,8 @@ export default class NativeStop extends LoopingBot {{
         let first = bank_obs(
             case,
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_FOOD)],
-            &[(LOBSTER_ID, 24)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_FOOD)],
+            &[(r289_item_id("lobster"), 24)],
             &[("strength", 12)],
             &[combat_npc(4, "Moss giant", 22, true, MOSS_GIANT_SAFESPOT)],
             true,
@@ -11093,8 +11745,8 @@ export default class NativeStop extends LoopingBot {{
         let bones_in_pack = bank_obs(
             case,
             MOSS_GIANT_SAFESPOT,
-            &[(BIG_BONES_ID, 1)],
-            &[(LOBSTER_ID, 24)],
+            &[(r289_item_id("big_bones"), 1)],
+            &[(r289_item_id("lobster"), 24)],
             &[("strength", 44)],
             &[
                 combat_npc(4, "Moss giant", 0, false, MOSS_GIANT_SAFESPOT),
@@ -11109,7 +11761,10 @@ export default class NativeStop extends LoopingBot {{
             case,
             MOSS_GIANT_BANK,
             &[],
-            &[(LOBSTER_ID, 24), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("lobster"), 24),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 44)],
             &[],
             false,
@@ -11120,8 +11775,8 @@ export default class NativeStop extends LoopingBot {{
         let restocked = bank_obs(
             case,
             MOSS_GIANT_BANK,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
-            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_RESTOCK)],
+            &[(r289_item_id("lobster"), 4), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11132,8 +11787,8 @@ export default class NativeStop extends LoopingBot {{
         let closed = bank_obs(
             case,
             MOSS_GIANT_BANK,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
-            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_RESTOCK)],
+            &[(r289_item_id("lobster"), 4), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11144,8 +11799,8 @@ export default class NativeStop extends LoopingBot {{
         let returned = bank_obs(
             case,
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
-            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_RESTOCK)],
+            &[(r289_item_id("lobster"), 4), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11156,8 +11811,8 @@ export default class NativeStop extends LoopingBot {{
         let further = bank_obs(
             case,
             MOSS_GIANT_SAFESPOT,
-            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
-            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("lobster"), MOSS_GIANT_BANK_RESTOCK)],
+            &[(r289_item_id("lobster"), 4), (r289_item_id("big_bones"), 1)],
             &[("strength", 68)],
             &[combat_npc(6, "Moss giant", 20, true, MOSS_GIANT_SAFESPOT)],
             true,
@@ -11194,7 +11849,10 @@ export default class NativeStop extends LoopingBot {{
             case,
             MOSS_GIANT_BANK,
             &[],
-            &[(LOBSTER_ID, 24), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("lobster"), 24),
+                (r289_item_id("big_bones"), 1),
+            ],
             &[("strength", 44)],
             &[],
             false,
@@ -11224,8 +11882,11 @@ export default class NativeStop extends LoopingBot {{
         let baseline = bank_obs(
             case,
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
-            &[(TROUT_ID, 12)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+            ],
+            &[(r289_item_id("trout"), 12)],
             &[("strength", 0)],
             &[],
             false,
@@ -11235,17 +11896,22 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut no_key = baseline.clone();
-        no_key.item_ids.remove(&BRASS_KEY_ID);
+        no_key.item_ids.remove(&r289_item_id("edgevilledungeonkey"));
         assert!(validate_case_baseline(case, &no_key).is_err());
         let mut note_holding = baseline.clone();
-        note_holding.item_ids.insert(NOTED_BIG_BONES_ID, 1);
+        note_holding
+            .item_ids
+            .insert(r289_item_id("cert_big_bones"), 1);
         assert!(validate_case_baseline(case, &note_holding).is_err());
 
         let first = bank_obs(
             case,
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
-            &[(TROUT_ID, 12)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+            ],
+            &[(r289_item_id("trout"), 12)],
             &[("strength", 12)],
             &[combat_npc(7, "Giant", 22, true, HILL_GIANT_PIT)],
             true,
@@ -11257,11 +11923,11 @@ export default class NativeStop extends LoopingBot {{
             case,
             HILL_GIANT_PIT,
             &[
-                (TROUT_ID, HILL_GIANT_FOOD),
-                (BRASS_KEY_ID, 1),
-                (BIG_BONES_ID, 1),
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+                (r289_item_id("big_bones"), 1),
             ],
-            &[(TROUT_ID, 12)],
+            &[(r289_item_id("trout"), 12)],
             &[("strength", 44)],
             &[
                 combat_npc(7, "Giant", 0, false, HILL_GIANT_PIT),
@@ -11275,8 +11941,11 @@ export default class NativeStop extends LoopingBot {{
         let deposited = bank_obs(
             case,
             HILL_GIANT_BANK,
-            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
-            &[(TROUT_ID, 12), (BIG_BONES_ID, 1)],
+            &[
+                (r289_item_id("trout"), HILL_GIANT_FOOD),
+                (r289_item_id("edgevilledungeonkey"), 1),
+            ],
+            &[(r289_item_id("trout"), 12), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11288,10 +11957,13 @@ export default class NativeStop extends LoopingBot {{
             case,
             HILL_GIANT_BANK,
             &[
-                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
-                (BRASS_KEY_ID, 1),
+                (
+                    r289_item_id("trout"),
+                    HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                ),
+                (r289_item_id("edgevilledungeonkey"), 1),
             ],
-            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("trout"), 8), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11303,10 +11975,13 @@ export default class NativeStop extends LoopingBot {{
             case,
             HILL_GIANT_BANK,
             &[
-                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
-                (BRASS_KEY_ID, 1),
+                (
+                    r289_item_id("trout"),
+                    HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                ),
+                (r289_item_id("edgevilledungeonkey"), 1),
             ],
-            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("trout"), 8), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11318,10 +11993,13 @@ export default class NativeStop extends LoopingBot {{
             case,
             HILL_GIANT_PIT,
             &[
-                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
-                (BRASS_KEY_ID, 1),
+                (
+                    r289_item_id("trout"),
+                    HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                ),
+                (r289_item_id("edgevilledungeonkey"), 1),
             ],
-            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("trout"), 8), (r289_item_id("big_bones"), 1)],
             &[("strength", 44)],
             &[],
             false,
@@ -11333,10 +12011,13 @@ export default class NativeStop extends LoopingBot {{
             case,
             HILL_GIANT_PIT,
             &[
-                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
-                (BRASS_KEY_ID, 1),
+                (
+                    r289_item_id("trout"),
+                    HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                ),
+                (r289_item_id("edgevilledungeonkey"), 1),
             ],
-            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[(r289_item_id("trout"), 8), (r289_item_id("big_bones"), 1)],
             &[("strength", 68)],
             &[combat_npc(9, "Giant", 20, true, HILL_GIANT_PIT)],
             true,
@@ -11384,8 +12065,8 @@ export default class NativeStop extends LoopingBot {{
         let baseline = bank_obs(
             case,
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
             &[("strength", 0)],
             &[],
             false,
@@ -11395,17 +12076,24 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut full_trip_food = baseline.clone();
-        full_trip_food.item_ids.insert(LOBSTER_ID, CHAOS_DRUID_FOOD);
+        full_trip_food
+            .item_ids
+            .insert(r289_item_id("lobster"), CHAOS_DRUID_FOOD);
         assert!(validate_case_baseline(case, &full_trip_food).is_err());
         let mut seeded_herb = baseline.clone();
-        seeded_herb.item_ids.insert(UNIDENTIFIED_GUAM_ID, 1);
+        seeded_herb
+            .item_ids
+            .insert(r289_item_id("unidentified_guam"), 1);
         assert!(validate_case_baseline(case, &seeded_herb).is_err());
 
         let deposited = bank_obs(
             case,
             CHAOS_DRUID_BANK,
             &[],
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD)],
+            &[(
+                r289_item_id("lobster"),
+                CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD,
+            )],
             &[("strength", 0)],
             &[],
             false,
@@ -11416,8 +12104,8 @@ export default class NativeStop extends LoopingBot {{
         let restocked = bank_obs(
             case,
             CHAOS_DRUID_BANK,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 0)],
             &[],
             false,
@@ -11428,8 +12116,8 @@ export default class NativeStop extends LoopingBot {{
         let closed = bank_obs(
             case,
             CHAOS_DRUID_BANK,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 0)],
             &[],
             false,
@@ -11440,8 +12128,8 @@ export default class NativeStop extends LoopingBot {{
         let returned = bank_obs(
             case,
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 0)],
             &[],
             false,
@@ -11452,8 +12140,8 @@ export default class NativeStop extends LoopingBot {{
         let first = bank_obs(
             case,
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_FOOD)],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 12)],
             &[combat_npc(10, "Chaos druid", 22, true, CHAOS_DRUID_FIELD)],
             true,
@@ -11464,8 +12152,11 @@ export default class NativeStop extends LoopingBot {{
         let looted = bank_obs(
             case,
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("unidentified_guam"), 1),
+            ],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 44)],
             &[
                 combat_npc(10, "Chaos druid", 0, false, CHAOS_DRUID_FIELD),
@@ -11479,8 +12170,11 @@ export default class NativeStop extends LoopingBot {{
         let further = bank_obs(
             case,
             CHAOS_DRUID_FIELD,
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
-            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[
+                (r289_item_id("lobster"), CHAOS_DRUID_FOOD),
+                (r289_item_id("unidentified_guam"), 1),
+            ],
+            &[(r289_item_id("lobster"), CHAOS_DRUID_BANK_FOOD)],
             &[("strength", 68)],
             &[combat_npc(12, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
             true,
@@ -11500,7 +12194,10 @@ export default class NativeStop extends LoopingBot {{
             case,
             CHAOS_DRUID_BANK,
             &[],
-            &[(LOBSTER_ID, CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD)],
+            &[(
+                r289_item_id("lobster"),
+                CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD,
+            )],
             &[("strength", 0)],
             &[],
             false,
@@ -11542,15 +12239,15 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded_cake = baseline.clone();
-        seeded_cake.item_ids.insert(CAKE_ID, 1);
+        seeded_cake.item_ids.insert(r289_item_id("cake"), 1);
         assert!(validate_case_baseline(case, &seeded_cake).is_err());
         // A pre-Start Guard drop would fire `bankEveryItems=1` without a
         // kill-fed pickup.
         let mut seeded_loot = baseline.clone();
-        seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
+        seeded_loot.item_ids.insert(r289_item_id("iron_ore"), 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
         let mut seeded_rune = baseline.clone();
-        seeded_rune.item_ids.insert(BLOOD_RUNE_ID, 1);
+        seeded_rune.item_ids.insert(r289_item_id("bloodrune"), 1);
         assert!(validate_case_baseline(case, &seeded_rune).is_err());
         let mut low_thieving = baseline.clone();
         low_thieving.levels.insert("thieving".into(), 4);
@@ -11562,7 +12259,7 @@ export default class NativeStop extends LoopingBot {{
         let stolen = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4)],
+            &[(r289_item_id("cake"), 4)],
             &[],
             &[("strength", 0), ("thieving", 60)],
             &[],
@@ -11574,7 +12271,7 @@ export default class NativeStop extends LoopingBot {{
         let first = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4)],
+            &[(r289_item_id("cake"), 4)],
             &[],
             &[("strength", 12), ("thieving", 60)],
             &[combat_npc(13, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -11586,7 +12283,7 @@ export default class NativeStop extends LoopingBot {{
         let looted = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4), (STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4), (r289_item_id("steel_arrow"), 5)],
             &[],
             &[("strength", 44), ("thieving", 60)],
             &[
@@ -11601,8 +12298,8 @@ export default class NativeStop extends LoopingBot {{
         let deposited = bank_obs(
             case,
             ARDY_BANK,
-            &[(CAKE_ID, 4)],
-            &[(STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4)],
+            &[(r289_item_id("steel_arrow"), 5)],
             &[("strength", 44), ("thieving", 60)],
             &[],
             false,
@@ -11613,8 +12310,8 @@ export default class NativeStop extends LoopingBot {{
         let closed = bank_obs(
             case,
             ARDY_BANK,
-            &[(CAKE_ID, 4)],
-            &[(STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4)],
+            &[(r289_item_id("steel_arrow"), 5)],
             &[("strength", 44), ("thieving", 60)],
             &[],
             false,
@@ -11625,8 +12322,8 @@ export default class NativeStop extends LoopingBot {{
         let returned = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4)],
-            &[(STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4)],
+            &[(r289_item_id("steel_arrow"), 5)],
             &[("strength", 44), ("thieving", 60)],
             &[],
             false,
@@ -11637,8 +12334,8 @@ export default class NativeStop extends LoopingBot {{
         let further = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4)],
-            &[(STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4)],
+            &[(r289_item_id("steel_arrow"), 5)],
             &[("strength", 68), ("thieving", 60)],
             &[combat_npc(15, "Guard", 20, true, ARDY_THIEVER_STAND)],
             true,
@@ -11672,7 +12369,7 @@ export default class NativeStop extends LoopingBot {{
         let no_deposit = bank_obs(
             case,
             ARDY_BANK,
-            &[(CAKE_ID, 4), (STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4), (r289_item_id("steel_arrow"), 5)],
             &[],
             &[("strength", 44), ("thieving", 60)],
             &[],
@@ -11701,7 +12398,7 @@ export default class NativeStop extends LoopingBot {{
         let defeat = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(CAKE_ID, 4)],
+            &[(r289_item_id("cake"), 4)],
             &[],
             &[("strength", 44), ("thieving", 60)],
             &[
@@ -11716,8 +12413,8 @@ export default class NativeStop extends LoopingBot {{
         let phantom_bank = bank_obs(
             case,
             ARDY_BANK,
-            &[(CAKE_ID, 4)],
-            &[(STEEL_ARROW_ID, 5)],
+            &[(r289_item_id("cake"), 4)],
+            &[(r289_item_id("steel_arrow"), 5)],
             &[("strength", 44), ("thieving", 60)],
             &[],
             false,
@@ -11865,8 +12562,8 @@ export default class NativeStop extends LoopingBot {{
         let mut baseline = bank_obs(
             case,
             ROCK_CRAB_SAFE_STAND,
-            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
-            &[(LOBSTER_ID, 20)],
+            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
+            &[(r289_item_id("lobster"), 20)],
             &[("strength", 0)],
             &[],
             false,
@@ -11877,7 +12574,7 @@ export default class NativeStop extends LoopingBot {{
         baseline.dormant_rocks_seen = true;
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+        seeded.item_ids.insert(r289_item_id("uncut_sapphire"), 1);
         assert!(validate_case_baseline(case, &seeded).is_err());
         let mut awake = baseline.clone();
         awake.dormant_rocks_seen = false;
@@ -11910,7 +12607,7 @@ export default class NativeStop extends LoopingBot {{
         };
         let looted = {
             let mut o = defeat.clone();
-            o.item_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+            o.item_ids.insert(r289_item_id("uncut_sapphire"), 1);
             o.local_in_combat = false;
             o.local_target_npc = None;
             o.npc_facts.clear();
@@ -11919,8 +12616,8 @@ export default class NativeStop extends LoopingBot {{
         let deposited = {
             let mut o = looted.clone();
             o.tile = Some(SEERS_BANK);
-            o.item_ids.remove(&UNCUT_SAPPHIRE_ID);
-            o.bank_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+            o.item_ids.remove(&r289_item_id("uncut_sapphire"));
+            o.bank_ids.insert(r289_item_id("uncut_sapphire"), 1);
             o.bank_open = true;
             o.bank_loaded = true;
             o.bank_generation = 5;
@@ -11966,12 +12663,12 @@ export default class NativeStop extends LoopingBot {{
             case,
             GREEN_DRAGON_FIELD,
             &[
-                (LOBSTER_ID, GREEN_DRAGON_FOOD),
-                (LAW_RUNE_ID, VARROCK_TELE_LAW),
-                (AIR_RUNE_ID, VARROCK_TELE_AIR),
-                (FIRE_RUNE_ID, VARROCK_TELE_FIRE),
+                (r289_item_id("lobster"), GREEN_DRAGON_FOOD),
+                (r289_item_id("lawrune"), VARROCK_TELE_LAW),
+                (r289_item_id("airrune"), VARROCK_TELE_AIR),
+                (r289_item_id("firerune"), VARROCK_TELE_FIRE),
             ],
-            &[(LOBSTER_ID, 24)],
+            &[(r289_item_id("lobster"), 24)],
             &[("strength", 0), ("magic", 0)],
             &[],
             false,
@@ -11980,8 +12677,12 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         baseline.equipment_ids.clear();
-        baseline.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
-        baseline.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        baseline
+            .equipment_ids
+            .insert(r289_item_id("rune_scimitar"), 1);
+        baseline
+            .equipment_ids
+            .insert(r289_item_id("antidragonbreathshield"), 1);
         baseline.levels.insert("magic".into(), VARROCK_TELE_MAGIC);
         baseline
             .effective_levels
@@ -12008,8 +12709,9 @@ export default class NativeStop extends LoopingBot {{
         };
         let restocked = {
             let mut o = deposited.clone();
-            o.item_ids.insert(LOBSTER_ID, GREEN_DRAGON_BANK_RESTOCK);
-            o.bank_ids.insert(LOBSTER_ID, 16);
+            o.item_ids
+                .insert(r289_item_id("lobster"), GREEN_DRAGON_BANK_RESTOCK);
+            o.bank_ids.insert(r289_item_id("lobster"), 16);
             o
         };
         let closed = {
@@ -12056,9 +12758,9 @@ export default class NativeStop extends LoopingBot {{
         let raft = combat_obs(
             FIRE_GIANT_RAFT,
             &[
-                (LOBSTER_ID, FIRE_GIANT_FOOD),
-                (GLARIALS_AMULET_ID, 1),
-                (ROPE_ID, 1),
+                (r289_item_id("lobster"), FIRE_GIANT_FOOD),
+                (r289_item_id("glarials_amulet_waterfall_quest"), 1),
+                (r289_item_id("rope"), 1),
             ],
             &[("strength", 0)],
             &levels,
@@ -12211,19 +12913,21 @@ export default class NativeStop extends LoopingBot {{
 
         let walk_baseline = noncombat_obs(
             TENZING_HUT_DOOR,
-            &[(COINS_ID, CLIMBING_BOOTS_WALK_PACK_COINS)],
-            &[(COINS_ID, 2 * CLIMBING_BOOTS_WALK_PACK_COINS)],
+            &[(r289_item_id("coins"), CLIMBING_BOOTS_WALK_PACK_COINS)],
+            &[(r289_item_id("coins"), 2 * CLIMBING_BOOTS_WALK_PACK_COINS)],
             &[],
             &[],
             &[],
         );
         validate_case_baseline(walk, &walk_baseline).unwrap();
         let mut seeded_boots = walk_baseline.clone();
-        seeded_boots.item_ids.insert(CLIMBING_BOOTS_ID, 1);
+        seeded_boots
+            .item_ids
+            .insert(r289_item_id("death_climbingboots"), 1);
         assert!(validate_case_baseline(walk, &seeded_boots).is_err());
         let mut short_money = walk_baseline.clone();
         short_money.item_ids.insert(
-            COINS_ID,
+            r289_item_id("coins"),
             CLIMBING_BOOTS_WALK_PACK_COINS - CLIMBING_BOOTS_PAIR_COINS,
         );
         assert!(
@@ -12231,10 +12935,12 @@ export default class NativeStop extends LoopingBot {{
             "a pre-bought pair's money must not pass as the ready-to-buy trip"
         );
         let mut stray_runes = walk_baseline.clone();
-        stray_runes.item_ids.insert(LAW_RUNE_ID, 1);
+        stray_runes.item_ids.insert(r289_item_id("lawrune"), 1);
         assert!(validate_case_baseline(walk, &stray_runes).is_err());
         let mut leftover_bank = walk_baseline.clone();
-        leftover_bank.bank_ids.insert(CLIMBING_BOOTS_ID, 5);
+        leftover_bank
+            .bank_ids
+            .insert(r289_item_id("death_climbingboots"), 5);
         assert!(
             validate_case_baseline(walk, &leftover_bank).is_err(),
             "pre-existing banked boots 3105 must not pass as a clean Start"
@@ -12243,12 +12949,12 @@ export default class NativeStop extends LoopingBot {{
         let tele_baseline = noncombat_obs(
             TENZING_HUT_DOOR,
             &[
-                (COINS_ID, CLIMBING_BOOTS_TELE_PACK_COINS),
-                (LAW_RUNE_ID, 1),
-                (AIR_RUNE_ID, 3),
-                (WATER_RUNE_ID, 1),
+                (r289_item_id("coins"), CLIMBING_BOOTS_TELE_PACK_COINS),
+                (r289_item_id("lawrune"), 1),
+                (r289_item_id("airrune"), 3),
+                (r289_item_id("waterrune"), 1),
             ],
-            &[(COINS_ID, 2 * CLIMBING_BOOTS_TELE_PACK_COINS)],
+            &[(r289_item_id("coins"), 2 * CLIMBING_BOOTS_TELE_PACK_COINS)],
             &[],
             &[],
             &[("magic", FALADOR_TELE_MAGIC)],
@@ -12257,7 +12963,7 @@ export default class NativeStop extends LoopingBot {{
         let mut walk_money = tele_baseline.clone();
         walk_money
             .item_ids
-            .insert(COINS_ID, CLIMBING_BOOTS_WALK_PACK_COINS);
+            .insert(r289_item_id("coins"), CLIMBING_BOOTS_WALK_PACK_COINS);
         assert!(
             validate_case_baseline(teleport, &walk_money).is_err(),
             "the walking cell's 28-pair money is not the teleport cell trip"
@@ -12322,7 +13028,7 @@ export default class NativeStop extends LoopingBot {{
                 .cast
                 .as_ref()
                 .unwrap()
-                .item_id(CLIMBING_BOOTS_ID),
+                .item_id(r289_item_id("death_climbingboots")),
             25
         );
         assert!(tele_ok.qualify().is_ok());
@@ -12340,7 +13046,11 @@ export default class NativeStop extends LoopingBot {{
             frame
                 .xp
                 .insert("magic".into(), early_cast.skill_xp("magic"));
-            for id in [LAW_RUNE_ID, AIR_RUNE_ID, WATER_RUNE_ID] {
+            for id in [
+                r289_item_id("lawrune"),
+                r289_item_id("airrune"),
+                r289_item_id("waterrune"),
+            ] {
                 frame.item_ids.insert(id, early_cast.item_id(id));
             }
         }
@@ -12360,10 +13070,10 @@ export default class NativeStop extends LoopingBot {{
         let deposit_at = partial_deposit.len() - 4;
         partial_deposit[deposit_at]
             .item_ids
-            .insert(CLIMBING_BOOTS_ID, 27);
+            .insert(r289_item_id("death_climbingboots"), 27);
         partial_deposit[deposit_at]
             .bank_ids
-            .insert(CLIMBING_BOOTS_ID, 1);
+            .insert(r289_item_id("death_climbingboots"), 1);
         assert!(witness(walk, &walk_baseline, partial_deposit.iter())
             .qualify()
             .is_err());
@@ -12374,13 +13084,13 @@ export default class NativeStop extends LoopingBot {{
         let opened_at = leftover_deposit.len() - 5;
         leftover_deposit[opened_at]
             .bank_ids
-            .insert(CLIMBING_BOOTS_ID, 5);
+            .insert(r289_item_id("death_climbingboots"), 5);
         leftover_deposit[opened_at + 1]
             .bank_ids
-            .insert(CLIMBING_BOOTS_ID, 33);
+            .insert(r289_item_id("death_climbingboots"), 33);
         leftover_deposit[opened_at + 1]
             .item_ids
-            .insert(CLIMBING_BOOTS_ID, 0);
+            .insert(r289_item_id("death_climbingboots"), 0);
         let leftover = witness(walk, &walk_baseline, leftover_deposit.iter());
         assert_eq!(leftover.climbing_boots_cycle.boot_bank_empty, Some(false));
         assert!(leftover.qualify().is_err());
@@ -12393,7 +13103,11 @@ export default class NativeStop extends LoopingBot {{
         let mut cast = from.clone();
         cast.tile = Some(FALADOR_TELE_LAND);
         cast.xp.insert("magic".into(), from.skill_xp("magic") + 50);
-        for id in [LAW_RUNE_ID, AIR_RUNE_ID, WATER_RUNE_ID] {
+        for id in [
+            r289_item_id("lawrune"),
+            r289_item_id("airrune"),
+            r289_item_id("waterrune"),
+        ] {
             cast.item_ids.insert(id, from.item_id(id) - 1);
         }
         cast
@@ -12402,10 +13116,12 @@ export default class NativeStop extends LoopingBot {{
     /// The purchase frame: boots up, exactly 12 coins a pair gone.
     fn climbing_boots_bought(baseline: &Observation, pairs: i32) -> Observation {
         let mut bought = baseline.clone();
-        bought.item_ids.insert(CLIMBING_BOOTS_ID, pairs);
+        bought
+            .item_ids
+            .insert(r289_item_id("death_climbingboots"), pairs);
         bought.item_ids.insert(
-            COINS_ID,
-            baseline.item_id(COINS_ID) - pairs * CLIMBING_BOOTS_PAIR_COINS,
+            r289_item_id("coins"),
+            baseline.item_id(r289_item_id("coins")) - pairs * CLIMBING_BOOTS_PAIR_COINS,
         );
         bought
     }
@@ -12420,7 +13136,7 @@ export default class NativeStop extends LoopingBot {{
         pairs: i32,
         cast: bool,
     ) -> Vec<Observation> {
-        let coins = baseline.item_id(COINS_ID);
+        let coins = baseline.item_id(r289_item_id("coins"));
         let mut framed = baseline.clone();
         framed.npc_facts = vec![tenzing.clone()];
         let mut first = climbing_boots_bought(baseline, 1);
@@ -12443,23 +13159,29 @@ export default class NativeStop extends LoopingBot {{
         let mut opened = returned.clone();
         opened.bank_open = true;
         opened.bank_loaded = true;
-        opened.bank_ids.remove(&CLIMBING_BOOTS_ID);
+        opened.bank_ids.remove(&r289_item_id("death_climbingboots"));
         let mut deposited = opened.clone();
-        deposited.item_ids.insert(CLIMBING_BOOTS_ID, 0);
-        deposited.bank_ids.insert(CLIMBING_BOOTS_ID, pairs);
+        deposited
+            .item_ids
+            .insert(r289_item_id("death_climbingboots"), 0);
+        deposited
+            .bank_ids
+            .insert(r289_item_id("death_climbingboots"), pairs);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(COINS_ID, coins);
-        restocked.bank_ids.insert(COINS_ID, coins);
+        restocked.item_ids.insert(r289_item_id("coins"), coins);
+        restocked.bank_ids.insert(r289_item_id("coins"), coins);
         let mut departed = restocked.clone();
         departed.bank_open = false;
         departed.bank_loaded = false;
         departed.bank_generation = 2;
         departed.tile = Some(TENZING_HUT_DOOR);
         let mut further = departed.clone();
-        further.item_ids.insert(CLIMBING_BOOTS_ID, 1);
         further
             .item_ids
-            .insert(COINS_ID, coins - CLIMBING_BOOTS_PAIR_COINS);
+            .insert(r289_item_id("death_climbingboots"), 1);
+        further
+            .item_ids
+            .insert(r289_item_id("coins"), coins - CLIMBING_BOOTS_PAIR_COINS);
         further.tile = Some(TENZING_HUT_DOOR);
         frames.extend([returned, opened, deposited, restocked, departed, further]);
         frames
@@ -12495,20 +13217,20 @@ export default class NativeStop extends LoopingBot {{
         let mut opened = baseline.clone();
         opened.shop_open = true;
         opened.main_modal = SHOPMAIN;
-        opened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 30)];
-        opened.item_ids.insert(COINS_ID, 2000);
+        opened.shop_stock = vec![shop_row(r289_item_id("vial_empty"), 30)];
+        opened.item_ids.insert(r289_item_id("coins"), 2000);
         opened.tick = 11;
 
         let mut bought = opened.clone();
         bought.shop_stock[0].count = 25;
-        bought.item_ids.insert(EMPTY_VIAL_ID, 5);
-        bought.item_ids.insert(COINS_ID, 1900);
+        bought.item_ids.insert(r289_item_id("vial_empty"), 5);
+        bought.item_ids.insert(r289_item_id("coins"), 1900);
 
         let mut peak = bought.clone();
         peak.tick = 12;
         peak.shop_stock[0].count = 3;
-        peak.item_ids.insert(EMPTY_VIAL_ID, 27);
-        peak.item_ids.insert(COINS_ID, 1460);
+        peak.item_ids.insert(r289_item_id("vial_empty"), 27);
+        peak.item_ids.insert(r289_item_id("coins"), 1460);
 
         let mut loaded = peak.clone();
         loaded.tick = 13;
@@ -12519,15 +13241,15 @@ export default class NativeStop extends LoopingBot {{
         loaded.bank_open = true;
         loaded.bank_loaded = true;
         loaded.bank_generation = 1;
-        loaded.bank_ids.insert(COINS_ID, 18000);
+        loaded.bank_ids.insert(r289_item_id("coins"), 18000);
 
         let mut deposited = loaded.clone();
-        deposited.item_ids.remove(&EMPTY_VIAL_ID);
-        deposited.bank_ids.insert(EMPTY_VIAL_ID, 27);
+        deposited.item_ids.remove(&r289_item_id("vial_empty"));
+        deposited.bank_ids.insert(r289_item_id("vial_empty"), 27);
 
         let mut top_up = deposited.clone();
-        top_up.item_ids.insert(COINS_ID, 3460);
-        top_up.bank_ids.insert(COINS_ID, 16000);
+        top_up.item_ids.insert(r289_item_id("coins"), 3460);
+        top_up.bank_ids.insert(r289_item_id("coins"), 16000);
 
         let mut closed = top_up.clone();
         closed.bank_open = false;
@@ -12542,13 +13264,13 @@ export default class NativeStop extends LoopingBot {{
         reopened.tick = 15;
         reopened.shop_open = true;
         reopened.main_modal = SHOPMAIN;
-        reopened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 30)];
+        reopened.shop_stock = vec![shop_row(r289_item_id("vial_empty"), 30)];
 
         let mut further = reopened.clone();
         further.tick = 16;
         further.shop_stock[0].count = 29;
-        further.item_ids.insert(EMPTY_VIAL_ID, 1);
-        further.item_ids.insert(COINS_ID, 3440);
+        further.item_ids.insert(r289_item_id("vial_empty"), 1);
+        further.item_ids.insert(r289_item_id("coins"), 3440);
 
         ShopBuyoutTrace {
             opened,
@@ -12613,7 +13335,7 @@ export default class NativeStop extends LoopingBot {{
         let baseline = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(EMPTY_VIAL_ID, 1);
+        seeded.item_ids.insert(r289_item_id("vial_empty"), 1);
         assert!(validate_case_baseline(case, &seeded).is_err());
 
         let frames = shop_buyout_trace(&baseline);
@@ -12621,7 +13343,10 @@ export default class NativeStop extends LoopingBot {{
         let top_up = witness(case, &baseline, frames.top_up_cycle());
         assert_eq!(top_up.shop_buyout_cycle.earned_quantity, 27);
         assert_eq!(top_up.shop_buyout_cycle.trip_bank_product, Some(0));
-        assert_eq!(top_up.shop_buyout_cycle.bought_id, Some(EMPTY_VIAL_ID));
+        assert_eq!(
+            top_up.shop_buyout_cycle.bought_id,
+            Some(r289_item_id("vial_empty"))
+        );
         assert_eq!(
             top_up.shop_buyout_cycle.funding,
             Some(ShopFunding::TopUp {
@@ -12634,7 +13359,9 @@ export default class NativeStop extends LoopingBot {{
         top_up.qualify().unwrap();
 
         let mut retained_further = frames.further.clone();
-        retained_further.item_ids.insert(COINS_ID, 1440);
+        retained_further
+            .item_ids
+            .insert(r289_item_id("coins"), 1440);
         let mut retained_closed = frames.deposited.clone();
         retained_closed.bank_open = false;
         retained_closed.bank_loaded = false;
@@ -12643,7 +13370,9 @@ export default class NativeStop extends LoopingBot {{
         retained_returned.tick = 14;
         retained_returned.tile = Some(AEMAD_STAND);
         let mut retained_reopened = frames.reopened.clone();
-        retained_reopened.item_ids.insert(COINS_ID, 1460);
+        retained_reopened
+            .item_ids
+            .insert(r289_item_id("coins"), 1460);
         retained_further.shop_stock = retained_reopened.shop_stock.clone();
         retained_further.shop_stock[0].count = 29;
         let retained = witness(
@@ -12671,13 +13400,19 @@ export default class NativeStop extends LoopingBot {{
 
         // Sold-out SKU is absence while another posted row keeps the shop open.
         let mut sold_opened = frames.opened.clone();
-        sold_opened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 5), shop_row(AIR_RUNE_ID, 8)];
+        sold_opened.shop_stock = vec![
+            shop_row(r289_item_id("vial_empty"), 5),
+            shop_row(r289_item_id("airrune"), 8),
+        ];
         let mut sold_bought = sold_opened.clone();
-        sold_bought.shop_stock = vec![shop_row(AIR_RUNE_ID, 8)];
-        sold_bought.item_ids.insert(EMPTY_VIAL_ID, 5);
-        sold_bought.item_ids.insert(COINS_ID, 1900);
+        sold_bought.shop_stock = vec![shop_row(r289_item_id("airrune"), 8)];
+        sold_bought.item_ids.insert(r289_item_id("vial_empty"), 5);
+        sold_bought.item_ids.insert(r289_item_id("coins"), 1900);
         let sold = witness(case, &baseline, [&sold_opened, &sold_bought]);
-        assert_eq!(sold.shop_buyout_cycle.bought_id, Some(EMPTY_VIAL_ID));
+        assert_eq!(
+            sold.shop_buyout_cycle.bought_id,
+            Some(r289_item_id("vial_empty"))
+        );
         assert_eq!(sold.shop_buyout_cycle.earned_quantity, 5);
         assert!(sold.qualify().is_err());
 
@@ -12719,17 +13454,27 @@ export default class NativeStop extends LoopingBot {{
         // first 5, peak 27, only 5 deposited. Later frames keep bank 5 so a
         // first-delta deposit rule would still let the rest of the cycle pass.
         let mut partial = frames.deposited.clone();
-        partial.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial.bank_ids.insert(r289_item_id("vial_empty"), 5);
         let mut partial_top_up = frames.top_up.clone();
-        partial_top_up.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial_top_up
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 5);
         let mut partial_closed = frames.closed.clone();
-        partial_closed.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial_closed
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 5);
         let mut partial_returned = frames.returned.clone();
-        partial_returned.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial_returned
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 5);
         let mut partial_reopened = frames.reopened.clone();
-        partial_reopened.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial_reopened
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 5);
         let mut partial_further = frames.further.clone();
-        partial_further.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        partial_further
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 5);
         let partial_w = witness(
             case,
             &baseline,
@@ -12755,9 +13500,13 @@ export default class NativeStop extends LoopingBot {{
 
         // First loaded bank already holds leftover stock; +5 is not the peak.
         let mut preseed_loaded = frames.loaded.clone();
-        preseed_loaded.bank_ids.insert(EMPTY_VIAL_ID, 100);
+        preseed_loaded
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 100);
         let mut preseed_deposited = frames.deposited.clone();
-        preseed_deposited.bank_ids.insert(EMPTY_VIAL_ID, 105);
+        preseed_deposited
+            .bank_ids
+            .insert(r289_item_id("vial_empty"), 105);
         let preseed_w = witness(
             case,
             &baseline,
@@ -12902,9 +13651,9 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(case.card_name(), "AIO Teleport");
         let baseline = noncombat_obs(
             LUMBRIDGE_BANK,
-            &[(LAW_RUNE_ID, 2), (FIRE_RUNE_ID, 20)],
+            &[(r289_item_id("lawrune"), 2), (r289_item_id("firerune"), 20)],
             &[],
-            &[(STAFF_OF_AIR_ID, 1)],
+            &[(r289_item_id("staff_of_air"), 1)],
             &[("magic", 0)],
             &[("magic", VARROCK_TELE_MAGIC)],
         );
@@ -12915,24 +13664,24 @@ export default class NativeStop extends LoopingBot {{
         let mut teleported = baseline.clone();
         teleported.tile = Some(VARROCK_TELE_LAND);
         teleported.xp.insert("magic".into(), 35);
-        teleported.item_ids.insert(LAW_RUNE_ID, 1);
+        teleported.item_ids.insert(r289_item_id("lawrune"), 1);
         let mut deposited = teleported.clone();
         deposited.tile = Some(VARROCK_EAST_BANK);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.bank_ids.insert(LAW_RUNE_ID, 200);
-        deposited.item_ids.insert(LAW_RUNE_ID, 0);
+        deposited.bank_ids.insert(r289_item_id("lawrune"), 200);
+        deposited.item_ids.insert(r289_item_id("lawrune"), 0);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(LAW_RUNE_ID, 20);
-        restocked.bank_ids.insert(LAW_RUNE_ID, 180);
+        restocked.item_ids.insert(r289_item_id("lawrune"), 20);
+        restocked.bank_ids.insert(r289_item_id("lawrune"), 180);
         let mut closed = restocked.clone();
         closed.bank_open = false;
         closed.bank_loaded = false;
         closed.bank_generation = 2;
         let mut further = closed.clone();
         further.xp.insert("magic".into(), 70);
-        further.item_ids.insert(LAW_RUNE_ID, 19);
+        further.item_ids.insert(r289_item_id("lawrune"), 19);
         assert!(witness(
             case,
             &baseline,
@@ -12951,9 +13700,9 @@ export default class NativeStop extends LoopingBot {{
         let case = CoreCase::parse("aio_teleport_falador").unwrap();
         let baseline = noncombat_obs(
             LUMBRIDGE_BANK,
-            &[(LAW_RUNE_ID, 2), (AIR_RUNE_ID, 20)],
+            &[(r289_item_id("lawrune"), 2), (r289_item_id("airrune"), 20)],
             &[],
-            &[(STAFF_OF_WATER_ID, 1)],
+            &[(r289_item_id("staff_of_water"), 1)],
             &[("magic", 0)],
             &[("magic", FALADOR_TELE_MAGIC)],
         );
@@ -12962,14 +13711,18 @@ export default class NativeStop extends LoopingBot {{
         already.tile = Some(FALADOR_TELE_LAND);
         assert!(validate_case_baseline(case, &already).is_err());
         let mut no_air = baseline.clone();
-        no_air.item_ids.remove(&AIR_RUNE_ID);
+        no_air.item_ids.remove(&r289_item_id("airrune"));
         assert!(validate_case_baseline(case, &no_air).is_err());
 
         // aio_teleport_no_staff: covering air staff must not satisfy Air.
         let case = CoreCase::parse("aio_teleport_no_staff").unwrap();
         let baseline = noncombat_obs(
             LUMBRIDGE_BANK,
-            &[(LAW_RUNE_ID, 2), (AIR_RUNE_ID, 20), (FIRE_RUNE_ID, 20)],
+            &[
+                (r289_item_id("lawrune"), 2),
+                (r289_item_id("airrune"), 20),
+                (r289_item_id("firerune"), 20),
+            ],
             &[],
             &[],
             &[("magic", 0)],
@@ -12977,7 +13730,9 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut staffed = baseline.clone();
-        staffed.equipment_ids.insert(STAFF_OF_AIR_ID, 1);
+        staffed
+            .equipment_ids
+            .insert(r289_item_id("staff_of_air"), 1);
         assert!(validate_case_baseline(case, &staffed).is_err());
 
         // shop_buyout cycle/baseline assertions live in
@@ -12996,37 +13751,37 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(BRONZE_DAGGER_ID, 1);
+        seeded.item_ids.insert(r289_item_id("bronze_dagger"), 1);
         assert!(validate_case_baseline(case, &seeded).is_err());
         let mut panel = baseline.clone();
         panel.tile = Some(VARROCK_ANVIL);
-        panel.item_ids.insert(BRONZE_BAR_ID, 5);
-        panel.item_ids.insert(HAMMER_ID, 1);
-        panel.main_make_ids.insert(BRONZE_DAGGER_ID);
+        panel.item_ids.insert(r289_item_id("bronze_bar"), 5);
+        panel.item_ids.insert(r289_item_id("hammer"), 1);
+        panel.main_make_ids.insert(r289_item_id("bronze_dagger"));
         let mut produced = panel.clone();
-        produced.item_ids.insert(BRONZE_DAGGER_ID, 1);
-        produced.item_ids.insert(BRONZE_BAR_ID, 4);
+        produced.item_ids.insert(r289_item_id("bronze_dagger"), 1);
+        produced.item_ids.insert(r289_item_id("bronze_bar"), 4);
         produced.xp.insert("smithing".into(), 12);
         let mut deposited = produced.clone();
         deposited.tile = Some(VARROCK_WEST_BANK);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.item_ids.remove(&BRONZE_DAGGER_ID);
-        deposited.item_ids.remove(&BRONZE_BAR_ID);
-        deposited.bank_ids.insert(BRONZE_DAGGER_ID, 1);
-        deposited.bank_ids.insert(BRONZE_BAR_ID, 23);
+        deposited.item_ids.remove(&r289_item_id("bronze_dagger"));
+        deposited.item_ids.remove(&r289_item_id("bronze_bar"));
+        deposited.bank_ids.insert(r289_item_id("bronze_dagger"), 1);
+        deposited.bank_ids.insert(r289_item_id("bronze_bar"), 23);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(BRONZE_BAR_ID, 5);
-        restocked.bank_ids.insert(BRONZE_BAR_ID, 18);
+        restocked.item_ids.insert(r289_item_id("bronze_bar"), 5);
+        restocked.bank_ids.insert(r289_item_id("bronze_bar"), 18);
         let mut returned = restocked.clone();
         returned.bank_open = false;
         returned.bank_loaded = false;
         returned.bank_generation = 2;
         returned.tile = Some(VARROCK_ANVIL);
         let mut further = returned.clone();
-        further.item_ids.insert(BRONZE_DAGGER_ID, 1);
-        further.item_ids.insert(BRONZE_BAR_ID, 4);
+        further.item_ids.insert(r289_item_id("bronze_dagger"), 1);
+        further.item_ids.insert(r289_item_id("bronze_bar"), 4);
         further.xp.insert("smithing".into(), 24);
         assert!(witness(
             case,
@@ -13074,34 +13829,34 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(LEATHER_GLOVES_ID, 1);
+        seeded.item_ids.insert(r289_item_id("leather_gloves"), 1);
         assert!(validate_case_baseline(case, &seeded).is_err());
         let mut iface = baseline.clone();
-        iface.item_ids.insert(SOFT_LEATHER_ID, 5);
-        iface.item_ids.insert(NEEDLE_ID, 1);
-        iface.item_ids.insert(THREAD_ID, 10);
+        iface.item_ids.insert(r289_item_id("leather"), 5);
+        iface.item_ids.insert(r289_item_id("needle"), 1);
+        iface.item_ids.insert(r289_item_id("thread"), 10);
         iface.main_modal = LEATHER_IF;
         iface.widget_ids.insert(LEATHER_GLOVES_MAKE10);
         let mut produced = iface.clone();
-        produced.item_ids.insert(LEATHER_GLOVES_ID, 5);
-        produced.item_ids.insert(SOFT_LEATHER_ID, 0);
+        produced.item_ids.insert(r289_item_id("leather_gloves"), 5);
+        produced.item_ids.insert(r289_item_id("leather"), 0);
         produced.xp.insert("crafting".into(), 13);
         let mut deposited = produced.clone();
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.item_ids.remove(&LEATHER_GLOVES_ID);
-        deposited.bank_ids.insert(LEATHER_GLOVES_ID, 5);
-        deposited.bank_ids.insert(SOFT_LEATHER_ID, 23);
+        deposited.item_ids.remove(&r289_item_id("leather_gloves"));
+        deposited.bank_ids.insert(r289_item_id("leather_gloves"), 5);
+        deposited.bank_ids.insert(r289_item_id("leather"), 23);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(SOFT_LEATHER_ID, 5);
-        restocked.bank_ids.insert(SOFT_LEATHER_ID, 18);
+        restocked.item_ids.insert(r289_item_id("leather"), 5);
+        restocked.bank_ids.insert(r289_item_id("leather"), 18);
         let mut returned = restocked.clone();
         returned.bank_open = false;
         returned.bank_loaded = false;
         returned.bank_generation = 2;
         let mut further = returned.clone();
-        further.item_ids.insert(LEATHER_GLOVES_ID, 1);
+        further.item_ids.insert(r289_item_id("leather_gloves"), 1);
         further.xp.insert("crafting".into(), 26);
         assert!(witness(
             case,
@@ -13133,29 +13888,33 @@ export default class NativeStop extends LoopingBot {{
         );
         validate_case_baseline(case, &baseline).unwrap();
         let mut withdrawn = baseline.clone();
-        withdrawn.item_ids.insert(HARD_LEATHER_ID, 5);
-        withdrawn.item_ids.insert(NEEDLE_ID, 1);
-        withdrawn.item_ids.insert(THREAD_ID, 10);
+        withdrawn.item_ids.insert(r289_item_id("hard_leather"), 5);
+        withdrawn.item_ids.insert(r289_item_id("needle"), 1);
+        withdrawn.item_ids.insert(r289_item_id("thread"), 10);
         let mut produced = withdrawn.clone();
-        produced.item_ids.insert(HARDLEATHER_BODY_ID, 5);
-        produced.item_ids.insert(HARD_LEATHER_ID, 0);
+        produced
+            .item_ids
+            .insert(r289_item_id("hardleather_body"), 5);
+        produced.item_ids.insert(r289_item_id("hard_leather"), 0);
         produced.xp.insert("crafting".into(), 35);
         let mut deposited = produced.clone();
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.item_ids.remove(&HARDLEATHER_BODY_ID);
-        deposited.bank_ids.insert(HARDLEATHER_BODY_ID, 5);
-        deposited.bank_ids.insert(HARD_LEATHER_ID, 23);
+        deposited.item_ids.remove(&r289_item_id("hardleather_body"));
+        deposited
+            .bank_ids
+            .insert(r289_item_id("hardleather_body"), 5);
+        deposited.bank_ids.insert(r289_item_id("hard_leather"), 23);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(HARD_LEATHER_ID, 5);
-        restocked.bank_ids.insert(HARD_LEATHER_ID, 18);
+        restocked.item_ids.insert(r289_item_id("hard_leather"), 5);
+        restocked.bank_ids.insert(r289_item_id("hard_leather"), 18);
         let mut returned = restocked.clone();
         returned.bank_open = false;
         returned.bank_loaded = false;
         returned.bank_generation = 2;
         let mut further = returned.clone();
-        further.item_ids.insert(HARDLEATHER_BODY_ID, 1);
+        further.item_ids.insert(r289_item_id("hardleather_body"), 1);
         further.xp.insert("crafting".into(), 70);
         assert!(witness(
             case,
@@ -13198,10 +13957,10 @@ export default class NativeStop extends LoopingBot {{
         });
         assert!(validate_case_baseline(case, &seeded_fire).is_err());
         let mut withdrawn = baseline.clone();
-        withdrawn.item_ids.insert(LOGS_ID, 5);
-        withdrawn.item_ids.insert(TINDERBOX_ID, 1);
+        withdrawn.item_ids.insert(r289_item_id("logs"), 5);
+        withdrawn.item_ids.insert(r289_item_id("tinderbox"), 1);
         let mut lit = withdrawn.clone();
-        lit.item_ids.insert(LOGS_ID, 4);
+        lit.item_ids.insert(r289_item_id("logs"), 4);
         lit.xp.insert("firemaking".into(), 40);
         lit.loc_facts.push(BoundedLoc {
             id: 1,
@@ -13215,18 +13974,18 @@ export default class NativeStop extends LoopingBot {{
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
-        deposited.item_ids.insert(LOGS_ID, 0);
-        deposited.bank_ids.insert(LOGS_ID, 23);
+        deposited.item_ids.insert(r289_item_id("logs"), 0);
+        deposited.bank_ids.insert(r289_item_id("logs"), 23);
         let mut restocked = deposited.clone();
-        restocked.item_ids.insert(LOGS_ID, 5);
-        restocked.bank_ids.insert(LOGS_ID, 18);
+        restocked.item_ids.insert(r289_item_id("logs"), 5);
+        restocked.bank_ids.insert(r289_item_id("logs"), 18);
         let mut returned = restocked.clone();
         returned.bank_open = false;
         returned.bank_loaded = false;
         returned.bank_generation = 2;
         let mut further = returned.clone();
         further.xp.insert("firemaking".into(), 80);
-        further.item_ids.insert(LOGS_ID, 4);
+        further.item_ids.insert(r289_item_id("logs"), 4);
         further.tick = returned.tick + 1;
         assert!(witness(
             case,
@@ -13237,23 +13996,23 @@ export default class NativeStop extends LoopingBot {{
         .is_ok());
         let mut walked = withdrawn.clone();
         walked.xp.insert("firemaking".into(), 40);
-        walked.item_ids.insert(LOGS_ID, 4);
+        walked.item_ids.insert(r289_item_id("logs"), 4);
         let mut walked_deposited = walked.clone();
         walked_deposited.bank_open = true;
         walked_deposited.bank_loaded = true;
         walked_deposited.bank_generation = 1;
-        walked_deposited.item_ids.insert(LOGS_ID, 0);
-        walked_deposited.bank_ids.insert(LOGS_ID, 23);
+        walked_deposited.item_ids.insert(r289_item_id("logs"), 0);
+        walked_deposited.bank_ids.insert(r289_item_id("logs"), 23);
         let mut walked_restocked = walked_deposited.clone();
-        walked_restocked.item_ids.insert(LOGS_ID, 5);
-        walked_restocked.bank_ids.insert(LOGS_ID, 18);
+        walked_restocked.item_ids.insert(r289_item_id("logs"), 5);
+        walked_restocked.bank_ids.insert(r289_item_id("logs"), 18);
         let mut walked_returned = walked_restocked.clone();
         walked_returned.bank_open = false;
         walked_returned.bank_loaded = false;
         walked_returned.bank_generation = 2;
         let mut walked_further = walked_returned.clone();
         walked_further.xp.insert("firemaking".into(), 80);
-        walked_further.item_ids.insert(LOGS_ID, 4);
+        walked_further.item_ids.insert(r289_item_id("logs"), 4);
         assert!(witness(
             case,
             &baseline,

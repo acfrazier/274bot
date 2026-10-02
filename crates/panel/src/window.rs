@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dear_imgui_rs as imgui;
-use dear_imgui_rs::{ConfigFlags, DockFlags, Id, TextureId, WindowFlags};
+use dear_imgui_rs::{BackendFlags, ConfigFlags, DockFlags, Id, TextureId, WindowFlags};
 use dear_imgui_wgpu as imgui_wgpu;
 use dear_imgui_winit as imgui_winit;
 use pollster::block_on;
@@ -36,6 +36,10 @@ mod work_area;
 pub(crate) use work_area::fit_window_to_work_area;
 #[cfg(test)]
 pub(crate) use work_area::{fit_window_in, FitTarget, WorkArea};
+
+#[path = "ime.rs"]
+mod ime;
+use ime::attach_platform;
 
 /// What the panel window needs from the graphics stack, appended to the
 /// startup errors a missing driver produces. `BOT_CPU=1` selects the game
@@ -442,6 +446,7 @@ struct ImguiState {
     context: imgui::Context,
     platform: imgui_winit::WinitPlatform,
     renderer: imgui_wgpu::WgpuRenderer,
+    base_style: imgui::Style,
 }
 
 struct AppWindow {
@@ -463,6 +468,15 @@ struct AppWindow {
     /// already exists; COPY_SRC backends allocate a one-off instead of
     /// keeping a second framebuffer on every slot.
     offscreen: Option<wgpu::Texture>,
+}
+
+impl Drop for AppWindow {
+    fn drop(&mut self) {
+        // Fields drop in declaration order (Window before ImguiState).
+        // The callback holds only a Weak and upgrades it per submission, so
+        // expiry cannot dangle. Clear first even if other Window Arcs survive.
+        ime::clear_window(&self.window);
+    }
 }
 
 /// How often the loop checks a pending GPU bring-up. Only runs until the
@@ -658,6 +672,14 @@ fn fit_new_window(window: &Window, event_loop: &ActiveEventLoop) {
 }
 
 impl AppWindow {
+    fn apply_dpi_scale(&mut self, dpi: f32) {
+        let base_style = self.imgui.base_style.clone();
+        *self.imgui.context.style_mut() = base_style;
+        crate::app::apply_ui_scale(self.imgui.context.style_mut(), dpi);
+        // RENDERER_HAS_TEXTURES makes ImGui lazily bake the new font size on
+        // the next frame; build() would not eagerly rebuild this atlas.
+    }
+
     /// Create the OS window and surface, then hand adapter/device creation
     /// to a worker. [`AppWindow::finish`] completes the stack on the UI
     /// thread once the worker answers.
@@ -805,20 +827,32 @@ impl AppWindow {
         if let Some(theme) = cfg.theme {
             apply_theme(&mut context, theme);
         }
+
         if let Some(cb) = lifecycle.on_style.as_mut() {
             cb(&mut context);
         }
+        let base_style = context.style().clone();
+        crate::app::apply_ui_scale(context.style_mut(), window.scale_factor() as f32);
 
-        // Keep one bundled base font at its logical 14 px size (`PANEL_FONT_SIZE`).
-        // Dear ImGui 1.92 applies display density when baking it; do not multiply here.
+        // Keep one bundled base font at its logical 14 px size. FontScaleDpi
+        // makes Dear ImGui rasterize it at the monitor's physical scale.
+        // Dear ImGui 1.92 builds its atlas as a renderer-managed texture.
+        // Advertise that capability before the initial build; new monitor
+        // scales are baked lazily by ImGui without entering the legacy path.
+        {
+            let io = context.io_mut();
+            let mut flags = io.backend_flags();
+            flags.insert(BackendFlags::RENDERER_HAS_TEXTURES);
+            io.set_backend_flags(flags);
+        }
         let glyphs_present = add_panel_font(&mut context);
         assert!(
             glyphs_present,
             "embedded 3270 font must cover the panel's drawn glyphs"
         );
+        let _ = context.font_atlas_mut().build();
 
-        let mut platform = imgui_winit::WinitPlatform::new(&mut context);
-        platform.attach_window(&window, imgui_winit::HiDpiMode::Default, &mut context);
+        let platform = attach_platform(&mut context, &window);
 
         let init_info =
             imgui_wgpu::WgpuInitInfo::new(device.clone(), queue.clone(), surface_desc.format);
@@ -838,7 +872,8 @@ impl AppWindow {
                 flags = ConfigFlags::from_bits_retain(merged);
             }
             io.set_config_flags(flags);
-            io.set_config_windows_resize_from_edges(false);
+            io.set_config_dpi_scale_fonts(false);
+
             io.set_config_docking_always_tab_bar(false);
         }
 
@@ -846,6 +881,7 @@ impl AppWindow {
             context,
             platform,
             renderer,
+            base_style,
         };
 
         #[cfg(feature = "memory-profile")]
@@ -865,6 +901,7 @@ impl AppWindow {
                 b: cfg.clear_color[2] as f64,
                 a: cfg.clear_color[3] as f64,
             },
+
             offscreen,
         })
     }
@@ -1401,19 +1438,15 @@ const PANEL_REQUIRED_GLYPHS: &[char] = &[
     '\u{f006}', '\u{f015}', '\u{f019}', '\u{f054}', '\u{f07b}', '\u{f108}', '\u{f15b}', '\u{f15c}',
 ];
 
-/// Base UI font size. ImGui sizes a font by its ascent-to-descent height,
-/// not its em. The Regular face measures about 6.94 px per cell at 14 px,
-/// matching ProggyClean's 7 px grid at 13 px without glyph padding.
-const PANEL_FONT_SIZE: f32 = 14.0;
-
-/// Add the 3270 subset as the atlas's only, base font at [`PANEL_FONT_SIZE`].
-/// Dear ImGui 1.92 owns density scaling; the input size stays fixed.
-fn add_panel_font(ctx: &mut imgui::Context) -> bool {
+/// Add the 3270 subset as the atlas's only base font at
+/// [`crate::theme::PANEL_FONT_SIZE`]. Dear ImGui 1.92 owns density scaling;
+/// this remains a 14 logical px size at every monitor scale.
+pub(crate) fn add_panel_font(ctx: &mut imgui::Context) -> bool {
     let mut fonts = ctx.fonts();
     let font = fonts
         .add_font_from_memory_ttf(
             PANEL_FONT_BYTES,
-            PANEL_FONT_SIZE,
+            crate::theme::PANEL_FONT_SIZE,
             Some(&imgui::FontConfig::new().name("3270 Nerd Font Regular")),
             None,
         )
@@ -1656,6 +1689,7 @@ where
                         window.window.request_redraw();
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
+                        window.apply_dpi_scale(window.window.scale_factor() as f32);
                         let new_size = window.window.inner_size();
                         window.resize(new_size);
                         window.window.request_redraw();

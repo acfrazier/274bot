@@ -925,6 +925,7 @@ export default class T extends LoopingBot {
                 allow_bank_fetch: false,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )),
         "{drained:?}"
@@ -1056,6 +1057,7 @@ fn approach_walk(drained: &[InteractReq]) -> bool {
                 allow_bank_fetch: false,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )
     })
@@ -1179,5 +1181,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }

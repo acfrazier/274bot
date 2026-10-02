@@ -966,6 +966,7 @@ fn walk_leg(tiles: &[(i32, i32)]) -> Leg {
 fn door_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -992,10 +993,45 @@ fn door_edge() -> TransportEdge {
     }
 }
 
+fn web_cut_edges() -> [TransportEdge; 2] {
+    let mut knife = door_edge();
+    knife.at = WorldTile {
+        x: 3202,
+        z: 3200,
+        level: 0,
+    };
+    knife.to = WorldTile {
+        x: 3204,
+        z: 3200,
+        level: 0,
+    };
+    knife.loc_id = 733;
+    knife.option = 0;
+    knife.ticks = 2;
+    knife.dir = Some(DoorDir::E);
+    knife.open_loc_id = Some(734);
+    knife.item_req = vec![(946, 1)];
+
+    let mut slash = knife.clone();
+    slash.option = 1;
+    slash.item_req.clear();
+    slash.worn_req = vec![1321];
+    [knife, slash]
+}
+
+fn web_route(edge: TransportEdge) -> Route {
+    Route {
+        dest: edge.to,
+        ticks: 2.0,
+        legs: vec![Leg::Transport { edge }],
+    }
+}
+
 /// A ladder edge standing at (3202, 3204) → (3202, 3205).
 fn ladder_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -1025,6 +1061,7 @@ fn ladder_edge() -> TransportEdge {
 fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
     TransportEdge {
         kind: TransportKind::AgilityShortcut,
+        player_delta: None,
         at,
         to: WorldTile {
             x: at.x - 5,
@@ -1100,6 +1137,7 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
     );
     let closed = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3200,
@@ -1136,6 +1174,7 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
 fn trapdoor_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -1167,6 +1206,7 @@ fn trapdoor_edge() -> TransportEdge {
 fn cart_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -2128,6 +2168,307 @@ fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
 }
 
 #[test]
+fn follow_web_reselects_knife_after_planned_slash_blade_is_unequipped() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    plant_equipment_item(&mut c, 1321);
+    let mut snap = snap_at(&mut c, 0, 0);
+    assert_eq!(snap.equipment()[0].def.id, 1321);
+    assert!(snap.inv().iter().any(|&(id, count)| id == 946 && count > 0));
+
+    let edges = web_cut_edges();
+    let route = web_route(edges[1].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1, "one approach walk before the cut");
+    let stand = rec.walked[0];
+
+    clear_equipment_item(&mut c);
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(snap.equipment().is_empty());
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1, "the current knife replaces planned Slash");
+    assert_eq!(rec.loc_ops, 0, "do not send the stale Slash op");
+}
+
+#[test]
+fn follow_web_reselects_slash_after_planned_knife_is_removed() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[0].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 1, "one approach walk before the cut");
+    let stand = rec.walked[0];
+
+    clear_inventory_item(&mut c);
+    plant_equipment_item(&mut c, 1321);
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(snap.inv().iter().all(|&(id, _)| id != 946));
+    assert!(snap.equipment().iter().any(|item| item.def.id == 1321));
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1, "the current slash blade replaces oplocu");
+    assert_eq!(rec.loc_uses, 0, "do not use the stale knife edge");
+}
+
+#[test]
+fn follow_web_without_a_qualifying_action_fails_without_sending() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    plant_equipment_item(&mut c, 1321);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[1].clone());
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    clear_inventory_item(&mut c);
+    clear_equipment_item(&mut c);
+    let stand = rec.walked[0];
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+
+    match traveller.follow(&mut rec, &snap, route, &mut options) {
+        Some(TravelOutcome::Blocked { detail, .. }) => {
+            assert!(
+                detail.contains("neither a worn slash blade nor a carried knife qualifies"),
+                "explicit failure detail: {detail}"
+            );
+        }
+        other => panic!("expected an explicit blocked outcome, got {other:?}"),
+    }
+    assert_eq!(rec.loc_ops, 0, "no doomed Slash is sent");
+    assert_eq!(rec.loc_uses, 0, "no missing knife is used");
+}
+
+#[test]
+fn follow_web_slash_during_approach_walks_through_without_an_op() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 2, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let edges = web_cut_edges();
+    let route = web_route(edges[0].clone());
+    let dest = route.dest;
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    let stand = rec.walked[0];
+    plant_loc(&mut c, 734, "Web", "Slash", 2, 0);
+    c.add_chat(0, "You fail to cut through it.", "");
+    plant_player(&mut c, stand.0, stand.1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.loc_uses, 0, "the approach completion sends no op");
+
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert!(rec.walked.contains(&(4, 0)), "walk through the open web");
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.loc_uses, 0);
+    plant_player(&mut c, 4, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at: dest })
+    );
+}
+
+#[test]
+fn follow_web_retries_each_observed_cut_failure_and_accepts_the_slashed_loc() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut edge = door_edge();
+    edge.loc_id = 733;
+    edge.option = 0;
+    edge.item_req = vec![(946, 1)];
+    edge.open_loc_id = Some(734);
+    edge.dir = Some(DoorDir::E);
+    let edges = [edge.clone()];
+    let dest = edge.to;
+    let route = Route {
+        legs: vec![Leg::Transport { edge }],
+        dest,
+        ticks: 2.0,
+    };
+    let mut options = TravelOptions {
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1, "the initial cut uses the held knife");
+
+    c.add_chat(0, "You fail to cut through it.", "");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 2,
+        "one observed 50% failure immediately permits one retry"
+    );
+
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 2,
+        "the same failure message must not trigger multiple retries"
+    );
+
+    c.add_chat(0, "You fail to cut through it.", "");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 3, "each fresh failure permits one retry");
+
+    plant_loc(&mut c, 734, "Web", "Slash", 1, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_uses, 3,
+        "loc_change to 734 succeeds without reclicking"
+    );
+    assert!(
+        rec.walked.contains(&(3, 0)),
+        "the follower walks through the slashed web"
+    );
+
+    plant_player(&mut c, 3, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at: dest })
+    );
+}
+
+#[test]
+fn follow_web_does_not_retry_from_elapsed_time_without_a_failure_message() {
+    let mut c = scene_client();
+    plant_loc(&mut c, 733, "Web", "Slash", 1, 0);
+    plant_inv_item(&mut c, 946);
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut edge = door_edge();
+    edge.loc_id = 733;
+    edge.option = 0;
+    edge.item_req = vec![(946, 1)];
+    edge.open_loc_id = Some(734);
+    edge.dir = Some(DoorDir::E);
+    let edges = [edge.clone()];
+    let route = Route {
+        legs: vec![Leg::Transport { edge: edge.clone() }],
+        dest: edge.to,
+        ticks: 2.0,
+    };
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 1,
+        edges: Some(&edges),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_uses, 1);
+    let outcome = loop {
+        bump_rebuild(&mut c, &mut snap);
+        if let Some(outcome) = traveller.follow(&mut rec, &snap, route.clone(), &mut options) {
+            break outcome;
+        }
+        assert!(snap.tick() < 8, "web did not settle within the hop budget");
+    };
+    assert!(
+        matches!(outcome, TravelOutcome::Stalled { .. }),
+        "without an observed fail message, wait for the ordinary hop timeout: {outcome:?}"
+    );
+    assert_eq!(
+        rec.loc_uses, 1,
+        "the 50% retry is event-driven, never an automatic timed door troll"
+    );
+}
+
+#[test]
 fn follow_npc_edge_sends_op_npc_and_arrives() {
     // Task 2: a `TransportKind::Npc` edge (cart, essence wizard,
     // Elkoy) must interact with the driver NPC — an `OP_NPC1` on the
@@ -2233,6 +2574,7 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -2289,6 +2631,7 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
     };
     let tree = |to| TransportEdge {
         kind: TransportKind::SpiritTree,
+        player_delta: None,
         at: WorldTile {
             x: 2461,
             z: 3444,
@@ -2512,6 +2855,7 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
     };
     let tree = |to| TransportEdge {
         kind: TransportKind::SpiritTree,
+        player_delta: None,
         at,
         to,
         loc_id: 1293,
@@ -3293,6 +3637,7 @@ fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
 fn rangingguild_enter_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: RANGING_OUTSIDE,
         to: RANGING_INSIDE,
         loc_id: 2514,
@@ -3323,6 +3668,7 @@ fn rangingguild_exit_edge() -> TransportEdge {
 fn shantay_north_short_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: SHANTAY_NORTH_AT,
         to: SHANTAY_NORTH_TO,
         loc_id: SHANTAY_HENGE_LOC_ID,
@@ -3361,6 +3707,7 @@ fn follow_still_pending<D: Driver>(
 fn shantay_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -3487,6 +3834,7 @@ const TEST_TOLL_COIN_OBJ: i32 = 4242;
 fn alkharid_toll_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3201,
@@ -3997,6 +4345,7 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
     };
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4240,6 +4589,7 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4319,6 +4669,7 @@ fn follow_essence_entry_accepts_any_mine_landing() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::Npc,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4382,6 +4733,7 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
     let mut t = Traveller::new();
     let edge = TransportEdge {
         kind: TransportKind::EssenceExit,
+        player_delta: None,
         at: WorldTile {
             x: 3201,
             z: 3201,
@@ -4440,6 +4792,7 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
 fn ring_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4474,6 +4827,7 @@ fn ring_edge() -> TransportEdge {
 fn glory_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4506,6 +4860,7 @@ fn glory_edge() -> TransportEdge {
 fn varrock_spell_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4538,6 +4893,7 @@ fn varrock_spell_edge() -> TransportEdge {
 fn lumbridge_spell_edge() -> TransportEdge {
     TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: WorldTile {
             x: 0,
             z: 0,
@@ -4610,6 +4966,68 @@ fn plant_inv_stack(c: &mut Client, obj_id: i32, count: i32) {
         IfTypeMut {
             link_obj_type: Some(vec![obj_id + 1]),
             link_obj_number: Some(vec![count]),
+            ..Default::default()
+        },
+    );
+}
+
+fn clear_inventory_item(c: &mut Client) {
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+}
+
+fn plant_equipment_item(c: &mut Client, obj_id: i32) {
+    {
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.objs.len() <= obj_id as usize {
+            cache.objs.push(ObjType::default());
+        }
+        cache.objs[obj_id as usize] = ObjType {
+            id: obj_id,
+            ..Default::default()
+        };
+    }
+    c.side_icon[4] = 400;
+    c.set_iface(
+        400,
+        IfType {
+            id: 400,
+            layer_id: 400,
+            children: Some(vec![401]),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        401,
+        IfType {
+            id: 401,
+            layer_id: 400,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        401,
+        IfTypeMut {
+            link_obj_type: Some(vec![obj_id + 1]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+}
+
+fn clear_equipment_item(c: &mut Client) {
+    c.set_iface_mut(
+        401,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
             ..Default::default()
         },
     );
@@ -6053,6 +6471,126 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
 }
 
 #[test]
+fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.loc_id == 1738
+                && edge.at
+                    == WorldTile {
+                        x: 3204,
+                        z: 3207,
+                        level: 0,
+                    }
+        })
+        .expect("real Lumbridge south staircase")
+        .clone();
+    let mut c = scene_client();
+    plant_loc_sized(&mut c, 1738, "Staircase", "Climb-up", 4, 7, 2, 2, 0);
+    for x in 0..104 {
+        for z in 0..104 {
+            c.collision[0].flags[x][z] =
+                world
+                    .collision
+                    .walkable_word(3200 + x as i32, 3200 + z as i32, 0) as i32;
+        }
+    }
+    let mut snap = snap_at(&mut c, 6, 9);
+    let mut loc = snap
+        .locs()
+        .iter()
+        .find(|loc| loc.id == 1738)
+        .unwrap()
+        .clone();
+    loc.shape = 10;
+    loc.footprint_width = 2;
+    loc.footprint_length = 2;
+    snap.seed_locs(vec![loc.clone()]);
+    let from = WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0,
+    };
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(&loc, snap.scene(), from),
+        Some(false),
+        "the south castle wall separates the Chebyshev-near stand from the stairs"
+    );
+    let near = WorldTile {
+        x: 3206,
+        z: 3209,
+        level: 0,
+    };
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(near))
+        .flood_reach()
+        .unwrap();
+    let approach = api::query::loc_approach::booth_approach(&loc, snap.scene(), near, &flood)
+        .unwrap()
+        .dest
+        .expect("inside the castle, an operable stair side is reachable");
+    eprintln!("real stairs near={near:?} loc={loc:?} approach={approach:?}");
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(&loc, snap.scene(), approach),
+        Some(true)
+    );
+    let route = Route {
+        legs: vec![Leg::Transport { edge: edge.clone() }],
+        dest: edge.to,
+        ticks: edge.ticks as f64,
+    };
+    let mut rec = FollowRec {
+        route: Some((6, 9)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_ops, 0,
+        "do not send a stairs op through the castle wall"
+    );
+    assert_eq!(
+        rec.walked.last(),
+        Some(&(approach.x - 3200, approach.z - 3200))
+    );
+    // A near-anchor tile still behind the wall must not finish the approach.
+    plant_player(&mut c, 5, 6);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![loc.clone()]);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+    plant_player(&mut c, approach.x - 3200, approach.z - 3200);
+    bump_rebuild(&mut c, &mut snap);
+    snap.seed_locs(vec![loc]);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.loc_ops, 1,
+        "the operable footprint stand can send Climb-up"
+    );
+    c.minusedlevel = 1;
+    plant_player(&mut c, edge.to.x - 3200, edge.to.z - 3200);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(matches!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at }) if at == edge.to
+    ));
+}
+
+#[test]
 fn door_tile_is_the_edge_at() {
     // A door with `to` 2 tiles away: the door's own tile is the
     // edge's `at` (the loc tile), never the midpoint of `at`/`to`.
@@ -7201,6 +7739,7 @@ fn level_change_transport_requires_proximity_to_to() {
     let snap = snap_at(&mut c, 100, 100);
     let edge = TransportEdge {
         kind: TransportKind::Ladder,
+        player_delta: None,
         at: WorldTile {
             x: 3202,
             z: 3204,
@@ -7274,6 +7813,100 @@ fn level_change_transport_requires_proximity_to_to() {
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::LegDone
+    ));
+}
+
+#[test]
+fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
+    let mut c = scene_client();
+    let snap = snap_at(&mut c, 11, 33);
+    let anchor = WorldTile {
+        x: 3202,
+        z: 3204,
+        level: 0,
+    };
+    let baked_to = WorldTile {
+        x: 3212,
+        z: 3234,
+        level: 0,
+    };
+    let landing = WorldTile {
+        x: 3210,
+        z: 3233,
+        level: 0,
+    };
+    let edge = TransportEdge {
+        kind: TransportKind::Ladder,
+        player_delta: Some(WorldTile {
+            x: 10,
+            z: 30,
+            level: 0,
+        }),
+        at: anchor,
+        to: baked_to,
+        loc_id: 1,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let mut options = TravelOptions {
+        close_enough: 0,
+        ..TravelOptions::default()
+    };
+    let mut run = FollowRun::start(
+        Route {
+            legs: vec![Leg::Transport { edge }],
+            dest: landing,
+            ticks: 2.0,
+        },
+        &options,
+    );
+    let leg = run.legs.pop_front().unwrap();
+    run.transport = Some(TransportHop {
+        leg,
+        to: baked_to,
+        arrival_footprint: None,
+        ticks_waited: 0,
+        sent_tile: Some(WorldTile {
+            x: 3200,
+            z: 3203,
+            level: 0,
+        }),
+        tries: 0,
+        troll: false,
+        npc_index: None,
+        npc_recovery: super::NpcRecovery::default(),
+        open_sent_tick: None,
+        chat_seq: 0,
+        dialog_page: None,
+        approach: None,
+    });
+    let mut rec = FollowRec::default();
+    let mut no_session = None;
+    // A tile beside either predicted landing is not an arrival at radius 0.
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::Watching
+    ));
+    // The route's nominal/planned `to` is not proof of this relative jump.
+    let snap = snap_at(&mut c, 12, 34);
+    assert!(matches!(
+        run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
+        Poll::Watching
+    ));
+    let snap = snap_at(&mut c, 10, 33);
     assert!(matches!(
         run.poll_transport(&mut rec, &snap, &mut options, &mut no_session),
         Poll::LegDone

@@ -3,6 +3,12 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+#[cfg(feature = "load")]
+pub mod api_gather;
+#[cfg(feature = "load")]
+pub mod api_progress;
+#[cfg(feature = "load")]
+mod api_session;
 /// Shared native bank selector and transfer machines.
 pub mod bank;
 /// Native boost-potion descriptors, planning and sip selection.

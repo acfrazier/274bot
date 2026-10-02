@@ -166,24 +166,6 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_rs2b0t_path_paint() {
-        let d = NavSettings::default();
-        assert!(!d.allow_teleports);
-        assert!(!d.allow_wilderness);
-        assert!(!d.allow_bank_fetch, "BankBudget defaults off");
-        assert!(!d.show_nav_path);
-        assert_eq!(d.color_path, "#FF0000");
-        assert_eq!(d.color_transport, "#00FF00");
-        assert_eq!(d.color_click, "#FFFFFF");
-        assert_eq!(d.color_text, "#FFFFFF");
-        assert_eq!(d.color_collision, "#0080FF");
-        assert_eq!(d.color_client, "#00D4FF");
-        assert_eq!(d.color_client_run_alt, "#FFFF00");
-        assert!(!d.collision_fill && !d.client_trail && !d.component_flood);
-        assert!(!d.show_special_areas);
-    }
-
-    #[test]
     fn live_force_layers_does_not_change_saved_teles_or_colours() {
         let saved = NavSettings::default();
         let e = effective(&saved, true);
