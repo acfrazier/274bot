@@ -40,8 +40,9 @@ pub const LAMP_SKILLS: [&str; 7] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsState {
     pub open: bool,
-    /// 0 = random events, 1 = lamp skill, 2 = lamp auto, 3 = teleports,
-    /// 4 = wilderness, 5 = bank fetch, 6 = map bake, 7 = memory.
+    /// 0=random events, 1=lamp skill, 2=lamp auto, 3=teleports,
+    /// 4=wilderness, 5=bank fetch, 6=manual-walk pause, 7=map bake,
+    /// 8=memory.
     pub row: usize,
 }
 
@@ -53,6 +54,8 @@ pub enum SettingsKey {
     /// The remembered map-bake choice changed — persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
+    /// The global manual-walk pause preference changed and needs persistence.
+    PauseScriptOnManualWalkAbort,
     /// Relog the bound member now so a pending memory-mode switch reaches
     /// the server.
     MemoryRelog,
@@ -75,6 +78,7 @@ pub struct SettingsPane<'a> {
     pub nav: &'a mut NavFindSettings,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
+    pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
     pub title: &'a str,
     pub notice: Option<&'a FormNotice>,
     pub memory: Option<MemoryNotice>,
@@ -95,9 +99,15 @@ impl<'a> SettingsPane<'a> {
             title: TITLE,
             notice: None,
             memory: None,
+            pause_script_on_manual_walk_abort: None,
         }
     }
 
+    /// Bind the shared global pause preference to the settings row.
+    pub fn pause_script_on_manual_walk_abort(mut self, value: &'a mut bool) -> Self {
+        self.pause_script_on_manual_walk_abort = Some(value);
+        self
+    }
     /// One key while the popup is open. Up/Down move the row; Enter/Space
     /// toggle the row's setting (the random toggle flips `random_events`,
     /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`], nav
@@ -120,14 +130,17 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(7);
+                self.state.row = (self.state.row + 1).min(8);
                 SettingsKey::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.activate();
                 match self.state.row {
-                    0..=2 | 7 => SettingsKey::Changed,
-                    6 => SettingsKey::MapBake,
+                    0..=2 | 8 => SettingsKey::Changed,
+                    6 if self.pause_script_on_manual_walk_abort.is_some() => {
+                        SettingsKey::PauseScriptOnManualWalkAbort
+                    }
+                    7 => SettingsKey::MapBake,
                     _ => SettingsKey::Consumed,
                 }
             }
@@ -155,15 +168,20 @@ impl<'a> SettingsPane<'a> {
             3 => self.nav.allow_teleports = !self.nav.allow_teleports,
             4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
             5 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
-            7 => self.settings.lowmem = !self.settings.lowmem,
-            _ => *self.map_bake = self.map_bake.toggled(),
+            6 => {
+                if let Some(pause) = self.pause_script_on_manual_walk_abort.as_mut() {
+                    **pause = !**pause;
+                }
+            }
+            7 => *self.map_bake = self.map_bake.toggled(),
+            _ => self.settings.lowmem = !self.settings.lowmem,
         }
     }
 
-    /// The popup rect: centered, sized to the eight rows.
+    /// The popup rect: centered, sized to the nine rows.
     pub fn popup_rect(area: Rect) -> Rect {
-        let w = area.width.min(36);
-        let h = 10.min(area.height);
+        let w = area.width.min(44);
+        let h = 11.min(area.height);
         Rect {
             x: area.x + area.width.saturating_sub(w) / 2,
             y: area.y + area.height.saturating_sub(h) / 2,
@@ -250,6 +268,16 @@ impl Widget for SettingsPane<'_> {
             ("allow teleports", format!("{}", self.nav.allow_teleports)),
             ("allow wilderness", format!("{}", self.nav.allow_wilderness)),
             ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
+            (
+                "Pause script on manual movement",
+                format!(
+                    "{}",
+                    self.pause_script_on_manual_walk_abort
+                        .as_deref()
+                        .copied()
+                        .unwrap_or(true)
+                ),
+            ),
             ("map bake", self.map_bake.as_str().to_string()),
             ("memory", memory_value),
         ];
@@ -289,9 +317,9 @@ impl Widget for SettingsPane<'_> {
     }
 }
 
-/// The popup's rows: random events, lamp skill, lamp auto, three nav
-/// opt-ins, the map-bake choice and memory. Notices start under them.
-const ROWS: u16 = 8;
+/// opt-ins, the pause toggle, the map-bake choice and memory. Notices start
+/// under the nine rows.
+const ROWS: u16 = 9;
 
 /// The width in columns of one character, as [`Span`] measures it.
 fn char_width(text: &str, at: usize, ch: char) -> usize {
@@ -493,11 +521,44 @@ mod tests {
     }
 
     #[test]
+    fn manual_movement_pause_row_is_reachable_persistent_and_visible_at_common_sizes() {
+        for (width, height) in [(120, 40), (80, 24)] {
+            let mut settings = ProfileSettings::default();
+            let mut nav = NavFindSettings::default();
+            let mut bake = MapBakeChoice::Ask;
+            let mut pause = true;
+            let mut state = SettingsState { open: true, row: 0 };
+            {
+                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                    .pause_script_on_manual_walk_abort(&mut pause);
+                for _ in 0..6 {
+                    assert_eq!(pane.on_key(key(KeyCode::Down)), SettingsKey::Consumed);
+                }
+                assert_eq!(pane.state.row, 6);
+                assert_eq!(
+                    pane.on_key(key(KeyCode::Enter)),
+                    SettingsKey::PauseScriptOnManualWalkAbort
+                );
+            }
+            assert!(!pause, "activation flips the saved global toggle off");
+            let text = render(
+                SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                    .pause_script_on_manual_walk_abort(&mut pause),
+                width,
+                height,
+            );
+            assert!(
+                text.contains("Pause script on manual movement: false"),
+                "{width}x{height} must render the reachable row: {text:?}"
+            );
+        }
+    }
+    #[test]
     fn memory_row_toggles_lowmem_and_reports_the_change() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 7 };
+        let mut state = SettingsState { open: true, row: 8 };
         assert!(settings.lowmem, "profiles start lowmem");
         let outcome = {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
@@ -545,7 +606,7 @@ mod tests {
         };
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 7 };
+        let mut state = SettingsState { open: true, row: 8 };
         let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
         pane.memory = Some(MemoryNotice {
             login_lowmem: true,
@@ -562,14 +623,14 @@ mod tests {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 5 };
+        let mut state = SettingsState { open: true, row: 6 };
         let (moved, flipped) = {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             let moved = pane.on_key(key(KeyCode::Down));
             (moved, pane.on_key(key(KeyCode::Enter)))
         };
         assert_eq!(moved, SettingsKey::Consumed);
-        assert_eq!(state.row, 6, "the map-bake row is last");
+        assert_eq!(state.row, 7, "the map-bake row follows the pause toggle");
         assert_eq!(flipped, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Always);
         assert!(!nav.allow_bank_fetch, "the bank row is untouched");

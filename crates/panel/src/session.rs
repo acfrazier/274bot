@@ -1302,6 +1302,7 @@ impl Session {
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
+        core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
         // The fleet rows show the WalkTo walks this panel arms.
         core.set_walk_arms(Arc::clone(&travellers));
         Self {
@@ -2515,7 +2516,7 @@ impl Session {
         self.set_capture(view.capture);
         self.set_live_full_rate(view.full_rate);
         // Scenario nav bag is session-only — never ui_state::save'd.
-        self.nav_overlay = Some(from_scenario(&view.nav));
+        self.nav_overlay = Some(from_scenario(&view.nav, &self.ui.nav));
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let world = self.core.play().and_then(|play| play.world());
@@ -3081,6 +3082,8 @@ impl Session {
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
+        self.core
+            .set_pause_script_on_manual_walk_abort(self.ui.nav.pause_script_on_manual_walk_abort);
         self.core.advance_removals(Instant::now());
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;

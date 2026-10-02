@@ -1,7 +1,8 @@
 //! Borrowed native observations with readiness attached to their evidence stamp.
 use super::{
-    ActorTargetView, ChatLineView, ChatOptionView, GameSnapshot, GroundItemView, ItemView, LocView,
-    LocalPlayerView, NpcView, QuestStatusView, StatView, VarpView, WorldStateView,
+    ActorTargetView, ChatLineView, ChatOptionView, GameSnapshot, GroundItemView, HitmarksView,
+    ItemView, LocView, LocalPlayerView, NpcView, PlayerView, ProjectileView, QuestStatusView,
+    SideTabView, StatView, VarpView, WorldStateView,
 };
 use crate::quest_progress::EvidenceStamp;
 
@@ -116,12 +117,26 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    /// The local player once the player family has posted its first row.
-    /// Disconnect or a pre-player frame is not an observed empty player.
+    /// The local player once the scene and player family are ready.
+    /// Disconnect, a loading scene, or a pre-player frame is not a posted row.
     pub fn local_player(&self) -> Option<Observed<&'a LocalPlayerView>> {
-        let snapshot = self.ingame()?;
+        let snapshot = self.scene_ready()?;
+        if !snapshot.players_available {
+            return None;
+        }
         Some(Observed {
             value: snapshot.local_player()?,
+            stamp: self.stamp,
+        })
+    }
+
+    /// Remote player rows once the scene and player family are ready.
+    /// A posted empty slice means no remote players; pre-player frames remain
+    /// unavailable.
+    pub fn players(&self) -> Option<Observed<&'a [PlayerView]>> {
+        let snapshot = self.scene_ready()?;
+        snapshot.players_available.then_some(Observed {
+            value: snapshot.players(),
             stamp: self.stamp,
         })
     }
@@ -163,7 +178,7 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    pub fn inventory(&self) -> Option<Observed<&[ItemView]>> {
+    pub fn inventory(&self) -> Option<Observed<&'a [ItemView]>> {
         let snapshot = self.snapshot?;
         (snapshot.ingame() && snapshot.inventory_size() > 0).then(|| Observed {
             value: snapshot.inventory(),
@@ -294,6 +309,47 @@ impl<'a> SnapshotView<'a> {
     fn scene_ready(&self) -> Option<&'a GameSnapshot> {
         let snapshot = self.ingame()?;
         (snapshot.scene_state() == 2).then_some(snapshot)
+    }
+
+    /// Projectile rows from the current scene. An empty list is observed once
+    /// the scene is ready; before then it is unavailable.
+    pub fn projectiles(&self) -> Option<Observed<&'a [ProjectileView]>> {
+        let snapshot = self.scene_ready()?;
+        Some(Observed {
+            value: snapshot.projectiles(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// The four raw local hitmarks once the scene and player family are ready.
+    pub fn hitmarks(&self) -> Option<Observed<HitmarksView>> {
+        let snapshot = self.scene_ready()?;
+        if !snapshot.players_available {
+            return None;
+        }
+        snapshot.local_player()?;
+        Some(Observed {
+            value: *snapshot.hitmarks()?,
+            stamp: self.stamp,
+        })
+    }
+
+    /// Side-tab rows after their interface family has posted.
+    pub fn side_tabs(&self) -> Option<Observed<&'a [SideTabView]>> {
+        let snapshot = self.ingame()?;
+        snapshot.side_tabs_available.then_some(Observed {
+            value: snapshot.side_tabs(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// The selected side-tab index after the side-tab family has posted.
+    pub fn active_side_tab(&self) -> Option<Observed<i32>> {
+        let snapshot = self.ingame()?;
+        snapshot.side_tabs_available.then_some(Observed {
+            value: snapshot.active_side_tab(),
+            stamp: self.stamp,
+        })
     }
 
     /// Nearby NPCs once the scene is built. Disconnect or a rebuild is not
@@ -499,6 +555,7 @@ pub struct CombatView {
 mod tests {
     use super::*;
     use crate::selected::RunKey;
+    use crate::snapshot::HitmarkView;
 
     #[test]
     fn unavailable_fields_never_look_like_observed_empty_fields() {
@@ -517,6 +574,11 @@ mod tests {
             SnapshotView::new(Some(&snapshot), stamp),
         ] {
             assert!(view.local_player().is_none());
+            assert!(view.players().is_none());
+            assert!(view.projectiles().is_none());
+            assert!(view.hitmarks().is_none());
+            assert!(view.side_tabs().is_none());
+            assert!(view.active_side_tab().is_none());
             assert!(view.world().is_none());
             assert!(view.inventory_capacity().is_none());
             assert!(view.inventory().is_none());
@@ -541,6 +603,11 @@ mod tests {
         snapshot.ingame = true;
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert!(view.local_player().is_none());
+        assert!(view.players().is_none());
+        assert!(view.projectiles().is_none());
+        assert!(view.hitmarks().is_none());
+        assert!(view.side_tabs().is_none());
+        assert!(view.active_side_tab().is_none());
         assert!(view.world().is_none());
         assert!(view.inventory_capacity().is_none());
         assert!(view.inventory().is_none());
@@ -582,6 +649,15 @@ mod tests {
             used: true,
         }]);
         let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(view.local_player().is_none());
+        assert!(
+            view.players().is_none(),
+            "a scene-ready but unposted player family is not an empty list"
+        );
+        assert!(view.projectiles().unwrap().value.is_empty());
+        assert!(view.hitmarks().is_none());
+        assert!(view.side_tabs().is_none());
+        assert!(view.active_side_tab().is_none());
         assert_eq!(view.inventory_capacity().unwrap().value, 28);
         assert!(view.inventory().unwrap().value.is_empty());
         assert!(view.bank().unwrap().value.is_empty());
@@ -600,6 +676,11 @@ mod tests {
         snapshot.ingame = false;
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert!(view.local_player().is_none());
+        assert!(view.players().is_none());
+        assert!(view.projectiles().is_none());
+        assert!(view.hitmarks().is_none());
+        assert!(view.side_tabs().is_none());
+        assert!(view.active_side_tab().is_none());
         assert!(view.world().is_none());
         assert!(view.inventory_capacity().is_none());
         assert!(view.inventory().is_none());
@@ -627,6 +708,7 @@ mod tests {
         };
         let mut snapshot = GameSnapshot {
             ingame: true,
+            scene_state: 2,
             base: Some((3200, 3400)),
             world: super::super::WorldStateView {
                 map_base_x: 3200,
@@ -653,11 +735,13 @@ mod tests {
                     },
                     distance: 0,
                     animation: -1,
+                    animation_frame: 0,
                     pose_animation: -1,
                     orientation: 0,
                     target_orientation: 0,
                     overhead_text: None,
                     spot_animation: -1,
+                    spot_animation_stamp: 0,
                     health: 10,
                     total_health: 10,
                     face_entity: -1,
@@ -668,9 +752,37 @@ mod tests {
                 },
                 combat_level: 3,
                 skill_level: 3,
+                weapon: Some(415),
             },
             energy: 77,
             weight: 0,
+        });
+        snapshot.side_tabs_available = true;
+        snapshot.active_side_tab = 3;
+        snapshot.hitmarks = Some(HitmarksView {
+            marks: [
+                HitmarkView {
+                    value: -7,
+                    kind: 99,
+                    cycle: 111,
+                },
+                HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                },
+                HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                },
+                HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                },
+            ],
+            loop_cycle: 104,
         });
         snapshot.inventory_size = 28;
 
@@ -682,6 +794,19 @@ mod tests {
         ));
         assert_eq!(local.value.energy, 77);
 
+        assert_eq!(view.local_player().unwrap().value.player.weapon, Some(415));
+        let players = view.players().expect("posted empty remote-player list");
+        assert!(players.value.is_empty());
+        assert_eq!(players.stamp, stamp);
+        assert!(view.projectiles().unwrap().value.is_empty());
+        let hitmarks = view.hitmarks().expect("posted local hitmarks");
+        assert_eq!(hitmarks.value.loop_cycle, 104);
+        assert_eq!(hitmarks.value.marks[0].value, -7);
+        assert_eq!(hitmarks.value.marks[0].kind, 99);
+        assert_eq!(hitmarks.value.marks[0].cycle, 111);
+        assert_eq!(hitmarks.stamp, stamp);
+        assert!(view.side_tabs().unwrap().value.is_empty());
+        assert_eq!(view.active_side_tab().unwrap().value, 3);
         let world = view.world().expect("posted world build");
         assert_eq!(world.value.map_base_x, 3200);
         assert_eq!(world.value.map_base_z, 3400);
@@ -695,6 +820,19 @@ mod tests {
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert!(view.world().is_none());
         assert!(view.inventory_capacity().is_none());
+        let gens = snapshot.gens();
+        snapshot.reset_session(gens);
+        assert!(!snapshot.players_available);
+        assert!(!snapshot.side_tabs_available);
+        assert!(snapshot.hitmarks.is_none());
+        assert!(snapshot.projectiles().is_empty());
+        let reset_view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(reset_view.local_player().is_none());
+        assert!(reset_view.players().is_none());
+        assert!(reset_view.projectiles().is_none());
+        assert!(reset_view.hitmarks().is_none());
+        assert!(reset_view.side_tabs().is_none());
+        assert!(reset_view.active_side_tab().is_none());
     }
 
     #[test]

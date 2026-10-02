@@ -700,6 +700,7 @@ const SNAPSHOT_KEYS = new Set([
   'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
   'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
   'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
+  'walk_outcome_cancel_reason','user_move_intent_seq',
   'route_inspect_seq','route_inspect_generation','route_inspect_request_id',
   'route_inspect_ok','route_inspect_reason','route_inspect_bank_planned',
   'route_inspect_ticks','route_inspect_hops',

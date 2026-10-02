@@ -1059,6 +1059,83 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     );
     assert!(f.core.play().unwrap().script_last_error("alice").is_some());
 }
+#[test]
+fn gatherer_radius_round_trips_through_profile_save_and_load() {
+    let mut f = native_fixture("gatherer-radius-profile", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    let mut values = Map::new();
+    values.insert("radius".into(), json!(12.0));
+
+    let op = f
+        .scripts
+        .set_compiled_overrides(&mut f.core, "alice", id, values)
+        .unwrap();
+    f.core.flush_writes();
+    assert_eq!(
+        f.core.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed),
+        "saving the Gatherer profile must not fail while configuring its integer radius"
+    );
+
+    let saved = f.saved_bag("alice", &key).expect("Gatherer profile saved");
+    let (_, saved_values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
+    assert_eq!(
+        saved_values.get("radius").and_then(Value::as_u64),
+        Some(12),
+        "the durable profile stores the integral setting as an integer"
+    );
+
+    let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    assert_eq!(
+        script::gatherer::GathererSettings::from_bag(&bag)
+            .unwrap()
+            .radius,
+        12
+    );
+}
+
+#[test]
+fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
+    let mut f = native_fixture("gatherer-radius-legacy", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+
+    for radius in [json!(12.0), json!(12.5)] {
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        let mut values = Map::new();
+        values.insert("radius".into(), radius);
+        row.settings.script_settings.insert(
+            key.clone(),
+            vault::CompiledSettingsRecord {
+                schema_version: 2,
+                values,
+            }
+            .into_entry(),
+        );
+        f.core
+            .save_profile(row, crate::ArmMirror::None, "legacy-radius")
+            .unwrap();
+        f.core.flush_writes();
+
+        let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        let parsed = script::gatherer::GathererSettings::from_bag(&bag);
+        if bag["radius"].as_f64() == Some(12.5) {
+            let error = parsed.expect_err("fractional radius must be rejected");
+            assert_eq!(error.code.as_ref(), "invalid-settings");
+            assert!(
+                error
+                    .message
+                    .contains("floating point `12.5`, expected u16"),
+                "{:?}",
+                error.message
+            );
+        } else {
+            assert_eq!(bag["radius"].as_u64(), Some(12));
+            assert_eq!(parsed.unwrap().radius, 12);
+        }
+    }
+}
 
 #[test]
 fn native_settings_wait_for_durability_and_remain_per_account() {

@@ -116,6 +116,44 @@ pub fn best_melee_weapon(
     usable.first().map(|name| (*name).to_string())
 }
 
+/// Borrowed native pick. Reuses the frozen tier/type ordering without making
+/// temporary names or copying the inventory at engagement start.
+pub(crate) fn best_melee_weapon_by(
+    family: &[EquipmentNameEntry],
+    attack: i32,
+    prefer_stab: bool,
+    mut available: impl FnMut(&str) -> bool,
+) -> Option<&str> {
+    let order = if prefer_stab {
+        &STAB_ORDER
+    } else {
+        &SLASH_ORDER
+    };
+    weapon_names(family)
+        .filter(|name| available(name))
+        .filter(|name| {
+            let tier = name.split(' ').next().unwrap_or("");
+            let level = TIER_ATTACK
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(tier))
+                .map_or(1, |(_, level)| *level);
+            level <= attack
+        })
+        .min_by_key(|name| {
+            let (tier, kind) = name.split_once(' ').unwrap_or((name, ""));
+            let kind = kind.strip_suffix("(p)").unwrap_or(kind);
+            let tier = TIER_RANK
+                .iter()
+                .position(|key| key.eq_ignore_ascii_case(tier))
+                .map_or(-1, |index| index as i32);
+            let kind = order
+                .iter()
+                .position(|key| key.eq_ignore_ascii_case(kind))
+                .map_or(-1, |index| index as i32);
+            (-tier, kind)
+        })
+}
+
 /// The first family weapon (family order) named in `names`, case-insensitive.
 pub fn known_melee_weapon(family: &[EquipmentNameEntry], names: &[String]) -> Option<String> {
     let have = lowered(names);

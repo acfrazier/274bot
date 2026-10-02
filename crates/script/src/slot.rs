@@ -1457,6 +1457,9 @@ impl SlotScript {
     }
 
     pub fn note_manual_walk_takeover(&mut self, intent_seq: u64, tick: u64) {
+        // A deliberate takeover is gameplay progress, even if the human
+        // clicked an unwalkable tile and no player-info movement follows.
+        self.watchdog.stamp_gameplay(Instant::now());
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.note_manual_walk_takeover(intent_seq);
@@ -1548,6 +1551,16 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_interaction(authority, receipt);
+        }
+    }
+
+    pub fn complete_native_bank_pick(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native_bank::BankPickReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_bank_pick(authority, receipt);
         }
     }
 
