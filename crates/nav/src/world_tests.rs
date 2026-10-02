@@ -32,8 +32,18 @@ fn seers_street_walks_to_rock_crabs_on_foot() {
         z: 3720,
         level: 0,
     };
-    let r =
-        find(&world.collision, &world.graph, from, to).expect("on-foot path after stamper rebake");
+    let r = crate::router::find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        to,
+        crate::router::FindOptions {
+            zones: crate::zones::ZoneExempt::all(),
+            ..Default::default()
+        },
+        &crate::world_state::WorldState::empty(),
+    )
+    .expect("on-foot path after stamper rebake");
     assert_eq!(r.dest, to);
     assert!(r.legs.iter().any(|l| matches!(l, Leg::Walk { .. })));
     let walked: Vec<WorldTile> = r
@@ -285,6 +295,7 @@ fn load_pack_path_round_trips_a_world() {
     let mut graph = TransportGraph::default();
     graph.edges.push(TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: tile(1, 0, 0),
         to: tile(3, 0, 0),
         loc_id: 1530,
@@ -351,6 +362,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
     let mut graph = TransportGraph::default();
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
+        player_delta: None,
         at: tile(0, 0, 0),
         to: tile(4, 4, 0),
         loc_id: 0,

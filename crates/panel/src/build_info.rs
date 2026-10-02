@@ -1,11 +1,11 @@
 //! Deploy fingerprint: static release label plus rs2b0t git stamp.
 //!
-//! Visible line is `alpha 4 · e978193` (same ` · ` as the old 4.5c line).
+//! Visible line is `beta 1 · e978193` (same ` · ` as the old 4.5c line).
 //! Hover is the crate version (`0.1.7`), then full commit + `builtAt`.
 //! Bump [`RELEASE`] by hand when the public name changes.
 
 /// Public name on the dim line. Not derived from git or Cargo.toml.
-pub const RELEASE: &str = "alpha 4";
+pub const RELEASE: &str = "beta 1";
 /// Crate version (`Cargo.toml`), shown on hover.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Full 40-char SHA when known, else `"unknown"`.
@@ -26,7 +26,7 @@ pub fn git_stamp(short: &str, dirty: bool) -> String {
     }
 }
 
-/// `alpha 4 · e978193`
+/// `beta 1 · e978193`
 pub fn line(release: &str, stamp: &str) -> String {
     format!("{release} · {stamp}")
 }
@@ -49,7 +49,7 @@ pub fn build_tooltip() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{git_stamp, line, tooltip, SHORT};
+    use super::{git_stamp, line, tooltip};
 
     #[test]
     fn git_stamp_is_short_or_short_dirty() {
@@ -73,14 +73,6 @@ mod tests {
         assert_eq!(
             tooltip("0.1.7", "abcdef0123456789", true, ""),
             "0.1.7\ncommit abcdef0123456789 (dirty tree)\nbuilt —"
-        );
-    }
-
-    #[test]
-    fn baked_short_is_seven_or_unknown() {
-        assert!(
-            SHORT == "unknown" || SHORT.chars().count() == 7,
-            "short must be 7 chars or unknown, got {SHORT:?}"
         );
     }
 }

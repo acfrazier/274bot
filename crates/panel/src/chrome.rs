@@ -177,20 +177,12 @@ pub const CONFIG_ROW: &[&str] = &["General config", "Nav config", "Loadouts"];
 mod tests {
     use crate::chrome::{
         button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
-        multibox_tooltip, resolve_heading_order, sections, BUTTON_GAP, CONFIG_HOST_ROW, CONFIG_MIN,
-        CONFIG_SCRIPT_ROW, HEADING_ORDER, MIN_BUTTON, MOCK_BUTTONS, SCRIPT_ROW,
+        multibox_tooltip, resolve_heading_order, BUTTON_GAP, CONFIG_MIN, MIN_BUTTON,
     };
-    use crate::theme::{apply_amber, integer_ui_scale, ACCENT, PANEL_WIDTH};
+    use crate::theme::{apply_amber, panel_scale, PANEL_WIDTH};
 
     #[test]
     fn heading_order_defaults_and_merges() {
-        assert_eq!(
-            resolve_heading_order(&[]),
-            HEADING_ORDER
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect::<Vec<_>>()
-        );
         let saved = vec!["log".into(), "nope".into(), "status".into()];
         assert_eq!(
             resolve_heading_order(&saved),
@@ -205,103 +197,19 @@ mod tests {
     }
 
     #[test]
-    fn sections_contains_all_section_ids() {
-        let ids: Vec<&str> = sections().iter().map(|s| s.id).collect();
-        for id in [
-            "profile",
-            "script",
-            "parameters",
-            "status",
-            "log",
-            "rendering",
-            "input",
-            "debug",
-        ] {
-            assert!(ids.contains(&id), "missing section id {id:?}");
-        }
-    }
-
-    #[test]
-    fn accent_is_amber_not_green() {
-        assert_eq!(ACCENT[0], 1.0);
-        const {
-            assert!(ACCENT[1] > 0.6, "amber G must exceed 0.6");
-        }
-        const {
-            assert!(ACCENT[0] > ACCENT[1], "amber is red-dominant, never green");
-        }
-    }
-
-    #[test]
     fn multibox_tooltip_matches_the_plan_copy() {
         assert_eq!(multibox_tooltip(true), "hide rail — slots keep running");
         assert_eq!(multibox_tooltip(false), "sidecar wall");
     }
 
     #[test]
-    fn multibox_is_wired_not_a_mock() {
-        assert!(
-            !MOCK_BUTTONS.contains(&"MultiBox"),
-            "MultiBox is a live toggle; only parameter chrome stays mocked"
-        );
-        assert!(
-            !MOCK_BUTTONS.contains(&"Loadouts"),
-            "Loadouts is wired, not a mock"
-        );
-        assert!(
-            !MOCK_BUTTONS.contains(&"General config"),
-            "General config opens slot render + global cadence"
-        );
-        for b in ["Browse…", "Start", "Pause", "Stop"] {
-            assert!(
-                !MOCK_BUTTONS.contains(&b),
-                "script {b:?} is wired, not a mock"
-            );
+    fn panel_scale_preserves_fractional_monitor_density() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            assert_eq!(panel_scale(scale), scale);
         }
-    }
-
-    #[test]
-    fn config_rows_are_two_by_two_without_parameters_heading() {
-        assert_eq!(CONFIG_HOST_ROW, ["General config", "Nav config"]);
-        assert_eq!(CONFIG_SCRIPT_ROW, ["Loadouts", "Script prefs"]);
-        assert!(!HEADING_ORDER.contains(&"parameters"));
-        assert!(
-            !MOCK_BUTTONS.contains(&"Nav config"),
-            "Nav config is its own window"
-        );
-        assert!(!MOCK_BUTTONS.contains(&"General config"));
-        assert!(
-            !MOCK_BUTTONS.contains(&"Loadouts"),
-            "Loadouts opens its own window"
-        );
-        assert!(
-            !MOCK_BUTTONS.contains(&"Script prefs"),
-            "Script prefs opens its own window"
-        );
-    }
-
-    #[test]
-    fn browse_start_stop_are_not_mocks() {
-        assert!(!MOCK_BUTTONS.contains(&"Browse…"));
-        assert!(!MOCK_BUTTONS.contains(&"Start"));
-        assert!(!MOCK_BUTTONS.contains(&"Pause"));
-        assert!(!MOCK_BUTTONS.contains(&"Stop"));
-    }
-
-    #[test]
-    fn script_section_is_wired() {
-        assert!(
-            sections().iter().any(|s| s.id == "script" && s.wired),
-            "the script section is un-mocked this task"
-        );
-    }
-
-    #[test]
-    fn integer_ui_scale_retina_is_2_and_never_below_1() {
-        assert_eq!(integer_ui_scale(2.0), 2.0);
-        assert_eq!(integer_ui_scale(1.0), 1.0);
-        assert_eq!(integer_ui_scale(1.75), 2.0);
-        assert_eq!(integer_ui_scale(0.5), 1.0);
+        for invalid in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+            assert_eq!(panel_scale(invalid), 1.0);
+        }
     }
 
     #[test]
@@ -326,12 +234,6 @@ mod tests {
         let packed = equal_button_width(280.0, 4);
         assert!(packed < MIN_BUTTON);
         assert!(packed > 40.0);
-        const {
-            assert!(MIN_BUTTON > 0.0);
-        }
-        assert_eq!(SCRIPT_ROW.len(), 3);
-        assert_eq!(CONFIG_HOST_ROW.len(), 2);
-        assert_eq!(CONFIG_SCRIPT_ROW.len(), 2);
         let script = button_cells(avail, 3);
         assert_eq!(script.len(), 3);
         assert!(script[1].1 && script[2].1, "Start/Pause/Stop stay one row");

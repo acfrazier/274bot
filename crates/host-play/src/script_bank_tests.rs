@@ -516,7 +516,7 @@ fn bank_pick_walk_reuses_the_winning_route_and_hold_keeps_it_without_sends() {
         &GameSnapshot::new(),
         &navs,
         &Arc::new(Mutex::new(vec![])),
-        world.as_deref(),
+        world.as_ref(),
         true,
         false,
         || panic!("a held slot must not enter the reach/follow path"),
@@ -567,9 +567,9 @@ fn bank_pick_walk_timeout_discards_the_winner_and_attempts_only_the_air_fallback
 }
 
 #[test]
-fn bank_pick_walk_reset_abort_and_newer_route_lease_reject_late_results() {
+fn bank_pick_walk_reset_abort_takeover_and_newer_route_lease_reject_late_results() {
     let world = Some(world(false));
-    for replacement in 0..3 {
+    for replacement in 0..4 {
         let navs = navs(vec![bank("bank", 8, 8)]);
         let gate = Controlled::new();
         assert!(queue_bank_walk(
@@ -584,15 +584,34 @@ fn bank_pick_walk_reset_abort_and_newer_route_lease_reject_late_results() {
         match replacement {
             0 => super::super::reset_script_nav(&navs, "test"),
             1 => super::super::abort_script_walk(&navs, "test"),
-            _ => {
+            2 => {
                 // Publish another walk owner's refusal while the bank worker
                 // is parked: its late success must not replace that outcome.
                 let mut all = navs.lock().unwrap();
                 let bot = all.get_mut("test").unwrap();
                 bot.route_generation = bot.route_generation.wrapping_add(1);
                 bot.walk_request_id = 91;
-                bot.requested_route = Some((tile(15, 15), 2, false, false, false));
+                bot.requested_route = Some((
+                    tile(15, 15),
+                    2,
+                    false,
+                    false,
+                    false,
+                    nav::zones::ZoneExempt::NONE,
+                ));
                 bot.note_failure(bot.route_generation, 91, tile(15, 15), 2, false);
+            }
+            _ => {
+                let mut all = navs.lock().unwrap();
+                let bot = all.get_mut("test").unwrap();
+                assert!(bot.script_walk_armed());
+                bot.cancel_for_manual_input();
+                assert!(!bot.script_walk_armed());
+                assert_eq!(bot.manual_takeover_watermark, bot.walk_outcome_seq);
+                assert_eq!(
+                    bot.walk_outcome_request_id, 0,
+                    "a raw bank walk must not fabricate a request-id-zero cancellation receipt"
+                );
             }
         }
         let before = {
@@ -637,7 +656,14 @@ fn bank_pick_latest_pending_selection_preserves_an_armed_walk() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("test").unwrap();
         bot.route = Some(route.clone());
-        bot.requested_route = Some((route.dest, 0, false, false, false));
+        bot.requested_route = Some((
+            route.dest,
+            0,
+            false,
+            false,
+            false,
+            nav::zones::ZoneExempt::NONE,
+        ));
         bot.walk_request_id = 91;
         bot.route_generation = 12;
     }

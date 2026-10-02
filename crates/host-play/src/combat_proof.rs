@@ -265,6 +265,7 @@ pub(crate) fn record_walk(
     tick: u64,
     run: impl std::fmt::Debug,
     request_id: u64,
+    action_id: u64,
     request: &script::native::WalkRequest,
     snapshot: &GameSnapshot,
 ) {
@@ -281,6 +282,7 @@ pub(crate) fn record_walk(
         "snapshot_tick": snapshot.tick(),
         "run": format!("{run:?}"),
         "request_id": request_id,
+        "action_id": action_id,
         "request": {
             "target": { "x": request.target.x, "z": request.target.z, "level": request.target.level },
             "radius": request.radius,

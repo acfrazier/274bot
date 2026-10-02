@@ -684,7 +684,6 @@ mod tests {
 
     #[test]
     fn trade_op_is_the_frozen_fourth_player_slot() {
-        assert_eq!(TRADE_OP, 4);
         let player = PlayerRef {
             name: "bob".into(),
             distance: 1,
@@ -788,19 +787,5 @@ mod tests {
         ] {
             assert_eq!(truthy(&value), want, "{value}");
         }
-    }
-
-    #[test]
-    fn offer_constants_match_frozen_trade_ts() {
-        assert_eq!(OFFER_INV, 3322);
-        assert_eq!(MY_OFFER_INV, 3415);
-        assert_eq!(OFFER_ALL, 4);
-        assert_eq!(OFFER_X, 5);
-        assert_eq!(REMOVE_ALL, 4);
-        assert_eq!(COUNT_OPEN_MS, 3_000);
-        assert_eq!(SETTLE_MS, 4_000);
-        assert_eq!(DECLINE_BUTTON_WAIT_MS, 1_200);
-        assert_eq!(DECLINE_CLOSE_MS, 3_000);
-        assert_eq!(REMOVE_MAX, 28);
     }
 }

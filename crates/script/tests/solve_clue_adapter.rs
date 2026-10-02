@@ -260,6 +260,8 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
 }
@@ -316,6 +318,7 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         allow_bank_fetch: false,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 

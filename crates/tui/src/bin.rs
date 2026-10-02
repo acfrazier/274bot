@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use client::client::Client;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -48,7 +49,7 @@ use host_play::{
     open_vault, parse_profile_args, peek_map_catalogue, persist_background_bots_ack,
     player_here_tile, profile_password, run_with_io, run_with_template, MapDemandHandle,
     MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue, ServerProfile,
-    SharedClientTemplate, WalkArm, WireCmd,
+    SharedClientTemplate, SlotFrameInput, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -676,7 +677,20 @@ impl TuiSession {
             .as_ref()
             .map(|t| t.profile().map_members())
             .unwrap_or(false);
-        let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
+        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
+            let hold = frame.hold;
+            if host_play::cancel_walk_arm_on_manual_input(
+                name,
+                &travellers,
+                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
+                    x,
+                    z,
+                    level,
+                }),
+                frame,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
             // Clear facts and externally armed work at the actual session
             // boundary before scenario/local-player/Guardian early returns.
             if publish_frontend_slot(
@@ -1375,7 +1389,7 @@ impl TuiSession {
             z: h.z,
             level: h.level,
         });
-        let options = app.nav.find_options();
+        let options = app.map_find_options();
         let profile = self.server_profile.clone();
         let state = self.focused_walk_state(&name);
         let request = host_play::walk_map::WalkRequest {
@@ -1452,7 +1466,7 @@ impl TuiSession {
             &world,
             from,
             dest,
-            app.nav.find_options(),
+            app.map_find_options(),
             &state,
             &bank,
             &self.travellers,
@@ -1483,7 +1497,7 @@ impl TuiSession {
             ActionKind::Teleport,
             &context,
             from,
-            app.nav.find_options(),
+            app.map_find_options(),
         ) {
             Ok(command) => command,
             Err(error) => {
@@ -1511,7 +1525,7 @@ impl TuiSession {
             app.error = Some("no bots selected".into());
             return;
         }
-        let options = app.nav.find_options();
+        let options = app.map_find_options();
         let destination = app
             .map_model
             .pending()
@@ -2255,6 +2269,19 @@ impl TuiSession {
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
         app.world = self.nav_world.lock().unwrap().clone();
+        // This is the UI loop, not a client's snapshot/tick thread. The first
+        // explicit reach-layer request decodes the already verified sidecar.
+        app.map_reach = if app.map_active && app.map.layers.reach {
+            self.server_profile.as_ref().and_then(|profile| {
+                let world = app.world.as_ref()?;
+                let bound = profile.world()?;
+                Arc::ptr_eq(world, &bound)
+                    .then(|| profile.reach())
+                    .flatten()
+            })
+        } else {
+            None
+        };
         app.refresh();
         self.bind_map_context(app);
         if app.map_active {
@@ -3018,6 +3045,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::MapClose => {
             session.release_map_catalogue();
+            app.map_reach = None;
             app.map_model.close();
         }
         AppAction::ArmWalk(tile) => session.arm_walk_on(app, tile),
@@ -3185,3 +3213,7 @@ fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
 #[cfg(test)]
 #[path = "bin_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "manual_click_live_tests.rs"]
+mod manual_click_live_tests;

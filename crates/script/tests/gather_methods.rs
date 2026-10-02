@@ -76,6 +76,8 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
 }
@@ -145,7 +147,6 @@ export function tick(api) {
     missingName: api.gatherResource({}),
     rocks: api.gatherResource({ name: 'Rocks' }),
     blankName: api.gatherResource({ name: '   ' }),
-    namespace: api.gather,
     promise: omitted instanceof Promise,
   });
 }
@@ -174,7 +175,6 @@ export function tick(api) {
         assert_eq!(value["missingName"]["error"], "invalid-args");
         assert_eq!(value["rocks"]["error"], "unknown-resource");
         assert_eq!(value["blankName"]["error"], "unknown-resource");
-        assert!(value["namespace"].is_null());
         assert_eq!(value["promise"], false);
     }
 }

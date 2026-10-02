@@ -209,6 +209,36 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn food_options_come_from_selected_289_fixed_heal_facts() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        r#"
+import { FOOD_OPTIONS } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = JSON.stringify({
+            legacyFoods: ['Shark', 'Lobster', 'Apple pie'].every(name => FOOD_OPTIONS.includes(name)),
+            generatedFood: FOOD_OPTIONS.includes('Chocolaty milk'),
+            unfinishedFood: FOOD_OPTIONS.includes('Unfinished bowl'),
+        });
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(value["legacyFoods"], true);
+    assert_eq!(value["generatedFood"], true);
+    assert_eq!(value["unfinishedFood"], false);
+}
+#[test]
 fn settings_display_and_saved_preserve_posted_values() {
     let value = probe_json(
         r#"

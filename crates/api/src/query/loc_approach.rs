@@ -2,7 +2,7 @@
 //! `LocApproach.ts`): a 4-bit force-approach mask rotated by the
 //! loc's angle, checked against the scene's directional wall flags.
 
-use crate::snapshot::{LocView, SceneView, WorldTile};
+use crate::snapshot::{GameSnapshot, LocView, SceneView, WorldTile};
 use client::dash3d::CollisionFlag;
 
 /// The loc shapes with a real footprint (the m8aq
@@ -13,6 +13,65 @@ const FORCE_NORTH: i32 = 0x1;
 const FORCE_EAST: i32 = 0x2;
 const FORCE_SOUTH: i32 = 0x4;
 const FORCE_WEST: i32 = 0x8;
+
+/// A placed footprint's rotated dimensions and blocked approach sides.
+/// Shared by live loc readiness and packed transport admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocApproach {
+    pub width: u8,
+    pub length: u8,
+    pub blocked_sides: u8,
+}
+
+impl LocApproach {
+    /// Construct the packed approach geometry from a loc definition's raw,
+    /// unrotated dimensions and force-approach mask.
+    ///
+    /// Returns `None` when a dimension cannot be represented by the packed
+    /// footprint fields.
+    pub fn from_loc_def(width: i32, length: i32, angle: i32, force_approach: i32) -> Option<Self> {
+        let (width, length) = if angle & 1 == 0 {
+            (width, length)
+        } else {
+            (length, width)
+        };
+        Some(Self {
+            width: u8::try_from(width).ok()?,
+            length: u8::try_from(length).ok()?,
+            blocked_sides: rotate_force_approach(force_approach, angle) as u8,
+        })
+    }
+
+    /// Test one stand against the footprint, not merely its south-west anchor.
+    /// Callers check scene bounds and standability before admission.
+    pub fn can_operate(self, origin: WorldTile, from: WorldTile, flags: i32) -> bool {
+        if from.level != origin.level || self.width == 0 || self.length == 0 {
+            return false;
+        }
+        let max_x = origin.x + i32::from(self.width) - 1;
+        let max_z = origin.z + i32::from(self.length) - 1;
+        let in_x = (origin.x..=max_x).contains(&from.x);
+        let in_z = (origin.z..=max_z).contains(&from.z);
+        let mask = i32::from(self.blocked_sides);
+        (in_x && in_z)
+            || (from.x == origin.x - 1
+                && in_z
+                && flags & CollisionFlag::W_E == 0
+                && mask & FORCE_WEST == 0)
+            || (from.x == max_x + 1
+                && in_z
+                && flags & CollisionFlag::W_W == 0
+                && mask & FORCE_EAST == 0)
+            || (from.z == origin.z - 1
+                && in_x
+                && flags & CollisionFlag::W_N == 0
+                && mask & FORCE_SOUTH == 0)
+            || (from.z == max_z + 1
+                && in_x
+                && flags & CollisionFlag::W_S == 0
+                && mask & FORCE_NORTH == 0)
+    }
+}
 
 /// Rotate the 4-bit force-approach mask by the loc's angle (the m8aq
 /// `rotateForceApproach`).
@@ -50,45 +109,27 @@ fn test_loc(
     force_approach: i32,
     scene: &SceneView,
 ) -> bool {
-    let max_x = dst_x + size_x - 1;
-    let max_z = dst_z + size_z - 1;
-
-    if src_x >= dst_x && src_x <= max_x && src_z >= dst_z && src_z <= max_z {
-        return true;
+    let (Ok(width), Ok(length)) = (u8::try_from(size_x), u8::try_from(size_z)) else {
+        return false;
+    };
+    LocApproach {
+        width,
+        length,
+        blocked_sides: force_approach as u8,
     }
-    if src_x == dst_x - 1
-        && src_z >= dst_z
-        && src_z <= max_z
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_E) == 0
-        && (force_approach & FORCE_WEST) == 0
-    {
-        return true;
-    }
-    if src_x == max_x + 1
-        && src_z >= dst_z
-        && src_z <= max_z
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_W) == 0
-        && (force_approach & FORCE_EAST) == 0
-    {
-        return true;
-    }
-    if src_z == dst_z - 1
-        && src_x >= dst_x
-        && src_x <= max_x
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_N) == 0
-        && (force_approach & FORCE_SOUTH) == 0
-    {
-        return true;
-    }
-    if src_z == max_z + 1
-        && src_x >= dst_x
-        && src_x <= max_x
-        && (collision_at(scene, src_x, src_z) & CollisionFlag::W_S) == 0
-        && (force_approach & FORCE_NORTH) == 0
-    {
-        return true;
-    }
-    false
+    .can_operate(
+        WorldTile {
+            x: dst_x,
+            z: dst_z,
+            level: scene.level,
+        },
+        WorldTile {
+            x: src_x,
+            z: src_z,
+            level: scene.level,
+        },
+        collision_at(scene, src_x, src_z),
+    )
 }
 
 /// Whether `from` can operate `loc` in `scene`; `None` when the
@@ -119,6 +160,77 @@ pub fn can_operate_from(loc: &LocView, scene: &SceneView, from: WorldTile) -> Op
         force_approach,
         scene,
     ))
+}
+
+/// Chebyshev distance from a tile to the loc's full rotated rectangle.
+/// A loc-backed radius is measured from this footprint, not its south-west
+/// anchor. Plain tile destinations retain their anchor-based radius.
+pub fn distance_from(loc: &LocView, from: WorldTile) -> Option<u32> {
+    if !FOOTPRINT_SHAPES.contains(&loc.shape)
+        || from.level != loc.tile.level
+        || loc.footprint_width <= 0
+        || loc.footprint_length <= 0
+    {
+        return None;
+    }
+    let nearest_x = from
+        .x
+        .clamp(loc.tile.x, loc.tile.x + loc.footprint_width - 1);
+    let nearest_z = from
+        .z
+        .clamp(loc.tile.z, loc.tile.z + loc.footprint_length - 1);
+    Some(from.x.abs_diff(nearest_x).max(from.z.abs_diff(nearest_z)))
+}
+
+/// Whether an identified loc is absent from an observed, ready scene.
+/// Off-scene and rebuilding targets are unknown, not gone.
+pub fn target_gone(snapshot: &GameSnapshot, to: WorldTile, loc_id: i32) -> bool {
+    snapshot.ingame()
+        && snapshot.scene_state() == 2
+        && super::SceneQuery::new(snapshot.scene(), None).contains(to)
+        && !snapshot
+            .locs()
+            .iter()
+            .any(|loc| loc.tile == to && loc.id == loc_id)
+}
+
+/// Live footprint arrival for an explicitly identified loc radius walk.
+/// Off-scene or unknown footprints return `None`, not interaction proof.
+/// The full rotated rectangle, force-approach sides and live wall flags
+/// determine arrival; unrelated locs on the destination tile are ignored.
+pub fn arrived_at(
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    loc_id: i32,
+) -> Option<bool> {
+    let scene = snapshot.scene();
+    let query = super::SceneQuery::new(scene, None);
+    if !query.contains(to) {
+        return None;
+    }
+    let mut modeled = false;
+    for loc in snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.tile == to && loc.id == loc_id)
+    {
+        if distance_from(loc, to).is_none() {
+            continue;
+        }
+        let Some(can_operate) = can_operate_from(loc, scene, from) else {
+            continue;
+        };
+        modeled = true;
+        let in_radius = u32::try_from(radius).is_ok_and(|radius| {
+            distance_from(loc, from).is_some_and(|distance| distance <= radius)
+        });
+        if in_radius && query.walkable(from) && can_operate {
+            return Some(true);
+        }
+    }
+    modeled.then_some(false)
 }
 
 /// Every walkable tile from which `loc` can be operated; `None` when

@@ -65,6 +65,8 @@ pub use host::{RandomClaim, RandomStatus};
 use parking_lot::Mutex as QueueMutex;
 mod debug_replies;
 mod instance_lock;
+#[cfg(any(test, feature = "live-probe"))]
+mod manual_click_live_probe;
 mod play_bootstrap;
 mod play_login;
 mod play_status;
@@ -87,8 +89,8 @@ pub use map_cache::{
 };
 pub use map_producer::{map_artifact_policies, NativeMapProducer};
 pub use walk_arm::{
-    arm_walk_on, cancel_walk_arm, step_walk_arm_bank_fetch, step_walk_arm_follow,
-    walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
+    arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, step_walk_arm_bank_fetch,
+    step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
 };
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
@@ -98,6 +100,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 #[cfg(test)]
 use host::{wake_channel, DetectedRandom, Pump};
 use host::{FrameBuf, SlotInput, SlotWake};
+pub use host::{ManualMoveIntent, MouseOwner};
 pub use instance_lock::{
     instance_conflict_message, instance_lock_path, resolve_instance_permit,
     try_acquire_instance_lock, InstanceHolder, InstanceKind, InstanceLock, InstanceLockResult,
@@ -133,6 +136,7 @@ use play_login::{
 };
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
+pub use play_slots::SlotFrameInput;
 #[cfg(test)]
 use play_slots::{
     end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,
@@ -442,7 +446,15 @@ mod combat_live_proof_tests;
 mod tests;
 
 #[cfg(test)]
+mod api_gather_live_tests;
+#[cfg(test)]
+mod api_gather_tests;
+#[cfg(test)]
 mod bank_npc_live;
 #[cfg(test)]
 #[path = "quester_journal_live_tests.rs"]
 mod quester_journal_live_tests;
+
+#[cfg(test)]
+#[path = "nav_door_toggle_live_settlement_tests.rs"]
+mod nav_door_toggle_live_settlement_tests;

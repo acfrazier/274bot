@@ -25,7 +25,7 @@ use crate::theme::{
 };
 use crate::window::RedrawMode;
 use client::io::Packet;
-use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
+use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
 
@@ -396,34 +396,41 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
     body.data()[..body.pos].to_vec()
 }
 
-fn plant_snapshot(unpack: &std::path::Path, packs: &[(String, Vec<u8>)]) {
+fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    struct FixtureEntries;
+    impl client::unpack::EntrySource for FixtureEntries {
+        fn fetch_entries(
+            &mut self,
+            _archive: i32,
+            files: &[i32],
+        ) -> Result<Vec<(i32, Vec<u8>)>, String> {
+            Ok(files.iter().map(|&file| (file, b"body".to_vec())).collect())
+        }
+    }
     let versionlist = &packs
         .iter()
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let version = client::unpack::version_hash(versionlist);
-    let dir = unpack.join(&version);
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut manifest = format!(
-        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
-        dir.display()
-    );
+    let transfer = nav::manifest::hash_bytes(versionlist);
+    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let input = unpack.join("fixture-input");
+    std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
-        std::fs::write(dir.join(name), bytes).unwrap();
-        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+        std::fs::write(input.join(name), bytes).unwrap();
     }
-    for name in ["models", "anims", "midi", "maps"] {
-        let mut bin = 0u32.to_le_bytes().to_vec();
-        bin.extend_from_slice(&4u32.to_le_bytes());
-        bin.extend_from_slice(b"body");
-        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
-        manifest += &format!(
-            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
-            bin.len()
-        );
-    }
-    std::fs::write(dir.join("manifest"), manifest).unwrap();
+    let out = unpack
+        .join(format!("revision-{revision}"))
+        .join(negotiated)
+        .join(transfer);
+    // Use the same verified retained publisher fixture as host runtime_bind.
+    // Legacy size-only markers are not ordinary-launch asset candidates.
+    client::unpack::fetch_snapshot(
+        &input.to_string_lossy(),
+        &out.to_string_lossy(),
+        &mut FixtureEntries,
+    )
+    .unwrap();
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
@@ -506,7 +513,7 @@ fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     )
     .unwrap();
     let unpack = root.join("unpack");
-    plant_snapshot(&unpack, &packs);
+    plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
     (root, cache, manifest_path, unpack, port)
 }
@@ -1028,6 +1035,11 @@ fn dock_host_frame(ctx: &mut dear_imgui_rs::Context, state: &mut PanelState, os:
 
 fn dock_host_context() -> dear_imgui_rs::Context {
     let mut ctx = dear_imgui_rs::Context::create();
+    ctx.io_mut()
+        .set_backend_flags(BackendFlags::RENDERER_HAS_TEXTURES);
+    assert!(crate::window::add_panel_font(&mut ctx));
+    let _ = ctx.font_atlas_mut().build();
+    apply_ui_scale(ctx.style_mut(), 1.0);
     ctx.io_mut().set_config_flags(ConfigFlags::DOCKING_ENABLE);
     ctx
 }
@@ -1179,6 +1191,35 @@ fn apply_ui_scale_scales_padding_for_retina() {
 }
 
 #[test]
+fn amber_palette_preserves_scaled_scrollbars_across_monitor_changes() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let base_style = ctx.style().clone();
+    for (scale, size, rounding) in [(2.0, 12.0, 6.0), (1.5, 9.0, 4.0), (1.0, 6.0, 3.0)] {
+        *ctx.style_mut() = base_style.clone();
+        apply_ui_scale(ctx.style_mut(), scale);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let _ui = ctx.frame();
+        crate::theme::apply_amber_current(&crate::theme::ChromeColors::default());
+        ctx.render();
+        assert_eq!(
+            ctx.style().scrollbar_size(),
+            size,
+            "scrollbar width at {scale}×"
+        );
+        assert_eq!(
+            ctx.style().scrollbar_rounding(),
+            rounding,
+            "scrollbar rounding at {scale}×",
+        );
+    }
+}
+
+#[test]
 fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
     assert_eq!(native_applet(), [765.0, 503.0]);
     assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
@@ -1212,15 +1253,19 @@ fn game_window_title_is_the_profile_name() {
 }
 
 #[test]
-fn panel_split_is_a_thin_right_slice() {
-    let r = panel_split_ratio(1120.0);
-    assert!((r - PANEL_WIDTH / 1120.0).abs() < 0.001);
-    let wide = panel_split_ratio(2000.0);
-    assert!(
-        (wide * 2000.0 - PANEL_WIDTH).abs() < 0.01,
-        "panel stays 330px on a wide host window, got {}",
-        wide * 2000.0
-    );
+fn panel_split_keeps_its_logical_width_at_every_scale() {
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        for base_width in [1120.0, 2000.0] {
+            let width = base_width * scale;
+            let ratio = panel_split_ratio(width, scale);
+            assert!(
+                (ratio * width - PANEL_WIDTH * scale).abs() < 0.01,
+                "panel stays {} physical px at {scale}× in a {width}px window, got {}",
+                PANEL_WIDTH * scale,
+                ratio * width
+            );
+        }
+    }
 }
 
 #[test]

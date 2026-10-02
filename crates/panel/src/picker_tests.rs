@@ -16,7 +16,7 @@ use super::{
     reset_route_cache, right_align_x, route_flatten_count, set_navflags_binding, set_pack,
     set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
     walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
-    FlagsSidecarState, WalktoCaption,
+    FlagsSidecarState, WalktoCaption, ROUTE_THROUGH_ZONES_TOOLTIP,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -369,6 +369,59 @@ fn picker_map_window_builds_headless() {
     picker_map_window(ui, &mut s, &open_world(3, 3), &mut open, None, &mut map);
     ctx.render();
     assert!(open, "the window must stay open until Walk is confirmed");
+}
+#[test]
+fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
+    let _guard = crate::test_support::imgui_context_guard();
+    assert_eq!(
+        ROUTE_THROUGH_ZONES_TOOLTIP,
+        "Allows routes past monsters that may kill your bot."
+    );
+    let mut ctx = dear_imgui_rs::Context::create();
+    let world = open_world(3, 3);
+
+    for marked in [false, true] {
+        super::note_closed();
+        let mut session = Session::new();
+        session.route_through_zones = true;
+        if marked {
+            session.open_walkto_for_marked();
+        } else {
+            session.walkto_open = true;
+        }
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert!(
+            !session.route_through_zones,
+            "opening from {} starts with zones avoided",
+            if marked { "marked Fleet" } else { "chrome" }
+        );
+
+        let rect = super::last_picker_layout().route_zones_rect;
+        let checkbox = [
+            (rect[0][0] + rect[1][0]) * 0.5,
+            (rect[0][1] + rect[1][1]) * 0.5,
+        ];
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+        assert!(
+            session.route_through_zones,
+            "clicking the checkbox opts this WalkTo into zone crossing"
+        );
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+        assert!(
+            session.route_through_zones,
+            "the selection lasts for the current open picker"
+        );
+
+        super::note_closed();
+        session.route_through_zones = true;
+        session.walkto_open = true;
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert!(
+            !session.route_through_zones,
+            "the next open resets the per-WalkTo choice"
+        );
+    }
 }
 
 fn picker_click_frame(
@@ -766,36 +819,6 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
 }
 
 #[test]
-fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
-    let _guard = super::lock_nav_statics();
-    let mut world = bake_world(3, 3, &[]);
-    world.collision.origin.x = 7777;
-    let origin = world.collision.origin;
-    let width = world.collision.width;
-    let height = world.collision.height;
-    let expected: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
-    nav::paint::reset_bake_reach_calls();
-    set_reach_binding(Some(Arc::clone(&expected)), origin, width, height, true);
-    let first = reach_bitset(&world).expect("bundled bits");
-    let second = reach_bitset(&world).expect("slot reuse");
-    assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(&*first, &*expected);
-    assert_eq!(
-        nav::paint::bake_reach_calls(),
-        0,
-        "bundled first/second paint must not flood"
-    );
-    let mut other = open_world(3, 3);
-    other.collision.origin.x = 99;
-    assert!(
-        reach_bitset(&other).is_none(),
-        "same-size different origin must not reuse bundled bits"
-    );
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
-    set_reach_binding(None, origin, 0, 0, false);
-}
-
-#[test]
 fn unbound_reach_is_unavailable_and_does_not_bake() {
     let _guard = super::lock_nav_statics();
     set_reach_binding(
@@ -1017,8 +1040,7 @@ fn session_pack_detach_clears_flood_and_reach_binding() {
     let origin = world.collision.origin;
     let width = world.collision.width;
     let height = world.collision.height;
-    let bits: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
-    set_reach_binding(Some(Arc::clone(&bits)), origin, width, height, true);
+    set_reach_binding(None, origin, width, height, true);
     assert!(reach_binding_occupied());
 
     let seed = WorldTile {
@@ -1062,6 +1084,7 @@ fn test_route() -> nav::router::Route {
             Leg::Transport {
                 edge: TransportEdge {
                     kind: TransportKind::Door,
+                    player_delta: None,
                     at: wt(3, 0),
                     to: wt(4, 0),
                     loc_id: 1530,

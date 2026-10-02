@@ -57,6 +57,7 @@ fn walled_5x5() -> WorldCollision {
 fn knife_graph() -> TransportGraph {
     let edge = TransportEdge {
         kind: TransportKind::Door,
+        player_delta: None,
         at: tile(1, 2, 0),
         to: tile(2, 2, 0),
         loc_id: 1530,

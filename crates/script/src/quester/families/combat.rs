@@ -466,6 +466,7 @@ impl StepPlan for CombatPlan {
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
+            walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
         };
         run.begin_combat(cx)?;
         Ok(Box::new(run))
@@ -518,9 +519,23 @@ struct CombatRun {
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
+    walk_outcome_seq_at_begin: u64,
 }
 
 impl CombatRun {
+    fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
+        let current_seq = cx.tick.cx.observed_walk_outcome_seq;
+        if current_seq == self.walk_outcome_seq_at_begin {
+            return false;
+        }
+        crate::observed::with(|scene| {
+            let latest = scene.latest();
+            latest.walk_outcome_seq() == Some(current_seq)
+                && latest.walk_outcome_cancel_reason()
+                    == Some(crate::isolate_fb::WalkCancelReason::UserInput)
+        })
+    }
+
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
         let handle = cx.tick.actions.begin::<Combat>(
             (Arc::clone(&self.request), Arc::clone(&self.tables)),
@@ -536,7 +551,7 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Result<(), ActionError> {
         let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(stand, 1, cx.required_after),
+            reach::walk_request(stand, 1, None, cx.required_after),
             &mut cx.tick.cx,
         )?;
         self.phase = Phase::ReturningToStand;
@@ -550,6 +565,9 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
+        if receipt.end == WalkEnd::UserInput {
+            return Poll::Ready(Err(ActionError::UserInput));
+        }
         if !matches!(receipt.end, WalkEnd::Arrived) {
             return Poll::Ready(Err(ActionError::Blocked(Arc::clone(
                 &RETURN_TO_STAND_FAILED,
@@ -727,6 +745,10 @@ impl CombatRun {
 
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.user_interrupted_since_begin(cx) {
+            self.action = None;
+            return Poll::Ready(Err(ActionError::UserInput));
+        }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
             match self.begin_loot(cx) {
                 Ok(LootStart::Waiting | LootStart::Started) => return Poll::Pending,

@@ -82,6 +82,7 @@ fn obs_at(here: Option<Tile>) -> FightObservation {
         animating: false,
         los_override: Some(true),
         tick: 1,
+        user_move_intent_seq: 0,
     }
 }
 
@@ -545,12 +546,14 @@ fn unexpected_replies_abort_and_unknown_op_is_not_invented() {
 }
 
 #[test]
-fn walk_to_spot_execute_calls_interrupt_watch_and_walks_the_world() {
+fn walk_to_spot_manual_movement_takeover_does_not_rewalk() {
     let iso = LoadIsolate::spawn(
         r#"
 import { WalkToSpot } from '../../api/combat/hunting/combat.js';
 export default class T extends LoopingBot {
     loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
         const host = {
             died: false,
             targetIdx: null,
@@ -590,19 +593,86 @@ export default class T extends LoopingBot {
         vec![],
     )
     .unwrap();
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+    let mut initial = empty_snapshot(
         1,
         TileInput {
             x: 2914,
             z: 9809,
             level: 0,
         },
-    )));
+    );
+    // A pre-existing intent in the first snapshot is the start baseline.
+    initial.user_move_intent_seq = 5;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&initial));
     iso.on_game_tick(1);
     let iw = iso.probe("globalThis.__iw").unwrap();
     let host_fight = iso.probe("globalThis.__hostFight").unwrap();
     let status = iso.probe("globalThis.__status").unwrap();
     let drained = iso.drain_interacts();
+
+    let request_id = drained
+        .iter()
+        .find_map(|req| match req {
+            InteractReq::Walk { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .expect("initial WalkToSpot request");
+    iso.pause();
+    iso.resume();
+    let mut paused = empty_snapshot(
+        2,
+        TileInput {
+            x: 2914,
+            z: 9809,
+            level: 0,
+        },
+    );
+    paused.user_move_intent_seq = 6;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&paused));
+    iso.on_game_tick(3);
+    iso.probe("true").unwrap();
+    let after_resume = iso.drain_interacts();
+    assert!(
+        after_resume.is_empty(),
+        "paused-period intent first observed after Resume must keep the walk: {after_resume:?}"
+    );
+    assert!(
+        iso.live_walking_operation(),
+        "the carried Hunt walk remains live after paused-period movement"
+    );
+
+    let mut takeover = empty_snapshot(
+        4,
+        TileInput {
+            x: 2914,
+            z: 9809,
+            level: 0,
+        },
+    );
+    takeover.user_move_intent_seq = 7;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&takeover));
+    iso.on_game_tick(4);
+    iso.probe("true").unwrap();
+    let after_takeover = iso.drain_interacts();
+    assert!(
+        !iso.live_walking_operation(),
+        "the interrupted Hunt walk must relinquish ownership"
+    );
+    assert!(
+        after_takeover.iter().all(|req| matches!(
+            req,
+            InteractReq::AbortWalk {
+                request_id: aborted
+            } if *aborted == request_id
+        )),
+        "takeover must not reselect, rewalk, bank, or issue unrelated effects: {after_takeover:?}"
+    );
+    iso.on_game_tick(5);
+    let repeated = iso.drain_interacts();
+    assert!(
+        repeated.is_empty(),
+        "repeated ticks must not start another Hunt leg after takeover: {repeated:?}"
+    );
     iso.join();
     assert_eq!(
         iw, true,
@@ -634,6 +704,7 @@ export default class T extends LoopingBot {
                 allow_bank_fetch: true,
                 request_id,
                 avoid: _,
+                cross: _,
             } if *request_id != 0
         )),
         "{drained:?}"
@@ -713,5 +784,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }

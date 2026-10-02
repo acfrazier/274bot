@@ -6,7 +6,7 @@ use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
 use super::select;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkRequest};
+use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
@@ -218,6 +218,12 @@ impl NativeMachine for Combat {
         Ok(machine)
     }
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<CombatReport, ActionError>> {
+        if self.pending_walk.is_some_and(|id| {
+            cx.walk_receipt(id.get())
+                .is_some_and(|receipt| receipt.end == WalkEnd::UserInput)
+        }) {
+            return Poll::Ready(Err(ActionError::UserInput));
+        }
         let snapshot = cx.snapshot();
         let Some(frame) = Frame::borrow(snapshot) else {
             return Poll::Pending;
@@ -329,13 +335,8 @@ impl NativeMachine for Combat {
                 self.antifire(tick),
             );
             let lines = select::lines(danger, arbiter::stat(&frame, 3).1);
-            let food = self
-                .request
-                .allow
-                .food
-                .then(|| arbiter::food_by(&frame, &self.tables, None, |_| true))
-                .flatten();
-            self.safety_end(&frame, tick, danger, lines.emergency, food);
+            let food_available = self.emergency_food_available(&frame, danger);
+            self.safety_end(&frame, tick, danger, lines.emergency, food_available);
             self.counters.locked = self.counters.locked.saturating_add(1);
             return Poll::Pending;
         }
@@ -1057,12 +1058,13 @@ impl Combat {
         tick: u16,
         danger: Option<i32>,
         emergency: i32,
-        food: Option<i32>,
+        food_available: bool,
     ) {
         if self.phase == Phase::Escape || self.phase == Phase::WindDown {
             return;
         }
-        let no_food = danger != Some(0) && arbiter::stat(frame, 3).0 <= emergency && food.is_none();
+        let no_food =
+            danger != Some(0) && arbiter::stat(frame, 3).0 <= emergency && !food_available;
         let no_fire = self.flags & SHIELD_OVERRIDE != 0
             && !self.shield(frame)
             && !self.antifire(tick)
@@ -1108,6 +1110,30 @@ impl Combat {
             return false;
         }
         plan.push(row, reserve, &self.tables)
+    }
+    fn emergency_food_available(&self, frame: &Frame<'_>, danger: Option<i32>) -> bool {
+        if !self.request.allow.food {
+            return false;
+        }
+        if arbiter::food_by(frame, &self.tables, None, |food| {
+            food.eat_delay_arg.is_some()
+        })
+        .is_some()
+        {
+            return true;
+        }
+
+        let (hp, max) = arbiter::stat(frame, 3);
+        arbiter::food_by(frame, &self.tables, None, |food| {
+            let Some(delay) = food.message_delay else {
+                return false;
+            };
+            let gate = danger.map_or((max + 1) / 2, |danger| {
+                danger.saturating_mul(delay + 2).saturating_add(1)
+            });
+            food.eat_delay_arg.is_none() && hp.saturating_add(food.heal).min(max) > gate
+        })
+        .is_some()
     }
     fn plain_food(&self, frame: &Frame<'_>, tick: u16, gate: Option<i32>) -> Option<i32> {
         if !self.request.allow.food || self.pending_row(RowKind::Eat) {
@@ -1242,13 +1268,8 @@ impl Combat {
             self.antifire(tick),
         );
         let mut lines = select::lines(danger, hp_max);
-        let available_food = self
-            .request
-            .allow
-            .food
-            .then(|| arbiter::food_by(frame, &self.tables, None, |_| true))
-            .flatten();
-        self.safety_end(frame, tick, danger, lines.emergency, available_food);
+        let food_available = self.emergency_food_available(frame, danger);
+        self.safety_end(frame, tick, danger, lines.emergency, food_available);
         if self.phase == Phase::WindDown {
             let obs = prayer_observation(frame);
             for click in self.sweep.candidates(self.tables.selected(), &obs) {
@@ -1834,10 +1855,12 @@ impl Combat {
     ) -> Result<(), ActionError> {
         let id = cx.walk(WalkRequest {
             target: tile,
+            loc_id: None,
             radius: 1,
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
+            cross: Vec::new().into_boxed_slice(),
         })?;
         self.pending_walk = NonZeroU64::new(id);
         self.schedule.clear(tick, 1, false);

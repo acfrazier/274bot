@@ -12,7 +12,7 @@ use dear_imgui_rs::{StyleColor, TreeNodeFlags, Ui};
 use serde::{Deserialize, Serialize};
 
 use crate::session::Session;
-use crate::theme::{ACCENT, ERROR, GREEN};
+use crate::theme::{scale_px, ACCENT, ERROR, GREEN};
 
 const NAME_PICKER_KINDS: &[&str] = &[
     "obj",
@@ -648,8 +648,11 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
         };
         ui.text_wrapped(label);
         let picker = is_picker_kind(&argument.kind);
-        let trailing = if picker { 54.0 } else { 0.0 } + if argument.optional { 58.0 } else { 0.0 };
-        ui.set_next_item_width((ui.content_region_avail()[0] - trailing).max(80.0));
+        let trailing = scale_px(
+            ui,
+            if picker { 54.0 } else { 0.0 } + if argument.optional { 58.0 } else { 0.0 },
+        );
+        ui.set_next_item_width((ui.content_region_avail()[0] - trailing).max(scale_px(ui, 80.0)));
         let mut changed = false;
         if argument.kind == "int" && !argument.optional {
             let mut typed = session
@@ -772,7 +775,8 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
 
     ui.popup(PICKER_POPUP, || {
         ui.text(format!("Pick {kind}"));
-        let picker_width = ui.content_region_avail()[0].clamp(180.0, 460.0);
+        let picker_width =
+            ui.content_region_avail()[0].clamp(scale_px(ui, 180.0), scale_px(ui, 460.0));
         ui.set_next_item_width(picker_width);
         ui.input_text(
             "##debug-picker-search",
@@ -797,7 +801,7 @@ fn draw_name_picker(ui: &Ui, session: &mut Session, catalog: Option<&DebugCatalo
 
         let mut picked = None;
         ui.child_window("##debug-picker-hits")
-            .size([picker_width, 180.0])
+            .size([picker_width, scale_px(ui, 180.0)])
             .build(ui, || {
                 for hit in &session.debug_panel.picker_hits {
                     let label = if hit.alias.is_empty() {

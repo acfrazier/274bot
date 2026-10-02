@@ -239,6 +239,7 @@ pub struct FightObservation {
     pub scene_state: i32,
     pub hold: bool,
     pub ours: bool,
+    pub user_move_intent_seq: u64,
     pub chat_continue: bool,
     pub npcs: Vec<FightNpc>,
     pub self_target_kind: i32,
@@ -263,6 +264,7 @@ impl FightObservation {
             ingame: scene.latest().ingame().unwrap_or(ready.ingame),
             scene_state: session.scene_state().unwrap_or(ready.scene_state),
             hold: session.hold().unwrap_or(ready.hold),
+            user_move_intent_seq: session.user_move_intent_seq().unwrap_or(0),
             ours: session.ours().unwrap_or(ready.ours),
             chat_continue: session.chat_continue().unwrap_or(ready.chat_continue),
             npcs: session
@@ -302,6 +304,7 @@ impl FightObservation {
             post.scene_state(self.scene_state)
                 .hold(self.hold)
                 .ours(self.ours)
+                .user_move_intent_seq(self.user_move_intent_seq)
                 .chat_continue(self.chat_continue)
                 .npcs(self.npcs.iter().map(FightNpc::to_row).collect())
                 .self_target_kind(self.self_target_kind)
@@ -333,6 +336,7 @@ impl FightObservation {
             ingame: true,
             scene_state: 2,
             hold: false,
+            user_move_intent_seq: 0,
             ours: false,
             chat_continue: false,
             npcs: Vec::new(),

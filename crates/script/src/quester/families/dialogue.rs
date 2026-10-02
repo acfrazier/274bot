@@ -43,6 +43,7 @@ pub struct Dialogue {
     steps: u32,
     due_tick: u64,
     gap_inventory: Option<u64>,
+    gap_rearms_left: u64,
     ack_modal: i32,
     ack_page: u64,
     npc_index: i32,
@@ -62,6 +63,19 @@ impl NativeMachine for Dialogue {
             steps: 0,
             due_tick: 0,
             gap_inventory: None,
+            // Each held unit can be transferred once. Allow four additional
+            // observed changes for batched/reward updates, but never let
+            // unrelated inventory activity keep a closed dialogue alive.
+            gap_rearms_left: cx
+                .snapshot()
+                .inventory()
+                .map_or(0, |inventory| {
+                    inventory.value.iter().fold(0u64, |count, item| {
+                        count.saturating_add(item.count.max(0) as u64)
+                    })
+                })
+                .saturating_add(DIALOG_GAP_TICKS)
+                .min(DRIVE_STEPS as u64),
             ack_modal: -1,
             ack_page: 0,
             npc_index: -1,
@@ -86,9 +100,7 @@ impl NativeMachine for Dialogue {
         match self.phase {
             Phase::Approach => {
                 if let Some(target) = nearest_talk(cx, self.args.id) {
-                    if target.distance <= 2 {
-                        self.npc_index = target.index;
-                        self.npc_action = Arc::from(target.action);
+                    if target.distance <= 2 && talk_reachable(cx, target.tile) {
                         cx.cancel_request(self.walk_request_id);
                         self.walk_request_id = 0;
                         return match self.open(cx) {
@@ -159,11 +171,12 @@ impl NativeMachine for Dialogue {
                     self.drive(cx, &obs)
                 } else {
                     let inventory = inventory_fingerprint(cx);
-                    if inventory != self.gap_inventory {
+                    if inventory != self.gap_inventory && self.gap_rearms_left > 0 {
                         // Bulk hand-ins close the chat while the server consumes
                         // items, then reopen it for the final page. These are
                         // active game ticks, not the conversation's quiet end.
                         self.gap_inventory = inventory;
+                        self.gap_rearms_left -= 1;
                         self.due_tick = obs.tick.saturating_add(DIALOG_GAP_TICKS);
                     }
                     if obs.tick >= self.due_tick {
@@ -192,9 +205,17 @@ impl Dialogue {
                 return Ok(());
             }
             if let Some(target) = nearest_talk(cx, self.args.id) {
-                if target.distance > 2 {
-                    self.walk_request_id =
-                        cx.walk(reach::walk_request(target.tile, 1, cx.evidence()))?;
+                let reachable = talk_reachable(cx, target.tile);
+                if target.distance > 2 || !reachable {
+                    // A nearby NPC across a closed wall/door is not ready to
+                    // talk. Route to its side instead of accepting a blocked
+                    // adjacent tile and cancelling before the door traversal.
+                    self.walk_request_id = cx.walk(reach::walk_request(
+                        target.tile,
+                        if reachable { 1 } else { 0 },
+                        None,
+                        cx.evidence(),
+                    ))?;
                     self.phase = Phase::Approach;
                     self.deadline_ms = cx.active_now().as_millis() as u64 + DIALOGUE_APPROACH_MS;
                     return Ok(());
@@ -328,6 +349,18 @@ struct TalkTarget<'a> {
     action: &'a str,
     tile: api::WorldTile,
     distance: i32,
+}
+
+fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
+    cx.snapshot().reach().is_none_or(|reach| {
+        reach.value.can_reach(
+            tile,
+            &api::query::SceneReachOptions {
+                max_steps: None,
+                adjacent_ok: true,
+            },
+        )
+    })
 }
 
 fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {

@@ -26,14 +26,23 @@
 //! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
 //! read from each.
 
-use crate::isolate_fb::{CombatStyle, QuestStatus, Row, SceneEntity, Snapshot, Stat};
+use crate::api_gather::{GatherCounts, GatherEnd, GatherFailure};
+use crate::api_progress::{ProgressPage, QuestProgressRow as ApiQuestProgressRow};
+use crate::isolate_fb::{
+    ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, QuestProgressRow, QuestStatus, Row,
+    SceneEntity, Snapshot, Stat,
+};
 use api::line_of_sight::CollisionQuery;
+use api::quest_progress::{EvidenceStamp, ProgressFlag};
+use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
+use api::snapshot::QuestListStatus;
 use flatbuffers::{ForwardsUOffset, Vector};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 type StringVector<'a> = Option<Vector<'a, ForwardsUOffset<&'a str>>>;
@@ -503,6 +512,18 @@ pub struct WalkOutcome {
     pub blocked: bool,
 }
 
+/// The latest posted live Gatherer page, retained only for request identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherObservation {
+    pub request_id: u64,
+}
+/// The retained terminal result of the latest Gatherer session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatherOutcomeObservation {
+    pub request_id: u64,
+    pub end: GatherEnd,
+}
+
 /// Which post carried a page, in which scene. Equal stamps are the same
 /// posted table; a new table or a `ResetSession` changes the stamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -587,6 +608,7 @@ scene_pages! {
         self_slot: i32,
         self_target_kind: i32,
         self_target_index: i32,
+        user_move_intent_seq: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -609,6 +631,7 @@ scene_pages! {
         shop_open: bool,
         walk_outcome: WalkOutcome,
         bank_selection: crate::isolate_fb::BankSelectionInput,
+        walk_outcome_cancel_reason: crate::isolate_fb::WalkCancelReason,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.
         combat_tab_root: i32,
@@ -653,6 +676,9 @@ scene_pages! {
         reach: Reach,
         puzzle_board: PuzzlePage,
         walk_missing_carry: Vec<CarryRow>,
+        api_gather: GatherObservation,
+        api_gather_outcome: GatherOutcomeObservation,
+        api_progress: ProgressPage,
     }
 }
 
@@ -687,6 +713,10 @@ impl<'a> Lens<'a> {
     /// The stamp of the posted collision table.
     pub fn collision_stamp(&self) -> Option<Stamp> {
         self.stamp(&self.scene.collision)
+    }
+    /// The latest host walk outcome's ordering sequence.
+    pub fn walk_outcome_seq(&self) -> Option<u64> {
+        self.walk_outcome().map(|outcome| outcome.seq)
     }
 }
 
@@ -732,6 +762,158 @@ fn read_buttons<'a>(
         .map(|row| ButtonRow::read(&row, strings))
         .collect()
 }
+fn read_gather_page(page: ApiGather<'_>) -> GatherObservation {
+    GatherObservation {
+        request_id: page.request_id(),
+    }
+}
+
+fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObservation> {
+    use crate::api_gather::GatherEnd;
+    let request_id = page.request_id();
+    if request_id == 0 {
+        return None;
+    }
+    let counts = GatherCounts {
+        yielded: page.yielded(),
+        dropped: page.dropped(),
+        deposited: page.deposited(),
+        trips: page.trips(),
+        xp: page.xp(),
+    };
+    let message = page.message().unwrap_or_default();
+    let end = match page.end() {
+        1 => GatherEnd::Stopped {
+            token: request_id,
+            counts,
+        },
+        2 => GatherEnd::Blocked {
+            token: request_id,
+            failure: GatherFailure {
+                code: page.code().unwrap_or_default().into(),
+                message: message.into(),
+                retryable: page.retryable(),
+            },
+            counts,
+        },
+        3 => GatherEnd::Refused {
+            token: request_id,
+            reason: message.into(),
+        },
+        4 => GatherEnd::Failed {
+            token: request_id,
+            reason: message.into(),
+            counts,
+        },
+        _ => return None,
+    };
+    Some(GatherOutcomeObservation { request_id, end })
+}
+fn read_api_progress(page: ApiProgress<'_>) -> Option<ProgressPage> {
+    let token = page.request_id();
+    if token == 0 {
+        return None;
+    }
+    match page.kind() {
+        1 => Some(ProgressPage::Reading { token }),
+        2 => page
+            .row()
+            .and_then(read_progress_row)
+            .map(|row| ProgressPage::Done {
+                token,
+                row: Arc::new(row),
+            }),
+        3 => page.reason().map(|reason| ProgressPage::Refused {
+            token,
+            reason: Arc::from(reason),
+        }),
+        _ => None,
+    }
+}
+
+fn read_progress_row(row: QuestProgressRow<'_>) -> Option<ApiQuestProgressRow> {
+    let colour = match row.colour() {
+        1 => QuestListStatus::NotStarted,
+        2 => QuestListStatus::InProgress,
+        3 => QuestListStatus::Complete,
+        4 => QuestListStatus::Unknown,
+        _ => return None,
+    };
+    let complete = progress_truth(row.complete())?;
+    let stage = progress_knowledge(row.stage()?, row.stage_gap()?);
+    let rule = progress_knowledge(row.rule()?, row.rule_gap()?);
+    let flags = row.flags()?;
+    let flags = flags
+        .iter()
+        .map(|flag| {
+            let name = flag.flag()?;
+            let truth = progress_truth(flag.truth())?;
+            let count = match flag.count() {
+                -1 => None,
+                count
+                    if (0..=crate::isolate_fb::MAX_PROGRESS_FLAG_COUNT as i32).contains(&count) =>
+                {
+                    Some(count as u32)
+                }
+                _ => return None,
+            };
+            Some(ProgressFlag {
+                flag: FactKey::new(name),
+                truth,
+                count,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(ApiQuestProgressRow {
+        quest: Arc::from(row.quest()?),
+        display: Arc::from(row.display()?),
+        colour,
+        stage,
+        rule,
+        complete,
+        flags: flags.into(),
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 0,
+                run: row.evidence_run(),
+                session: row.evidence_session(),
+            },
+            tick: row.evidence_tick(),
+            sequence: row.evidence_sequence(),
+        },
+        journal_read: row.journal_read(),
+        binding: Arc::from(row.binding()?),
+        role: row.role().map(Arc::from),
+    })
+}
+
+fn progress_knowledge(value: &str, gap: &str) -> Knowledge<Arc<str>> {
+    if gap.is_empty() {
+        Knowledge::Known(Arc::from(value))
+    } else {
+        let gap = Gap {
+            code: Arc::from(gap),
+            sources: Arc::from([]),
+        };
+        if value.is_empty() {
+            Knowledge::Unknown(gap)
+        } else {
+            Knowledge::Partial {
+                known: Arc::from(value),
+                gaps: Arc::from([gap]),
+            }
+        }
+    }
+}
+
+fn progress_truth(code: u8) -> Option<Truth> {
+    match code {
+        1 => Some(Truth::True),
+        2 => Some(Truth::False),
+        3 => Some(Truth::Unknown),
+        _ => None,
+    }
+}
 
 impl Scene {
     fn fresh() -> Self {
@@ -739,6 +921,10 @@ impl Scene {
             epoch: EPOCH.fetch_add(1, Ordering::Relaxed),
             ..Self::default()
         }
+    }
+    /// The session epoch changes whenever this scene is reset.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     /// Every page as last posted (the delta merge; absent stays absent).
@@ -836,6 +1022,10 @@ impl Scene {
         if snap.has_self_target_kind() {
             p.self_target_kind(snap.self_target_kind());
         }
+        if snap.has_user_move_intent_seq() {
+            p.user_move_intent_seq(snap.user_move_intent_seq());
+        }
+
         if snap.has_self_target_index() {
             p.self_target_index(snap.self_target_index());
         }
@@ -1198,6 +1388,17 @@ impl Scene {
                     .collect(),
             );
         }
+        if let Some(page) = snap.api_gather() {
+            p.api_gather(read_gather_page(page));
+        }
+        if let Some(page) = snap.api_gather_outcome() {
+            if let Some(outcome) = read_gather_outcome(page) {
+                p.api_gather_outcome(outcome);
+            }
+        }
+        if let Some(page) = snap.api_progress().and_then(read_api_progress) {
+            p.api_progress(page);
+        }
         if snap.has_walk_outcome_seq() {
             p.walk_outcome(WalkOutcome {
                 seq: snap.walk_outcome_seq(),
@@ -1213,6 +1414,7 @@ impl Scene {
                 allow_teleports: snap.walk_outcome_allow_teleports(),
                 blocked: snap.walk_outcome_blocked(),
             });
+            p.walk_outcome_cancel_reason(snap.walk_outcome_cancel_reason());
         }
     }
 }
@@ -1295,9 +1497,10 @@ impl Interner {
 mod tests {
     use super::*;
     use crate::isolate_fb::{
-        encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, BankStandInput,
-        ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
+        encode_snapshot_with_native, BankStandInput, ItemRowInput, NativeFactsInput,
+        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+        StatInput, TileInput,
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {
@@ -1343,6 +1546,59 @@ mod tests {
             assert_eq!(scene.tick(), None);
             assert!(scene.latest().here().is_none());
             assert!(scene.latest().npcs().is_none());
+        });
+    }
+
+    #[test]
+    fn user_move_intent_is_visible_latest_and_since_login_without_new_outcome() {
+        on_reset();
+        let mut initial = empty(1);
+        initial.ingame = true;
+        let (keyframe, fingerprint) = encode_snapshot_delta(None, &initial, false);
+        apply_bytes(&keyframe);
+
+        let mut movement = empty(2);
+        movement.ingame = true;
+        movement.user_move_intent_seq = 3;
+        movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        let native = NativeFactsInput {
+            walk_outcome_seq: 10,
+            ..NativeFactsInput::default()
+        };
+        let (movement_delta, fingerprint) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &movement, native, false);
+        apply_bytes(&movement_delta);
+        with(|scene| {
+            assert_eq!(scene.latest().user_move_intent_seq(), Some(3));
+            assert_eq!(scene.since_login().user_move_intent_seq(), Some(3));
+            assert_eq!(scene.latest().walk_outcome_seq(), Some(10));
+            assert_eq!(
+                scene.latest().walk_outcome_cancel_reason(),
+                Some(crate::isolate_fb::WalkCancelReason::UserInput)
+            );
+        });
+
+        let mut later_movement = empty(3);
+        later_movement.ingame = true;
+        later_movement.user_move_intent_seq = 4;
+        later_movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        let native = NativeFactsInput {
+            walk_outcome_seq: 10,
+            ..NativeFactsInput::default()
+        };
+        let (intent_only_delta, _) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &later_movement, native, false);
+        let intent_only = Snapshot::from_bytes(&intent_only_delta).expect("intent delta");
+        assert!(!intent_only.has_walk_outcome_seq());
+        apply(&intent_only);
+        with(|scene| {
+            assert_eq!(scene.latest().user_move_intent_seq(), Some(4));
+            assert_eq!(scene.since_login().user_move_intent_seq(), Some(4));
+            assert_eq!(scene.latest().walk_outcome_seq(), Some(10));
+            assert_eq!(
+                scene.latest().walk_outcome_cancel_reason(),
+                Some(crate::isolate_fb::WalkCancelReason::UserInput)
+            );
         });
     }
 

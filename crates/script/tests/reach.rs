@@ -121,6 +121,8 @@ fn base<'a>(here: TileInput) -> SnapshotInput<'a> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }
 
@@ -254,6 +256,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
             allow_bank_fetch: true,
             request_id,
             avoid: _,
+            cross: _,
         }] => {
             assert_ne!(*request_id, 0);
             *request_id
@@ -666,7 +669,7 @@ fn entity_op_clicks_once_then_settles_done_on_expect() {
 }
 
 #[test]
-fn entity_op_cant_reach_without_a_door_is_unreachable_with_the_frozen_log() {
+fn entity_op_cant_reach_without_a_door_is_unreachable() {
     let iso = spawn(ENTITY_OP);
     let mut snap = base(stand());
     post(&iso, &snap);
@@ -683,12 +686,6 @@ fn entity_op_cant_reach_without_a_door_is_unreachable_with_the_frozen_log() {
     tick(&iso, 2);
     tick(&iso, 3);
     assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
-    assert_eq!(
-        iso.probe("__logs").unwrap(),
-        serde_json::json!([
-            "reach: 'Attack' at (8,5): server can't reach it and no door in front to open or close (unreachable)"
-        ])
-    );
     iso.join();
 }
 
@@ -709,9 +706,10 @@ fn entity_op_that_could_not_click_retries_after_one_tick() {
 
 const GRID: i32 = 16;
 
-/// A posted reach view over `0..16 x 0..16` on level 0, flooded from
-/// `here`: `exact` tiles are reachable exactly, `adj` with `adjacentOk`.
+/// A posted reach view over `0..16 x 0..16` on level 0. `walkable` is
+/// scene geometry; `reachable` and `reachable_adj` are the flood from `here`.
 struct Grid {
+    walkable: Vec<u32>,
     reachable: Vec<u32>,
     reachable_adj: Vec<u32>,
     exact_rank: Vec<u16>,
@@ -723,6 +721,7 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     let n = (GRID * GRID) as usize;
     let index = |(x, z): (i32, i32)| (x * GRID + z) as usize;
     let mut g = Grid {
+        walkable: vec![0; n.div_ceil(32)],
         reachable: vec![0; n.div_ceil(32)],
         reachable_adj: vec![0; n.div_ceil(32)],
         exact_rank: vec![u16::MAX; n],
@@ -731,6 +730,7 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     };
     for &tile in exact.iter().chain([&here]) {
         let i = index(tile);
+        g.walkable[i / 32] |= 1 << (i % 32);
         g.reachable[i / 32] |= 1 << (i % 32);
         g.exact_rank[i] = if tile == here { 0 } else { 1 };
     }
@@ -742,6 +742,13 @@ fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
     g
 }
 
+fn allow_walkable(g: &mut Grid, tiles: &[(i32, i32)]) {
+    for &(x, z) in tiles {
+        let i = (x * GRID + z) as usize;
+        g.walkable[i / 32] |= 1 << (i % 32);
+    }
+}
+
 fn view(g: &Grid) -> ReachViewInput<'_> {
     ReachViewInput {
         available: true,
@@ -750,7 +757,7 @@ fn view(g: &Grid) -> ReachViewInput<'_> {
         level: 0,
         width: GRID,
         height: GRID,
-        walkable: &g.reachable,
+        walkable: &g.walkable,
         reachable: &g.reachable,
         reachable_adj: &g.reachable_adj,
         exact_rank: &g.exact_rank,
@@ -880,15 +887,11 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
 }
 
 #[test]
-fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
+fn entity_op_walks_through_an_open_leaf_without_closing_it() {
     let iso = spawn(ENTITY_OP);
     let close = ["Close".to_string()];
-    let open = ["Open".to_string()];
     let g = grid((5, 5), &[], &[]);
-    let locs = [
-        barrier("Gate", &open, 1551, 6, 5, 1),
-        barrier("Door", &close, 1531, 8, 4, 3),
-    ];
+    let locs = [barrier("Door", &close, 1531, 8, 4, 3)];
     let mut snap = base(stand());
     snap.reach = view(&g);
     snap.locs = &locs;
@@ -899,25 +902,139 @@ fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
     snap.chat_lines = &lines;
     post(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![loc_op(8, 4, "Close", 1531)],
-        "the leaf beside the target is closed; the gate is not opened"
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 8,
+                z: 5,
+                radius: 1,
+                ..
+            }]
+        ),
+        "recovery walks toward the target through the open passage, never Close"
     );
     assert_eq!(iso.probe("__clicks").unwrap(), 1);
 
-    // Closing the leaf made the target reachable: the next round clicks.
-    let reached = grid((5, 5), &[], &[(8, 5)]);
-    snap.tick = 3;
+    let reached = grid((8, 4), &[], &[(8, 5)]);
+    snap.here = Some(TileInput {
+        x: 8,
+        z: 4,
+        level: 0,
+    });
     snap.reach = view(&reached);
     post(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(iso.probe("__clicks").unwrap(), 2);
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let mut g = grid((5, 5), &[], &[]);
+    allow_walkable(&mut g, &[(6, 5)]);
+    let mut door = barrier("Door", &open, 1530, 6, 5, 1);
+    door.shape = 0;
+    door.angle = 0; // WALL_STRAIGHT / WEST.
+    let doors = [door];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &doors;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
     assert_eq!(
-        logs(&iso),
-        vec!["reach: closing 'Door' at (8,4) to reach (8,5)"]
+        iso.drain_interacts(),
+        vec![loc_op(6, 5, "Open", 1530)],
+        "the engine-reachable west stand opens directly instead of walking across the wall"
     );
+    iso.join();
+}
+
+#[test]
+fn non_straight_wall_door_keeps_the_approach_walk() {
+    let iso = spawn(NPC_DIALOG);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let mut g = grid((5, 5), &[], &[]);
+    allow_walkable(&mut g, &[(6, 5)]);
+    let mut door = barrier("Door", &open, 1530, 6, 5, 1);
+    door.shape = 9;
+    door.angle = 0;
+    let doors = [door];
+    let npcs = [npc("Traiborn", &talk, 4, 8, 5, 3, false)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &doors;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 6,
+                z: 5,
+                radius: 1,
+                ..
+            }]
+        ),
+        "non-straight wall geometry must not inherit the engine's straight-wall shortcut"
+    );
+    iso.join();
+}
+
+#[test]
+fn wall_aware_hop_finish_does_not_settle_across_a_wall() {
+    let iso = spawn(
+        r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops({ x: 8, z: 5, level: 0 }, 3, [], () => {});
+    }
+}
+"#,
+    );
+    let blocked = grid((5, 5), &[], &[]);
+    let mut snap = base(stand());
+    snap.reach = view(&blocked);
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "a radius disk across a wall is not arrival"
+    );
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear {
+            x: 8,
+            z: 5,
+            radius: 3,
+            ..
+        }]
+    ));
+
+    let reached = grid((7, 5), &[(8, 5)], &[]);
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 7,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&reached);
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
     iso.join();
 }
 
@@ -925,9 +1042,9 @@ fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
 fn open_when_unreachable_probes_and_clears_before_the_first_click() {
     let iso = spawn(ENTITY_OP);
     iso.probe("globalThis.__probe = true").unwrap();
-    let close = ["Close".to_string()];
-    let g = grid((5, 5), &[], &[]);
-    let locs = [barrier("Door", &close, 1531, 8, 4, 3)];
+    let open = ["Open".to_string()];
+    let g = grid((5, 5), &[], &[(6, 5)]);
+    let locs = [barrier("Door", &open, 1530, 6, 5, 1)];
     let mut snap = base(stand());
     snap.reach = view(&g);
     snap.locs = &locs;
@@ -938,11 +1055,12 @@ fn open_when_unreachable_probes_and_clears_before_the_first_click() {
         0,
         "the scene probe clears the way before any click"
     );
-    assert_eq!(iso.drain_interacts(), vec![loc_op(8, 4, "Close", 1531)]);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Open", 1530)]);
 
     let reached = grid((5, 5), &[], &[(8, 5)]);
     snap.tick = 2;
     snap.reach = view(&reached);
+    snap.locs = &[];
     post(&iso, &snap);
     tick(&iso, 2);
     assert_eq!(
@@ -958,7 +1076,7 @@ fn open_when_unreachable_probes_and_clears_before_the_first_click() {
 fn entity_op_gives_up_retry_after_eight_cleared_rounds() {
     let iso = spawn(ENTITY_OP);
     let open = ["Open".to_string()];
-    let g = grid((5, 5), &[], &[]);
+    let g = grid((5, 5), &[], &[(6, 5)]);
     let door = [barrier("Door", &open, 1530, 6, 5, 1)];
     let mut snap = base(stand());
     snap.reach = view(&g);

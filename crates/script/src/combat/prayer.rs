@@ -435,6 +435,7 @@ mod tests {
                         sequence: tick,
                     },
                     accepted,
+                    chat_since: 0,
                 },
             );
             match action.effect {

@@ -6,10 +6,8 @@ use host_play::catalog_core::{
     CoreWatchStatus, FiremakerCycle, LineOfSightHere, LineOfSightIdentity, LineOfSightObservation,
     LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt, LineOfSightTile, Observation,
     RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
-    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, LOS_V2_STOP, LOS_VIS_SCENERY,
-    LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, NATURE_RUNE_ID, OAK_LOGS_ID,
-    RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
-    UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
+    HIGH_ALCH_MAGIC_XP, LOS_V2_STOP, LOS_VIS_SCENERY, LOS_V_E, LOS_V_W, LOS_WALK_SCENERY,
+    RUNE_CHAINBODY_HIGH_ALCH_COINS, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
 use host_play::catalog_core::{
     ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
@@ -20,6 +18,14 @@ use host_play::catalog_core::{
 
 #[path = "catalog_core_watch/hunt.rs"]
 mod hunt;
+
+fn r289_item_id(alias: &str) -> i32 {
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("selected R289 game data")
+        .item_by_alias(alias)
+        .unwrap_or_else(|| panic!("selected R289 game data lacks item alias {alias:?}"))
+        .id
+}
 
 fn thiever_observation() -> Observation {
     let mut observation = Observation {
@@ -143,8 +149,12 @@ fn herb_empty_observation(tick: u32, bank_open: bool, bank_loaded: bool) -> Obse
     };
     observation.levels.insert("herblore".into(), 20);
     if bank_loaded {
-        observation.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 20);
-        observation.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 0);
+        observation
+            .bank_ids
+            .insert(r289_item_id("unidentified_guam"), 20);
+        observation
+            .bank_ids
+            .insert(r289_item_id("unidentified_marentill"), 0);
     }
     observation
 }
@@ -177,7 +187,9 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
     let unloaded = CoreWatch::default();
     unloaded.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     let mut unacknowledged = herb_empty_observation(1, true, false);
-    unacknowledged.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 20);
+    unacknowledged
+        .bank_ids
+        .insert(r289_item_id("unidentified_guam"), 20);
     unloaded.observe("catalogtest", unacknowledged, false);
     unloaded.observe("catalogtest", closed.clone(), false);
     assert!(unloaded.begin_start("catalogtest").is_err());
@@ -185,7 +197,9 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
     let wrong_seed = CoreWatch::default();
     wrong_seed.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     let mut nineteen_guam = herb_empty_observation(1, true, true);
-    nineteen_guam.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 19);
+    nineteen_guam
+        .bank_ids
+        .insert(r289_item_id("unidentified_guam"), 19);
     wrong_seed.observe("catalogtest", nineteen_guam, false);
     wrong_seed.observe("catalogtest", closed.clone(), false);
     assert!(wrong_seed.begin_start("catalogtest").is_err());
@@ -228,8 +242,8 @@ fn fire_observation(tick: u32, logs: i32, xp: i32, bank_open: bool) -> Observati
         bank_generation: u64::from(bank_open),
         ..Observation::default()
     };
-    observation.item_ids.insert(OAK_LOGS_ID, logs);
-    observation.item_ids.insert(TINDERBOX_ID, 1);
+    observation.item_ids.insert(r289_item_id("oak_logs"), logs);
+    observation.item_ids.insert(r289_item_id("tinderbox"), 1);
     observation.xp.insert("firemaking".into(), xp);
     observation
 }
@@ -260,12 +274,12 @@ fn firemaker_does_not_reuse_stale_xp_or_old_fire_after_partial_restock() {
         &fire_observation_with_plot(3, 0, 1_015, false),
     );
     let mut deposited = fire_observation(4, 0, 2_000, true);
-    deposited.bank_ids.insert(OAK_LOGS_ID, 28);
+    deposited.bank_ids.insert(r289_item_id("oak_logs"), 28);
     cycle.observe(spec, &baseline, &deposited);
 
     let mut restocked = fire_observation(5, 1, 2_000, true);
     restocked.bank_generation = 1;
-    restocked.bank_ids.insert(OAK_LOGS_ID, 27);
+    restocked.bank_ids.insert(r289_item_id("oak_logs"), 27);
     cycle.observe(spec, &baseline, &restocked);
 
     let mut returned_without_new_burn = fire_observation_with_plot(6, 1, 2_000, false);
@@ -317,18 +331,22 @@ fn alcher_swarm_stop_without_recovery_fails_the_headed_watch_with_phase_status()
 
     let mut withdrawn = baseline.clone();
     withdrawn.bank_generation = 2;
-    withdrawn.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 20);
-    withdrawn.item_ids.insert(NATURE_RUNE_ID, 20);
+    withdrawn
+        .item_ids
+        .insert(r289_item_id("cert_rune_chainbody"), 20);
+    withdrawn.item_ids.insert(r289_item_id("naturerune"), 20);
     watch.observe("catalogtest", withdrawn.clone(), false);
 
     let mut first = withdrawn;
-    first.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 19);
-    first.item_ids.insert(NATURE_RUNE_ID, 19);
     first
         .item_ids
-        .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS);
+        .insert(r289_item_id("cert_rune_chainbody"), 19);
+    first.item_ids.insert(r289_item_id("naturerune"), 19);
+    first
+        .item_ids
+        .insert(r289_item_id("coins"), RUNE_CHAINBODY_HIGH_ALCH_COINS);
     first.xp.insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP);
-    first.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+    first.equipment_ids.insert(r289_item_id("staff_of_fire"), 1);
     watch.observe("catalogtest", first.clone(), false);
     assert_eq!(watch.status(), CoreWatchStatus::Running);
 
@@ -396,10 +414,10 @@ fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
 }
 
 use host_play::catalog_core::{
-    ARCHERY_TICKET_ID, BRONZE_ARROW_ID, COINS_PER_TRIP, ENTRY_FEE, MAGIC_SHORTBOW_ID,
-    RANGING_GUILD_FULL_STOP_NEEDLE, RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK,
-    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID, SEED_KEEP_TICKETS,
-    TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_SCORE,
+    ARCHERY_TICKET_ID, COINS_PER_TRIP, ENTRY_FEE, RANGING_GUILD_FULL_STOP_NEEDLE,
+    RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK, RANGING_GUILD_STAND,
+    RUNE_ARROWS_PER_TRADE, SEED_KEEP_TICKETS, TARGET_RESULT_MODAL, TICKETS_PER_TRADE,
+    VARP_TARGET_COUNT, VARP_TARGET_SCORE,
 };
 
 fn ranging_round_baseline() -> Observation {
@@ -412,8 +430,12 @@ fn ranging_round_baseline() -> Observation {
     };
     observation.levels.insert("ranged".into(), 70);
     observation.effective_levels.insert("ranged".into(), 70);
-    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
-    observation.item_ids.insert(COINS_ID, ENTRY_FEE * 2);
+    observation
+        .item_ids
+        .insert(r289_item_id("magic_shortbow"), 1);
+    observation
+        .item_ids
+        .insert(r289_item_id("coins"), ENTRY_FEE * 2);
     observation.varps.insert(VARP_TARGET_COUNT, 0);
     observation.varps.insert(VARP_TARGET_SCORE, 0);
     observation
@@ -429,7 +451,9 @@ fn ranging_redeem_baseline() -> Observation {
     };
     observation.levels.insert("ranged".into(), 70);
     observation.effective_levels.insert("ranged".into(), 70);
-    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    observation
+        .item_ids
+        .insert(r289_item_id("magic_shortbow"), 1);
     observation
         .item_ids
         .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
@@ -457,7 +481,7 @@ fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() 
     );
 
     let mut paid = baseline.clone();
-    paid.item_ids.insert(COINS_ID, ENTRY_FEE);
+    paid.item_ids.insert(r289_item_id("coins"), ENTRY_FEE);
     paid.varps.insert(VARP_TARGET_COUNT, 1);
     watch.observe("catalogtest", paid.clone(), false);
     assert!(watch.qualify().is_err(), "fee alone is not a round");
@@ -481,7 +505,7 @@ fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() 
     );
 
     let mut second = reset;
-    second.item_ids.insert(COINS_ID, 0);
+    second.item_ids.insert(r289_item_id("coins"), 0);
     second.varps.insert(VARP_TARGET_COUNT, 1);
     watch.observe("catalogtest", second, false);
     watch.qualify().expect("paid shot payout and second enter");
@@ -543,7 +567,9 @@ fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
 
     let arrows_only = start(baseline.clone());
     let mut arrows = baseline.clone();
-    arrows.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    arrows
+        .item_ids
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     arrows_only.observe("catalogtest", arrows, false);
     assert!(
         arrows_only.qualify().is_err(),
@@ -553,7 +579,8 @@ fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
     let traded = start(baseline.clone());
     let mut buy = baseline;
     buy.item_ids.insert(ARCHERY_TICKET_ID, 0);
-    buy.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    buy.item_ids
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     traded.observe("catalogtest", buy, false);
     traded
         .qualify()
@@ -567,7 +594,7 @@ fn ranging_guild_redeem_rejects_already_held_arrows_as_baseline() {
     let mut seeded_arrows = ranging_redeem_baseline();
     seeded_arrows
         .item_ids
-        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     watch.observe("catalogtest", seeded_arrows, false);
     assert!(
         watch.begin_start("catalogtest").is_err(),
@@ -590,7 +617,7 @@ fn ranging_bank_baseline() -> Observation {
         .insert(ARCHERY_TICKET_ID, SEED_KEEP_TICKETS);
     observation
         .item_ids
-        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     observation.varps.insert(VARP_TARGET_COUNT, 0);
     observation
 }
@@ -605,10 +632,11 @@ fn ranging_bank_open(
     now.bank_open = true;
     now.bank_loaded = true;
     now.bank_generation = baseline.bank_generation + 1;
-    now.item_ids.insert(RUNE_ARROW_ID, 0);
-    now.bank_ids.insert(RUNE_ARROW_ID, arrows_in_bank);
-    now.bank_ids.insert(COINS_ID, coins_in_bank);
-    now.bank_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    now.item_ids.insert(r289_item_id("rune_arrow"), 0);
+    now.bank_ids
+        .insert(r289_item_id("rune_arrow"), arrows_in_bank);
+    now.bank_ids.insert(r289_item_id("coins"), coins_in_bank);
+    now.bank_ids.insert(r289_item_id("magic_shortbow"), 1);
     now
 }
 
@@ -638,8 +666,10 @@ fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
     let wrong = start(baseline.clone());
     let mut varrock = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
     varrock.tile = Some(VARROCK_WEST_BANK);
-    varrock.item_ids.insert(COINS_ID, COINS_PER_TRIP);
-    varrock.bank_ids.insert(COINS_ID, 0);
+    varrock
+        .item_ids
+        .insert(r289_item_id("coins"), COINS_PER_TRIP);
+    varrock.bank_ids.insert(r289_item_id("coins"), 0);
     wrong.observe("catalogtest", varrock, false);
     assert!(
         wrong.qualify().is_err(),
@@ -649,8 +679,10 @@ fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
     let no_return = start(baseline.clone());
     let mut deposited = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
     no_return.observe("catalogtest", deposited.clone(), false);
-    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
-    deposited.bank_ids.insert(COINS_ID, 0);
+    deposited
+        .item_ids
+        .insert(r289_item_id("coins"), COINS_PER_TRIP);
+    deposited.bank_ids.insert(r289_item_id("coins"), 0);
     no_return.observe("catalogtest", deposited.clone(), false);
     let mut closed = deposited;
     closed.bank_open = false;
@@ -664,7 +696,9 @@ fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
     );
 
     let mut fee_at_bank = closed;
-    fee_at_bank.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee_at_bank
+        .item_ids
+        .insert(r289_item_id("coins"), ENTRY_FEE);
     fee_at_bank.varps.insert(VARP_TARGET_COUNT, 1);
     no_return.observe("catalogtest", fee_at_bank, false);
     assert!(
@@ -696,8 +730,10 @@ fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
     let coins_without_bank = start(baseline.clone());
     let mut gifted = baseline.clone();
     gifted.tick += 1;
-    gifted.item_ids.insert(COINS_ID, COINS_PER_TRIP);
-    gifted.item_ids.insert(RUNE_ARROW_ID, 0);
+    gifted
+        .item_ids
+        .insert(r289_item_id("coins"), COINS_PER_TRIP);
+    gifted.item_ids.insert(r289_item_id("rune_arrow"), 0);
     coins_without_bank.observe("catalogtest", gifted, false);
     assert!(
         coins_without_bank.qualify().is_err(),
@@ -709,8 +745,10 @@ fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
     watch.observe("catalogtest", deposited.clone(), false);
     assert!(watch.qualify().is_err(), "deposit alone is incomplete");
 
-    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
-    deposited.bank_ids.insert(COINS_ID, 0);
+    deposited
+        .item_ids
+        .insert(r289_item_id("coins"), COINS_PER_TRIP);
+    deposited.bank_ids.insert(r289_item_id("coins"), 0);
     watch.observe("catalogtest", deposited.clone(), false);
     assert!(
         watch.qualify().is_err(),
@@ -737,7 +775,7 @@ fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
     );
 
     let mut fee = returned;
-    fee.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee.item_ids.insert(r289_item_id("coins"), ENTRY_FEE);
     fee.varps.insert(VARP_TARGET_COUNT, 1);
     watch.observe("catalogtest", fee, false);
     watch
@@ -762,7 +800,7 @@ fn ranging_guild_bank_rejects_redeem_stack_and_already_funded_pack() {
     let funded = CoreWatch::default();
     funded.configure(CoreCase::RangingGuildBank, "catalogtest");
     let mut coins = ranging_bank_baseline();
-    coins.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    coins.item_ids.insert(r289_item_id("coins"), COINS_PER_TRIP);
     funded.observe("catalogtest", coins, false);
     assert!(
         funded.begin_start("catalogtest").is_err(),
@@ -809,7 +847,7 @@ fn ranging_full_earned_tickets(baseline: &Observation) -> Observation {
     now.tick += 1;
     now.tile = Some(RANGING_GUILD_STAND);
     now.item_ids.insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
-    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now.item_ids.insert(r289_item_id("coins"), ENTRY_FEE);
     now
 }
 
@@ -818,8 +856,9 @@ fn ranging_full_bought(from: &Observation) -> Observation {
     now.tick += 1;
     now.tile = Some(RANGING_GUILD_MERCHANT_STAND);
     now.item_ids.insert(ARCHERY_TICKET_ID, 0);
-    now.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
-    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now.item_ids
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
+    now.item_ids.insert(r289_item_id("coins"), ENTRY_FEE);
     now
 }
 
@@ -843,9 +882,9 @@ fn ranging_full_bank_bought(from: &Observation, arrows: i32, item: i32) -> Obser
     now.bank_open = true;
     now.bank_loaded = true;
     now.bank_generation = from.bank_generation + 1;
-    now.item_ids.insert(RUNE_ARROW_ID, 0);
+    now.item_ids.insert(r289_item_id("rune_arrow"), 0);
     now.bank_ids.insert(item, arrows);
-    now.item_ids.insert(COINS_ID, 0);
+    now.item_ids.insert(r289_item_id("coins"), 0);
     now.item_ids.insert(ARCHERY_TICKET_ID, 50);
     now
 }
@@ -870,7 +909,9 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     let seeded_arrows = CoreWatch::default();
     seeded_arrows.configure(CoreCase::RangingGuildFull, "catalogtest");
     let mut packed = baseline.clone();
-    packed.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    packed
+        .item_ids
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     seeded_arrows.observe("catalogtest", packed, false);
     assert!(
         seeded_arrows.begin_start("catalogtest").is_err(),
@@ -880,9 +921,12 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     let no_buy = ranging_full_start(baseline.clone());
     let mut gifted = baseline.clone();
     gifted.tick += 1;
-    gifted.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    gifted
+        .item_ids
+        .insert(r289_item_id("rune_arrow"), RUNE_ARROWS_PER_TRADE);
     no_buy.observe("catalogtest", gifted.clone(), false);
-    let deposited = ranging_full_bank_bought(&gifted, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    let deposited =
+        ranging_full_bank_bought(&gifted, RUNE_ARROWS_PER_TRADE, r289_item_id("rune_arrow"));
     no_buy.observe("catalogtest", deposited, false);
     assert!(
         no_buy.qualify().is_err(),
@@ -894,7 +938,8 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     let wrong_item = ranging_full_start(baseline.clone());
     wrong_item.observe("catalogtest", earned.clone(), false);
     wrong_item.observe("catalogtest", bought.clone(), false);
-    let bronze = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, BRONZE_ARROW_ID);
+    let bronze =
+        ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, r289_item_id("bronze_arrow"));
     wrong_item.observe("catalogtest", bronze, false);
     assert!(
         wrong_item.qualify().is_err(),
@@ -906,13 +951,14 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     let mut shop_modal = bought.clone();
     shop_modal.main_modal = 4461;
     no_modal.observe("catalogtest", shop_modal, false);
-    let banked = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    let banked =
+        ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, r289_item_id("rune_arrow"));
     no_modal.observe("catalogtest", banked.clone(), false);
     let mut empty = banked.clone();
     empty.bank_open = false;
     empty.bank_loaded = false;
     empty.bank_generation += 1;
-    empty.item_ids.insert(COINS_ID, 0);
+    empty.item_ids.insert(r289_item_id("coins"), 0);
     empty.script_lifecycle = Some(ranging_full_stop(&format!(
         "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
     )));
@@ -937,14 +983,19 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     closed_bank.bank_loaded = false;
     closed_bank.bank_generation += 1;
     bank_close_only.observe("catalogtest", closed_bank.clone(), false);
-    let banked_after_close =
-        ranging_full_bank_bought(&closed_bank, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    let banked_after_close = ranging_full_bank_bought(
+        &closed_bank,
+        RUNE_ARROWS_PER_TRADE,
+        r289_item_id("rune_arrow"),
+    );
     bank_close_only.observe("catalogtest", banked_after_close.clone(), false);
     let mut stopped_without_continue = banked_after_close;
     stopped_without_continue.bank_open = false;
     stopped_without_continue.bank_loaded = false;
     stopped_without_continue.bank_generation += 1;
-    stopped_without_continue.item_ids.insert(COINS_ID, 0);
+    stopped_without_continue
+        .item_ids
+        .insert(r289_item_id("coins"), 0);
     stopped_without_continue.script_lifecycle = Some(ranging_full_stop(&format!(
         "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 0 tickets held, 50 rune arrows bought"
     )));
@@ -965,7 +1016,7 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     empty_only.bank_open = false;
     empty_only.bank_loaded = false;
     empty_only.bank_generation += 1;
-    empty_only.item_ids.insert(COINS_ID, 0);
+    empty_only.item_ids.insert(r289_item_id("coins"), 0);
     empty_only.script_lifecycle = Some(ranging_full_stop("harness deadline"));
     deadline.observe("catalogtest", empty_only, false);
     assert!(
@@ -1000,7 +1051,11 @@ fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_co
         "modal close plus continuation without bought-then-banked stop is incomplete"
     );
 
-    let banked = ranging_full_bank_bought(&continued, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    let banked = ranging_full_bank_bought(
+        &continued,
+        RUNE_ARROWS_PER_TRADE,
+        r289_item_id("rune_arrow"),
+    );
     watch.observe("catalogtest", banked.clone(), false);
     assert!(
         watch.qualify().is_err(),
@@ -1011,7 +1066,7 @@ fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_co
     stopped.bank_open = false;
     stopped.bank_loaded = false;
     stopped.bank_generation += 1;
-    stopped.item_ids.insert(COINS_ID, 0);
+    stopped.item_ids.insert(r289_item_id("coins"), 0);
     stopped.script_lifecycle = Some(ranging_full_stop(&format!(
         "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
     )));
@@ -1060,8 +1115,8 @@ fn restocked_from(baseline: &Observation) -> Observation {
     restocked.bank_open = true;
     restocked.bank_loaded = true;
     restocked.bank_generation = baseline.bank_generation + 1;
-    restocked.item_ids.insert(LOBSTER_ID, 20);
-    restocked.item_ids.insert(COINS_ID, 60);
+    restocked.item_ids.insert(r289_item_id("lobster"), 20);
+    restocked.item_ids.insert(r289_item_id("coins"), 60);
     restocked.items.insert("Lobster".into(), 20);
     restocked.items.insert("Coins".into(), 60);
     restocked

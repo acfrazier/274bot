@@ -23,6 +23,8 @@ fn snapshot(tick: u64, here: LineOfSightTile) -> SnapshotInput<'static> {
             level: here.level,
         }),
         ingame: true,
+        walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason::None,
+        user_move_intent_seq: 0,
         inv: &[],
         inv_size: 28,
         stats: &[],
@@ -106,6 +108,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_bank_fetch,
             request_id,
             avoid: _,
+            cross: _,
         } => (
             x,
             z,
@@ -127,6 +130,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_bank_fetch,
             request_id,
             avoid: _,
+            cross: _,
         } => (
             x,
             z,

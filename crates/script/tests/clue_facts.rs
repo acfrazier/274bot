@@ -481,6 +481,8 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         self_target_kind: scene.self_target_kind,
         self_target_index: scene.self_target_index,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     let native = script::isolate_fb::NativeFactsInput {
         puzzle_board: scene
@@ -997,6 +999,7 @@ export async function tick(api) {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }],
         "an absent enabled hook defaults true and advances into the search arm"
     );
@@ -1112,6 +1115,7 @@ export async function tick(api) {
             allow_bank_fetch: false,
             request_id: 0,
             avoid: Vec::new(),
+            cross: Vec::new(),
         }]
     );
     assert!(iso.probe("globalThis.__out").unwrap().is_null());
@@ -1240,6 +1244,7 @@ fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
         allow_bank_fetch: false,
         request_id: 0,
         avoid: Vec::new(),
+        cross: Vec::new(),
     }
 }
 

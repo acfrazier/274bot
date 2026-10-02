@@ -24,15 +24,15 @@ pub struct LeatherCrafterSpec {
 pub fn leather_crafter_spec(case: CoreCase) -> Option<LeatherCrafterSpec> {
     match case {
         CoreCase::LeatherCrafter => Some(LeatherCrafterSpec {
-            product: LEATHER_GLOVES_ID,
-            input: SOFT_LEATHER_ID,
-            wrong: HARDLEATHER_BODY_ID,
+            product: catalog_item_id("leather_gloves"),
+            input: catalog_item_id("leather"),
+            wrong: catalog_item_id("hardleather_body"),
             require_interface: true,
         }),
         CoreCase::LeatherCrafterHardBody => Some(LeatherCrafterSpec {
-            product: HARDLEATHER_BODY_ID,
-            input: HARD_LEATHER_ID,
-            wrong: LEATHER_GLOVES_ID,
+            product: catalog_item_id("hardleather_body"),
+            input: catalog_item_id("hard_leather"),
+            wrong: catalog_item_id("leather_gloves"),
             require_interface: false,
         }),
         _ => None,
@@ -53,7 +53,7 @@ impl LeatherCrafterCycle {
             if self.interface.is_none()
                 && now.item_id(input) >= 1
                 && now.item_id(product) == 0
-                && now.item_id(NEEDLE_ID) >= 1
+                && now.item_id(catalog_item_id("needle")) >= 1
             {
                 self.interface = Some(now.clone());
             }
@@ -61,7 +61,7 @@ impl LeatherCrafterCycle {
         if self.withdrawn.is_none()
             && now.item_id(input) >= 1
             && now.item_id(product) == 0
-            && now.item_id(NEEDLE_ID) >= 1
+            && now.item_id(catalog_item_id("needle")) >= 1
             && baseline.item_id(input) == 0
         {
             self.withdrawn = Some(now.clone());
@@ -88,7 +88,7 @@ impl LeatherCrafterCycle {
             && now.bank_generation > baseline.bank_generation
             && now.item_id(product) == 0
             && now.bank_item_id(product) >= 1
-            && now.item_id(NEEDLE_ID) >= 1
+            && now.item_id(catalog_item_id("needle")) >= 1
         {
             self.deposited = Some(now.clone());
         }
