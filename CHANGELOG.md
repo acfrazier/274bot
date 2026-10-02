@@ -27,10 +27,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   strength is your choice. A first run of `tui-play` with no `--user` now
   stops with "vault has no profiles" instead of seeding a `test` profile;
   pass `--user NAME` to create the first one.
-- **Navigation packs.** The pack format is now v11; packs you baked yourself
-  with an earlier version are refused and must be rebaked with `nav-pack`. A
-  v11 pack you baked with an earlier 0.2.0 build keeps its old members gates
-  until you rebake it.
+- **Navigation packs.** The pack format is now v14; packs you baked yourself
+  with an earlier version, including earlier 0.2.0 builds, are refused and
+  must be rebaked with `nav-pack`.
 - **Graphics.** On Windows the panel tries Vulkan first and falls back to
   Direct3D 12. On every platform the window now prefers the power-saving GPU.
   `WGPU_BACKEND` and `WGPU_POWER_PREF` override this (see FIRST-START);
@@ -84,6 +83,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   navigation. A custom pack whose reach or Firemaking data doesn't match its
   manifest is refused when the profile loads instead of being silently
   ignored.
+- Walks now route around dangerous monsters and the Temple of Ikov lava
+  bridge by default. When no safe route exists, the refusal names the
+  monsters in the way. WalkTo in the panel and the TUI has a "Route through
+  danger zones" option to cross them anyway for that walk.
+- Bots approach stairs, ladders, large trees and other big objects (for
+  example the Lumbridge Castle staircase) from a side they can actually use,
+  instead of trying through a wall.
+- Doors: reachable doors open without unnecessary walking, recovery no longer
+  closes a door that is already open, and a bot no longer waits for a tree or
+  rock that disappears while it walks there.
+- Walks can now use ladders and stairs whose landing the game works out from
+  where you are standing, which navigation previously didn't know about. One
+  example is the ladder down to the Mage Arena bank in the deep Wilderness.
+- Walks through the Wilderness webs on the way to the Mage Arena now cut them,
+  with a slashing weapon you are wielding or else a knife, and try again when
+  a cut fails.
+- Walks to "within N tiles" of a place now finish at a spot the destination
+  can really be reached from, which fixes walks that failed near walls, for
+  example when returning from a bank.
+- Moving by hand (a click in the game view, the minimap or a walk option in a
+  menu, or a TUI manual step) now stops the bot's automatic walk at once and,
+  by default, pauses the script that owns it; the cancelled walk is not
+  replayed when you resume. Turn this off with "Pause script on manual
+  movement" in Nav config (shared by the panel and the TUI). Pausing a script
+  yourself, walking by hand and resuming still keeps the script's walk.
 
 ### Profiles and fleet
 
@@ -151,6 +175,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   failing import instead of only dimming. `tui-play --help` prints usage and
   exits 0.
 
+### Scripts
+
+- Food choices in script settings now list every food the game heals with,
+  best heal first, instead of a fixed list of 25.
+
 ### Audio
 
 - Fixed a brief audio stutter when the first background song starts.
@@ -164,23 +193,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   animated login screen still returns after logout), and the built-in game data
   is stored compressed and unpacked once when the bot host starts, which adds
   about 20 ms to launch.
+- Faster startup: after the first launch, the client reuses the game assets
+  it already downloaded and checked, so later launches reach the game in
+  seconds instead of downloading everything again.
 
 ### In progress
 
 These features are usable now and still growing; this list changes as they land.
 
-- **Quester** (revision 289): runs Cook's Assistant end to end, reading
-  progress from the quest journal and picking up again after Stop/Start. If
-  an attack interrupts a conversation it stops with "dialogue interrupted by
-  combat" instead of carrying on. Planned for 0.2.0: every quest, with fights
-  handled by a shared combat machine (melee, ranged and magic).
+- **Quester** (revision 289): runs quests from built-in quest guides, reading
+  progress from the quest journal and picking up again after Stop/Start. More
+  quests, and fights handled by a shared combat machine, are being added
+  through 0.2.0.
 - **Gatherer**: woodcutting, mining and fishing from a start tile, a custom
-  area, or Auto, which searches outward for the nearest usable spots. Waits
-  for trees and rocks to respawn, steps away from mining gas, ents and
-  whirlpools, and power-drops including incidental uncut gems. Planned:
-  banking trips, death recovery and self-defence.
-- Planned: walks that route around dangerous monsters by default, with a
-  WalkTo option to go through anyway.
+  area, or Auto, which searches outward for the nearest usable spots. Banking
+  trips, death recovery and self-defence are being added through 0.2.0.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
