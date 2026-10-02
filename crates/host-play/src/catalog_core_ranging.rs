@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 
-use super::{near, Observation, COINS_ID, MAGIC_SHORTBOW_ID, RUNE_ARROW_ID};
+use super::{catalog_item_id, near, Observation};
 
 /// Selected 289 `obj.pack` / `289.json` `archery_ticket`.
 pub const ARCHERY_TICKET_ID: i32 = 1464;
@@ -55,8 +55,8 @@ pub struct RangingGuildRoundCycle {
 impl RangingGuildRoundCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         let coins_spent = baseline
-            .item_id(COINS_ID)
-            .saturating_sub(now.item_id(COINS_ID));
+            .item_id(catalog_item_id("coins"))
+            .saturating_sub(now.item_id(catalog_item_id("coins")));
         let count = now.varp(VARP_TARGET_COUNT);
         let score = now.varp(VARP_TARGET_SCORE);
         self.paid |= coins_spent >= ENTRY_FEE && count >= 1;
@@ -102,8 +102,8 @@ impl RangingGuildRedeemCycle {
             .item_id(ARCHERY_TICKET_ID)
             .saturating_sub(now.item_id(ARCHERY_TICKET_ID));
         let arrows_gained = now
-            .item_id(RUNE_ARROW_ID)
-            .saturating_sub(baseline.item_id(RUNE_ARROW_ID));
+            .item_id(catalog_item_id("rune_arrow"))
+            .saturating_sub(baseline.item_id(catalog_item_id("rune_arrow")));
         self.spent |= tickets_spent >= TICKETS_PER_TRADE;
         self.received |= arrows_gained >= RUNE_ARROWS_PER_TRADE;
     }
@@ -117,10 +117,10 @@ pub fn ranging_guild_round_baseline_ready(baseline: &Observation) -> bool {
     super::near(baseline.tile, RANGING_GUILD_STAND, 2)
         && baseline.level("ranged") >= RANGED_LIVE
         && baseline.effective_level("ranged") >= RANGED_LIVE
-        && baseline.item_id(MAGIC_SHORTBOW_ID) >= 1
-        && baseline.item_id(COINS_ID) >= ENTRY_FEE * 2
+        && baseline.item_id(catalog_item_id("magic_shortbow")) >= 1
+        && baseline.item_id(catalog_item_id("coins")) >= ENTRY_FEE * 2
         && baseline.item_id(ARCHERY_TICKET_ID) == 0
-        && baseline.item_id(RUNE_ARROW_ID) == 0
+        && baseline.item_id(catalog_item_id("rune_arrow")) == 0
         && baseline.varp(VARP_TARGET_COUNT) == 0
 }
 
@@ -128,9 +128,9 @@ pub fn ranging_guild_redeem_baseline_ready(baseline: &Observation) -> bool {
     super::near(baseline.tile, RANGING_GUILD_MERCHANT_STAND, 3)
         && baseline.level("ranged") >= RANGED_LIVE
         && baseline.effective_level("ranged") >= RANGED_LIVE
-        && baseline.item_id(MAGIC_SHORTBOW_ID) >= 1
+        && baseline.item_id(catalog_item_id("magic_shortbow")) >= 1
         && baseline.item_id(ARCHERY_TICKET_ID) >= TICKETS_PER_TRADE
-        && baseline.item_id(RUNE_ARROW_ID) == 0
+        && baseline.item_id(catalog_item_id("rune_arrow")) == 0
 }
 
 /// Seers KEEP deposit, coin withdraw-X, close, STAND return, then a real fee.
@@ -161,25 +161,34 @@ impl RangingGuildBankCycle {
         let deposited_now = open
             && at_seers
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(RUNE_ARROW_ID) == 0
-            && now.bank_item_id(RUNE_ARROW_ID) > baseline.bank_item_id(RUNE_ARROW_ID)
+            && now.item_id(catalog_item_id("rune_arrow")) == 0
+            && now.bank_item_id(catalog_item_id("rune_arrow"))
+                > baseline.bank_item_id(catalog_item_id("rune_arrow"))
             && Self::keep_held(baseline, now);
         if self.banked.is_none() && deposited_now {
             self.deposited = true;
             self.banked = Some(now.clone());
-            if now.item_id(COINS_ID) > baseline.item_id(COINS_ID) {
+            if now.item_id(catalog_item_id("coins")) > baseline.item_id(catalog_item_id("coins")) {
                 self.coin_withdrawn = true;
-                self.coins_at_withdraw = now.item_id(COINS_ID);
+                self.coins_at_withdraw = now.item_id(catalog_item_id("coins"));
             }
         }
         if let Some(banked) = &self.banked {
             if open && now.bank_generation == banked.bank_generation {
-                let from_bank = now.bank_item_id(COINS_ID) < banked.bank_item_id(COINS_ID)
-                    || now.item_id(COINS_ID) > banked.item_id(COINS_ID)
-                    || banked.item_id(COINS_ID) > baseline.item_id(COINS_ID);
-                if now.item_id(COINS_ID) > baseline.item_id(COINS_ID) && from_bank {
+                let from_bank = now.bank_item_id(catalog_item_id("coins"))
+                    < banked.bank_item_id(catalog_item_id("coins"))
+                    || now.item_id(catalog_item_id("coins"))
+                        > banked.item_id(catalog_item_id("coins"))
+                    || banked.item_id(catalog_item_id("coins"))
+                        > baseline.item_id(catalog_item_id("coins"));
+                if now.item_id(catalog_item_id("coins"))
+                    > baseline.item_id(catalog_item_id("coins"))
+                    && from_bank
+                {
                     self.coin_withdrawn = true;
-                    self.coins_at_withdraw = self.coins_at_withdraw.max(now.item_id(COINS_ID));
+                    self.coins_at_withdraw = self
+                        .coins_at_withdraw
+                        .max(now.item_id(catalog_item_id("coins")));
                 }
             }
             self.closed |=
@@ -190,7 +199,7 @@ impl RangingGuildBankCycle {
             if self.returned {
                 self.further |= self.coin_withdrawn
                     && self.coins_at_withdraw >= ENTRY_FEE
-                    && now.item_id(COINS_ID) + ENTRY_FEE <= self.coins_at_withdraw
+                    && now.item_id(catalog_item_id("coins")) + ENTRY_FEE <= self.coins_at_withdraw
                     && now.varp(VARP_TARGET_COUNT) >= 1;
             }
         }
@@ -211,10 +220,10 @@ pub fn ranging_guild_bank_baseline_ready(baseline: &Observation) -> bool {
         && baseline.level("ranged") >= RANGED_LIVE
         && baseline.effective_level("ranged") >= RANGED_LIVE
         && baseline.item_id(ARCHERY_TICKET_ID) == SEED_KEEP_TICKETS
-        && baseline.item_id(RUNE_ARROW_ID) == RUNE_ARROWS_PER_TRADE
-        && baseline.item_id(COINS_ID) == 0
-        && baseline.item_id(MAGIC_SHORTBOW_ID) == 0
-        && baseline.equipment_id(MAGIC_SHORTBOW_ID) == 0
+        && baseline.item_id(catalog_item_id("rune_arrow")) == RUNE_ARROWS_PER_TRADE
+        && baseline.item_id(catalog_item_id("coins")) == 0
+        && baseline.item_id(catalog_item_id("magic_shortbow")) == 0
+        && baseline.equipment_id(catalog_item_id("magic_shortbow")) == 0
         && baseline.varp(VARP_TARGET_COUNT) == 0
 }
 
@@ -240,8 +249,8 @@ pub struct RangingGuildFullCycle {
 impl RangingGuildFullCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         let tickets = now.item_id(ARCHERY_TICKET_ID);
-        let arrows = now.item_id(RUNE_ARROW_ID);
-        let coins = now.item_id(COINS_ID);
+        let arrows = now.item_id(catalog_item_id("rune_arrow"));
+        let coins = now.item_id(catalog_item_id("coins"));
         let count = now.varp(VARP_TARGET_COUNT);
         self.tickets_peak = self.tickets_peak.max(tickets);
 
@@ -255,10 +264,12 @@ impl RangingGuildFullCycle {
         if !self.bought
             && self.tickets_peak >= TICKETS_PER_TRADE
             && self.tickets_peak.saturating_sub(tickets) >= TICKETS_PER_TRADE
-            && arrows.saturating_sub(baseline.item_id(RUNE_ARROW_ID)) >= RUNE_ARROWS_PER_TRADE
+            && arrows.saturating_sub(baseline.item_id(catalog_item_id("rune_arrow")))
+                >= RUNE_ARROWS_PER_TRADE
         {
             self.bought = true;
-            self.bought_arrows = arrows.saturating_sub(baseline.item_id(RUNE_ARROW_ID));
+            self.bought_arrows =
+                arrows.saturating_sub(baseline.item_id(catalog_item_id("rune_arrow")));
         }
 
         // Live: runeMax>=50 then pack 0 after a later bank. Same bought id.
@@ -268,8 +279,9 @@ impl RangingGuildFullCycle {
             && at_seers
             && now.bank_generation > baseline.bank_generation
             && arrows == 0
-            && now.bank_item_id(RUNE_ARROW_ID) >= self.bought_arrows
-            && now.bank_item_id(RUNE_ARROW_ID) > baseline.bank_item_id(RUNE_ARROW_ID)
+            && now.bank_item_id(catalog_item_id("rune_arrow")) >= self.bought_arrows
+            && now.bank_item_id(catalog_item_id("rune_arrow"))
+                > baseline.bank_item_id(catalog_item_id("rune_arrow"))
         {
             self.banked_bought = true;
         }
@@ -319,10 +331,10 @@ pub fn ranging_guild_full_baseline_ready(baseline: &Observation) -> bool {
         && baseline.level("ranged") >= RANGED_LIVE
         && baseline.effective_level("ranged") >= RANGED_LIVE
         && baseline.item_id(ARCHERY_TICKET_ID) == SEED_KEEP_TICKETS
-        && baseline.item_id(RUNE_ARROW_ID) == 0
-        && baseline.bank_item_id(RUNE_ARROW_ID) == 0
-        && baseline.item_id(COINS_ID) == 0
-        && baseline.item_id(MAGIC_SHORTBOW_ID) == 0
-        && baseline.equipment_id(MAGIC_SHORTBOW_ID) == 0
+        && baseline.item_id(catalog_item_id("rune_arrow")) == 0
+        && baseline.bank_item_id(catalog_item_id("rune_arrow")) == 0
+        && baseline.item_id(catalog_item_id("coins")) == 0
+        && baseline.item_id(catalog_item_id("magic_shortbow")) == 0
+        && baseline.equipment_id(catalog_item_id("magic_shortbow")) == 0
         && baseline.varp(VARP_TARGET_COUNT) == 0
 }

@@ -96,15 +96,19 @@ impl ClimbingBootsCycle {
         // pack after that until deposit.
         if self.tenzing.is_some() && self.dialogue {
             if self.bought.is_none() {
-                let gained = now.item_id(CLIMBING_BOOTS_ID) - baseline.item_id(CLIMBING_BOOTS_ID);
-                let spent = baseline.item_id(COINS_ID) - now.item_id(COINS_ID);
+                let gained = now.item_id(catalog_item_id("death_climbingboots"))
+                    - baseline.item_id(catalog_item_id("death_climbingboots"));
+                let spent = baseline.item_id(catalog_item_id("coins"))
+                    - now.item_id(catalog_item_id("coins"));
                 if gained >= 1 && spent == gained * CLIMBING_BOOTS_PAIR_COINS {
                     self.bought_pairs = gained;
                     self.earned_boots = gained;
                     self.bought = Some(now.clone());
                 }
             } else if self.deposited.is_none() {
-                self.earned_boots = self.earned_boots.max(now.item_id(CLIMBING_BOOTS_ID));
+                self.earned_boots = self
+                    .earned_boots
+                    .max(now.item_id(catalog_item_id("death_climbingboots")));
             }
         }
         // A real cast, not the option: magic XP plus the whole Falador cost
@@ -116,12 +120,15 @@ impl ClimbingBootsCycle {
         // Recorded for either cell, so a walking cell that cast fails closed.
         if self.cast.is_none()
             && self.earned_boots >= 1
-            && now.item_id(CLIMBING_BOOTS_ID) >= self.earned_boots
+            && now.item_id(catalog_item_id("death_climbingboots")) >= self.earned_boots
             && self.bought.as_ref().is_some_and(|bought| {
                 now.skill_xp("magic") > bought.skill_xp("magic")
-                    && now.item_id(LAW_RUNE_ID) < bought.item_id(LAW_RUNE_ID)
-                    && now.item_id(AIR_RUNE_ID) < bought.item_id(AIR_RUNE_ID)
-                    && now.item_id(WATER_RUNE_ID) < bought.item_id(WATER_RUNE_ID)
+                    && now.item_id(catalog_item_id("lawrune"))
+                        < bought.item_id(catalog_item_id("lawrune"))
+                    && now.item_id(catalog_item_id("airrune"))
+                        < bought.item_id(catalog_item_id("airrune"))
+                    && now.item_id(catalog_item_id("waterrune"))
+                        < bought.item_id(catalog_item_id("waterrune"))
             })
             && near(now.tile, landing, 8)
         {
@@ -136,13 +143,14 @@ impl ClimbingBootsCycle {
             && !now.bank_open
             && near(now.tile, bank, 8)
             && self.earned_boots >= 1
-            && now.item_id(CLIMBING_BOOTS_ID) >= self.earned_boots
+            && now.item_id(catalog_item_id("death_climbingboots")) >= self.earned_boots
             && (!use_teleport || self.cast.is_some())
         {
             self.returned = Some(now.clone());
         }
         if now.bank_open && now.bank_loaded && self.boot_bank_empty.is_none() {
-            self.boot_bank_empty = Some(now.bank_item_id(CLIMBING_BOOTS_ID) == 0);
+            self.boot_bank_empty =
+                Some(now.bank_item_id(catalog_item_id("death_climbingboots")) == 0);
         }
         // Deposit the earned peak against a verified empty boot bank, not the
         // first 1-pair bought sample and not leftover bank stock.
@@ -154,8 +162,9 @@ impl ClimbingBootsCycle {
             && now.bank_generation > baseline.bank_generation
             && self.earned_boots >= 1
         {
-            let carried_lost = self.earned_boots - now.item_id(CLIMBING_BOOTS_ID);
-            let bank_gained = now.bank_item_id(CLIMBING_BOOTS_ID);
+            let carried_lost =
+                self.earned_boots - now.item_id(catalog_item_id("death_climbingboots"));
+            let bank_gained = now.bank_item_id(catalog_item_id("death_climbingboots"));
             if carried_lost >= self.earned_boots && bank_gained >= self.earned_boots {
                 self.deposited = Some(now.clone());
             }
@@ -165,8 +174,10 @@ impl ClimbingBootsCycle {
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation == deposited.bank_generation
-                && now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
-                && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)
+                && now.item_id(catalog_item_id("coins"))
+                    > deposited.item_id(catalog_item_id("coins"))
+                && now.bank_item_id(catalog_item_id("coins"))
+                    < deposited.bank_item_id(catalog_item_id("coins"))
             {
                 self.restocked = Some(now.clone());
             }
@@ -177,15 +188,17 @@ impl ClimbingBootsCycle {
                 && !now.bank_open
                 && !now.bank_loaded
                 && now.bank_generation > restocked.bank_generation
-                && now.item_id(COINS_ID) >= CLIMBING_BOOTS_PAIR_COINS
+                && now.item_id(catalog_item_id("coins")) >= CLIMBING_BOOTS_PAIR_COINS
             {
                 self.departed = Some(now.clone());
             }
         }
         // A further pair bought back at Tenzing's hut after the departure.
         if let Some(departed) = &self.departed {
-            let gained = now.item_id(CLIMBING_BOOTS_ID) - departed.item_id(CLIMBING_BOOTS_ID);
-            let spent = departed.item_id(COINS_ID) - now.item_id(COINS_ID);
+            let gained = now.item_id(catalog_item_id("death_climbingboots"))
+                - departed.item_id(catalog_item_id("death_climbingboots"));
+            let spent =
+                departed.item_id(catalog_item_id("coins")) - now.item_id(catalog_item_id("coins"));
             self.further |= gained >= 1
                 && spent == gained * CLIMBING_BOOTS_PAIR_COINS
                 && near(now.tile, TENZING_HUT_DOOR, 12);

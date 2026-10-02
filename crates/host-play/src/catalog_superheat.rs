@@ -13,9 +13,9 @@ pub fn superheater_baseline_ready(
         && baseline.item_id(bar) == 0
         && baseline.item_id(primary) == 0
         && baseline.item_id(secondary) == 0
-        && baseline.item_id(NATURE_RUNE_ID) == 0
+        && baseline.item_id(catalog_item_id("naturerune")) == 0
         && baseline.item_id(staff) == 0
-        && baseline.item_id(IRON_BAR_ID) == 0
+        && baseline.item_id(catalog_item_id("iron_bar")) == 0
         && baseline.equipment_id(staff) == 0
 }
 /// Superheat a trip, deposit bars except natures, restock ores, then smelt again.
@@ -46,19 +46,28 @@ impl SuperheaterCycle {
             staff,
             steel,
         } = spec;
-        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID, SILVER_BAR_ID]
-            .into_iter()
-            .filter(|id| *id != bar)
-            .any(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
+        let wrong_bars = [
+            catalog_item_id("iron_bar"),
+            catalog_item_id("bronze_bar"),
+            catalog_item_id("steel_bar"),
+            catalog_item_id("silver_bar"),
+        ]
+        .into_iter()
+        .filter(|id| *id != bar)
+        .any(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
         self.wrong_product |= wrong_bars;
-        if now.equipment_id(STAFF_OF_FIRE_ID) > 0 && staff != STAFF_OF_FIRE_ID {
+        if now.equipment_id(catalog_item_id("staff_of_fire")) > 0
+            && staff != catalog_item_id("staff_of_fire")
+        {
             self.wrong_staff = true;
         }
-        if now.equipment_id(FIRE_BATTLESTAFF_ID) > 0 && staff != FIRE_BATTLESTAFF_ID {
+        if now.equipment_id(catalog_item_id("fire_battlestaff")) > 0
+            && staff != catalog_item_id("fire_battlestaff")
+        {
             self.wrong_staff = true;
         }
         self.first_bars |= now.item_id(bar) >= 1
-            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(catalog_item_id("naturerune")) >= 1
             && now.item_id(staff) == 0
             && now.equipment_id(staff) >= 1
             && now.skill_xp("magic") > baseline.skill_xp("magic")
@@ -72,7 +81,7 @@ impl SuperheaterCycle {
             && now.bank_generation > baseline.bank_generation
             && now.item_id(bar) == 0
             && now.bank_item_id(bar) >= 1
-            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(catalog_item_id("naturerune")) >= 1
             && now.item_id(primary) == 0
             && now.item_id(secondary) == 0
         {
@@ -87,7 +96,7 @@ impl SuperheaterCycle {
                 && now.item_id(secondary) >= 1
                 && now.bank_item_id(primary) < deposited.bank_item_id(primary)
                 && now.bank_item_id(secondary) < deposited.bank_item_id(secondary)
-                && now.item_id(NATURE_RUNE_ID) >= 1
+                && now.item_id(catalog_item_id("naturerune")) >= 1
                 && if steel {
                     now.item_id(secondary) == 2 * now.item_id(primary)
                 } else {
@@ -103,7 +112,8 @@ impl SuperheaterCycle {
                 && now.item_id(bar) >= 1
                 && now.item_id(primary) < withdrawn.item_id(primary)
                 && now.item_id(secondary) < withdrawn.item_id(secondary)
-                && now.item_id(NATURE_RUNE_ID) < withdrawn.item_id(NATURE_RUNE_ID)
+                && now.item_id(catalog_item_id("naturerune"))
+                    < withdrawn.item_id(catalog_item_id("naturerune"))
                 && now.skill_xp("magic") > withdrawn.skill_xp("magic")
                 && now.skill_xp("smithing") > withdrawn.skill_xp("smithing")
                 && now.equipment_id(staff) >= 1;

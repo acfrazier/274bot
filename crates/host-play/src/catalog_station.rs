@@ -2,12 +2,12 @@ use super::*;
 pub fn cook_wrong_or_burnt(observation: &Observation, wrong: i32) -> bool {
     observation.item_id(wrong) > 0
         || observation.bank_item_id(wrong) > 0
-        || observation.item_id(BURNT_FISH_1_ID) > 0
-        || observation.bank_item_id(BURNT_FISH_1_ID) > 0
-        || observation.item_id(BURNT_FISH_2_ID) > 0
-        || observation.bank_item_id(BURNT_FISH_2_ID) > 0
-        || observation.item_id(BURNT_LOBSTER_ID) > 0
-        || observation.bank_item_id(BURNT_LOBSTER_ID) > 0
+        || observation.item_id(catalog_item_id("burntfish1")) > 0
+        || observation.bank_item_id(catalog_item_id("burntfish1")) > 0
+        || observation.item_id(catalog_item_id("burntfish2")) > 0
+        || observation.bank_item_id(catalog_item_id("burntfish2")) > 0
+        || observation.item_id(catalog_item_id("burnt_lobster")) > 0
+        || observation.bank_item_id(catalog_item_id("burnt_lobster")) > 0
 }
 
 pub fn cook_noted(observation: &Observation, noted_raw: i32, noted_product: i32) -> bool {
@@ -61,23 +61,23 @@ pub fn smelter_bot_baseline_ready(
         && baseline.item_id(secondary) == 0
         && baseline.item_id(product) == 0
         && baseline.item_id(wrong) == 0
-        && baseline.item_id(IRON_BAR_ID) == 0
+        && baseline.item_id(catalog_item_id("iron_bar")) == 0
         && !smelter_noted(baseline, primary + 1, secondary + 1, product + 1)
 }
 
 pub fn flax_spinner_noted(observation: &Observation) -> bool {
-    observation.item_id(NOTED_FLAX_ID) > 0
-        || observation.bank_item_id(NOTED_FLAX_ID) > 0
-        || observation.item_id(NOTED_BOW_STRING_ID) > 0
-        || observation.bank_item_id(NOTED_BOW_STRING_ID) > 0
+    observation.item_id(catalog_item_id("cert_flax")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_flax")) > 0
+        || observation.item_id(catalog_item_id("cert_bow_string")) > 0
+        || observation.bank_item_id(catalog_item_id("cert_bow_string")) > 0
 }
 
 pub fn flax_spinner_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, FLAX_SPINNER_BANK, 8)
         && baseline.level("crafting") >= 1
-        && baseline.item_id(FLAX_ID) == 0
-        && baseline.item_id(BOW_STRING_ID) == 0
-        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && baseline.item_id(catalog_item_id("flax")) == 0
+        && baseline.item_id(catalog_item_id("bow_string")) == 0
+        && baseline.item_id(catalog_item_id("ball_of_wool")) == 0
         && !flax_spinner_noted(baseline)
 }
 /// Produce exact unnoted output with relevant XP after Start, deposit into a
@@ -210,66 +210,72 @@ pub fn station_production_spec(
 ) -> Option<StationProductionSpec> {
     match case {
         CoreCase::CookBot => Some(StationProductionSpec {
-            product: SALMON_ID,
-            input: RAW_SALMON_ID,
+            product: catalog_item_id("salmon"),
+            input: catalog_item_id("raw_salmon"),
             extra_input: None,
-            wrong: LOBSTER_ID,
+            wrong: catalog_item_id("lobster"),
             extra_wrong: None,
             skill: "cooking",
             station: CATHERBY_RANGE_STAND,
             station_radius: 8,
-            noted: cook_noted(observation, NOTED_RAW_SALMON_ID, NOTED_SALMON_ID)
-                || cook_wrong_or_burnt(observation, LOBSTER_ID),
+            noted: cook_noted(
+                observation,
+                catalog_item_id("cert_raw_salmon"),
+                catalog_item_id("cert_salmon"),
+            ) || cook_wrong_or_burnt(observation, catalog_item_id("lobster")),
         }),
         CoreCase::CookBotLobster => Some(StationProductionSpec {
-            product: LOBSTER_ID,
-            input: RAW_LOBSTER_ID,
+            product: catalog_item_id("lobster"),
+            input: catalog_item_id("raw_lobster"),
             extra_input: None,
-            wrong: SALMON_ID,
+            wrong: catalog_item_id("salmon"),
             extra_wrong: None,
             skill: "cooking",
             station: CATHERBY_RANGE_STAND,
             station_radius: 8,
-            noted: cook_noted(observation, NOTED_RAW_LOBSTER_ID, NOTED_LOBSTER_ID)
-                || cook_wrong_or_burnt(observation, SALMON_ID),
+            noted: cook_noted(
+                observation,
+                catalog_item_id("cert_raw_lobster"),
+                catalog_item_id("cert_lobster"),
+            ) || cook_wrong_or_burnt(observation, catalog_item_id("salmon")),
         }),
         CoreCase::SmelterBot => Some(StationProductionSpec {
-            product: BRONZE_BAR_ID,
-            input: COPPER_ORE_ID,
-            extra_input: Some(TIN_ORE_ID),
-            wrong: STEEL_BAR_ID,
-            extra_wrong: Some(IRON_BAR_ID),
+            product: catalog_item_id("bronze_bar"),
+            input: catalog_item_id("copper_ore"),
+            extra_input: Some(catalog_item_id("tin_ore")),
+            wrong: catalog_item_id("steel_bar"),
+            extra_wrong: Some(catalog_item_id("iron_bar")),
             skill: "smithing",
             station: AL_KHARID_FURNACE,
             station_radius: 8,
             noted: smelter_noted(
                 observation,
-                NOTED_COPPER_ORE_ID,
-                NOTED_TIN_ORE_ID,
-                NOTED_BRONZE_BAR_ID,
+                catalog_item_id("cert_copper_ore"),
+                catalog_item_id("cert_tin_ore"),
+                catalog_item_id("cert_bronze_bar"),
             ),
         }),
         CoreCase::SmelterBotSteel => Some(StationProductionSpec {
-            product: STEEL_BAR_ID,
-            input: IRON_ORE_ID,
-            extra_input: Some(COAL_ID),
-            wrong: BRONZE_BAR_ID,
-            extra_wrong: Some(IRON_BAR_ID),
+            product: catalog_item_id("steel_bar"),
+            input: catalog_item_id("iron_ore"),
+            extra_input: Some(catalog_item_id("coal")),
+            wrong: catalog_item_id("bronze_bar"),
+            extra_wrong: Some(catalog_item_id("iron_bar")),
             skill: "smithing",
             station: AL_KHARID_FURNACE,
             station_radius: 8,
             noted: smelter_noted(
                 observation,
-                NOTED_IRON_ORE_ID,
-                NOTED_COAL_ID,
-                NOTED_STEEL_BAR_ID,
+                catalog_item_id("cert_iron_ore"),
+                catalog_item_id("cert_coal"),
+                catalog_item_id("cert_steel_bar"),
             ),
         }),
         CoreCase::FlaxSpinner => Some(StationProductionSpec {
-            product: BOW_STRING_ID,
-            input: FLAX_ID,
+            product: catalog_item_id("bow_string"),
+            input: catalog_item_id("flax"),
             extra_input: None,
-            wrong: BALL_OF_WOOL_ID,
+            wrong: catalog_item_id("ball_of_wool"),
             extra_wrong: None,
             skill: "crafting",
             station: FLAX_SPINNER_WHEEL,
@@ -277,10 +283,10 @@ pub fn station_production_spec(
             noted: flax_spinner_noted(observation),
         }),
         CoreCase::FlaxAioSpin => Some(StationProductionSpec {
-            product: BOW_STRING_ID,
-            input: FLAX_ID,
+            product: catalog_item_id("bow_string"),
+            input: catalog_item_id("flax"),
             extra_input: None,
-            wrong: BALL_OF_WOOL_ID,
+            wrong: catalog_item_id("ball_of_wool"),
             extra_wrong: None,
             skill: "crafting",
             station: FLAX_SPINNER_WHEEL,

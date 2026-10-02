@@ -45,6 +45,7 @@ pub use hunt::{
 
 #[path = "catalog_ids.rs"]
 mod ids;
+pub(crate) use ids::catalog_item_id;
 pub use ids::*;
 #[path = "catalog_case.rs"]
 mod case;
