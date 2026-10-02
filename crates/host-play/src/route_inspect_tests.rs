@@ -1247,6 +1247,8 @@ fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
             tick,
             here: None,
             ingame: true,
+            walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason::None,
+            user_move_intent_seq: 0,
             inv: &[],
             inv_size: 28,
             stats: &[],

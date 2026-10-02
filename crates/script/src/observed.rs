@@ -608,6 +608,7 @@ scene_pages! {
         self_slot: i32,
         self_target_kind: i32,
         self_target_index: i32,
+        user_move_intent_seq: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -630,6 +631,7 @@ scene_pages! {
         shop_open: bool,
         walk_outcome: WalkOutcome,
         bank_selection: crate::isolate_fb::BankSelectionInput,
+        walk_outcome_cancel_reason: crate::isolate_fb::WalkCancelReason,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.
         combat_tab_root: i32,
@@ -711,6 +713,10 @@ impl<'a> Lens<'a> {
     /// The stamp of the posted collision table.
     pub fn collision_stamp(&self) -> Option<Stamp> {
         self.stamp(&self.scene.collision)
+    }
+    /// The latest host walk outcome's ordering sequence.
+    pub fn walk_outcome_seq(&self) -> Option<u64> {
+        self.walk_outcome().map(|outcome| outcome.seq)
     }
 }
 
@@ -1016,6 +1022,10 @@ impl Scene {
         if snap.has_self_target_kind() {
             p.self_target_kind(snap.self_target_kind());
         }
+        if snap.has_user_move_intent_seq() {
+            p.user_move_intent_seq(snap.user_move_intent_seq());
+        }
+
         if snap.has_self_target_index() {
             p.self_target_index(snap.self_target_index());
         }
@@ -1404,6 +1414,7 @@ impl Scene {
                 allow_teleports: snap.walk_outcome_allow_teleports(),
                 blocked: snap.walk_outcome_blocked(),
             });
+            p.walk_outcome_cancel_reason(snap.walk_outcome_cancel_reason());
         }
     }
 }
@@ -1486,9 +1497,10 @@ impl Interner {
 mod tests {
     use super::*;
     use crate::isolate_fb::{
-        encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, BankStandInput,
-        ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
+        encode_snapshot_with_native, BankStandInput, ItemRowInput, NativeFactsInput,
+        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+        StatInput, TileInput,
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {
@@ -1534,6 +1546,59 @@ mod tests {
             assert_eq!(scene.tick(), None);
             assert!(scene.latest().here().is_none());
             assert!(scene.latest().npcs().is_none());
+        });
+    }
+
+    #[test]
+    fn user_move_intent_is_visible_latest_and_since_login_without_new_outcome() {
+        on_reset();
+        let mut initial = empty(1);
+        initial.ingame = true;
+        let (keyframe, fingerprint) = encode_snapshot_delta(None, &initial, false);
+        apply_bytes(&keyframe);
+
+        let mut movement = empty(2);
+        movement.ingame = true;
+        movement.user_move_intent_seq = 3;
+        movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        let native = NativeFactsInput {
+            walk_outcome_seq: 10,
+            ..NativeFactsInput::default()
+        };
+        let (movement_delta, fingerprint) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &movement, native, false);
+        apply_bytes(&movement_delta);
+        with(|scene| {
+            assert_eq!(scene.latest().user_move_intent_seq(), Some(3));
+            assert_eq!(scene.since_login().user_move_intent_seq(), Some(3));
+            assert_eq!(scene.latest().walk_outcome_seq(), Some(10));
+            assert_eq!(
+                scene.latest().walk_outcome_cancel_reason(),
+                Some(crate::isolate_fb::WalkCancelReason::UserInput)
+            );
+        });
+
+        let mut later_movement = empty(3);
+        later_movement.ingame = true;
+        later_movement.user_move_intent_seq = 4;
+        later_movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        let native = NativeFactsInput {
+            walk_outcome_seq: 10,
+            ..NativeFactsInput::default()
+        };
+        let (intent_only_delta, _) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &later_movement, native, false);
+        let intent_only = Snapshot::from_bytes(&intent_only_delta).expect("intent delta");
+        assert!(!intent_only.has_walk_outcome_seq());
+        apply(&intent_only);
+        with(|scene| {
+            assert_eq!(scene.latest().user_move_intent_seq(), Some(4));
+            assert_eq!(scene.since_login().user_move_intent_seq(), Some(4));
+            assert_eq!(scene.latest().walk_outcome_seq(), Some(10));
+            assert_eq!(
+                scene.latest().walk_outcome_cancel_reason(),
+                Some(crate::isolate_fb::WalkCancelReason::UserInput)
+            );
         });
     }
 

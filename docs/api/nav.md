@@ -399,6 +399,16 @@ before the observed player finishes moving. They settle on observed arrival
 or a stationary route end, bounded by the existing active walk deadline.
 This does not relax the requested radius.
 
+Manual movement takes ownership before frontend or script follow. A matching
+native walk completes once with the normal `WalkEnd::UserInput` receipt
+(`blocked=None`), ahead of arrival, deadline and evidence checks. It displays
+“cancelled by user input”; it is not an action error. Cancellation invalidates
+the old route generation and clears pending route/bank work and cancelled carry.
+Requests queued from an older observed walk-outcome sequence cannot restart that
+owner, and live route-less walking composers stop through the shared intent
+sequence. Already operator-paused or reconnect-carried script work keeps its
+existing Resume behavior.
+
 ## Traveller (`nav::traveller`)
 
 `Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:

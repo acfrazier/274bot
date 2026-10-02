@@ -318,6 +318,7 @@ pub(crate) fn emit_walk_cancelled(
     slot: Option<&str>,
     destination: WorldTile,
     at: Option<WorldTile>,
+    route_generation: u64,
     reason: &'static str,
 ) {
     if !api::hostlog::enabled(api::hostlog::Category::NavEvent) {
@@ -331,10 +332,12 @@ pub(crate) fn emit_walk_cancelled(
             always_stderr: false,
         },
         format_args!(
-            "WalkTo outcome=cancelled destination={} at={} reason={} leg=- transport=-",
+            "WalkTo outcome=cancelled destination={} at={} reason={} leg=- transport=- route_generation={}{}",
             WorldWalkTile(Some(destination)),
             WorldWalkTile(at),
             reason,
+            route_generation,
+            if reason == "UserInput" { " (cancelled by user input)" } else { "" },
         ),
     );
 }

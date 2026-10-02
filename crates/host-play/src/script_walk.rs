@@ -41,21 +41,87 @@ pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name
 /// End the uid's walk follow and everything that shares its ownership. A
 /// still-live native owner receives `Cancelled`; a revoked one nothing.
 pub(super) fn abort_walk_on_bot(bot: &mut NavBot) {
+    abort_walk_on_bot_with_end(bot, script::native::WalkEnd::Cancelled);
+}
+
+pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::WalkEnd) {
+    let manual = end == script::native::WalkEnd::UserInput;
+    if bot.bank_pick.walking(bot.route_generation) {
+        bot.bank_pick.reset();
+    }
     bot.route_generation = bot.route_generation.wrapping_add(1);
     bot.route = None;
     bot.route_worker = None;
     bot.pending_route = None;
     bot.requested_route = None;
-    bot.end_native_walk(script::native::WalkEnd::Cancelled);
+    bot.end_native_walk(end);
     bot.route_loc_id = None;
     bot.route_loc_geometry = (false, false);
     bot.route_quest_evidence = None;
     bot.walk_request_id = 0;
-    bot.clear_walk_outcome();
+    if !manual {
+        bot.clear_walk_outcome();
+    }
     bot.traveller.clear();
     // Bank work and carried routes share the revoked walk's ownership.
     bot.bank_fetch = None;
     bot.carried_walk = None;
+}
+
+/// The single takeover seam, called before frontend and script consumers.
+/// `hold` freezes automatic follow but never suppresses human intent.
+pub(crate) fn take_manual_walk_ownership(
+    scripts: &super::ScriptWall,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    frame: crate::SlotFrameInput,
+    client_active: bool,
+    tick: u64,
+) -> bool {
+    let count = frame.manual_move_count();
+    if count == 0 {
+        return false;
+    }
+    let script = super::script_slot(scripts, name);
+    let mut slot = script.as_ref().map(|slot| slot.lock().unwrap());
+    let eligible = client_active
+        && slot
+            .as_ref()
+            .is_some_and(|slot| slot.want_run && slot.state() == script::RunState::Running);
+    let live_family = eligible
+        && slot
+            .as_ref()
+            .is_some_and(|slot| slot.live_walking_operation());
+    let mut all = navs.lock().unwrap();
+    if !all.contains_key(name) {
+        all.insert(name.to_owned(), NavBot::default());
+    }
+    let bot = all
+        .get_mut(name)
+        .expect("the slot intent counter was inserted");
+    bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
+    if !eligible || !(bot.script_walk_armed() || live_family) {
+        return false;
+    }
+    bot.cancel_for_manual_input();
+    // Watchdog ownership must end before slice C's configured Pause entry;
+    // otherwise Pause defers it and Resume silently re-arms the old anchor.
+    if let Some(slot) = slot.as_mut() {
+        slot.note_manual_walk_takeover(bot.user_move_intent_seq, tick);
+        let _ = slot.abort_owned_recovery();
+    }
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Info,
+        slot = name,
+        "walk outcome=cancelled reason=UserInput request={} generation={} intent_seq={} source={:?} manual_steps={}",
+        bot.walk_outcome_request_id,
+        bot.walk_outcome_generation,
+        bot.user_move_intent_seq,
+        frame.manual_move_intent,
+        frame.manual_steps,
+    );
+    true
 }
 
 /// Operator Pause of the slot's script. Frozen stops clicking at the paused
@@ -86,14 +152,14 @@ pub(crate) fn pause_script(
 /// if it still applies: not when a request in `queued` replaces it (a
 /// newer walk, a nearest-bank walk, an abort) and not when the player
 /// already stands within its arrival radius (`arrived`).
-pub(crate) fn resumed_walk(
+pub(crate) fn resumed_walk<'a>(
     carried: Option<script::shim::InteractReq>,
-    queued: &[script::shim::InteractReq],
+    queued: impl IntoIterator<Item = &'a script::shim::InteractReq>,
     arrived: impl FnOnce(WorldTile, i32) -> bool,
 ) -> Option<script::shim::InteractReq> {
     use script::shim::InteractReq;
     let carried = carried?;
-    let superseded = queued.iter().any(|op| {
+    let superseded = queued.into_iter().any(|op| {
         matches!(
             op,
             InteractReq::Walk { .. }

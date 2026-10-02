@@ -296,7 +296,7 @@ pub(crate) fn drain_observed_host_interacts(
     slot: &mut SlotScript,
 ) -> (
     Option<DrainedRunPolicyUpdate>,
-    Vec<script::shim::InteractReq>,
+    Vec<script::load::QueuedInteract>,
     bool,
 ) {
     let producer_generation = slot.runtime_generation();
@@ -383,7 +383,7 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             // Ownership already removed game rows; retained non-game rows
             // follow the same pause rule as an unowned batch in every frame.
-            slot.restore_interacts(queued);
+            slot.restore_host_interacts(queued);
         }
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
@@ -414,6 +414,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // The slot repeats the run/action fence before accepting the receipt.
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             deliver_native_walk_end(&mut slot, bot, tick);
+            slot.observe_walk_outcome_seq(bot.walk_outcome_seq);
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();
@@ -648,6 +649,8 @@ pub(crate) fn script_observe_cached_with_channels(
                     walk_radius,
                     walk_allow_teleports,
                     walk_blocked,
+                    walk_cancel_reason,
+                    user_move_intent_seq,
                     walk_missing_carry,
                     inspect_posted,
                     bank_selection,
@@ -667,6 +670,8 @@ pub(crate) fn script_observe_cached_with_channels(
                                 b.walk_outcome_radius,
                                 b.walk_outcome_allow_teleports,
                                 b.walk_outcome_blocked,
+                                b.walk_outcome_cancel_reason,
+                                b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
                                 b.bank_pick.poll(std::time::Instant::now()),
@@ -688,6 +693,8 @@ pub(crate) fn script_observe_cached_with_channels(
                             0,
                             false,
                             false,
+                            script::isolate_fb::WalkCancelReason::None,
+                            0,
                             Vec::new(),
                             route_inspect::PostedInspect::default(),
                             script::isolate_fb::BankSelectionInput::default(),
@@ -748,6 +755,8 @@ pub(crate) fn script_observe_cached_with_channels(
                         radius: walk_radius,
                         allow_teleports: walk_allow_teleports,
                         blocked: walk_blocked,
+                        cancel_reason: walk_cancel_reason,
+                        user_move_intent_seq,
                     },
                     &carry_rows,
                     inspect_posted,
@@ -958,30 +967,41 @@ pub(crate) fn script_observe_cached_with_channels(
                     let mut carried = None;
                     if up && !hold && here.is_some() && snapshot.is_some() {
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
-                        queued.extend(slot.take_held_walks());
+                        queued.extend(slot.take_held_host_walks());
                     }
                     if let Some(update) = update {
                         run_policy_update = Some(update);
                     }
                     queued.extend(take_script_interacts(reqs, slot_input));
-                    interact.extend(resumed_walk(carried, &queued, |dest, radius| {
-                        let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
-                            return false;
-                        };
-                        let view = pack_cached_reach(
-                            slot.reach_pack_cache(),
-                            Some(snapshot),
-                            here,
-                            world.as_deref(),
-                            canlight,
-                        )
-                        .view;
-                        api::query::is_arrived(
-                            api::snapshot::WorldTile { x, z, level },
-                            dest,
-                            radius,
-                            || view,
-                        )
+                    let resumed =
+                        resumed_walk(carried, queued.iter().map(|q| &q.req), |dest, radius| {
+                            let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
+                                return false;
+                            };
+                            let view = pack_cached_reach(
+                                slot.reach_pack_cache(),
+                                Some(snapshot),
+                                here,
+                                world.as_deref(),
+                                canlight,
+                            )
+                            .view;
+                            api::query::is_arrived(
+                                api::snapshot::WorldTile { x, z, level },
+                                dest,
+                                radius,
+                                || view,
+                            )
+                        });
+                    interact.extend(resumed.map(|req| {
+                        script::load::QueuedInteract {
+                            req,
+                            observed_walk_outcome_seq: navs
+                                .lock()
+                                .unwrap()
+                                .get(name)
+                                .map_or(0, |bot| bot.walk_outcome_seq),
+                        }
                     }));
                     interact.extend(queued);
                 }
@@ -1016,9 +1036,9 @@ pub(crate) fn script_observe_cached_with_channels(
     if let Some(channels) = channels {
         // Channel requests are the broker's, never the game's. A frame with
         // none allocates nothing, and an untracked slot takes no lock.
-        let is_channel = |req: &script::shim::InteractReq| {
+        let is_channel = |queued: &script::load::QueuedInteract| {
             matches!(
-                req,
+                queued.req,
                 script::shim::InteractReq::ChannelOpen { .. }
                     | script::shim::InteractReq::ChannelPost { .. }
                     | script::shim::InteractReq::ChannelClose { .. }
@@ -1036,7 +1056,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 channel_generation,
                 channel_world,
                 channel_active,
-                channel_reqs,
+                channel_reqs.into_iter().map(|queued| queued.req).collect(),
             );
             deliver_channel_events(scripts, deliveries);
         }
@@ -1067,6 +1087,20 @@ pub(crate) fn script_observe_cached_with_channels(
                     while let Some(action) = slot.take_native_action() {
                         let authority = action.authority();
                         if !authority.live() {
+                            continue;
+                        }
+                        let current = navs.lock().unwrap().get(name).is_none_or(|bot| {
+                            bot.walking_decision_is_current(action.observed_walk_outcome_seq)
+                        });
+                        if !current
+                            && matches!(
+                                &action.effect,
+                                script::native::HostEffect::Walk(_)
+                                    | script::native::HostEffect::Interaction(
+                                        script::shim::InteractReq::WalkTo { .. }
+                                    )
+                            )
+                        {
                             continue;
                         }
                         match action.effect {
@@ -1166,7 +1200,15 @@ pub(crate) fn script_observe_cached_with_channels(
                     let mut rejected_withdraw_x = 0usize;
                     let mut rejected_withdraw_load = 0usize;
                     let mut rejected_bank_op = 0usize;
-                    for req in interact {
+                    for queued in interact {
+                        if queued.req.is_automatic_walk()
+                            && navs.lock().unwrap().get(name).is_some_and(|bot| {
+                                !bot.walking_decision_is_current(queued.observed_walk_outcome_seq)
+                            })
+                        {
+                            continue;
+                        }
+                        let req = queued.req;
                         match req {
                             req @ (script::shim::InteractReq::Deposit { .. }
                             | script::shim::InteractReq::Withdraw { .. }) => {
@@ -1396,23 +1438,25 @@ pub(crate) fn script_observe_cached_with_channels(
                     && slot.state() == script::RunState::Paused
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
-                    slot.restore_interacts(interact);
+                    slot.restore_host_interacts(interact);
                 }
             }
         } else {
             let rejected_x = interact
                 .iter()
-                .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
+                .filter(|queued| matches!(&queued.req, script::shim::InteractReq::WithdrawX { .. }))
                 .count();
             let rejected_load = interact
                 .iter()
-                .filter(|req| matches!(req, script::shim::InteractReq::WithdrawLoad { .. }))
+                .filter(|queued| {
+                    matches!(&queued.req, script::shim::InteractReq::WithdrawLoad { .. })
+                })
                 .count();
             let rejected_bank = interact
                 .iter()
                 .filter(|req| {
                     matches!(
-                        req,
+                        &req.req,
                         script::shim::InteractReq::Deposit { .. }
                             | script::shim::InteractReq::Withdraw { .. }
                     )
@@ -1446,17 +1490,17 @@ pub(crate) fn script_observe_cached_with_channels(
     } else if !interact.is_empty() {
         let rejected_x = interact
             .iter()
-            .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
+            .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawX { .. }))
             .count();
         let rejected_load = interact
             .iter()
-            .filter(|req| matches!(req, script::shim::InteractReq::WithdrawLoad { .. }))
+            .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawLoad { .. }))
             .count();
         let rejected_bank = interact
             .iter()
             .filter(|req| {
                 matches!(
-                    req,
+                    &req.req,
                     script::shim::InteractReq::Deposit { .. }
                         | script::shim::InteractReq::Withdraw { .. }
                 )
@@ -1638,13 +1682,13 @@ pub(crate) fn script_observe(
     )
 }
 
-pub(crate) fn take_script_interacts(
-    reqs: Vec<script::shim::InteractReq>,
+pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::InteractReq>>(
+    reqs: Vec<T>,
     slot_input: Option<&SlotInput>,
-) -> Vec<script::shim::InteractReq> {
+) -> Vec<T> {
     let mut out = Vec::with_capacity(reqs.len());
     for req in reqs {
-        match req {
+        match req.borrow() {
             script::shim::InteractReq::Mouse {
                 down,
                 x,
@@ -1653,14 +1697,14 @@ pub(crate) fn take_script_interacts(
                 identity,
             } => {
                 if let Some(inp) = slot_input {
-                    inp.enqueue_script_mouse_at(identity, down, x, y, button);
+                    inp.enqueue_script_mouse_at(*identity, *down, *x, *y, *button);
                 }
             }
             script::shim::InteractReq::RunPolicyOverride { .. } => {
                 // Host callers split these before dispatch. A raw/direct caller
                 // cannot turn host policy into a game interact.
             }
-            other => out.push(other),
+            _ => out.push(req),
         }
     }
     out

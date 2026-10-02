@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use client::client::Client;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -48,7 +49,7 @@ use host_play::{
     open_vault, parse_profile_args, peek_map_catalogue, persist_background_bots_ack,
     player_here_tile, profile_password, run_with_io, run_with_template, MapDemandHandle,
     MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue, ServerProfile,
-    SharedClientTemplate, WalkArm, WireCmd,
+    SharedClientTemplate, SlotFrameInput, WalkArm, WireCmd,
 };
 use nav::map::identity::Digest;
 use nav::tile::Tile;
@@ -676,159 +677,170 @@ impl TuiSession {
             .as_ref()
             .map(|t| t.profile().map_members())
             .unwrap_or(false);
-        let per_frame =
-            move |c: &mut client::client::Client, name: &str, frame: host_play::SlotFrameInput| {
-                let hold = frame.hold;
-                // Clear facts and externally armed work at the actual session
-                // boundary before scenario/local-player/Guardian early returns.
-                if publish_frontend_slot(
-                    name,
-                    c,
-                    &frontend_gens,
-                    &snapshots,
-                    &travellers,
-                    &tick_latch,
-                ) {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
+        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
+            let hold = frame.hold;
+            if host_play::cancel_walk_arm_on_manual_input(
+                name,
+                &travellers,
+                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
+                    x,
+                    z,
+                    level,
+                }),
+                frame,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+            // Clear facts and externally armed work at the actual session
+            // boundary before scenario/local-player/Guardian early returns.
+            if publish_frontend_slot(
+                name,
+                c,
+                &frontend_gens,
+                &snapshots,
+                &travellers,
+                &tick_latch,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
 
-                // TUI owns mainland seeding so host-play cannot re-arm it when
-                // an intentional scenario logout starts a new run_client stretch.
-                if seed_mainland_on_ready(
-                    c,
-                    &mainland_sent,
-                    name,
-                    mainland,
-                    c.ingame && c.scene_state == 2 && c.local_player.is_some(),
-                    c.last_login_reconnect,
-                ) {
-                    api::host_log!(
-                        api::hostlog::Category::Lifecycle,
-                        api::hostlog::Level::Info,
-                        slot = name,
-                        "mainland hop queued"
-                    );
-                }
+            // TUI owns mainland seeding so host-play cannot re-arm it when
+            // an intentional scenario logout starts a new run_client stretch.
+            if seed_mainland_on_ready(
+                c,
+                &mainland_sent,
+                name,
+                mainland,
+                c.ingame && c.scene_state == 2 && c.local_player.is_some(),
+                c.last_login_reconnect,
+            ) {
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Info,
+                    slot = name,
+                    "mainland hop queued"
+                );
+            }
 
-                // The shared `--live script_*` runner: tick the driven
-                // slot and its companions before the local-player gate
-                // (seeding must observe frames with no player decode).
-                // Hold freezes scenario follow like `step_nav_bot`.
-                if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                    if runner.drives(name) {
-                        if runner.wants_script_paint() {
-                            let paint = start_arming
-                                .lock()
-                                .unwrap()
-                                .handle
-                                .as_ref()
-                                .and_then(|handle| handle.paint(name));
-                            if let Some(paint) = paint {
-                                runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                            }
+            // The shared `--live script_*` runner: tick the driven
+            // slot and its companions before the local-player gate
+            // (seeding must observe frames with no player decode).
+            // Hold freezes scenario follow like `step_nav_bot`.
+            if let Some(runner) = scenario.lock().unwrap().as_mut() {
+                if runner.drives(name) {
+                    if runner.wants_script_paint() {
+                        let paint = start_arming
+                            .lock()
+                            .unwrap()
+                            .handle
+                            .as_ref()
+                            .and_then(|handle| handle.paint(name));
+                        if let Some(paint) = paint {
+                            runner.observe_script_paint(paint.lines.iter().map(String::as_str));
                         }
-                        let pump = live_start::fire_pending_catalog_start(
-                            &mut pending_script.lock().unwrap(),
-                            runner.on_start_script(),
-                            runner.on_stop_script(),
-                            || start_arming.lock().unwrap().clone(),
-                        );
-                        match pump {
-                            live_start::StartScriptPump::Hold => {}
-                            live_start::StartScriptPump::CompiledFailed(error) => {
-                                runner.fail_start(&error);
+                    }
+                    let pump = live_start::fire_pending_catalog_start(
+                        &mut pending_script.lock().unwrap(),
+                        runner.on_start_script(),
+                        runner.on_stop_script(),
+                        || start_arming.lock().unwrap().clone(),
+                    );
+                    match pump {
+                        live_start::StartScriptPump::Hold => {}
+                        live_start::StartScriptPump::CompiledFailed(error) => {
+                            runner.fail_start(&error);
+                        }
+                        live_start::StartScriptPump::Continue
+                        | live_start::StartScriptPump::CompiledRunning => {
+                            if pump == live_start::StartScriptPump::CompiledRunning {
+                                runner.observe_script_running();
                             }
-                            live_start::StartScriptPump::Continue
-                            | live_start::StartScriptPump::CompiledRunning => {
-                                if pump == live_start::StartScriptPump::CompiledRunning {
-                                    runner.observe_script_running();
-                                }
-                                if runner.on_stop_script() {
-                                    runner.observe_script_idle(start_arming.lock().is_ok_and(
-                                        |arming| {
-                                            arming
-                                                .handle
-                                                .as_ref()
-                                                .is_some_and(|handle| handle.idle(name))
+                            if runner.on_stop_script() {
+                                runner.observe_script_idle(start_arming.lock().is_ok_and(
+                                    |arming| {
+                                        arming
+                                            .handle
+                                            .as_ref()
+                                            .is_some_and(|handle| handle.idle(name))
+                                    },
+                                ));
+                            }
+                            runner.tick_with_hold(c, hold);
+                            // A relog can enter Start on the final off-world frame.
+                            // Arm it now rather than after the reconnect posts colour.
+                            if runner.on_start_script() {
+                                if let Ok(mut pending) = pending_script.lock() {
+                                    let pump = live_start::fire_pending_catalog_start(
+                                        &mut pending,
+                                        true,
+                                        false,
+                                        || {
+                                            start_arming
+                                                .lock()
+                                                .map(|arming| arming.clone())
+                                                .unwrap_or_default()
                                         },
-                                    ));
-                                }
-                                runner.tick_with_hold(c, hold);
-                                // A relog can enter Start on the final off-world frame.
-                                // Arm it now rather than after the reconnect posts colour.
-                                if runner.on_start_script() {
-                                    if let Ok(mut pending) = pending_script.lock() {
-                                        let pump = live_start::fire_pending_catalog_start(
-                                            &mut pending,
-                                            true,
-                                            false,
-                                            || {
-                                                start_arming
-                                                    .lock()
-                                                    .map(|arming| arming.clone())
-                                                    .unwrap_or_default()
-                                            },
-                                        );
-                                        match pump {
-                                            live_start::StartScriptPump::CompiledRunning => {
-                                                runner.observe_script_running();
-                                            }
-                                            live_start::StartScriptPump::CompiledFailed(error) => {
-                                                runner.fail_start(&error);
-                                            }
-                                            _ => {}
+                                    );
+                                    match pump {
+                                        live_start::StartScriptPump::CompiledRunning => {
+                                            runner.observe_script_running();
                                         }
+                                        live_start::StartScriptPump::CompiledFailed(error) => {
+                                            runner.fail_start(&error);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
                         }
-                    } else if let Some(index) = runner.companion_for(name) {
-                        runner.companion_tick(index, c);
                     }
+                } else if let Some(index) = runner.companion_for(name) {
+                    runner.companion_tick(index, c);
                 }
+            }
 
-                let Some(here) = player_here_tile(c) else {
-                    return;
-                };
-                // Guardian hold freezes WalkArm follow; the armed route
-                // stays latched and resumes when hold lifts.
-                if !WalkArm::may_follow(hold) {
-                    return;
-                }
-                // Step the armed walk route one leg per player-info tick
-                // (the panel's `tick_latch` pattern — a hop is sent once
-                // per server tick, not re-sent every 20 ms frame).
-                let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
-                    return;
-                };
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
-                        return;
-                    }
-                    latch.insert(name.to_string(), (c.gens.player, here));
-                }
-                let finished = {
-                    let snapshots = snapshots.lock().unwrap();
-                    let Some(snap) = snapshots.get(name) else {
-                        return;
-                    };
-                    let mut arm = arm.lock().unwrap();
-                    let world = nav_world.lock().unwrap().clone();
-                    host_play::step_walk_arm_follow(
-                        c,
-                        snap,
-                        &mut arm,
-                        world.as_deref(),
-                        here,
-                        map_members,
-                        Some(name),
-                    )
-                };
-                if finished {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
+            let Some(here) = player_here_tile(c) else {
+                return;
             };
+            // Guardian hold freezes WalkArm follow; the armed route
+            // stays latched and resumes when hold lifts.
+            if !WalkArm::may_follow(hold) {
+                return;
+            }
+            // Step the armed walk route one leg per player-info tick
+            // (the panel's `tick_latch` pattern — a hop is sent once
+            // per server tick, not re-sent every 20 ms frame).
+            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
+                return;
+            };
+            {
+                let mut latch = tick_latch.lock().unwrap();
+                if latch.get(name) == Some(&(c.gens.player, here)) {
+                    return;
+                }
+                latch.insert(name.to_string(), (c.gens.player, here));
+            }
+            let finished = {
+                let snapshots = snapshots.lock().unwrap();
+                let Some(snap) = snapshots.get(name) else {
+                    return;
+                };
+                let mut arm = arm.lock().unwrap();
+                let world = nav_world.lock().unwrap().clone();
+                host_play::step_walk_arm_follow(
+                    c,
+                    snap,
+                    &mut arm,
+                    world.as_deref(),
+                    here,
+                    map_members,
+                    Some(name),
+                )
+            };
+            if finished {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+        };
         let mut play = match self.template.clone() {
             Some(template) => run_with_template(
                 template,

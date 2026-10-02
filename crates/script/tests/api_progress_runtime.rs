@@ -89,6 +89,8 @@ fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPag
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     };
     let native = NativeFactsInput {
         api_progress,

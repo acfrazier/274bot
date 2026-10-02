@@ -35,7 +35,7 @@ pub use generated::rs_2b_0t::isolate::{
     ChatLine, ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch,
     MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
     QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface, Snapshot,
-    Stat, StatusField, Tile, Varp, WidgetText,
+    Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -297,13 +297,13 @@ pub struct NearestBoothInput<'a> {
     pub op: &'a str,
 }
 
-/// The snapshot fields the host observed this PLAYER_INFO — exactly the
-/// set the shim Game/Inventory/Skills/Bank/Banking/EventSignal read, no
-/// World clone. `inv`/`bank`/`bank_side` rows carry the resolved obj name
-/// (`None` when the host table has no name for the id — a script query
-/// never matches); `stats` the stat index/name/xp; `booths` the scene
-/// locs with a `Use-quickly` action; `banks` the packed stands; `hold`/
-/// `ours` the guardian's status for `EventSignal.pending()`.
+/// The host-observed PLAYER_INFO facts sent to the isolate, plus correlated
+/// movement intent and walk-outcome reason. No cloned World. `inv`/`bank`/
+/// `bank_side` rows carry the resolved obj name (`None` when the host table
+/// has no name for the id — a script query never matches); `stats` the stat
+/// index/name/xp; `booths` the scene locs with a `Use-quickly` action; `banks`
+/// the packed stands; `hold`/`ours` the guardian's status for
+/// `EventSignal.pending()`.
 pub struct SnapshotInput<'a> {
     pub tick: u64,
     pub here: Option<TileInput>,
@@ -393,10 +393,14 @@ pub struct SnapshotInput<'a> {
     pub self_target_index: i32,
     /// Selected-world widget text rows. Absent id is not a stale IfType label.
     pub widgets: &'a [WidgetTextInput<'a>],
+    /// Latest qualifying user movement intent, independent of a walk terminal.
+    pub user_move_intent_seq: u64,
+    /// Bounded cancellation reason for the latest posted walk outcome.
+    pub walk_outcome_cancel_reason: WalkCancelReason,
 }
 
 /// Optional native facts appended to the isolate snapshot. Kept separate
-/// from [`SnapshotInput`] so existing one-shot callers remain source-compatible.
+/// from [`SnapshotInput`] so callers can omit these facts when unused.
 #[derive(Clone, Copy, Default)]
 pub struct NativeFactsInput<'a> {
     pub self_chat: Option<&'a str>,
@@ -631,8 +635,17 @@ pub fn decode_snapshot(buf: &[u8]) -> Result<Snapshot<'_>, String> {
 
 impl<'a> Snapshot<'a> {
     pub fn from_bytes(buf: &'a [u8]) -> Result<Self, String> {
-        root_as_snapshot_with_opts(&isolate_verify_opts(), buf)
-            .map_err(|err: InvalidFlatbuffer| err.to_string())
+        let snapshot = root_as_snapshot_with_opts(&isolate_verify_opts(), buf)
+            .map_err(|err: InvalidFlatbuffer| err.to_string())?;
+        if snapshot.has_walk_outcome_cancel_reason()
+            && !matches!(
+                snapshot.walk_outcome_cancel_reason(),
+                WalkCancelReason::None | WalkCancelReason::UserInput
+            )
+        {
+            return Err("unknown walk outcome cancellation reason".to_string());
+        }
+        Ok(snapshot)
     }
 
     presence_methods! {
@@ -718,6 +731,9 @@ impl<'a> Snapshot<'a> {
         has_main_make => VT_MAIN_MAKE,
         has_main_make_available => VT_MAIN_MAKE_AVAILABLE,
         has_bank_approaches => VT_BANK_APPROACHES,
+        has_user_move_intent_seq => VT_USER_MOVE_INTENT_SEQ,
+        has_walk_outcome_cancel_reason => VT_WALK_OUTCOME_CANCEL_REASON,
+
         has_walk_outcome_seq => VT_WALK_OUTCOME_SEQ,
         has_walk_outcome_generation => VT_WALK_OUTCOME_GENERATION,
         has_walk_outcome_failed => VT_WALK_OUTCOME_FAILED,
@@ -1153,6 +1169,8 @@ pub struct SnapshotFingerprint {
     pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
+    pub user_move_intent_seq: u64,
+
     pub walk_outcome_seq: u64,
     pub walk_outcome_generation: u64,
     pub walk_outcome_failed: bool,
@@ -1163,6 +1181,7 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub walk_outcome_blocked: bool,
+    pub walk_outcome_cancel_reason: WalkCancelReason,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
     /// left to a stale keep.
@@ -1441,6 +1460,7 @@ impl SnapshotFingerprint {
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
+            user_move_intent_seq: input.user_move_intent_seq,
             walk_outcome_seq: native.walk_outcome_seq,
             walk_outcome_generation: native.walk_outcome_generation,
             walk_outcome_failed: native.walk_outcome_failed,
@@ -1451,6 +1471,7 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             walk_outcome_blocked: native.walk_outcome_blocked,
+            walk_outcome_cancel_reason: input.walk_outcome_cancel_reason,
             walk_missing_carry: native
                 .walk_missing_carry
                 .iter()
@@ -1602,6 +1623,7 @@ pub struct DeltaMask {
     pub quest_statuses: bool,
     pub npc_boxes: bool,
     pub bank_approaches: bool,
+    pub user_move_intent_seq: bool,
     pub walk_outcome: bool,
     pub route_inspect: bool,
     pub collision: bool,
@@ -1708,6 +1730,7 @@ impl DeltaMask {
             quest_statuses: true,
             npc_boxes: true,
             bank_approaches: true,
+            user_move_intent_seq: true,
             walk_outcome: true,
             route_inspect: true,
             collision: true,
@@ -1813,6 +1836,7 @@ impl DeltaMask {
             quest_statuses: next.quest_statuses != last.quest_statuses,
             npc_boxes: next.npc_boxes != last.npc_boxes,
             bank_approaches: next.bank_approaches != last.bank_approaches,
+            user_move_intent_seq: next.user_move_intent_seq != last.user_move_intent_seq,
             walk_outcome: next.walk_outcome_seq != last.walk_outcome_seq
                 || next.walk_outcome_generation != last.walk_outcome_generation
                 || next.walk_outcome_failed != last.walk_outcome_failed
@@ -1823,6 +1847,7 @@ impl DeltaMask {
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id
                 || next.walk_outcome_blocked != last.walk_outcome_blocked
+                || next.walk_outcome_cancel_reason != last.walk_outcome_cancel_reason
                 || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
@@ -2691,6 +2716,9 @@ fn encode_snapshot_masked_into(
             table.add_bank_approaches(off);
         }
     }
+    if mask.user_move_intent_seq {
+        table.add_user_move_intent_seq(input.user_move_intent_seq);
+    }
     if mask.walk_outcome {
         table.add_walk_outcome_seq(native.walk_outcome_seq);
         table.add_walk_outcome_generation(native.walk_outcome_generation);
@@ -2702,7 +2730,7 @@ fn encode_snapshot_masked_into(
         table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
         table.add_walk_outcome_request_id(native.walk_outcome_request_id);
         table.add_walk_outcome_blocked(native.walk_outcome_blocked);
-        // The vector rides every post of the family: a supplied empty one is
+        table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason);
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
         if let Some(off) = walk_missing_carry_off {
@@ -4996,6 +5024,8 @@ pub(crate) mod tests {
             self_target_kind: 0,
             self_target_index: -1,
             widgets: &[],
+            user_move_intent_seq: 0,
+            walk_outcome_cancel_reason: Default::default(),
         }
     }
 
@@ -6478,6 +6508,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn unknown_walk_cancel_reason_is_rejected() {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let root = {
+            let mut snapshot = SnapshotBuilder::new(&mut b);
+            snapshot.add_tick(1);
+            snapshot.add_walk_outcome_cancel_reason(WalkCancelReason(2));
+            snapshot.finish()
+        };
+        b.finish(root, None);
+        let error = match Snapshot::from_bytes(b.finished_data()) {
+            Err(error) => error,
+            Ok(_) => panic!("unknown bounded enum was accepted"),
+        };
+        assert!(error.contains("unknown walk outcome cancellation reason"));
+    }
+
+    #[test]
     fn omitted_walk_missing_carry_is_absent_on_an_old_buffer() {
         // A buffer written before slot 254 existed (append-only schema): the
         // slot is absent and the reader reports nothing rather than a clear.
@@ -6491,6 +6538,9 @@ pub(crate) mod tests {
         b.finish(root, None);
         let view = Snapshot::from_bytes(b.finished_data()).expect("old snapshot");
         assert!(view.has_walk_outcome_seq());
+        assert!(!view.has_user_move_intent_seq());
+        assert!(!view.has_walk_outcome_cancel_reason());
+        assert_eq!(view.walk_outcome_cancel_reason(), WalkCancelReason::None);
         assert!(!view.has_walk_missing_carry());
         assert!(view.walk_missing_carry().is_none());
     }
