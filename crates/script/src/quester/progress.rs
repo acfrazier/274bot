@@ -939,4 +939,50 @@ mod tests {
         ));
         assert_eq!(completed.complete, Truth::True);
     }
+
+    #[test]
+    fn released_sheep_complete_journal_resolves_complete_not_collect_more() {
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let bytes = crate::quester::card::released_path("sheep").unwrap();
+        let path = crate::quester::compile::compile_path(bytes, &selected, &quests).unwrap();
+        let in_progress = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                1,
+                &[
+                    "I asked Farmer Fred, near Lumbridge, for a quest. Fred",
+                    "said he'd pay me for shearing his sheep for him!",
+                    "I need to collect 20 more balls of wool.",
+                ],
+            ),
+            None,
+        );
+        assert!(matches!(
+            &in_progress.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "sheep:1"
+        ));
+        assert_eq!(in_progress.complete, Truth::False);
+        let completed = resolve_journal(
+            &path,
+            &read_lines(
+                &path,
+                2,
+                &[
+                    "I asked Farmer Fred, near Lumbridge, for a quest. Fred",
+                    "said he'd pay me for shearing his sheep for him!",
+                    "I brought Farmer Fred 20 balls of wool, and he paid me for",
+                    "it!",
+                    "QUEST COMPLETE!",
+                ],
+            ),
+            Some(&in_progress),
+        );
+        assert!(matches!(
+            &completed.stage,
+            Knowledge::Known(stage) if stage.0.as_ref() == "sheep:2"
+        ));
+        assert_eq!(completed.complete, Truth::True);
+    }
 }

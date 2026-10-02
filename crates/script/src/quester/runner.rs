@@ -209,6 +209,17 @@ impl Quester {
         if !self.dirty {
             return;
         }
+        self.emit_status(
+            output,
+            if self.parked {
+                NativePhase::Blocked
+            } else {
+                NativePhase::Working
+            },
+        );
+    }
+
+    fn emit_status(&mut self, output: &mut dyn NativeOutput, phase: NativePhase) {
         self.dirty = false;
         let stage = self
             .stage
@@ -293,15 +304,11 @@ impl Quester {
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
-            phase: if self.parked {
-                NativePhase::Blocked
-            } else {
-                NativePhase::Working
-            },
+            phase,
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
-            failure: self.parked.then(|| self.blocked_failure()),
+            failure: (phase == NativePhase::Blocked).then(|| self.blocked_failure()),
         });
     }
 
@@ -647,7 +654,7 @@ impl Script for Quester {
             .get(self.seq_index)
             .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
         {
-            self.publish(tick.output);
+            self.emit_status(tick.output, NativePhase::Complete);
             return Ok(ScriptFlow::Complete);
         }
         if self.settling {

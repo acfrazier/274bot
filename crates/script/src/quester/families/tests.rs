@@ -1439,6 +1439,127 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
 }
 
 #[test]
+fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
+    compile_context_test(|cx| {
+        let shears = ItemView {
+            def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![shears], 28);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears", "target": {"item": "shears"},
+                "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+        let first_id = authority.request_id();
+        ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "accepted click without product must wait a bounded round"
+        );
+        assert!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                tick.cx.active_now = Duration::from_secs(12);
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending(),
+            "a silent round must retry inside the until loop, not park until settle_ms"
+        );
+        let last_id = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .authority()
+            .request_id();
+        assert_ne!(
+            last_id, first_id,
+            "silent round must queue another UseOn before the 240s step timeout"
+        );
+        assert!(matches!(emitted(&ledger), InteractReq::UseOn { .. }));
+    });
+}
+
+#[test]
+fn use_on_until_continues_objbox_before_the_next_attempt() {
+    compile_context_test(|cx| {
+        let shears = ItemView {
+            def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        };
+        let wool = ItemView {
+            def: def(resolve_obj(cx, "wool").unwrap(), "Wool"),
+            slot: 1,
+            count: 1,
+            ..shears.clone()
+        };
+        let mut snapshot = ready();
+        snapshot.seed_inventory(vec![shears.clone(), wool], 28);
+        snapshot.seed_chat_modal(2100, vec!["You get some wool.".into()]);
+        snapshot.seed_chat_options(vec![], 2105);
+        let plan = compile_use_on(
+            &serde_json::json!({
+                "item": "shears", "target": {"item": "shears"},
+                "until": {"obj": "wool", "qty": 20}, "settle_ms": 240_000
+            }),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(emitted(&ledger), InteractReq::ContinueDialog),
+            "objbox from a successful shear must be continued before the next UseOn"
+        );
+    });
+}
+
+#[test]
 fn use_on_negative_feedback_is_authored_and_not_a_sheep_special_case() {
     compile_context_test(|cx| {
         let mut snapshot = ready();
@@ -3204,6 +3325,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         interaction: None,
         accepted: false,
         round_before: None,
+        round_deadline: None,
         chat_since: 0,
     };
     assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
