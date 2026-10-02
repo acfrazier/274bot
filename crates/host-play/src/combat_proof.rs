@@ -29,6 +29,7 @@ pub(crate) struct CombatCapture {
     pub(crate) started: bool,
     pub(crate) maze_owner_live_before: Option<bool>,
     pub(crate) maze_owner_live_after: Option<bool>,
+    pub(crate) maze_prayer_restaged: bool,
     last_frame: Option<String>,
     last_status: Option<String>,
     m5_attack_owner: Option<HostAuthority>,
@@ -276,6 +277,14 @@ pub(crate) fn maze_attack_owner_live(account: &str) -> Option<bool> {
         .m5_attack_owner
         .as_ref()
         .map(HostAuthority::owner_live)
+}
+
+/// Protect from Melee is varp 97 (`prayer14`). M5 may interrupt only while it is on.
+pub(crate) fn protect_from_melee_active(snapshot: &GameSnapshot) -> bool {
+    snapshot
+        .varps()
+        .iter()
+        .any(|row| row.index == 97 && row.value == 1)
 }
 
 pub(crate) fn record_maze_injection(
