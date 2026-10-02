@@ -968,8 +968,7 @@ impl TuiSession {
         }
     }
 
-    /// Relog `name` now: log out and back in through the login FIFO so
-    /// the toggled memory mode reaches the server tabs and sound.
+    /// Relog through the login FIFO to apply the entire queued memory mode.
     fn memory_relog_now(&mut self, app: &mut TuiApp, name: &str) {
         self.scripts.cancel_queued_as(name, "logged out");
         self.scripts.publish_start_places(&mut self.core);

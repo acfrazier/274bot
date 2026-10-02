@@ -1715,12 +1715,12 @@ fn memory_toggle_stages_arms_and_settles() {
     assert_eq!(
         arm(&s, "alice").lowmem_handshake(),
         Some(false),
-        "the toggle arms the next handshake at once (parked slots converge)"
+        "the toggle queues the next handshake without changing this login"
     );
     let notice = s.memory_status("alice").expect("recorded login");
     assert!(
         notice.differs(),
-        "server tabs/sound still follow the login mode"
+        "the entire client still follows the login mode"
     );
     assert_eq!((notice.login_lowmem, notice.desired_lowmem), (true, false));
 
@@ -1737,6 +1737,46 @@ fn memory_toggle_stages_arms_and_settles() {
         arm(&s, "alice").lowmem_handshake(),
         Some(false),
         "settle re-affirms the armed handshake"
+    );
+}
+
+#[test]
+fn older_memory_save_cannot_rearm_a_cancelled_queue_across_commits() {
+    let mut s = session("mem-toggle-back", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    publish_alice_login(&mut s, true);
+
+    let first = s.set_memory_mode("alice", false).unwrap();
+    // Seal and finish the first commit, but delay delivering its completion
+    // until after the operator has cancelled that queued mode.
+    let written = s.writer.as_mut().unwrap().wait_take().unwrap();
+    assert_eq!(written.op, first);
+    assert!(!written.superseded);
+    assert!(written.result.is_ok());
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let second = s.set_memory_mode("alice", true).unwrap();
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(true));
+    assert!(!s.memory_status("alice").unwrap().differs());
+
+    s.settle_write(written);
+    let armed = arm(&s, "alice").lowmem_handshake();
+    let differs = s.memory_status("alice").unwrap().differs();
+    drop(held);
+    s.flush_writes();
+
+    assert_eq!(
+        armed,
+        Some(true),
+        "an older successful memory save must not undo the toggle-back"
+    );
+    assert!(!differs, "a cancelled queue must stay cleared");
+    assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(true));
+    assert!(!s.memory_status("alice").unwrap().differs());
+    assert_eq!(
+        s.operation(second).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
     );
 }
 
@@ -2105,6 +2145,25 @@ fn park_alice(s: &OperatorSession<u32>) {
     row.ingame = false;
     row.scene_state = 0;
     row.login_latched = true;
+}
+
+#[test]
+fn logged_out_memory_change_waits_for_login_without_relog_offer() {
+    let (mut s, mut surface) = memory_ingame_toggled("mem-offline-offer");
+    s.logout("alice");
+    park_alice(&s);
+    s.poll();
+
+    let notice = s.memory_status("alice").unwrap();
+    assert!(notice.differs(), "logout must not discard the queued mode");
+    assert!(
+        !notice.can_relog(),
+        "an offline slot has no session to relog"
+    );
+    assert!(!notice.notice_text().contains("Relog now"));
+    s.login("alice", &mut surface);
+    publish_alice_login(&mut s, false);
+    assert!(!s.memory_status("alice").unwrap().differs());
 }
 
 #[test]

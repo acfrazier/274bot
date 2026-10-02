@@ -20,11 +20,9 @@ pub struct StatusPane<'a> {
     pub detail: Option<&'a SlotDetail>,
     /// The walk cell: the operator's picked dest (`x z level`) or `—`.
     pub walk: &'a str,
-    /// The mem cell: `lowmem` / `highmem` (plus the login mode while the
-    /// server still runs it).
+    /// The applied memory mode, with the queued next-login mode if different.
     pub mem: &'a str,
-    /// Pending memory-mode notice while login and setting differ: the
-    /// server-side part follows at the next login. Own wrapped line.
+    /// Pending whole-client next-login notice on its own wrapped line.
     pub mem_notice: Option<&'a str>,
     pub resources: Option<&'a ResourceView>,
     pub background_notice: Option<&'a str>,

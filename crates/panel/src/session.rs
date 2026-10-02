@@ -12,7 +12,6 @@
 //! holds: unlock spawns **one** Client (the focused profile); MultiBox spawns
 //! the rest.
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -390,9 +389,6 @@ struct PanelSurface<'a> {
     focus: &'a Mutex<crate::focus::Focus>,
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
-    /// Slots the operator toggled this session: attach leaves their gate
-    /// on the toggled value instead of the spawn profile's.
-    mem_toggled: &'a HashSet<String>,
     frontend_gens: &'a Arc<Mutex<HashMap<String, ClientGens>>>,
     nav_states: &'a Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
     travellers: &'a SlotTravellers,
@@ -427,12 +423,6 @@ impl SlotSurface for PanelSurface<'_> {
             .unwrap()
             .renderer_by
             .insert(name.to_string(), raster != vault::RasterMode::Off);
-        // A toggled slot's gate already reflects the operator's choice;
-        // overwriting it from a pre-toggle spawn profile would flap the
-        // live client against the armed handshake value every frame.
-        if !self.mem_toggled.contains(name) {
-            self.audio.set_music(name, !profile.settings.lowmem);
-        }
         SlotAttach {
             input: Some(Arc::clone(&input)),
             mailbox: Some(Arc::clone(&pixels)),
@@ -1121,19 +1111,13 @@ pub struct Session {
     external_core_watch: Arc<Mutex<Option<host_play::external_loader::ExternalWatch>>>,
     external_core_enabled: bool,
     external_ts: Option<PathBuf>,
-    /// Focused-slot speaker gate: at most one cpal speaker, owned by the
-    /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
-    /// off) never opens cpal; slot threads reconcile on their frame loop.
+    /// Focused-slot speaker, reconciled from the client's applied memory mode,
+    /// never from the queued setting.
     audio: Arc<AudioGate<AudioOut>>,
     /// Mem-popup Relog-now armed for this bot: the first click only arms
     /// (a running script would be interrupted), the second click relogs.
     /// Cleared when the relog starts or the button targets another bot.
     mem_relog_armed: Option<String>,
-    /// Slots the operator memory-toggled this session: their audio gate
-    /// already reflects the choice, so a later spawn (attach) must not
-    /// overwrite it from the pre-toggle profile, and a failed write pulls
-    /// it back with the restored row. Cleared on removal.
-    mem_toggled: HashSet<String>,
     /// Whether focus/multibox writes land on disk prefs. `true` in
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
@@ -1435,7 +1419,6 @@ impl Session {
             external_ts: None,
             audio: Arc::new(AudioGate::new()),
             mem_relog_armed: None,
-            mem_toggled: HashSet::new(),
             persist_ui: true,
             background_ack_open: false,
             fixture_mode: scenario::FixtureMode::Default,
@@ -2352,8 +2335,8 @@ impl Session {
         }
         // Spawn every member onto the wall without applying focus on each
         // load (that would demote/promote raster/mem and join `maininit`
-        // on the UI thread — the window never presents). Raster/mem flips
-        // are drop+reattach now, but focus apply still joins handshakes.
+        // on the UI thread — the window never presents). Raster switches
+        // reattach the renderer; memory stays queued until the next login.
         // s00 is focused last so it is FIFO head.
         for (name, _) in &names {
             let (core, mut surface) = self.core_and_surface();
@@ -2848,12 +2831,9 @@ impl Session {
                     c.set_nav_debug_paint(None);
                 }
             }
-            // Focused-slot speaker: at most one cpal speaker, fed by
-            // this slot's Client audio state (midi/waves/fade), gated
-            // on focus + the Music/SFX toggle — `lowmem` (toggle off)
-            // never opens cpal. The gate reconciles every frame; the
-            // open closure runs on this slot's thread.
-            let change = audio.frame(name, focused.as_deref(), || {
+            // Sound follows the applied client mode, not the queued setting.
+            // The open closure runs on this slot's client-owning thread.
+            let change = audio.frame(name, focused.as_deref(), !c.config.lowmem, || {
                 let now = Instant::now();
                 if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
                     if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
@@ -2880,12 +2860,6 @@ impl Session {
             if change == AudioChange::Closed {
                 slot_log(name, Level::Info, "audio: speaker closed");
             }
-            // Reconcile the client's actual `lowmem` mode to the
-            // Music/SFX gate (toggle on = highmem): a lowmem spawn
-            // skipped the sound load, so flipping the toggle
-            // mid-session must re-run it live, not on the next
-            // respawn. `set_lowmem` is idempotent — per-frame is cheap.
-            c.set_lowmem(!audio.music_on(name));
             if c.ingame
                 && c.scene_state == 2
                 && seed_on_first_world(c.last_login_reconnect)
@@ -3158,11 +3132,7 @@ impl Session {
         }
     }
 
-    /// A durable profile write that failed after its edit was accepted: the
-    /// banner shows it, and [`Self::settle_profile_save`] shows a failed
-    /// form save in its form too. Toggled gates follow the restored vault
-    /// rows back, so a refused memory toggle cannot leave the live client
-    /// ahead of the vault.
+    /// Surface failed durable profile writes without touching the client.
     fn surface_write_failures(&mut self) {
         let mut failed = false;
         for failure in self.core.take_write_failures() {
@@ -3170,11 +3140,6 @@ impl Session {
             self.error = Some(failure.to_string());
         }
         if failed {
-            for name in &self.mem_toggled {
-                if let Some(profile) = self.core.vault().and_then(|v| v.get(name)) {
-                    self.audio.set_music(name, !profile.settings.lowmem);
-                }
-            }
             if let Some(lowmem) = self
                 .focused_name()
                 .and_then(|name| self.core.vault().and_then(|v| v.get(&name)))
@@ -3799,7 +3764,6 @@ impl Session {
                 focus: &self.focus,
                 audio: &self.audio,
                 memory_override: self.memory_override,
-                mem_toggled: &self.mem_toggled,
                 frontend_gens: &self.frontend_gens,
                 nav_states: &self.nav_states,
                 travellers: &self.travellers,
@@ -3884,17 +3848,11 @@ impl Session {
         self.apply_result(result)
     }
 
-    /// Game-pane lowmem (General config). Follows the focused slot's
-    /// Music/SFX gate — the per-frame driver of the spawned `Client`'s
-    /// `config.lowmem` — so the status row can never show "lowmem" while
-    /// audio plays (a live boot's throwaway profile defaults lowmem, but
-    /// the slot runs what the gate says). Falls back to the session's
-    /// `ui.lowmem` when no slot is focused.
+    /// Queued mode for the focused bot's next login, including a session override.
     pub fn focused_lowmem(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return self.ui.lowmem;
-        };
-        !self.audio.music_on(&name)
+        self.focused_name()
+            .and_then(|name| self.core.memory_mode(&name))
+            .unwrap_or(self.ui.lowmem)
     }
 
     /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
@@ -3951,18 +3909,10 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return true;
         };
-        // The shared frontend-core command persists the vault profile and
-        // arms the next handshake at once. The audio gate stays this
-        // slot's speaker switch and one live lowmem channel (the slot
-        // pump is the other, so the TUI flips without a gate); the host
-        // drops the `Renderer` when `config.lowmem` changes so the next
-        // paint attaches with the new mode. No restart.
+        // The shared command only queues the next login mode. Neither the
+        // client nor its speaker changes while this setting is saved.
         match self.core.set_memory_mode(&name, lowmem) {
-            Ok(_) => {
-                self.mem_toggled.insert(name.clone());
-                self.audio.set_music(&name, !lowmem);
-                true
-            }
+            Ok(_) => true,
             Err(error) => {
                 self.error = Some(error);
                 false
@@ -3987,10 +3937,8 @@ impl Session {
         self.core.memory_relog_warning(&name) || self.scripts.start_queue_place(&name).is_some()
     }
 
-    /// Mem-popup Relog-now: log the focused bot out and back in through the
-    /// login FIFO so the toggled mode reaches the server. Returns whether
-    /// a relog started; with running or queued script work the first call
-    /// only arms the warning button and the second starts it.
+    /// Explicit Relog-now through the login FIFO. Running or queued script
+    /// work requires a second confirming click.
     pub fn request_focused_memory_relog(&mut self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
@@ -4017,35 +3965,8 @@ impl Session {
         focused.is_some_and(|name| self.mem_relog_armed.as_deref() == Some(name.as_str()))
     }
 
-    /// Status-row copy for the focused profile's mem mode.
-    pub fn mem_status_text(lowmem: bool) -> &'static str {
-        if lowmem {
-            "lowmem"
-        } else {
-            "highmem"
-        }
-    }
-
-    /// Status-row mem cell: the live mode, plus the login mode while the
-    /// server still runs it (Relog-now in the mem picker applies it).
-    pub fn mem_notice_text(
-        lowmem: bool,
-        notice: Option<frontend_core::MemoryNotice>,
-    ) -> Cow<'static, str> {
-        let live = Self::mem_status_text(lowmem);
-        match notice {
-            Some(n) if n.differs() => Cow::Owned(format!(
-                "{} (login {} — tabs + sound at next login)",
-                live,
-                Self::mem_status_text(n.login_lowmem)
-            )),
-            _ => Cow::Borrowed(live),
-        }
-    }
-
-    /// GPU↔CPU (not Off) on a spawned slot is a drop+reattach — the
-    /// `Client` and its socket stay up, so no logout/restart confirm is
-    /// ever required (Off is `set_draw`; mem flips are live too).
+    /// GPU↔CPU (not Off) reattaches the renderer on the same client,
+    /// never a restart or logout.
     pub fn raster_switch_needs_confirm(
         _next: vault::RasterMode,
         _prefer_cpu: bool,
@@ -4064,9 +3985,7 @@ impl Session {
         let _ = self.set_focused_raster(raster);
     }
 
-    /// Pick highmem/lowmem for the Game pane. The live `Client` flips mem
-    /// (the host drops + reattaches the renderer); never a restart. Rail
-    /// members stay lowmem.
+    /// Queue the Game pane's memory mode for its next login.
     pub fn request_focused_lowmem(&mut self, lowmem: bool) {
         if self.focused_lowmem() == lowmem {
             return;
@@ -4254,7 +4173,6 @@ impl Session {
         self.scripts.cancel_queued_as(name, "removed");
         self.scripts.publish_start_places(&mut self.core);
         self.apply_script_notice();
-        self.mem_toggled.remove(name);
         if self.mem_relog_armed.as_deref() == Some(name) {
             self.mem_relog_armed = None;
         }
