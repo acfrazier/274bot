@@ -433,8 +433,9 @@ TypeScript 5.8.3 (strict, ES2022, `ESNext`, `Bundler`):
 cargo test -p script --test host_js tsc_gather_quest_sample_type_checks -- --ignored
 ```
 
-The slice-C live cell loads the checked-in `.js` through the real Load path
-with the read-only test-support seam and requires `--features test-support`:
+The slice-C live cell loads the checked-in `.js` through the real Load path.
+The harness uses test-support receipts and fixture-control seams, so it
+requires `--features test-support`:
 
 ```sh
 LIVE=1 cargo test -p host-play --features test-support --test script_api_live -- --ignored --test-threads=1
@@ -443,6 +444,20 @@ LIVE=1 cargo test -p host-play --features test-support --test script_api_live --
 with `WORLD_ENGINE_DIR`, `WORLD_NAV_PACK`, `BOT_CACHE_DIR`,
 `BOT_EVIDENCE_DIR` and `BOT_LIVE_NAME_PREFIX` set. No panel/TUI presentation
 and no bank-trip (slice E) behavior is claimed here.
+
+`script_api_gather_and_quest` records the public running/gathering phases,
+confirmed yields and emptied drop slots, the Driver packet budget, the stopped
+session envelope and Cook's colour-only progress row. Its final receipt is
+`script-api-gather-and-quest-receipt.json` under `BOT_EVIDENCE_DIR`.
+
+The slice-D cell, `script_api_progress_journal`, uses the released Romeo & Juliet
+journal rules. It seeds stage 30 with the varp cheat, reads progress, advances
+the real fixture to stage 40 and reads again. It requires known stage/rule keys,
+`inProgress`, `complete: 'false'`, hidden journal paint while the quiet lease is
+owned, and public evidence matching the real closed-journal observation after
+the acquired observation. The final
+`script-api-progress-journal-receipt.json` includes both reads, their host
+evidence stamps and the journal open/close packet trace.
 
 ## Quest query helpers
 
