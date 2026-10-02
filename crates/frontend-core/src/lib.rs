@@ -58,6 +58,7 @@ pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
     start_marked, stop_marked, BulkSkip, MarkedSelection, ProfileIdentity, StopReport,
+    EMPTY_MARKS_HINT,
 };
 pub use session::{
     ArmMirror, MemoryNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,

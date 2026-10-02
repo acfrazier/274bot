@@ -70,6 +70,20 @@ impl FleetColumn {
     pub fn needs_progress(self) -> bool {
         matches!(self, Self::Runtime | Self::Idle | Self::Levels)
     }
+
+    /// Initial logical width. `None` stretches (Last log). Card is wide
+    /// enough for `Thiever`; World / login for `ready` / `logging in`.
+    pub fn init_width(self) -> Option<f32> {
+        match self {
+            Self::State => Some(112.0),
+            Self::Card => Some(96.0),
+            Self::Run => Some(80.0),
+            Self::Runtime => Some(64.0),
+            Self::LastLog => None,
+            Self::Idle => Some(96.0),
+            Self::Levels => Some(88.0),
+        }
+    }
 }
 
 pub fn visible(prefs: &HashMap<String, bool>, column: FleetColumn) -> bool {
@@ -100,6 +114,10 @@ mod tests {
         assert!(visible(&prefs, FleetColumn::Idle));
         assert!(!visible(&prefs, FleetColumn::Card));
         assert!(visible(&prefs, FleetColumn::State), "others are unchanged");
+        assert!(
+            FleetColumn::Card.init_width().unwrap() > 4.0 * 8.0,
+            "Card is wider than the four-letter header that used to clip Thiever"
+        );
     }
 
     /// Saving a toggle keeps whatever else the file held, and switching back

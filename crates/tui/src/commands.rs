@@ -503,7 +503,7 @@ impl Command {
             Command::ScriptStartAll | Command::ScriptStopAll => members(),
             Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
                 if app.table.selection.is_empty() {
-                    Err("mark fleet rows first")
+                    Err("mark fleet rows first (Space)")
                 } else {
                     app.script_sel
                         .as_ref()
@@ -513,7 +513,7 @@ impl Command {
             }
             Command::ScriptApplyMarked => {
                 if app.table.selection.is_empty() {
-                    Err("mark fleet rows first")
+                    Err("mark fleet rows first (Space)")
                 } else if app.focused_name().is_none() {
                     Err("no bot selected (Fleet: Enter or click a row)")
                 } else {

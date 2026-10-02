@@ -428,7 +428,10 @@ fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
 fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
     for command in [Command::ScriptAssignMarked, Command::ScriptRestartMarked] {
         let mut app = fleet_app(&["alice", "bob"]);
-        assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+        assert_eq!(
+            command.availability(&app),
+            Err("mark fleet rows first (Space)")
+        );
         app.table
             .selection
             .set(app.profile_id_for_name("alice"), true);
@@ -459,7 +462,10 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
 fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
     let command = Command::ScriptApplyMarked;
     let mut app = fleet_app(&["alice", "bob"]);
-    assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+    assert_eq!(
+        command.availability(&app),
+        Err("mark fleet rows first (Space)")
+    );
     app.table
         .selection
         .set(app.profile_id_for_name("bob"), true);

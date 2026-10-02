@@ -12,6 +12,10 @@ use std::path::Path;
 use crate::scripts::Scripts;
 use crate::session::OperatorSession;
 
+/// Shown next to a marked-bots control when nothing is marked, so a
+/// first-time operator can find the Fleet marks.
+pub const EMPTY_MARKS_HINT: &str = "Marks are made in the Fleet window.";
+
 /// Stable identity used by front-end selection state.
 ///
 /// Vault profile UIDs are signed because the host handshake stores them as an

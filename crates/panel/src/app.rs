@@ -1423,7 +1423,15 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) = rail_cap(ui, row, labels, is_focused, cw, preview);
+        let identity = state
+            .session
+            .core
+            .profile_identity(&row.name)
+            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(&row.name));
+        let mut marked = state.session.fleet_selection.contains(identity);
+        let (cap_select, cap_remove, cap_fold) =
+            rail_cap(ui, row, labels, is_focused, cw, preview, &mut marked);
+        state.session.fleet_selection.set(identity, marked);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -4231,8 +4239,15 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
+        let identity = state
+            .session
+            .core
+            .profile_identity(name)
+            .unwrap_or_else(|| frontend_core::ProfileIdentity::synthetic(name));
+        let mut marked = state.session.fleet_selection.contains(identity);
         let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, row, labels, is_focused, avail, preview);
+            rail_cap(ui, row, labels, is_focused, avail, preview, &mut marked);
+        state.session.fleet_selection.set(identity, marked);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -4266,9 +4281,11 @@ fn rail_cap(
     is_focused: bool,
     width: f32,
     preview: bool,
+    marked: &mut bool,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
+    const MARK_W: f32 = 18.0;
     let _id = ui.push_id(row.name.as_str());
     let [screen_x, screen_y] = ui.cursor_screen_pos();
     // Fractional scaled spacing can leave the next rail row between pixels.
@@ -4277,6 +4294,8 @@ fn rail_cap(
     let colour = light_rgb(light);
     let btn = scale_px(ui, BTN);
     let dot_w = scale_px(ui, DOT_W);
+    let mark_w = scale_px(ui, MARK_W);
+    let gap = scale_px(ui, BUTTON_GAP);
     let marker_x = ui.cursor_pos_x();
     if labels.world.is_empty() {
         draw_status_dot(ui, light, dot_w);
@@ -4286,9 +4305,13 @@ fn rail_cap(
     }
     #[cfg(test)]
     record_test_rail_item(ui);
-    ui.same_line_with_pos(marker_x + dot_w + scale_px(ui, BUTTON_GAP));
-    let name_w =
-        (width - btn * 2.0 - dot_w - scale_px(ui, BUTTON_GAP * 3.0)).max(scale_px(ui, 10.0));
+    ui.same_line_with_pos(marker_x + dot_w + gap);
+    ui.checkbox("##rail-mark", marked);
+    #[cfg(test)]
+    record_test_rail_item(ui);
+    ui.set_item_tooltip("mark for Fleet and Debug actions");
+    ui.same_line_with_pos(marker_x + dot_w + gap + mark_w + gap);
+    let name_w = (width - btn * 2.0 - dot_w - mark_w - gap * 4.0).max(scale_px(ui, 10.0));
     let clicked = ui
         .selectable_config(&labels.title)
         .selected(is_focused)
@@ -4341,7 +4364,8 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
     };
     let colour = light_rgb(row.light());
     TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
-    let _ = rail_cap(ui, &row, &labels, true, width, false);
+    let mut marked = false;
+    let _ = rail_cap(ui, &row, &labels, true, width, false, &mut marked);
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
 }

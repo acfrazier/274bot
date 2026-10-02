@@ -3483,7 +3483,10 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let command = crate::commands::Command::ScriptApplyMarked;
-    assert_eq!(command.availability(&app), Err("mark fleet rows first"));
+    assert_eq!(
+        command.availability(&app),
+        Err("mark fleet rows first (Space)")
+    );
     // bob and carol take it; erin is marked but on another card; dave is not
     // marked.
     for name in ["bob", "carol", "erin"] {

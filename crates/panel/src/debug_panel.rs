@@ -415,6 +415,12 @@ fn draw_target_controls(ui: &Ui, session: &mut Session) {
         session.debug_panel.clear_target_feedback();
     }
     drop(_disabled);
+    if marked_count == 0 {
+        ui.text_wrapped(frontend_core::EMPTY_MARKS_HINT);
+        if ui.button("Open Fleet##debug-open-fleet") {
+            session.fleet_open = true;
+        }
+    }
     ui.text_wrapped(format!(
         "Actual targets: {}",
         target_description(&target_rows(session))

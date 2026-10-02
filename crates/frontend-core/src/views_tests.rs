@@ -722,3 +722,22 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     assert!(matches!(s.resources().cpu, Metric::Available(_)));
     assert!(s.resource_generation() > generation);
 }
+
+/// World / login is the login phase, not the script brief: a logged-in idle
+/// bot is `ready`, not `idle`.
+#[test]
+fn world_login_uses_the_login_phase_not_script_idle() {
+    let local = FleetRow::fixture("alice", Phase::Ready, None, None);
+    assert_eq!(local.brief, "idle");
+    let mut out = String::new();
+    local.write_world_login(&mut out);
+    assert_eq!(out, "ready");
+    let public = FleetRow::fixture("bob", Phase::Ready, Some(301), None);
+    out.clear();
+    public.write_world_login(&mut out);
+    assert_eq!(out, "w301 ready");
+    let logging = FleetRow::fixture("carol", Phase::Connecting, None, None);
+    out.clear();
+    logging.write_world_login(&mut out);
+    assert_eq!(out, "logging in");
+}
