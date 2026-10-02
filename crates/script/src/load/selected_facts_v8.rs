@@ -392,7 +392,7 @@ fn gas_rock_ids<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8:
     let Some(data) = supply_v2::selected_data() else {
         return Ok(v8::undefined(scope).into());
     };
-    let Ok(ids) = api::gather_methods::gas_rock_ids(data.mining_hazards()) else {
+    let Ok(ids) = api::gather_methods::gas_rock_ids(data.as_ref(), data.mining_hazards()) else {
         return Ok(v8::undefined(scope).into());
     };
     let set = v8::Set::new(scope);

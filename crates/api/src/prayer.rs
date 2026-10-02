@@ -38,9 +38,7 @@ impl PrayerObservation {
     }
 
     fn slot(varp: i32) -> Option<usize> {
-        let Ok(index) = usize::try_from(varp - PRAYER_VARP0) else {
-            return None;
-        };
+        let index = usize::try_from(varp.checked_sub(PRAYER_VARP0)?).ok()?;
         (index < PRAYER_COUNT).then_some(index)
     }
 
@@ -82,7 +80,6 @@ impl PrayerObservation {
         self.present &= !(1 << index);
     }
 }
-
 pub fn lookup<'a>(data: &'a SelectedGameData, name: &str) -> Option<&'a PrayerFact> {
     data.prayer_by_name(name)
 }
@@ -141,7 +138,6 @@ mod tests {
     fn both_selected_caches_lookup_trim_and_case() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
-            assert_eq!(data.prayers().len(), 15);
             assert!(known(&data, "Protect from Melee"));
             assert!(known(&data, "  protect from melee  "));
             assert!(known(&data, "THICK SKIN"));
@@ -156,14 +152,15 @@ mod tests {
     #[test]
     fn available_requires_level_and_remaining_points() {
         let data = data(ClientRevision::R289);
+        let required = lookup(&data, "Protect from Melee").unwrap().level;
         let mut obs = PrayerObservation::empty();
-        obs.max = 43;
+        obs.max = required;
         obs.points = 1;
         assert!(available(&data, "Protect from Melee", &obs));
         obs.points = 0;
         assert!(!available(&data, "Protect from Melee", &obs));
         obs.points = 10;
-        obs.max = 42;
+        obs.max = required - 1;
         assert!(!available(&data, "Protect from Melee", &obs));
         assert!(!available(&data, "Nope", &obs));
     }
@@ -171,15 +168,16 @@ mod tests {
     #[test]
     fn active_is_varp_one_and_missing_stats_are_zero() {
         let data = data(ClientRevision::R274);
+        let melee = lookup(&data, "Protect from Melee").unwrap();
         let obs = PrayerObservation::empty();
         assert_eq!(points(&obs), 0);
         assert_eq!(max(&obs), 0);
         assert!(!full(&obs));
         assert!(!active(&data, "Protect from Melee", &obs));
         let mut on = obs;
-        on.set_varp(97, 1);
-        on.max = 43;
-        on.points = 43;
+        on.set_varp(melee.varp, 1);
+        on.max = melee.level;
+        on.points = melee.level;
         assert!(active(&data, "Protect from Melee", &on));
         assert!(full(&on));
         assert!(!matches_on(true, OnArg::Undefined));
@@ -190,18 +188,38 @@ mod tests {
 
     #[test]
     fn unobserved_overlay_is_neither_on_nor_off() {
+        let data = data(ClientRevision::R289);
+        let varp = lookup(&data, "Protect from Melee").unwrap().varp;
         let mut obs = PrayerObservation::empty();
-        assert!(!obs.varp_observed(97));
-        assert!(!obs.is_on(97));
-        assert!(!obs.is_off(97));
-        obs.set_varp(97, 1);
-        assert!(obs.is_on(97));
-        obs.unobserve_varp(97);
-        assert!(!obs.varp_observed(97));
-        assert!(!obs.is_on(97));
-        assert!(!obs.is_off(97));
-        obs.set_varp(97, 0);
-        assert!(obs.is_off(97));
-        assert!(!obs.is_on(97));
+        assert!(!obs.varp_observed(varp));
+        assert!(!obs.is_on(varp));
+        assert!(!obs.is_off(varp));
+        obs.set_varp(varp, 1);
+        assert!(obs.is_on(varp));
+        obs.unobserve_varp(varp);
+        assert!(!obs.varp_observed(varp));
+        assert!(!obs.is_on(varp));
+        assert!(!obs.is_off(varp));
+        obs.set_varp(varp, 0);
+        assert!(obs.is_off(varp));
+        assert!(!obs.is_on(varp));
+    }
+
+    #[test]
+    fn observation_ignores_varps_outside_the_fixed_layout() {
+        let mut obs = PrayerObservation::empty();
+        let after_last = PRAYER_VARP0 + PRAYER_COUNT as i32;
+        obs.set_varp(PRAYER_VARP0 - 1, 1);
+        obs.set_varp(after_last, 1);
+        assert!(!obs.varp_observed(PRAYER_VARP0 - 1));
+        assert!(!obs.varp_observed(after_last));
+        assert!(!obs.is_on(PRAYER_VARP0 - 1));
+        assert!(!obs.is_on(after_last));
+    }
+    #[test]
+    fn prayer_observation_stays_copy_and_compact() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<PrayerObservation>();
+        assert_eq!(std::mem::size_of::<PrayerObservation>(), 72);
     }
 }

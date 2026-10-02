@@ -3,13 +3,15 @@
 pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
     use crate::content::{FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
-    use api::content::ROCK_TYPE_NAMES;
     let food_heals = game_data
         .map(|data| {
             data.fixed_food_heals()
                 .map(|(name, heal)| serde_json::json!([name, heal]))
                 .collect::<Vec<_>>()
         })
+        .unwrap_or_default();
+    let rock_type_names = game_data
+        .map(api::gather_methods::rock_type_names)
         .unwrap_or_default();
     let spell_db = game_data
         .map(|data| {
@@ -53,7 +55,7 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
         "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
-        "random_event_casket_id": api::content::RANDOM_EVENT_CASKET_ID,
+        "random_event_casket_id": api::content::random_event_casket_id(game_data).unwrap_or(-1),
         "rune_routes": RUNE_ROUTES.iter().map(|route| {
             serde_json::json!({
                 "rune": route.rune,
@@ -74,7 +76,7 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
                 "x0": p.x0, "x1": p.x1, "z0": p.z0, "z1": p.z1
             })
         }).collect::<Vec<_>>(),
-        "rock_type_names": ROCK_TYPE_NAMES,
+        "rock_type_names": rock_type_names,
         "baker_stall": {
             "loc_id": BAKER_STALL.loc_id,
             "name": BAKER_STALL.name,
@@ -85,7 +87,7 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
             "flee": {"x": BAKER_STALL.flee.x, "z": BAKER_STALL.flee.z, "level": BAKER_STALL.flee.level},
             "cake_items": CAKE_ITEM_NAMES,
         },
-        "gather_tools": api::gather_tools::content_json_value(),
+        "gather_tools": api::gather_tools::content_json_value(game_data),
         "spell_db": spell_db,
         "staff_runes": staff_runes,
         "herbs": game_data
