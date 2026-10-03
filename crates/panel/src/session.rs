@@ -369,10 +369,6 @@ pub fn default_vault_path() -> PathBuf {
     script::bot_file("vault")
 }
 
-fn default_cache_dir() -> String {
-    client::cache_dir().display().to_string()
-}
-
 /// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
 /// `FrameOutput` into while its renderer is on (the panel `take`s it and
 /// packs the `PixMap` or reads the `Texture` back at the consume site),
@@ -1439,7 +1435,8 @@ impl Session {
                 host: "127.0.0.1".into(),
                 transport: client::Transport::Tcp,
                 port: 43594,
-                cache_dir: default_cache_dir(),
+                // Supplied by the selected profile after engine resolution.
+                cache_dir: String::new(),
                 lowmem: true,
                 // Panel per_frame queues hop from Session.mainland (env);
                 // spawn-time PlayOptions.mainland stays false.

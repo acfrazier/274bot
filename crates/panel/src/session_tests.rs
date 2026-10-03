@@ -47,6 +47,17 @@ mod upgrade_home;
 use upgrade_home::UpgradeHome;
 
 #[test]
+fn session_cache_is_unset_until_a_profile_is_bound() {
+    let session = Session::new();
+    let cache_dir = &session.play_options().cache_dir;
+
+    assert!(
+        cache_dir.is_empty(),
+        "cache path must come from the resolved profile, not the standalone-client default: {cache_dir:?}"
+    );
+}
+
+#[test]
 fn memory_override_changes_spawn_profile_without_persisting_it() {
     let path = tmp_vault("memory-override-spawn.vault");
     let mut s = Session::new();

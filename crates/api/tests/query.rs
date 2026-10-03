@@ -2694,11 +2694,18 @@ fn combat_style_labels_prefers_parenthetical_style_name() {
     );
 }
 
+fn configured_engine_cache_dir() -> Option<std::path::PathBuf> {
+    let engine_dir = std::env::var_os("ENGINE_DIR").filter(|path| !path.is_empty())?;
+    Some(std::path::PathBuf::from(engine_dir).join("data/pack/client"))
+}
+
 /// Packed `combat_unarmed` from the local client jag: SELECT + `pushvar com_mode`
 /// must survive unpack so live `combat_styles` is not an empty keyframe.
 #[test]
 fn packed_combat_unarmed_posts_aggressive_from_tab_0() {
-    let cache = client::cache_dir();
+    let Some(cache) = configured_engine_cache_dir() else {
+        return;
+    };
     if !cache.join("interface").is_file() {
         return;
     }

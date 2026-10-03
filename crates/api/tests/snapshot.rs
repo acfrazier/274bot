@@ -16,6 +16,11 @@ use client::datastruct::LinkList;
 use client::io::{Packet, ServerProt};
 use std::sync::Arc;
 
+fn configured_engine_cache_dir() -> Option<std::path::PathBuf> {
+    let engine_dir = std::env::var_os("ENGINE_DIR").filter(|path| !path.is_empty())?;
+    Some(std::path::PathBuf::from(engine_dir).join("data/pack/client"))
+}
+
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
@@ -2892,7 +2897,9 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
 /// provable.
 #[test]
 fn packed_shop_interfaces_post_main_stock_and_player_pack() {
-    let cache = client::cache_dir();
+    let Some(cache) = configured_engine_cache_dir() else {
+        return;
+    };
     if !cache.join("interface").is_file() {
         return;
     }
@@ -5115,7 +5122,9 @@ fn main_make_posts_anvil_rows_and_ignores_chat_make_and_shop() {
 /// Make. The host walks the open main modal rather than baking those ids.
 #[test]
 fn packed_interfaces_include_a_make_type_inv() {
-    let cache = client::cache_dir();
+    let Some(cache) = configured_engine_cache_dir() else {
+        return;
+    };
     if !cache.join("interface").is_file() {
         return;
     }
