@@ -857,12 +857,11 @@ fn first_search_core(
         use_teleports: opts.allow_teleports,
         allow_wilderness: opts.allow_wilderness,
         relax,
-        inventory_can_grow: graph.edges.iter().any(|edge| !edge.item_returns.is_empty())
-            || (opts.allow_teleports
-                && graph
-                    .teleports
-                    .iter()
-                    .any(|edge| !edge.item_returns.is_empty())),
+        inventory_can_grow: graph
+            .edges
+            .iter()
+            .chain(graph.teleports.iter().filter(|_| opts.allow_teleports))
+            .any(|edge| !edge.item_returns.is_empty() && edge_allowed(state, edge, relax)),
     };
     let mut goals = Goals::First(Box::new(FirstGoals::new(
         gates,
@@ -2498,9 +2497,6 @@ fn search_kernel(
     }
 }
 
-// Keep the tile-only and balance-key loops out of the shared dispatch frame.
-// Inlining both kernels otherwise shares resource-preflight code and stack space.
-#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn search_kernel_budget<B: Budget>(
     collision: &WorldCollision,
@@ -2631,7 +2627,9 @@ fn search_kernel_budget<B: Budget>(
                 }
                 let nd = n.cost + model.run_per_step;
                 let nb = n.tile.at(nb);
-                if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > nd) {
+                // Dominated relaxations need only the distance lookup, not
+                // another hash of the same key in the settled set.
+                if dist.get(&nb).is_none_or(|&g| g > nd) && !done.contains(&nb) {
                     dist.insert(nb, nd);
                     came_from.insert(nb, Back::Walk(n.tile));
                     heap.push(HeapNode { cost: nd, tile: nb });
@@ -2687,7 +2685,7 @@ fn search_kernel_budget<B: Budget>(
                             }
                         };
                         let nd = n.cost + edge.ticks as f64;
-                        if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                        if dist.get(&next).is_none_or(|&g| g > nd) && !done.contains(&next) {
                             dist.insert(next, nd);
                             came_from.insert(next, Back::Transport { from: n.tile, ei });
                             heap.push(HeapNode {
@@ -2728,7 +2726,7 @@ fn search_kernel_budget<B: Budget>(
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
                     let next = n.tile.at(session.return_tile);
-                    if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                    if dist.get(&next).is_none_or(|&g| g > nd) && !done.contains(&next) {
                         dist.insert(next, nd);
                         came_from.insert(
                             next,
@@ -2774,7 +2772,7 @@ fn search_kernel_budget<B: Budget>(
                     }
                 };
                 let nd = n.cost + edge.ticks as f64;
-                if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                if dist.get(&next).is_none_or(|&g| g > nd) && !done.contains(&next) {
                     dist.insert(next, nd);
                     came_from.insert(
                         next,
