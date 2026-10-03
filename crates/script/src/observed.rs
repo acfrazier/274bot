@@ -664,7 +664,9 @@ scene_pages! {
         ground: Vec<SceneRow>,
         players: Vec<SceneRow>,
         varps: Vec<VarpRow>,
+        chat_text: Text,
         chat_options: Vec<String>,
+        chat_option_ids: Vec<i32>,
         chat_lines: Vec<ChatLine>,
         make_products: Vec<MakeProduct>,
         bank_approaches: Vec<BankApproach>,
@@ -1179,6 +1181,9 @@ impl Scene {
                     .map_or(-1, |row| row.id()),
             );
         }
+        if snap.has_chat_text() {
+            p.chat_text(strings.text(snap.chat_text().unwrap_or_default()));
+        }
         if snap.has_chat_options() {
             // Empty texts stay: the 1-based answer index is the posted slot.
             p.chat_options(
@@ -1186,6 +1191,13 @@ impl Scene {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .map(|row| row.text().unwrap_or_default().to_string())
+                    .collect(),
+            );
+            p.chat_option_ids(
+                snap.chat_options()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| row.com_id())
                     .collect(),
             );
         }

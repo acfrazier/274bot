@@ -532,7 +532,7 @@ fn talk_choosing_by_stays_not_impl_and_talk_strict_stays_the_talk_through_alias(
 }
 
 #[test]
-fn same_continue_page_is_acknowledged_when_continue_stays_visible() {
+fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     let iso = spawn(TALK);
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Gundai", &actions, 7)];
@@ -546,6 +546,7 @@ fn same_continue_page_is_acknowledged_when_continue_stays_visible() {
     snap.chat_open = true;
     snap.chat_modal_id = 968;
     snap.chat_continue = true;
+    snap.chat_text = Some("First page");
     post(&iso, &snap);
     tick(&iso, 2);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
@@ -554,42 +555,26 @@ fn same_continue_page_is_acknowledged_when_continue_stays_visible() {
         snap.tick = n;
         post(&iso, &snap);
         tick(&iso, n);
-        if n % 2 == 0 {
-            assert_eq!(
-                iso.drain_interacts(),
-                vec![InteractReq::ContinueDialog],
-                "visible Continue acknowledges the preceding press at tick {n}"
-            );
-        } else {
-            assert!(
-                iso.drain_interacts().is_empty(),
-                "the frozen one-tick delay prevents a same-tick re-press at tick {n}"
-            );
-        }
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "an unchanged page cannot acknowledge Continue at tick {n}"
+        );
         assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     }
 
-    let choice = [ChatOptionInput {
-        text: "I'd like to access my bank account, please.",
-        com_id: 4883,
-    }];
     snap.tick = 7;
-    snap.chat_continue = false;
-    snap.chat_modal_id = 4882;
-    snap.chat_options = &choice;
+    snap.chat_text = Some("Second page on the same root");
     post(&iso, &snap);
     tick(&iso, 7);
     assert!(
         iso.drain_interacts().is_empty(),
-        "acked continue still waits one tick"
+        "page progress is followed by one quiet tick"
     );
+
     snap.tick = 8;
     post(&iso, &snap);
     tick(&iso, 8);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Answer { option: 1 }]
-    );
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
     iso.join();
 }
 
@@ -663,7 +648,7 @@ fn continue_ack_timeout_fails_without_repressing() {
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
 
     snap.tick = 3;
-    snap.chat_continue = false;
+    // Same root, page, and visible Continue leave the native ack pending.
     post(&iso, &snap);
     tick(&iso, 3);
     assert!(iso.drain_interacts().is_empty());
@@ -1004,49 +989,6 @@ export default class T extends LoopingBot {
     tick(&iso, 7);
     tick(&iso, 8);
     assert_eq!(iso.probe("__ok").unwrap(), true);
-    iso.join();
-}
-
-#[test]
-fn continue_ack_accepts_another_continue_on_the_same_chat_root() {
-    // Deterministic multi-page fixture: the server reuses the root and keeps
-    // Continue visible as page contents advance (also noted by the Quester
-    // observation in families/dialogue.rs:312-316).
-    let iso = spawn(TALK);
-    let actions = ["Talk-to".to_string()];
-    let npcs = [npc("Gundai", &actions, 7)];
-    let mut snap = base();
-    snap.npcs = &npcs;
-    post(&iso, &snap);
-    tick(&iso, 1);
-    assert_eq!(iso.drain_interacts().len(), 1);
-
-    snap.tick = 2;
-    snap.chat_open = true;
-    snap.chat_modal_id = 968;
-    snap.chat_continue = true;
-    snap.chat_text = Some("First page");
-    post(&iso, &snap);
-    tick(&iso, 2);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
-
-    snap.tick = 3;
-    snap.chat_text = Some("Second page on the same root");
-    post(&iso, &snap);
-    tick(&iso, 3);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "waits the frozen extra tick"
-    );
-
-    snap.tick = 4;
-    post(&iso, &snap);
-    tick(&iso, 4);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
-        "the next same-root page must be acknowledged"
-    );
     iso.join();
 }
 
