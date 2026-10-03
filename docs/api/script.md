@@ -109,6 +109,38 @@ timeouts. An operator logout, Stop, or slot removal ends the session instead:
 the in-flight machine rows and task runtimes end (`aborted`, `reset`). Compiled
 scripts end their live step at either boundary.
 
+### Quester queue and provisioning
+
+Quester uses the ordered `crates/script/paths/289/index.json` release roster.
+`quests` selects quest IDs (an empty list selects all released Paths);
+`order_override` prioritizes selected IDs and `skip` excludes IDs. `partner_account`
+and `gang` are per-account settings, not bulk-copy settings; partner quest
+execution remains separate from this release slice.
+
+Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
+Item requirements gate a new quest, not an in-progress quest whose hand-ins
+already consumed them. An unread bank is unknown, not an empty bank.
+
+For Paths that do not own their inventory, provisioning checks the pack before
+withdrawing or acquiring supplies, preserves tools when freshening the pack,
+and returns to the selected bank after completion before advancing the queue.
+An `acquirable` row with `acquire: null` is a withdrawal hint; its authored Path
+steps perform acquisition. Only `mustHave` shortfalls block. Tools are preservation
+and withdrawal hints, not additional `mustHave` requirements.
+Coin and loadout carry floats are drawn once per pass rather than replenished
+after every dose or meal; death resets those latches. Paths marked
+`owns_inventory` retain their authored inventory steps. Automatic coin funding
+is not provided.
+
+The native status producer exposes active quest progress under `quest`, its
+name under `display`, queue states, requirement and provisioning details, and
+step/session counters. `required_vs_live` counts skill gates; `required_<skill>`
+and `live_<skill>` carry integer base levels (a missing live field means
+unobserved). `tested_stats_warning` reports absent qualification or levels below
+the recorded profile. `journal_lines` is sent only once after a fresh read;
+consumers retain the last received lines. These fields do not add a panel window
+or TUI pane.
+
 ### Quester combat outcomes
 
 During a multi-kill combat or acquisition step, status exposes the latest

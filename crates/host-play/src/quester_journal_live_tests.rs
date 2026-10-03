@@ -1869,7 +1869,7 @@ fn live_quester_journal_synthetic_runemysteries() {
         field(&seeded, "varp_hint"),
         StatusValue::Integer(3)
     ));
-    match field(&seeded, "progress") {
+    match field(&seeded, "quest") {
         StatusValue::Quest(progress) => {
             assert!(
                 progress.signals.is_empty(),
@@ -1901,7 +1901,7 @@ fn live_quester_journal_synthetic_runemysteries() {
         field(&advanced, "varp_hint"),
         StatusValue::Integer(4)
     ));
-    match field(&advanced, "progress") {
+    match field(&advanced, "quest") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("progress status is not Quest: {other:?}"),
     }
@@ -1952,7 +1952,7 @@ fn live_quester_journal_synthetic_runemysteries() {
         field(&parked, "needs_read"),
         StatusValue::Truth(Truth::True)
     ));
-    match field(&parked, "progress") {
+    match field(&parked, "quest") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("no-match progress is not Quest: {other:?}"),
     }
@@ -1966,7 +1966,7 @@ fn live_quester_journal_synthetic_runemysteries() {
     // pending native read first, then publish a later no-match proof and park
     // again; an Ok response that leaves the slot Blocked is not sufficient.
     let parked_lines = text(&parked, "journal_lines").to_string();
-    let parked_evidence = progress_evidence(&parked, "progress");
+    let parked_evidence = progress_evidence(&parked, "quest");
     assert!(
         play.script_native_read_journal(&name, no_match_run).is_ok(),
         "ReadJournal must accept the current parked native run"
@@ -1983,7 +1983,7 @@ fn live_quester_journal_synthetic_runemysteries() {
                 && text(status, "rule") == "unknown"
                 && text(status, "journal_lines") == parked_lines
                 && {
-                    let evidence = progress_evidence(status, "progress");
+                    let evidence = progress_evidence(status, "quest");
                     evidence.run == parked_evidence.run
                         && (evidence.tick, evidence.sequence)
                             > (parked_evidence.tick, parked_evidence.sequence)
@@ -1992,7 +1992,7 @@ fn live_quester_journal_synthetic_runemysteries() {
     );
     assert_eq!(reread.run, no_match_run);
     assert_eq!(truth(&reread, "needs_read"), Truth::True);
-    match field(&reread, "progress") {
+    match field(&reread, "quest") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("re-read progress is not Quest: {other:?}"),
     }

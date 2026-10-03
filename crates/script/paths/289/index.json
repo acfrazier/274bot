@@ -4,6 +4,7 @@
     { "id": "cook", "file": "cook.json" },
     { "id": "sheep", "file": "sheep.json" },
     { "id": "runemysteries", "file": "runemysteries.json" },
-    { "id": "romeojuliet", "file": "romeojuliet.json" }
+    { "id": "romeojuliet", "file": "romeojuliet.json" },
+    { "id": "imp", "file": "imp.json" }
   ]
 }

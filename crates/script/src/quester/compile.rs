@@ -1,8 +1,9 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
-use super::path::{PathDocument, StepDocument};
+use super::path::{PathDocument, QuestItemDocument, QuestRequirementDocument, StepDocument};
 pub use super::progress::CompiledProgress;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
+use crate::native_bank::BankItem;
 use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::named_banks::NamedBank;
@@ -65,15 +66,64 @@ impl CompileError {
 
 pub struct CompiledPath {
     pub id: FactKey,
+    pub role: Option<FactKey>,
     pub display_name: Arc<str>,
+    pub tested_stats: Option<Arc<[api::selected::SkillMinimum]>>,
     pub digest: [u8; 32],
     pub colour_not_started: FactKey,
     pub colour_in_progress: FactKey,
     pub colour_complete: FactKey,
     pub progress: CompiledProgress,
+    pub eligibility: CompiledEligibility,
+    pub provisioning: CompiledProvisioning,
     pub prelude: Vec<CompiledStep>,
     pub sequences: Vec<CompiledSequence>,
     pub warnings: Vec<Arc<str>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompiledItemKind {
+    MustHave,
+    Acquirable,
+}
+
+#[derive(Clone)]
+pub struct CompiledQuestItem {
+    pub id: i32,
+    pub name: Arc<str>,
+    pub qty: u32,
+    pub kind: CompiledItemKind,
+    pub acquire: Option<Arc<str>>,
+}
+
+pub struct CompiledEligibility {
+    pub members: bool,
+    pub requirements: Arc<[QuestRequirementDocument]>,
+    pub items: Arc<[CompiledQuestItem]>,
+}
+
+#[derive(Clone)]
+pub struct CompiledCarry {
+    pub item: BankItem,
+    pub qty: i32,
+    /// Unique per-Path bit in `Provisioner::carry_drawn`.
+    pub latch_index: u8,
+}
+
+pub struct CompiledProvisioning {
+    pub path: FactKey,
+    pub owns_inventory: bool,
+    pub bank: Option<NamedBank>,
+    pub items: Arc<[CompiledQuestItem]>,
+    pub tools: Arc<[BankItem]>,
+    pub tool_ids: Arc<[i32]>,
+    pub coin_float: i32,
+    pub coin: Option<CompiledCarry>,
+    pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
+    pub base_spillover_keep: Arc<[i32]>,
+    pub loadout_spillover_keep: HashMap<Arc<str>, Arc<[i32]>>,
+    pub recipes: HashMap<Arc<str>, Arc<[CompiledAcquireStep]>>,
+    pub memo_ids: Arc<[i32]>,
 }
 
 pub struct CompiledSequence {
@@ -85,6 +135,9 @@ pub struct CompiledSequence {
 pub struct CompiledStep {
     pub id: FactKey,
     pub kind: Arc<str>,
+    pub comment: Option<Arc<str>>,
+    pub loadout: Option<Arc<str>>,
+    pub tactic: Option<Arc<str>>,
     pub advances: bool,
     pub skip_if: Arc<dyn PredicatePlan>,
     pub settle: Arc<dyn PredicatePlan>,
@@ -293,22 +346,6 @@ fn compile_uncached(
             },
         )),
     };
-    let mut bank_items = Vec::new();
-    for alias in header.items.iter().map(|item| item.obj.as_str()).chain(
-        header
-            .tools
-            .iter()
-            .filter_map(|tool| tool.strip_prefix("obj:")),
-    ) {
-        if let Some(item) = selected.item_by_alias(alias) {
-            if !bank_items.contains(&item.id) {
-                bank_items.push(item.id);
-            }
-        }
-    }
-    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
-        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
-    }
     let compiled_loadouts: Vec<_> = header
         .loadouts
         .iter()
@@ -325,6 +362,93 @@ fn compile_uncached(
         .collect();
     let loadouts =
         super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
+    let compiled_items: Arc<[CompiledQuestItem]> = Arc::from(
+        header
+            .items
+            .iter()
+            .map(|item| compile_quest_item(selected, item))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let mut tools = Vec::with_capacity(header.tools.len());
+    for tool in &header.tools {
+        let alias = tool
+            .strip_prefix("obj:")
+            .ok_or_else(|| CompileError::code("invalid-tool"))?;
+        tools.push(resolve_bank_item(selected, alias)?);
+    }
+    let mut loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>> = HashMap::new();
+    let mut carry_row_count = 0usize;
+    for name in header.loadouts.keys() {
+        let qualified = format!("{}/{}", document.id.0, name);
+        let row = loadouts
+            .resolve(&qualified)
+            .ok_or_else(|| CompileError::code("unknown-loadout"))?
+            .row();
+        let mut carry = Vec::with_capacity(row.carry.len());
+        for entry in &row.carry {
+            let item = resolve_bank_item(selected, &entry.item)?;
+            let qty =
+                i32::try_from(entry.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
+            if carry_row_count >= u64::BITS as usize {
+                return Err(CompileError::code("too-many-carry-rows"));
+            }
+            let latch_index = carry_row_count as u8;
+            carry_row_count += 1;
+            carry.push(CompiledCarry {
+                item,
+                qty,
+                latch_index,
+            });
+        }
+        loadout_carry.insert(Arc::from(qualified), Arc::from(carry));
+    }
+    let coin_float =
+        i32::try_from(header.coin_float).map_err(|_| CompileError::code("invalid-coin-float"))?;
+    let coin = (coin_float > 0)
+        .then(|| resolve_bank_item(selected, "coins"))
+        .transpose()?
+        .map(|item| CompiledCarry {
+            item,
+            qty: coin_float,
+            latch_index: u8::MAX,
+        });
+    let mut bank_items = Vec::new();
+    let mut base_spillover_keep = Vec::new();
+    let mut tool_ids = Vec::new();
+    for item in compiled_items.iter() {
+        push_unique_id(&mut bank_items, item.id);
+        push_unique_id(&mut base_spillover_keep, item.id);
+    }
+    for item in &tools {
+        push_unique_id(&mut bank_items, item.id);
+        push_unique_id(&mut base_spillover_keep, item.id);
+        push_unique_id(&mut tool_ids, item.id);
+    }
+    if let Some(coin) = &coin {
+        push_unique_id(&mut bank_items, coin.item.id);
+        push_unique_id(&mut base_spillover_keep, coin.item.id);
+    }
+    for carry in loadout_carry.values().flat_map(|carry| carry.iter()) {
+        push_unique_id(&mut bank_items, carry.item.id);
+    }
+    if bank_items.len() > super::bank_memo::MAX_BANK_MEMO {
+        return Err(CompileError::code("bank-memo-too-large").with_path(document.id.clone()));
+    }
+    let mut loadout_spillover_keep = HashMap::new();
+    for (name, carry) in &loadout_carry {
+        let mut keep = base_spillover_keep.clone();
+        for row in carry.iter() {
+            push_unique_id(&mut keep, row.item.id);
+        }
+        loadout_spillover_keep.insert(Arc::clone(name), Arc::from(keep));
+    }
+    let base_spillover_keep = Arc::from(base_spillover_keep);
+    let tool_ids = Arc::from(tool_ids);
+    let eligibility = CompiledEligibility {
+        members: header.members,
+        requirements: Arc::from(header.requirements.clone()),
+        items: Arc::clone(&compiled_items),
+    };
     let mut recipe_ctx = CompileContext {
         path: &document.id,
         progress: &compiled_progress,
@@ -420,17 +544,86 @@ fn compile_uncached(
             }
         }
     }
+    let provisioning = CompiledProvisioning {
+        path: document.id.clone(),
+        owns_inventory: header.owns_inventory,
+        bank,
+        items: compiled_items,
+        tools: Arc::from(tools),
+        tool_ids,
+        coin_float,
+        coin,
+        loadout_carry,
+        base_spillover_keep,
+        loadout_spillover_keep,
+        recipes: recipes
+            .into_iter()
+            .map(|(name, steps)| (Arc::from(name.as_str()), Arc::from(steps)))
+            .collect(),
+        memo_ids: Arc::from(bank_items),
+    };
     Ok(CompiledPath {
         id: document.id.clone(),
+        role: role.role.clone(),
         display_name: Arc::from(document.display_name.as_str()),
+        tested_stats: document.tested_stats.as_deref().map(Arc::from),
         digest,
         colour_not_started: progress.colour.not_started.clone(),
         colour_complete: progress.colour.complete.clone(),
         colour_in_progress: progress.colour.in_progress.clone(),
         progress: compiled_progress,
+        eligibility,
+        provisioning,
         prelude,
         sequences,
         warnings,
+    })
+}
+
+fn push_unique_id(ids: &mut Vec<i32>, id: i32) {
+    if !ids.contains(&id) {
+        ids.push(id);
+    }
+}
+
+fn compile_quest_item(
+    selected: &SelectedGameData,
+    item: &QuestItemDocument,
+) -> Result<CompiledQuestItem, CompileError> {
+    let kind = match item.kind.as_str() {
+        "mustHave" | "must_have" => CompiledItemKind::MustHave,
+        "acquirable" => CompiledItemKind::Acquirable,
+        _ => return Err(CompileError::code("invalid-item-kind")),
+    };
+    i32::try_from(item.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
+    let resolved = resolve_bank_item(selected, &item.obj)?;
+    Ok(CompiledQuestItem {
+        id: resolved.id,
+        name: resolved.name,
+        qty: item.qty,
+        kind,
+        acquire: item.acquire.as_deref().map(Arc::from),
+    })
+}
+
+fn resolve_bank_item(selected: &SelectedGameData, name: &str) -> Result<BankItem, CompileError> {
+    let item = selected
+        .item_by_alias(name)
+        .or_else(|| {
+            selected.items().iter().find(|item| {
+                item.name
+                    .as_deref()
+                    .is_some_and(|known| known.eq_ignore_ascii_case(name))
+            })
+        })
+        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+    let display = item
+        .name
+        .as_deref()
+        .ok_or_else(|| CompileError::code("unresolved-obj-name"))?;
+    Ok(BankItem {
+        id: item.id,
+        name: Arc::from(display),
     })
 }
 
@@ -502,9 +695,34 @@ fn compile_steps(
             detail: err.detail,
             source: None,
         })?;
+        let loadout: Option<Arc<str>> = if step.kind == "loadout" {
+            step.args
+                .get("loadout")
+                .and_then(serde_json::Value::as_str)
+                .map(|name| {
+                    if name.contains('/') {
+                        Arc::from(name)
+                    } else {
+                        Arc::from(format!("{}/{}", document.id.0, name))
+                    }
+                })
+        } else {
+            None
+        };
         out.push(CompiledStep {
             id: step.id.clone(),
             kind: Arc::from(step.kind.as_str()),
+            comment: step.comment.as_deref().map(Arc::from),
+            loadout,
+            tactic: (step.kind == "combat")
+                .then(|| {
+                    step.args
+                        .get("tactic")?
+                        .get("kind")?
+                        .as_str()
+                        .map(Arc::from)
+                })
+                .flatten(),
             advances: step.advances,
             skip_if,
             settle,
@@ -666,6 +884,7 @@ pub const COOK_JSON: &str = include_str!("../../paths/289/cook.json");
 pub const SHEEP_JSON: &str = include_str!("../../paths/289/sheep.json");
 pub const RUNE_MYSTERIES_JSON: &str = include_str!("../../paths/289/runemysteries.json");
 pub const ROMEO_AND_JULIET_JSON: &str = include_str!("../../paths/289/romeojuliet.json");
+pub const IMP_JSON: &str = include_str!("../../paths/289/imp.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -674,6 +893,7 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "sheep" => Some(SHEEP_JSON.as_bytes()),
         "runemysteries" => Some(RUNE_MYSTERIES_JSON.as_bytes()),
         "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
+        "imp" => Some(IMP_JSON.as_bytes()),
         _ => None,
     }
 }
