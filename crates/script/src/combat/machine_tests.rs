@@ -1116,6 +1116,171 @@ fn offensive_prayers_wait_for_live_combat_before_the_floor_sip() {
 }
 
 #[test]
+fn combat_does_not_sip_above_the_native_c5_floor() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.stat(5, 27, 43);
+    scene.inventory.push(scene.held("1doseprayerrestore", 0));
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack(harness.pending(&scene, 1));
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 2), 0);
+
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.npcs[0].animation_frame = 0;
+    scene.refresh();
+    let protect = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|row| row.name == "Protect from Melee")
+        .unwrap()
+        .clone();
+    let batch = harness.pending_batch(&scene, 3);
+    assert!(!batch.effects.iter().flatten().any(|row| matches!(
+        row,
+        HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink"
+    )));
+    assert!(batch.effects.iter().flatten().any(|row| matches!(
+        row,
+        HostEffect::Interaction(InteractReq::IfButton { component_id })
+            if *component_id == protect.button_com
+    )));
+}
+
+#[test]
+fn combat_and_guard_share_projectile_first_protect_policy() {
+    let mut scene = Scene::new("cow");
+    scene.stat(5, 43, 43);
+    scene.refresh();
+    let mut harness = fight(&mut scene);
+
+    scene.face_us();
+    scene.refresh();
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim: 9,
+            level: 0,
+            src: scene.npcs[0].tile,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: scene.local.player.index,
+            }),
+            t1: 0,
+            t2: 1,
+        }]);
+    let combat_batch = harness.pending_batch(&scene, 3);
+    let evidence = harness.runtime.evidence.expect("Combat frame evidence");
+    let snapshot = SnapshotView::new(Some(&scene.snapshot), evidence);
+    let request = crate::native::WalkRequest {
+        target: scene.local.player.actor.tile,
+        loc_id: None,
+        radius: 1,
+        options: crate::FindOptions::default(),
+        required_after: evidence,
+        evidence: None,
+        cross: Vec::new().into_boxed_slice(),
+        protect: true,
+        allow: crate::native::WalkAllow::default(),
+    };
+    let mut guard =
+        crate::combat::WalkGuard::begin_with(&request, &snapshot, Arc::clone(&scene.tables))
+            .expect("Guard starts with level 43 Prayer");
+    let guard_op = guard.tick(&snapshot);
+    let expected_button = scene
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .expect("selected Protect from Missiles")
+        .button_com;
+    let combat_button = (0..combat_batch.len()).find_map(|index| match combat_batch.get(index) {
+        Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+            Some(*component_id)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        combat_button,
+        Some(expected_button),
+        "Combat's chosen protect"
+    );
+    assert_eq!(
+        guard_op,
+        Some(crate::combat::GuardOp::IfButton {
+            component: expected_button,
+        }),
+        "Guard's chosen protect"
+    );
+}
+
+#[test]
+fn disagreeing_classified_projectiles_fall_back_to_the_saved_score() {
+    let mut scene = Scene::new("cow");
+    scene.face_us();
+    scene.refresh();
+    scene.snapshot.seed_projectiles(
+        [9, 91]
+            .into_iter()
+            .map(|spotanim| api::snapshot::ProjectileView {
+                spotanim,
+                level: 0,
+                src: scene.npcs[0].tile,
+                target: Some(ActorTargetView {
+                    kind: ActorKind::Player,
+                    index: scene.local.player.index,
+                }),
+                t1: 0,
+                t2: 1,
+            })
+            .collect(),
+    );
+    let evidence = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 3,
+        sequence: 3,
+    };
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence))
+        .expect("complete disagreement frame");
+    let score_frame = Frame {
+        projectiles: &[],
+        ..frame
+    };
+    let mut threats = crate::combat::threats::ThreatSet::default();
+    let local_slot = scene.local.player.index as i32;
+    let cow_id = scene.npcs[0].r#type.unwrap() as i32;
+    threats.observe_hunt(
+        [(7, cow_id, true, 2, local_slot)],
+        local_slot,
+        &scene.tables,
+        3,
+    );
+
+    let scored = crate::combat::policy::wanted_protect(
+        &threats,
+        &score_frame,
+        &scene.tables,
+        3,
+        false,
+        false,
+    )
+    .expect("the live cow supplies a melee score");
+    let selected =
+        crate::combat::policy::wanted_protect(&threats, &frame, &scene.tables, 3, false, false)
+            .expect("the disagreeing volley falls back to the live score");
+    assert_eq!(selected.varp, scored.varp);
+    assert_eq!(selected.name, "Protect from Melee");
+}
+
+#[test]
 fn lock_end_swing_cannot_discharge_the_explicit_drink_restoration() {
     for onset_offset in 1..=3 {
         let mut scene = Scene::new("khazard_warlord");

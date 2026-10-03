@@ -80,6 +80,21 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
         },
     ];
     let collision_flags = [0x100_i32, -1, 0x4000];
+    let projectiles = [api::snapshot::ProjectileView {
+        spotanim: 2_737,
+        level: 0,
+        src: api::snapshot::WorldTile {
+            x: 3_208,
+            z: 3_210,
+            level: 0,
+        },
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: 4,
+        }),
+        t1: 1,
+        t2: 2,
+    }];
     let bytes = encode_snapshot_with_native(
         &input,
         NativeFactsInput {
@@ -93,6 +108,7 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
                 height: 1,
                 flags: &collision_flags,
             }),
+            projectiles: Some(&projectiles),
             ..NativeFactsInput::default()
         },
     );
@@ -137,6 +153,22 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
         vec!["Talk-to", "Attack"]
     );
     assert_eq!((npc.target_kind(), npc.target_index()), (2, 4));
+    let projectile = snapshot.projectiles().expect("posted projectiles").get(0);
+    assert_eq!(projectile.spotanim(), 2_737);
+    assert_eq!(projectile.target_player_index(), Some(4));
+
+    crate::observed::on_reset();
+    crate::observed::apply(&snapshot);
+    crate::observed::with(|scene| {
+        let rows = scene
+            .latest()
+            .projectiles()
+            .expect("applied projectile page");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].spotanim, 2_737);
+        assert_eq!(rows[0].target_player_index, Some(4));
+    });
+    crate::observed::on_reset();
 
     let booth = snapshot.booths().expect("posted booth").get(0);
     assert_eq!((booth.x(), booth.z(), booth.level()), (3_209, 3_211, 0));

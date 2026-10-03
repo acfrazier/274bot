@@ -2,14 +2,15 @@
 //! no flick. The host follow sites own one driver per armed route.
 use super::arbiter;
 use super::frame::Frame;
+use super::policy;
 use super::schedule::{reached, InputEffect, OpKind, Schedule};
 use super::select;
-use super::tables::{CombatTables, PotionKind, PrayerRole, StyleWhere};
-use super::threats::{StyleObs, ThreatSet};
+use super::tables::{CombatTables, PotionKind, PrayerRole};
+use super::threats::ThreatSet;
 use crate::native::WalkRequest;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
-use api::snapshot::{ActorKind, SnapshotView};
+use api::snapshot::SnapshotView;
 use std::sync::{Arc, LazyLock};
 
 const LOWEST_PROTECT: i32 = 37;
@@ -105,42 +106,6 @@ fn kind_bit(kind: GuardProtect) -> u8 {
     }
 }
 
-/// Use the projectile's own style when one is on us. Do not treat every
-/// projectile as Missiles: a magic shot must stay Magic, and an unclassified
-/// shot does not override the shared selector.
-fn classified_incoming_protect<'a>(
-    frame: &Frame<'_>,
-    tables: &'a CombatTables,
-) -> Option<&'a PrayerFact> {
-    let me = frame.me();
-    let mut chosen: Option<&PrayerFact> = None;
-    for projectile in frame.projectiles {
-        if !projectile
-            .target
-            .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
-        {
-            continue;
-        }
-        let Some(style) = tables
-            .style_spotanim(projectile.spotanim)
-            .filter(|row| row.where_ == StyleWhere::Projectile)
-            .map(|row| select::style_from_mask(row.style))
-            .filter(|style| *style != StyleObs::Unknown)
-        else {
-            continue;
-        };
-        let Some(fact) = select::protect_fact(tables, style) else {
-            continue;
-        };
-        match chosen {
-            Some(previous) if previous.varp != fact.varp => return None,
-            Some(_) => {}
-            None => chosen = Some(fact),
-        }
-    }
-    chosen
-}
-
 impl WalkGuard {
     /// Documented begin. Refuses before the route is armed when no protect
     /// is reachable at all.
@@ -230,9 +195,8 @@ impl WalkGuard {
             self.flags &= !FLAG_ON;
         }
         self.settle_drink(&frame, tick, points);
-        let wanted = classified_incoming_protect(&frame, &self.tables).or_else(|| {
-            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
-        })?;
+        let wanted =
+            policy::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
         if base < wanted.level {
             let kind = protect_kind(&self.tables, wanted)?;
             let bit = kind_bit(kind);
@@ -301,8 +265,7 @@ impl WalkGuard {
         hp: i32,
         hp_max: i32,
     ) -> Option<GuardOp> {
-        let floor = (base - (7 + base / 4)).max(3);
-        if points > floor {
+        if !policy::prayer_sip_due(points, base) {
             return None;
         }
         self.drink(frame, tick, hp, hp_max, true)
@@ -756,6 +719,24 @@ mod tests {
                 component: missiles
             }
         );
+    }
+
+    #[test]
+    fn prayer_sip_uses_the_shared_c5_floor() {
+        for (points, due) in [(27, false), (26, true), (9, true), (8, true)] {
+            let mut scene = Scene::new(43);
+            scene.stats[5].effective = points;
+            scene.add_prayer_potion();
+            scene.launch_arrow();
+            scene.set_missiles(true);
+            let mut guard = scene.begin().unwrap();
+            let op = guard.tick(&scene.view_at(10));
+            assert_eq!(
+                matches!(&op, Some(GuardOp::Drink { .. })),
+                due,
+                "Prayer points {points}, got {op:?}"
+            );
+        }
     }
 
     #[test]

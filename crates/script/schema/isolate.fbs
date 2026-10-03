@@ -331,6 +331,12 @@ enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
 // Packed `banks` are keyframed and re-posted only when the NavWorld
 // identity changes, never merely because the stand list is rebuilt
 // unchanged.
+// One live projectile's combat-classification inputs. Only the spotanim and
+// decoded local-player target are needed by Hunt's borrowed protect frame.
+table CombatProjectile {
+  spotanim: int;
+  target_player_index: int = null;
+}
 table Snapshot {
   tick: ulong;
   here: Tile;
@@ -538,6 +544,9 @@ table Snapshot {
   user_move_intent_seq: ulong = 0;
   // Part of the walk_outcome family; replacement with None clears it.
   walk_outcome_cancel_reason: WalkCancelReason = None;
+  // Live projectiles retained for Hunt's borrowed combat-protection frame.
+  // Absent in a delta means keep; an empty vector is an observed clear.
+  projectiles: [CombatProjectile];
 }
 
 table Collision {
