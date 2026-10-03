@@ -51,6 +51,9 @@ pub struct ProtectWindowEvidence {
     pub in_flight_hits: u32,
     pub in_flight_max: i32,
     pub kill_tick: Option<u32>,
+    /// `"posted_corpse"` or `"combat_killed"` when [`Self::kill_tick`] is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kill_evidence: Option<&'static str>,
     pub prayer_off_tick: Option<u32>,
 }
 

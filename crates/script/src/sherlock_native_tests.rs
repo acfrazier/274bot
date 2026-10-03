@@ -12,6 +12,7 @@ use api::snapshot::{
     LocalPlayerView, NpcView, PlayerView, SnapshotView, StatView, VarpView, WorldStateView,
     WorldTile,
 };
+use serde_json::Value;
 use std::time::{Duration, Instant};
 
 struct Output;
@@ -569,20 +570,39 @@ fn ready_ok_lands_as_the_next_combat_page() {
     world.refresh();
     let mut delivered = false;
     for tick in begun + 2..begun + 10 {
-        let before = script.combat_id;
+        let combat_id = script.combat_id;
         let (flow, interacts) = drive(&mut script, &world, &mut ledger, tick);
         flow.expect("kill tick");
         accept_outbox(&mut ledger, tick);
-        if script.fight.is_none() && before.is_some() {
-            assert!(
-                script.outcome.is_none() || script.token.is_some(),
-                "report tick consumes or parks the outcome for the machine"
+        if script.fight.is_none() {
+            let Some(combat_id) = combat_id else {
+                continue;
+            };
+            let report = super::take_combat_page().expect(
+                "Ready(Ok) must land as the next page's combat report; a parked token is not delivery",
+            );
+            assert_eq!(
+                report.get("id").and_then(Value::as_u64),
+                Some(u64::from(combat_id)),
+                "next page combat id must match the outstanding delegation: {report}"
+            );
+            assert_eq!(
+                report.get("end").and_then(Value::as_str),
+                Some("killed"),
+                "next page must carry the Killed report: {report}"
             );
             assert!(
                 interacts.iter().any(|req| matches!(
                     req,
                     InteractReq::Held { action, .. } if action == "Dig"
-                )) || script.token.is_some()
+                )),
+                "post-kill Spade Dig required; a parked token is not delivery (token={:?}, interacts={:?})",
+                script.token,
+                interacts
+            );
+            assert!(
+                script.token.is_some(),
+                "the clue token remains after the report; it is not itself delivery"
             );
             delivered = true;
             break;
