@@ -1644,6 +1644,15 @@ impl Session {
                 );
             }
             Some(Operation::Start) => {
+                // A pending copy is a temporary admission hold, not a failed
+                // proof. Leave the witness at Start until admission can run.
+                if self
+                    .core
+                    .play()
+                    .is_some_and(|play| play.script_start_wait_reason().is_some())
+                {
+                    return;
+                }
                 if watch.begin_start(now).is_err() {
                     return;
                 }
@@ -5086,3 +5095,81 @@ pub use chooser::{EditLeave, EditSwitch};
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod fleet_hold_tests {
+    use super::*;
+    use host_play::external_loader::{
+        default_frozen_source, ExternalWatch, ExternalWatchStatus, Operation, BONES_COUNT,
+        FROZEN_SHA256,
+    };
+
+    #[test]
+    fn fleet_copy_hold_keeps_external_loader_start_pending_without_failure() {
+        let iso = script::IsolatedEnv::enter("panel-external-loader-copy-hold");
+        let path = iso.dir.join("BoneBurier.ts");
+        std::fs::copy(default_frozen_source(), &path).unwrap();
+        let mut session = Session::with_instance(host_play::InstancePermit::SkipLock);
+        session.persist_ui = false;
+        session.scripts.js = script::JsLibrary::with_cache(
+            iso.dir.join("js-scripts.json"),
+            iso.dir.join("js-cache"),
+        );
+        let mut play =
+            host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {});
+        play.attach_arm("alice", host_play::SlotArm::new(1, false));
+        session.core.set_play(Some(play));
+        session.set_focus_for_test("alice");
+        session.load_js(&path);
+        assert_eq!(session.error, None);
+        let card = session
+            .scripts
+            .js
+            .get(script::ScriptSource::File, &path.display().to_string())
+            .unwrap();
+        let watch = ExternalWatch::default();
+        watch.configure("alice", path.clone(), FROZEN_SHA256.into());
+        watch.note_scene(true, 2);
+        watch.note_inventory(Instant::now(), "alice", BONES_COUNT, 0);
+        watch.note_prereq_passed();
+        watch.note_load(
+            1,
+            &card.name,
+            &card.path,
+            &card.identity_key(),
+            &card.sha256,
+            true,
+            false,
+        );
+        assert_eq!(watch.dispatch_operation(), Some(Operation::Start));
+        session.install_external_core_watch(Some(watch.clone()));
+        let hold = session
+            .core
+            .play()
+            .unwrap()
+            .hold_script_starts("waiting for settings copy confirmation".into());
+        for _ in 0..3 {
+            session.pump_external_loader();
+            assert_eq!(watch.failure(), None);
+            assert_eq!(watch.status(), ExternalWatchStatus::Ready);
+            assert_eq!(watch.dispatch_operation(), Some(Operation::Start));
+            assert_eq!(session.focused_script_state(), script::RunState::Idle);
+        }
+        drop(hold);
+        session.pump_external_loader();
+        assert_eq!(session.error, None);
+        assert_eq!(watch.failure(), None);
+        assert_eq!(watch.dispatch_operation(), Some(Operation::ObserveBurials));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while session.focused_script_state() != script::RunState::Running {
+            assert!(
+                Instant::now() < deadline,
+                "external loader Start did not resume"
+            );
+            session.core.poll_host();
+            session.poll_scripts();
+            std::thread::yield_now();
+        }
+        assert_eq!(watch.failure(), None);
+    }
+}

@@ -1,4 +1,5 @@
 //! Native settings preparation is a persistence prerequisite, never a pump callback.
+//! Same-card replacements inherit accepted copy holds through their durable commit.
 use super::*;
 use script::native::{PreparedConfig, SettingsBag, StartError};
 use std::sync::atomic::AtomicBool;
@@ -285,8 +286,14 @@ impl<Io> OperatorSession<Io> {
             }
         };
         self.operations.set(op, &profile.username, Outcome::Pending);
-        self.native_edits
-            .insert((source.to_owned(), card.clone()), op);
+        // Supersession must not admit a queued Start on the pre-copy bag.
+        // Move the accepted copy's token, deadline and cancellation together;
+        // replacing its draft does not restart the bounded wait.
+        let copy_start_hold = self
+            .native_edits
+            .insert((source.to_owned(), card.clone()), op)
+            .and_then(|prior_op| self.preparations.get_mut(&prior_op))
+            .and_then(|prior| prior.copy_start_hold.take());
         self.native_edits
             .insert((profile.username.clone(), card), op);
         self.preparations.insert(
@@ -298,7 +305,7 @@ impl<Io> OperatorSession<Io> {
                 mirror,
                 label,
                 worker,
-                copy_start_hold: None,
+                copy_start_hold,
             },
         );
         Ok(op)
@@ -616,7 +623,7 @@ mod tests {
     fn block_preparation(
         f: &mut Fixture,
     ) -> (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>) {
-        let op = *f.core.preparations.keys().next().unwrap();
+        let op = *f.core.preparations.keys().max().unwrap();
         let mut pending = f.core.preparations.remove(&op).unwrap();
         let (release, wait) = std::sync::mpsc::channel();
         let (finished, done) = std::sync::mpsc::channel();
@@ -658,6 +665,62 @@ mod tests {
             (report.saved, report.failed.len(), report.pending()),
             (0, 1, 0)
         );
+    }
+
+    #[test]
+    fn fleet_copy_hold_survives_native_supersession_until_replacement_commit() {
+        let mut f = preparing_copy("copy-superseded-hold");
+        let id = script::CompiledId("Gatherer");
+        let original = *f.core.preparations.keys().next().unwrap();
+        f.scripts.start_all(&mut f.core, None);
+        let place = f.scripts.start_queue_place("bob").unwrap();
+        f.scripts
+            .set_compiled_setting(&mut f.core, "bob", id, "radius", json!(24))
+            .unwrap();
+        let (release, done) = block_preparation(&mut f);
+
+        // Settle only the superseded copy, leaving the real replacement
+        // result gated. The queued Start must not consume the pre-copy bag.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while f.core.preparations.contains_key(&original) {
+            assert!(Instant::now() < deadline, "original copy did not settle");
+            f.core.poll();
+            std::thread::yield_now();
+        }
+        for _ in 0..3 {
+            f.core.poll();
+            f.scripts.poll(&mut f.core);
+        }
+        let state = f.core.play().unwrap().script_state("bob");
+        let held_place = f.scripts.start_queue_place("bob");
+        release.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(state, script::RunState::Idle, "replacement still preparing");
+        assert_eq!(held_place, Some(place));
+
+        // The transferred hold also survives the replacement's writer boundary.
+        let gate = f.core.write_gate();
+        let held = gate.lock().unwrap();
+        f.core.take_preparations(true);
+        f.scripts.poll(&mut f.core);
+        assert_eq!(
+            f.core.play().unwrap().script_state("bob"),
+            script::RunState::Idle
+        );
+        assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
+        drop(held);
+        f.core.flush_writes();
+        f.scripts.poll(&mut f.core);
+        wait_running(&mut f, "bob");
+        let bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+        assert_eq!(bag["targetPreference"], json!("Nearest"));
+        assert_eq!(bag["radius"], json!(24));
+        assert_eq!(
+            f.configure_expected_bag("bob", id, bag),
+            script::CompiledDelivery::Unchanged,
+            "the queued run starts with the durable replacement, not a late push"
+        );
+        assert_eq!(f.scripts.last_settings_sync().unwrap().superseded, 1);
     }
 
     #[test]
@@ -865,7 +928,10 @@ mod tests {
         let key = script::compiled_identity_key(id);
         let entry = saved.settings.script_settings.get(&key).unwrap();
         let (schema_version, values) = vault::CompiledSettingsRecord::view(entry).unwrap();
-        assert_eq!(schema_version, 2);
+        assert_eq!(
+            schema_version,
+            script::compiled_card(id).unwrap().schema_version
+        );
         assert_eq!(values.get("targetPreference"), Some(&json!("Nearest")));
 
         let copied_bag = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
