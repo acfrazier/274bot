@@ -246,6 +246,8 @@ pub(crate) fn record_guard(
         "kind": "guard",
         "op": op,
         "component_id": component_id,
+        "accepted": true,
+        "dispatch": "sent",
         "tick": snapshot.tick(),
         "host_tick": snapshot.tick(),
         "snapshot_tick": snapshot.tick(),
