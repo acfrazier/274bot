@@ -191,6 +191,8 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -632,6 +634,8 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1596,4 +1600,95 @@ fn group_walk_reasons_label_stale_and_members_only_separately() {
     assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));
     assert_eq!(reason(ActionError::Stale), Some("stale"));
     assert_eq!(reason(ActionError::MembersOnly), Some("members-only path"));
+}
+
+#[test]
+fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
+    let mut nav = world(t(0, 0, 0), 1, &[]);
+    for level in 0..2 {
+        let mut boat = edge(TransportKind::Boat, wt(0, 0, level), wt(0, 0, level + 1));
+        boat.consumed_req = vec![(995, 30)];
+        nav.graph.edges.push(boat);
+    }
+    // A free detour exists only when danger zones are exempted. Its zone
+    // witness must not replace the shortfall on the legal paid route.
+    nav.graph.edges.extend([
+        edge(TransportKind::Ladder, wt(0, 0, 0), wt(0, 0, 3)),
+        edge(TransportKind::Ladder, wt(0, 0, 3), wt(0, 0, 2)),
+    ]);
+    nav.graph.zones = Some(
+        nav::zones::ZoneTable::from_parts(
+            vec![nav::zones::Zone::npc(
+                wt(0, 0, 3),
+                0,
+                nav::zones::ZoneClass::Always,
+                u16::MAX,
+                0,
+            )],
+            vec![nav::zones::ZoneKind::new(
+                "free-unsafe-detour",
+                "Unsafe detour",
+                123,
+                0,
+                false,
+                false,
+            )],
+            vec![],
+            vec![],
+            vec![],
+            nav.collision.origin,
+            1,
+            1,
+            &nav.graph.wilderness,
+        )
+        .unwrap(),
+    );
+    nav.graph.rebuild_index(&nav.collision);
+    nav.bind_named_bank_facts(
+        &api::game_data::for_revision(client::io::ClientRevision::R289).unwrap(),
+    )
+    .unwrap();
+    let ctx = context();
+    let arms = crate::WalkArms::default();
+    let state = WorldState {
+        inv: HashMap::from([(995, 30)]),
+        ..WorldState::empty()
+    };
+    assert!(nav::router::find_with(
+        &nav.collision,
+        &nav.graph,
+        wt(0, 0, 0),
+        wt(0, 0, 2),
+        FindOptions {
+            zones: nav::zones::ZoneExempt::all(),
+            ..FindOptions::default()
+        },
+        &state
+    )
+    .is_ok());
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    model.select_tile(&nav, t(0, 0, 2));
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &ctx,
+            Some(t(0, 0, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    let error = command
+        .walk_on(&nav, &ctx, "alice", &state, &[], &arms)
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(
+        matches!(error, ActionError::InsufficientItems { .. }),
+        "{message}"
+    );
+    assert!(
+        message.to_lowercase().contains("30 more coins"),
+        "{message}"
+    );
+    assert!(message.contains("need 60, carrying 30"), "{message}");
+    assert!(arms.lock().unwrap().get("alice").is_none());
 }

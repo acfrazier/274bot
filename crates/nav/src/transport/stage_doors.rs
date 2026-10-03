@@ -1493,6 +1493,8 @@ fn gated_edge(
         open_loc_id: None,
         skill_req: max_per_key(&needs.skills),
         item_req: max_per_key(&needs.items),
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: max_per_key(&needs.varps),
         worn_req: worn.into_iter().map(|(obj, _)| obj).collect(),

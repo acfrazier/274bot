@@ -112,6 +112,8 @@ pub(super) fn push_glider_flight(
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![quest.to_string()],
         varp_req: vec![],
         worn_req: vec![],

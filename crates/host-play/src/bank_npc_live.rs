@@ -1,14 +1,14 @@
 //! Live BankBudget fetch at real packed banks, from the street.
 //!
-//! Every leg runs a real planned session — Walk, Open, DepositAll,
-//! Withdraw, Close, Wear — through the production pump: the script pump
+//! Every leg runs a real planned session — Walk, Open, Withdraw, Close, Wear —
+//! through the production pump: the script pump
 //! ([`super::step_nav_bot`]) or the panel/TUI pump
 //! ([`super::step_walk_arm_follow`]), once per player tick. Legs cover
 //! Varrock West, Draynor, Falador East and Al Kharid, each with the booth
 //! (a booth-only stand table, so Open can only click a booth) and with the
 //! banker (the real table, whose Open tries the tellers first), through
 //! both owners. A leg passes only when the bronze dagger seeded into the
-//! bank ends up worn, the seeded bones are deposited, and Open used the
+//! bank ends up worn, the seeded bones remain carried, and Open used the
 //! expected access: the booth next to the player, or a banker.
 //!
 //! Sets a throwaway `HOME` it removes on the way out, points cache at the
@@ -54,7 +54,7 @@ use super::{
 
 /// Bronze dagger: wieldable, seeded into the bank each leg.
 const DAGGER: i32 = 1205;
-/// Bones: the backpack junk the DepositAll must clear.
+/// Bones: unrelated backpack items a fetch must retain.
 const BONES: i32 = 526;
 const SEED: [&str; 4] = [
     "~clearinv",
@@ -165,7 +165,6 @@ struct LegRun {
     front: Option<BankStep>,
     open: Option<OpenSend>,
     bank_facts_logged: bool,
-    empty_facts_logged: bool,
 }
 
 struct ScratchHome {
@@ -476,7 +475,6 @@ fn drive(client: &mut Client, live: &Mutex<Live>) {
             };
             let expected = [
                 BankStep::Open,
-                BankStep::DepositAll,
                 BankStep::Withdraw {
                     id: DAGGER,
                     count: 1,
@@ -644,16 +642,6 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
             rows(g.snap.bank_side()),
         );
     }
-    if g.snap.bank_loaded() && g.snap.bank_side().is_empty() && !g.run.empty_facts_logged {
-        g.run.empty_facts_logged = true;
-        println!(
-            "live_bank_fetch: {label}: pack deposited: inventory={:?} inv()={:?} bank_side={:?} bank has dagger={}",
-            rows(g.snap.inventory()),
-            g.snap.inv(),
-            rows(g.snap.bank_side()),
-            g.snap.bank().iter().any(|it| it.def.id == DAGGER),
-        );
-    }
     if g.session_front(spec.owner).is_some() {
         return;
     }
@@ -667,8 +655,15 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
         ));
         return;
     }
-    if holding(&g.snap, BONES) {
-        g.phase = Phase::Fail(format!("{label}: the bones were never deposited"));
+    if g.snap
+        .inv()
+        .iter()
+        .filter(|&&(id, _)| id == BONES)
+        .map(|&(_, count)| count)
+        .sum::<i32>()
+        != 3
+    {
+        g.phase = Phase::Fail(format!("{label}: the fetch changed the carried bones"));
         return;
     }
     if g.snap.bank_component_id() >= 0 {
@@ -710,7 +705,7 @@ fn run_leg(client: &mut Client, g: &mut Live, leg: usize, spec: LegSpec, now: In
         }
     };
     let line = format!(
-        "{label}: worn dagger, bones deposited, bank closed; Open used {used}; {} pumps, {:.1}s",
+        "{label}: worn dagger, bones retained, bank closed; Open used {used}; {} pumps, {:.1}s",
         g.run.pumps,
         g.run
             .started

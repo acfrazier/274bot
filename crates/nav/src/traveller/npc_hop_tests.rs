@@ -8,7 +8,9 @@ fn npc_route(kind: TransportKind) -> Route {
     };
     Route {
         dest: edge.to,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         ticks: 1.0,
     }
 }
@@ -404,7 +406,9 @@ fn sailor_crandor_variant_answers_the_normal_fare_not_crandor() {
     };
     let route = Route {
         dest: edge.to,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         ticks: 9.0,
     };
     let mut options = TravelOptions::default();

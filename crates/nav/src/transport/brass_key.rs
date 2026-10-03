@@ -128,6 +128,8 @@ pub(super) fn brass_key_door_edges(
                 open_loc_id: Some(open_id),
                 skill_req: vec![],
                 item_req: vec![(key_id, 1)],
+                consumed_req: vec![],
+                item_returns: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
