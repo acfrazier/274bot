@@ -201,6 +201,24 @@ fn post(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(snap));
 }
 
+/// Post the scalar from the modal text/option walk, exactly as the host does.
+/// `snap.chat_text` remains the unrelated chat-ring head.
+fn post_page(iso: &LoadIsolate, snap: &SnapshotInput<'_>, texts: &[String]) {
+    post_native(
+        iso,
+        snap,
+        NativeFactsInput {
+            chat_page_fingerprint: api::snapshot::chat_page_fingerprint(
+                texts,
+                snap.chat_options
+                    .iter()
+                    .map(|option| (option.com_id, option.text)),
+            ),
+            ..Default::default()
+        },
+    );
+}
+
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
     let _ = iso.probe("true");
@@ -537,6 +555,14 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Gundai", &actions, 7)];
     let mut snap = base();
+    let first_page = [
+        "First modal page".to_string(),
+        "Second body line".to_string(),
+    ];
+    let second_page = [
+        "First modal page".to_string(),
+        "Changed body line".to_string(),
+    ];
     snap.npcs = &npcs;
     post(&iso, &snap);
     tick(&iso, 1);
@@ -546,14 +572,14 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     snap.chat_open = true;
     snap.chat_modal_id = 968;
     snap.chat_continue = true;
-    snap.chat_text = Some("First page");
-    post(&iso, &snap);
+    snap.chat_text = Some("An unrelated game message");
+    post_page(&iso, &snap, &first_page);
     tick(&iso, 2);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
 
     for n in 3..=6u64 {
         snap.tick = n;
-        post(&iso, &snap);
+        post_page(&iso, &snap, &first_page);
         tick(&iso, n);
         assert!(
             iso.drain_interacts().is_empty(),
@@ -563,8 +589,8 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     }
 
     snap.tick = 7;
-    snap.chat_text = Some("Second page on the same root");
-    post(&iso, &snap);
+    // Only the modal body changes; the root, Continue and ring head stay put.
+    post_page(&iso, &snap, &second_page);
     tick(&iso, 7);
     assert!(
         iso.drain_interacts().is_empty(),
@@ -575,6 +601,36 @@ fn continue_ack_waits_for_page_change_on_the_same_chat_root() {
     post(&iso, &snap);
     tick(&iso, 8);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+    iso.join();
+}
+
+#[test]
+fn continue_ack_ignores_ring_lines_on_an_unchanged_page() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let page = ["Unchanged modal page".to_string()];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    snap.chat_open = true;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    snap.chat_text = Some("First ring line");
+    post_page(&iso, &snap, &page);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+
+    for n in 2..=5u64 {
+        snap.tick = n;
+        snap.chat_text = Some("New ring line; no dialogue progress");
+        post_page(&iso, &snap, &page);
+        tick(&iso, n);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "chat-ring progress must not acknowledge or re-press Continue at tick {n}"
+        );
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    }
     iso.join();
 }
 
@@ -629,6 +685,83 @@ fn same_options_page_after_answer_does_not_duplicate() {
 }
 
 #[test]
+fn choice_ack_tracks_modal_text_option_id_and_option_text_on_the_same_root() {
+    for changed_field in ["modal text", "option component", "option text"] {
+        let iso = spawn(TALK);
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Gundai", &actions, 7)];
+        let choice = [ChatOptionInput {
+            text: "I'd like to access my bank account, please.",
+            com_id: 4883,
+        }];
+        let next_choice = [ChatOptionInput {
+            text: if changed_field == "option text" {
+                "Can I access my bank account?"
+            } else {
+                choice[0].text
+            },
+            com_id: if changed_field == "option component" {
+                4884
+            } else {
+                choice[0].com_id
+            },
+        }];
+        let page = ["First choice prompt".to_string()];
+        let next_page = [if changed_field == "modal text" {
+            "Second choice prompt"
+        } else {
+            "First choice prompt"
+        }
+        .to_string()];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        snap.chat_open = true;
+        snap.chat_modal_id = 4882;
+        snap.chat_options = &choice;
+        snap.chat_text = Some("An unrelated ring line");
+        post_page(&iso, &snap, &page);
+        tick(&iso, 1);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![InteractReq::Answer { option: 1 }]
+        );
+
+        snap.tick = 2;
+        snap.chat_text = Some("New ring line on unchanged options");
+        post_page(&iso, &snap, &page);
+        tick(&iso, 2);
+        assert!(iso.drain_interacts().is_empty());
+
+        snap.chat_options = &next_choice;
+        snap.tick = 3;
+        post_page(&iso, &snap, &next_page);
+        tick(&iso, 3);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "ack starts two quiet ticks"
+        );
+
+        snap.tick = 4;
+        post_page(&iso, &snap, &next_page);
+        tick(&iso, 4);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "one quiet tick is not two"
+        );
+
+        snap.tick = 5;
+        post_page(&iso, &snap, &next_page);
+        tick(&iso, 5);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![InteractReq::Answer { option: 1 }],
+            "native choice acknowledgement must track {changed_field}"
+        );
+        iso.join();
+    }
+}
+
+#[test]
 fn continue_ack_timeout_fails_without_repressing() {
     let iso = spawn(TALK);
     let actions = ["Talk-to".to_string()];
@@ -636,6 +769,7 @@ fn continue_ack_timeout_fails_without_repressing() {
     let mut snap = base();
     snap.npcs = &npcs;
     post(&iso, &snap);
+    let page = ["A modal page that never advances".to_string()];
     tick(&iso, 1);
     iso.drain_interacts();
 
@@ -643,18 +777,21 @@ fn continue_ack_timeout_fails_without_repressing() {
     snap.chat_open = true;
     snap.chat_modal_id = 968;
     snap.chat_continue = true;
-    post(&iso, &snap);
+    snap.chat_text = Some("Initial unrelated ring line");
+    post_page(&iso, &snap, &page);
     tick(&iso, 2);
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
 
     snap.tick = 3;
     // Same root, page, and visible Continue leave the native ack pending.
-    post(&iso, &snap);
+    post_page(&iso, &snap, &page);
     tick(&iso, 3);
     assert!(iso.drain_interacts().is_empty());
     std::thread::sleep(std::time::Duration::from_millis(3_100));
     snap.tick = 4;
-    post(&iso, &snap);
+    // Ring traffic cannot turn a missing page ack into progress at the deadline.
+    snap.chat_text = Some("New unrelated ring line at the ack deadline");
+    post_page(&iso, &snap, &page);
     tick(&iso, 4);
     assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
     assert!(

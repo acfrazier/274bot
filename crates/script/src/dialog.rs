@@ -11,7 +11,7 @@ use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 #[cfg(test)]
 use crate::observed::Ops;
 use crate::observed::{self, Scene, Text};
-use crate::quester::families::dialogue::{page_fingerprint, PageAcknowledgement};
+use crate::quester::families::dialogue::PageAcknowledgement;
 use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
 use crate::shim::InteractReq;
 use serde::Deserialize;
@@ -54,10 +54,6 @@ struct NativeObservation {
     bank_open: bool,
     #[cfg(test)]
     npcs: Vec<Npc>,
-    #[cfg(test)]
-    chat_text: Option<Text>,
-    #[cfg(test)]
-    chat_option_ids: Vec<i32>,
 }
 
 impl NativeObservation {
@@ -65,20 +61,9 @@ impl NativeObservation {
     /// The tick is always the last posted one.
     fn from_scene(scene: &Scene) -> Self {
         let session = scene.since_login();
-        let chat_text = session.chat_text();
         let chat_options = session
             .chat_options()
             .map_or(&[][..], |rows| rows.as_slice());
-        let chat_option_ids = session
-            .chat_option_ids()
-            .map_or(&[][..], |components| components.as_slice());
-        let chat_page_fingerprint = page_fingerprint(
-            chat_text.map(std::slice::from_ref).unwrap_or_default(),
-            chat_option_ids
-                .iter()
-                .copied()
-                .zip(chat_options.iter().map(String::as_str)),
-        );
         Self {
             ingame: session.ingame().unwrap_or(false),
             tick: scene.tick().unwrap_or(0),
@@ -86,16 +71,12 @@ impl NativeObservation {
             ours: session.ours().unwrap_or(false),
             chat_modal_id: session.chat_modal_id().unwrap_or(-1),
             chat_continue: session.chat_continue().unwrap_or(false),
-            chat_page_fingerprint,
+            chat_page_fingerprint: session.chat_page_fingerprint().unwrap_or(0),
             // Empty texts stay: the 1-based Answer index is the posted slot.
             chat_options: chat_options.to_vec(),
             bank_open: session.bank_open().unwrap_or(false),
             #[cfg(test)]
             npcs: Vec::new(),
-            #[cfg(test)]
-            chat_text: chat_text.cloned(),
-            #[cfg(test)]
-            chat_option_ids: chat_option_ids.to_vec(),
         }
     }
 
@@ -167,8 +148,7 @@ pub(crate) struct Dialog {
     gap_ms: u64,
     steps: u32,
     due_tick: u64,
-    ack_modal_id: i32,
-    continue_ack: PageAcknowledgement,
+    ack_page: PageAcknowledgement,
     /// [`crate::reach::pending_posts`] when the dialogue began.
     pending_mark: u64,
     /// A log line to write before `after`.
@@ -213,8 +193,7 @@ impl Family for Dialog {
                 .unwrap_or(DIALOG_GAP_MS),
             steps: 0,
             due_tick: 0,
-            ack_modal_id: -1,
-            continue_ack: PageAcknowledgement::default(),
+            ack_page: PageAcknowledgement::default(),
             pending_mark: crate::reach::pending_posts(),
             log: None,
             after: None,
@@ -391,12 +370,8 @@ impl Dialog {
         self.drive_step(obs, cx)
     }
 
-    fn choice_acked(&self, obs: &NativeObservation) -> bool {
-        obs.chat_modal_id != self.ack_modal_id || obs.chat_continue
-    }
-
     fn wait_continue_ack(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
-        if self.continue_ack.acknowledged(
+        if self.ack_page.acknowledged(
             obs.chat_modal_id,
             obs.chat_continue,
             obs.chat_page_fingerprint,
@@ -413,7 +388,11 @@ impl Dialog {
     }
 
     fn wait_choice_ack(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
-        if self.choice_acked(obs) {
+        if self.ack_page.acknowledged(
+            obs.chat_modal_id,
+            obs.chat_continue,
+            obs.chat_page_fingerprint,
+        ) {
             self.phase = Phase::WaitChoiceTicks;
             self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
             cx.clock().deadline = None;
@@ -456,7 +435,7 @@ impl Dialog {
         }
         if obs.chat_continue {
             self.steps += 1;
-            self.continue_ack = PageAcknowledgement::capture(
+            self.ack_page = PageAcknowledgement::capture(
                 obs.chat_modal_id,
                 obs.chat_continue,
                 obs.chat_page_fingerprint,
@@ -469,7 +448,11 @@ impl Dialog {
         if !obs.options().is_empty() {
             let (option, line) = choose_option(obs.options(), &self.prefer);
             self.steps += 1;
-            self.ack_modal_id = obs.chat_modal_id;
+            self.ack_page = PageAcknowledgement::capture(
+                obs.chat_modal_id,
+                obs.chat_continue,
+                obs.chat_page_fingerprint,
+            );
             self.phase = Phase::WaitChoiceAck;
             cx.clock().arm(PAGE_ACK_MS);
             cx.emit(InteractReq::Answer { option });
@@ -545,10 +528,6 @@ mod tests {
             chat_page_fingerprint: 0,
             chat_options: Vec::new(),
             bank_open: false,
-            #[cfg(test)]
-            chat_text: None,
-            #[cfg(test)]
-            chat_option_ids: Vec::new(),
             npcs,
         }
     }
@@ -556,15 +535,12 @@ mod tests {
     /// Stand in for a decoded post carrying `obs`.
     fn post(obs: &NativeObservation) {
         observed::post(obs.tick, |post| {
-            if let Some(text) = obs.chat_text.as_ref() {
-                post.chat_text(text.clone());
-            }
             post.session(obs.ingame)
                 .hold(obs.hold)
                 .ours(obs.ours)
                 .chat_modal_id(obs.chat_modal_id)
                 .chat_continue(obs.chat_continue)
-                .chat_option_ids(obs.chat_option_ids.clone())
+                .chat_page_fingerprint(obs.chat_page_fingerprint)
                 .chat_options(obs.chat_options.clone())
                 .bank_open(obs.bank_open)
                 .npcs(

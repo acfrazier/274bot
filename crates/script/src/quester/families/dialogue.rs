@@ -5,6 +5,7 @@ use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
 use crate::shim::InteractReq;
+use api::snapshot::chat_page_fingerprint;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::task::Poll;
@@ -45,20 +46,6 @@ impl Default for PageAcknowledgement {
     fn default() -> Self {
         Self::capture(-1, false, 0)
     }
-}
-
-/// Hash the observed dialogue text and option component/text fields.
-pub(crate) fn page_fingerprint<'a, T: Hash>(
-    texts: &[T],
-    options: impl IntoIterator<Item = (i32, &'a str)>,
-) -> u64 {
-    let mut hash = DefaultHasher::new();
-    texts.hash(&mut hash);
-    for (component_id, text) in options {
-        component_id.hash(&mut hash);
-        text.hash(&mut hash);
-    }
-    hash.finish()
 }
 
 #[derive(Clone)]
@@ -356,7 +343,7 @@ impl ChatObs<'_> {
     // pages. A newer snapshot/tick alone is not an acknowledgement; the page
     // must change. Fingerprinting borrowed content avoids copying each page.
     fn page_fingerprint(&self) -> u64 {
-        page_fingerprint(
+        chat_page_fingerprint(
             self.texts,
             self.options
                 .iter()

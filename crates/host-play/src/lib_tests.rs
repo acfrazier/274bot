@@ -16195,6 +16195,112 @@ fn publish_script_snapshot(
         false,
     )
 }
+#[test]
+fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.chat_text[0] = "Unrelated ring message".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Second line".into()]);
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4883,
+            text: "Yes".into(),
+        }],
+        969,
+    );
+    let expected = api::snapshot::chat_page_fingerprint(
+        snapshot.chat_modal_texts(),
+        snapshot
+            .chat_options()
+            .iter()
+            .map(|option| (option.component_id, option.text.as_str())),
+    );
+    let (keyframe, first) = publish_script_snapshot(None, 1, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&keyframe).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_eq!(view.chat_page_fingerprint(), expected);
+    assert_eq!(view.chat_text(), Some("Unrelated ring message"));
+
+    client.chat_text[0] = "Another ring message".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    snapshot.rebuild(&client);
+    // This client has no interface tree: rebuild refreshes modals from that
+    // empty tree, so repost the fixture's unchanged native modal observation.
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Second line".into()]);
+    let (ring_delta, second) = publish_script_snapshot(Some(&first), 2, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&ring_delta).unwrap();
+    assert_eq!(view.chat_text(), Some("Another ring message"));
+    assert!(!view.has_chat_page_fingerprint());
+    assert_eq!(second.chat_page_fingerprint, first.chat_page_fingerprint);
+
+    // A non-head modal line changes while the ring, root and Continue stay put.
+    snapshot.seed_chat_modal(968, vec!["First line".into(), "Changed second line".into()]);
+    let (page_delta, third) = publish_script_snapshot(Some(&second), 3, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&page_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(view.chat_page_fingerprint(), expected);
+    assert!(!view.has_chat_text());
+    assert!(!view.has_chat_modal_id());
+    assert!(!view.has_chat_continue());
+    assert!(!view.has_chat_options());
+
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4884,
+            text: "Yes".into(),
+        }],
+        969,
+    );
+    let (id_delta, fourth) = publish_script_snapshot(Some(&third), 4, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&id_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(fourth.chat_page_fingerprint, third.chat_page_fingerprint);
+
+    snapshot.seed_chat_options(
+        vec![api::snapshot::ChatOptionView {
+            component_id: 4884,
+            text: "No".into(),
+        }],
+        969,
+    );
+    let (text_delta, fifth) = publish_script_snapshot(Some(&fourth), 5, &snapshot);
+    let view = script::isolate_fb::decode_snapshot(&text_delta).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_ne!(fifth.chat_page_fingerprint, fourth.chat_page_fingerprint);
+
+    let (clear, _) = script_snapshot_fb(
+        Some(&fifth),
+        false,
+        6,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script::isolate_fb::decode_snapshot(&clear).unwrap();
+    assert!(view.has_chat_page_fingerprint());
+    assert_eq!(view.chat_page_fingerprint(), 0);
+}
 
 fn posted_varp(view: &script::isolate_fb::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
