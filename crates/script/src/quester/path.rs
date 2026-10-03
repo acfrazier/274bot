@@ -282,7 +282,10 @@ mod tests {
         assert!(!decoded.members);
         assert!(matches!(
             decoded.bank,
-            QuestBankDocument::Tile { required: false, .. }
+            QuestBankDocument::Tile {
+                required: false,
+                ..
+            }
         ));
         let mut required = header.clone();
         required["bank"]["required"] = json!(true);
@@ -297,5 +300,5 @@ mod tests {
         assert!(serde_json::from_value::<QuestHeaderDocument>(extra).is_err());
         assert_eq!(PredicateDocument::All(vec![]).constant_truth(), Some(true));
         assert_eq!(PredicateDocument::Any(vec![]).constant_truth(), Some(false));
-}
+    }
 }

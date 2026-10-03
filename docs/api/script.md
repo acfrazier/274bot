@@ -144,6 +144,22 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Native Quester and Gatherer bank selection chooses the eligible, routable bank
+with the lowest walking-route cost in ticks; teleport grants and held runes do
+not change that ranking. A bank must have usable packed or declared access.
+Standing near a bank across a wall is not proof of reachability. A selection
+timeout may offer an air-nearest candidate, but the subsequent walk must still
+route successfully and fails closed otherwise. Compatibility `SelectBank` and
+`WalkNearestBank` retain their frozen four-tile shortcut, 500,000-expansion
+budget, five-second timeout and air fallback.
+
+An authored Path bank tile is not an exclusive destination by default:
+`{"tile": [3092, 3242, 0], "source": "author reference"}` still selects the
+cheapest routable bank. Add `"required": true` only when that particular bank
+is necessary. Required tiles must resolve to an eligible named bank with access
+and a successful route; an unmatched or unreachable required bank refuses
+rather than substituting another bank. `"bank": "nearest"` is unchanged.
+
 The native status producer exposes active quest progress under `quest`, its
 name under `display`, queue states, requirement and provisioning details, and
 step/session counters. `required_vs_live` counts skill gates; `required_<skill>`
@@ -247,9 +263,10 @@ The compiled Gatherer card schema is version 4. `disposition` defaults to
 `Bank`; `Power` drops selected gathering products, while `Bank` returns to the
 selected bank and deposits them. Bank mode also makes a trip when no inventory
 slot is free; Power mode can still take a supply-only trip. `bank` defaults to
-`Nearest` and also offers named banks present in the selected cache;
-`useMageBank` and `useZanarisBank` add those special banks to the preference.
-The unsupported `Closest` mode is not offered.
+`Nearest`. A named bank chosen by the user is required: always use that bank,
+and refuse if it is unavailable or unroutable instead of substituting another.
+`useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
+preferences. The unsupported `Closest` mode is not offered.
 Ordinary banks use packed stand access. Declared teller banks use the same
 live NPC/dialogue opener as `Bank.openNpcAccess`, including multi-page chat;
 an open modal without a loaded item table is not a successful native open.

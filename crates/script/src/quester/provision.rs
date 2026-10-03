@@ -1032,13 +1032,13 @@ mod tests {
     use super::*;
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
-    use crate::quester::compile::CompiledQuestItem;
     use crate::native_bank::BankPickRequest;
+    use crate::quester::compile::CompiledQuestItem;
     use crate::quester::families::tests::{def, local_player, with_tick};
+    use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_facts::QuestCatalog;
     use api::selected::{ClientRevision, FactKey};
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
-    use api::named_banks::{NamedBank, NamedBankFacts};
     use std::collections::HashMap;
 
     fn quest_catalog() -> QuestCatalog {
@@ -1174,10 +1174,13 @@ mod tests {
                 run.poll(&mut cx)
             });
             if let Some(request) = ledger.as_ref().and_then(|ledger| {
-                ledger.outbox.iter().find_map(|action| match &action.effect {
-                    HostEffect::BankPick(request) => Some(request.clone()),
-                    _ => None,
-                })
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        HostEffect::BankPick(request) => Some(request.clone()),
+                        _ => None,
+                    })
             }) {
                 return Ok(request);
             }
@@ -1286,8 +1289,7 @@ mod tests {
                 &cx,
             )
         });
-        let request =
-            poll_bank_pick(&mut run, &open_snapshot, &mut ledger, &banks).unwrap();
+        let request = poll_bank_pick(&mut run, &open_snapshot, &mut ledger, &banks).unwrap();
         assert_eq!(request.explicit_bank, Some(0));
 
         let unmatched = tile(3200, 3200);
@@ -1315,7 +1317,9 @@ mod tests {
             Err(ActionError::Unavailable(reason))
                 if reason.as_ref() == "required bank is not in the bank catalog"
         ));
-        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 
     #[test]

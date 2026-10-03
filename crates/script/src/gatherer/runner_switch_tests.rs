@@ -1,9 +1,9 @@
 use super::*;
 use crate::quester::families::tests::with_tick;
 use api::gather_methods::{known_rows, TargetClass};
+use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
 use api::snapshot::GameSnapshot;
-use api::named_banks::{NamedBank, NamedBankFacts};
 use api::snapshot::WorldTile;
 
 fn fixture() -> (Gatherer, GameSnapshot) {
@@ -40,7 +40,7 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
         z: 3423,
         level: 0,
     };
-    let (config, mut snapshot) = FamilyPreparation::run(|families| {
+    let (config, snapshot) = FamilyPreparation::run(move |families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let banks = Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
             "Varrock East",
@@ -57,17 +57,15 @@ fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
             banks,
             families,
         };
-        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings))?;
+        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings)).unwrap();
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
-        snapshot.seed_local_player(crate::quester::families::tests::local_player(
-            WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-        ));
-        Ok((config, snapshot))
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        }));
+        (config, snapshot)
     })
     .unwrap()
     .join()
@@ -94,10 +92,13 @@ fn gatherer_bank_pick(bank_choice: Option<&'static str>) -> crate::native_bank::
     ledger
         .as_ref()
         .and_then(|ledger| {
-            ledger.outbox.iter().find_map(|action| match &action.effect {
-                crate::native::HostEffect::BankPick(request) => Some(request.clone()),
-                _ => None,
-            })
+            ledger
+                .outbox
+                .iter()
+                .find_map(|action| match &action.effect {
+                    crate::native::HostEffect::BankPick(request) => Some(request.clone()),
+                    _ => None,
+                })
         })
         .expect("the bank trip must submit a selection request")
 }

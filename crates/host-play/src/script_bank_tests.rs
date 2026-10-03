@@ -1068,3 +1068,397 @@ fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
         assert!(native_bank_access(&world, bank("Unmapped", 8, 8), definition.tile).is_none());
     }
 }
+
+fn native_pick_action(
+    banks: Vec<NamedBank>,
+    from: WorldTile,
+    explicit: Option<&str>,
+) -> (script::SlotScript, script::native::HostAction) {
+    use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
+    use script::native_bank::{Select, SelectArgs};
+
+    struct Selecting {
+        args: Option<SelectArgs>,
+        handle: Option<ActionHandle<Select>>,
+    }
+    impl Script for Selecting {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if let Some(args) = self.args.take() {
+                self.handle = Some(tick.actions.begin::<Select>(args, &mut tick.cx).unwrap());
+            }
+            assert!(tick
+                .actions
+                .poll(self.handle.as_ref().unwrap(), &mut tick.cx)
+                .is_pending());
+            Ok(ScriptFlow::Continue)
+        }
+    }
+    let mut slot = script::SlotScript::new();
+    slot.start_test_script(
+        Box::new(Selecting {
+            args: Some(SelectArgs {
+                facts: Arc::new(NamedBankFacts::from_banks(banks)),
+                from,
+                preferences: BankPreferences::default(),
+                allow_wilderness: false,
+                explicit: explicit.map(Arc::from),
+            }),
+            handle: None,
+        }),
+        None,
+    )
+    .unwrap();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    slot.on_game_tick(&mut script::ScriptCtx {
+        driver: &mut HeldDriver,
+        tick: 1,
+        here: Some((from.x, from.z, from.level)),
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(&snapshot),
+        obj_names: None,
+        compiled: script::CompiledTick::default(),
+    });
+    let action = slot
+        .take_native_action()
+        .expect("real native Select request");
+    assert!(action.live());
+    (slot, action)
+}
+
+fn native_world(wall: bool, banks: &[NamedBank], graph: TransportGraph) -> Arc<NavWorld> {
+    let mut flags = vec![0; 4 * 48 * 48];
+    if wall {
+        for z in 0..48 {
+            flags[z * 48 + 6] =
+                CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        }
+    }
+    let (walk, blocked) = pack_walk(&flags);
+    Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 48,
+            height: 48,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        banks
+            .iter()
+            .map(|bank| nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: bank.tile,
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            })
+            .collect(),
+    ))
+}
+
+fn start_native_pick(
+    navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
+    world: Arc<NavWorld>,
+    action: script::native::HostAction,
+    opts: FindOptions,
+    state: WorldState,
+) {
+    let authority = action.authority();
+    let script::native::HostEffect::BankPick(request) = action.effect else {
+        panic!("expected bank pick");
+    };
+    let evidence = EvidenceStamp {
+        run: authority.run(),
+        tick: 1,
+        sequence: 1,
+    };
+    queue_bank(
+        navs,
+        "test",
+        &Some(world),
+        Some(state),
+        request.from,
+        opts,
+        authority.request_id().get(),
+        request.preferences,
+        None,
+        false,
+        Some(NativeBankPickInput {
+            request,
+            authority,
+            evidence,
+        }),
+    );
+}
+
+fn await_native_search(
+    navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
+    gate: &Controlled,
+) {
+    assert!(
+        navs.lock().unwrap()["test"].bank_pick.worker.is_some(),
+        "native selection must search even inside the air-near radius"
+    );
+    gate.0.wait(1);
+}
+
+#[test]
+fn native_bank_pick_routes_air_near_across_wall_and_required_refuses() {
+    let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
+    for (explicit, expected) in [(None, Some(1)), (Some("across wall"), None)] {
+        let (slot, action) = native_pick_action(banks.clone(), tile(4, 1), explicit);
+        let navs = navs(banks.clone());
+        let gate = Controlled::new();
+        start_native_pick(
+            &navs,
+            native_world(true, &banks, TransportGraph::default()),
+            action,
+            FindOptions::default(),
+            WorldState::empty(),
+        );
+        await_native_search(&navs, &gate);
+        gate.0.release();
+        gate.0.wait(4);
+        let mut all = navs.lock().unwrap();
+        let selected = all
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .unwrap()
+            .1
+            .selected;
+        assert_eq!(
+            selected.kind,
+            if expected.is_some() {
+                NativePickKind::Reachable
+            } else {
+                NativePickKind::NoCandidate
+            }
+        );
+        assert_eq!(selected.bank_index, expected.unwrap_or(u16::MAX));
+        assert!(all["test"].route.is_none(), "selection must not move");
+        drop(slot);
+    }
+    // Frozen SelectBank still completes by four-tile air proximity; changing
+    // native picks must not silently alter compatibility behavior.
+    let navs = navs(banks.clone());
+    queue_bank_pick(
+        &navs,
+        "test",
+        &Some(native_world(true, &banks, TransportGraph::default())),
+        None,
+        tile(4, 1),
+        false,
+        1,
+        BankPreferences::default(),
+        None,
+    );
+    let all = navs.lock().unwrap();
+    assert_eq!(all["test"].bank_pick.posted.bank_index, 0);
+    assert_eq!(
+        all["test"].bank_pick.posted.kind,
+        PickKind::NearShortcut as u8
+    );
+    assert!(all["test"].bank_pick.worker.is_none());
+}
+
+#[test]
+fn native_bank_pick_missing_access_is_not_even_a_timeout_candidate() {
+    let banks = vec![bank("unmapped near", 4, 1), bank("local", 40, 40)];
+    for explicit in [None, Some("unmapped near")] {
+        let (slot, action) = native_pick_action(banks.clone(), tile(4, 1), explicit);
+        let navs = navs(banks.clone());
+        let gate = Controlled::new();
+        start_native_pick(
+            &navs,
+            native_world(false, &banks[1..], TransportGraph::default()),
+            action,
+            FindOptions::default(),
+            WorldState::empty(),
+        );
+        if explicit.is_none() {
+            await_native_search(&navs, &gate);
+            let mut all = navs.lock().unwrap();
+            let pick = &mut all.get_mut("test").unwrap().bank_pick;
+            let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
+            pick.poll(deadline);
+            let selected = pick.take_native_receipt().unwrap().1.selected;
+            assert_eq!(selected.bank_index, 1);
+            assert_eq!(selected.kind, NativePickKind::AirFallback);
+            assert!(selected.access.is_some());
+            drop(all);
+            gate.0.release();
+            gate.0.wait(4);
+        } else {
+            let mut all = navs.lock().unwrap();
+            let pick = &mut all.get_mut("test").unwrap().bank_pick;
+            let selected = pick.take_native_receipt().unwrap().1.selected;
+            assert_eq!(selected.kind, NativePickKind::NoCandidate);
+            assert!(pick.worker.is_none());
+        }
+        drop(slot);
+    }
+}
+
+#[test]
+fn native_bank_pick_required_is_exclusive_and_default_uses_cheapest_route() {
+    let banks = vec![bank("local", 9, 4), bank("authored distant", 40, 40)];
+    for (explicit, expected) in [(None, 0), (Some("authored distant"), 1)] {
+        let (slot, action) = native_pick_action(banks.clone(), tile(4, 4), explicit);
+        let navs = navs(banks.clone());
+        let gate = Controlled::new();
+        start_native_pick(
+            &navs,
+            native_world(false, &banks, TransportGraph::default()),
+            action,
+            FindOptions::default(),
+            WorldState::empty(),
+        );
+        await_native_search(&navs, &gate);
+        gate.0.release();
+        gate.0.wait(4);
+        let selected = navs
+            .lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .unwrap()
+            .1
+            .selected;
+        assert_eq!(selected.bank_index, expected);
+        assert_eq!(selected.kind, NativePickKind::Reachable);
+        drop(slot);
+    }
+}
+
+#[test]
+fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
+    use nav::transport::{TransportEdge, TransportKind};
+    let banks = vec![bank("local", 12, 4), bank("Falador teleport bank", 40, 40)];
+    let mut graph = TransportGraph::default();
+    graph.teleports.push(TransportEdge {
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: tile(0, 0),
+        to: tile(39, 39),
+        loc_id: 0,
+        option: 0,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 37)],
+        item_req: vec![(555, 1), (556, 3), (563, 1)],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
+    let world = native_world(false, &banks, graph);
+    let mut state = WorldState::empty().with_map_members(true);
+    state.stats.insert(6, 60);
+    state.inv.extend([(555, 1), (556, 3), (563, 1)]);
+    let opts = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let local = native_bank_access(&world, banks[0], tile(4, 4)).unwrap().0;
+    let remote = native_bank_access(&world, banks[1], tile(4, 4)).unwrap().0;
+    let granted = nav::router::find_first_with(
+        &world.collision,
+        &world.graph,
+        tile(4, 4),
+        &[local, remote],
+        opts,
+        &state,
+    )
+    .into_route()
+    .unwrap();
+    assert_eq!(
+        granted.dest, remote,
+        "fixture must favor the granted teleport"
+    );
+    let (slot, action) = native_pick_action(banks.clone(), tile(4, 4), None);
+    let navs = navs(banks);
+    let gate = Controlled::new();
+    start_native_pick(&navs, world, action, opts, state);
+    await_native_search(&navs, &gate);
+    gate.0.release();
+    gate.0.wait(4);
+    let selected = navs
+        .lock()
+        .unwrap()
+        .get_mut("test")
+        .unwrap()
+        .bank_pick
+        .take_native_receipt()
+        .unwrap()
+        .1
+        .selected;
+    assert_eq!(selected.bank_index, 0);
+    assert_eq!(selected.kind, NativePickKind::Reachable);
+    drop(slot);
+}
+
+#[test]
+fn native_bank_pick_timeout_is_only_candidate_order_not_wall_arrival() {
+    let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
+    let from = tile(4, 1);
+    let world = native_world(true, &banks, TransportGraph::default());
+    let (slot, action) = native_pick_action(banks.clone(), from, None);
+    let navs = navs(banks);
+    let gate = Controlled::new();
+    start_native_pick(
+        &navs,
+        Arc::clone(&world),
+        action,
+        FindOptions::default(),
+        WorldState::empty(),
+    );
+    await_native_search(&navs, &gate);
+    let selected = {
+        let mut all = navs.lock().unwrap();
+        let pick = &mut all.get_mut("test").unwrap().bank_pick;
+        let deadline = pick.current.as_ref().unwrap().deadline.unwrap();
+        pick.poll(deadline);
+        let selected = pick.take_native_receipt().unwrap().1.selected;
+        assert!(all["test"].route.is_none(), "a pick never arms movement");
+        selected
+    };
+    assert_eq!(selected.kind, NativePickKind::AirFallback);
+    assert_eq!(
+        selected.bank_index, 0,
+        "timeout keeps the captured air order"
+    );
+    assert!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            selected.access_tile,
+            FindOptions::default(),
+            &WorldState::empty(),
+        )
+        .is_err(),
+        "the ordinary subsequent walk must still route through collision"
+    );
+    gate.0.release();
+    gate.0.wait(4);
+    assert!(
+        navs.lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .is_none(),
+        "late reachable-bank result cannot replace the timeout candidate"
+    );
+    drop(slot);
+}
