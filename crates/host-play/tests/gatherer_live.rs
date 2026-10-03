@@ -13,6 +13,8 @@
 //! (including a `CloseModal` + four-drop batch when the fixture presents a
 //! modal) are part of the live witness.  Power cells check observed empty
 //! slots, not merely dispatch receipts.
+//! Mining Power seeds one uncut sapphire to prove incidental-product disposal
+//! deterministically. Natural gem rolls are observations, never a pass gate.
 //! G2 cells cover moving fishing spots, supply gates, oak respawn and scene
 //! boundaries, Auto widening, and an id-seeded gas hazard. G3 cells cover
 //! banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
@@ -53,6 +55,7 @@ const COPPER_ID: i32 = 436;
 const TIN_ID: i32 = 438;
 const IRON_ID: i32 = 440;
 const COAL_ID: i32 = 453;
+const SEEDED_MINING_GEM_ID: i32 = 1623;
 const SHRIMP_ID: i32 = 317;
 const ANCHOVY_ID: i32 = 321;
 const TROUT_ID: i32 = 335;
@@ -1005,6 +1008,7 @@ struct Witness {
     failure_message: Option<String>,
     products_seen: BTreeSet<i32>,
     dropped_product_ids: BTreeSet<i32>,
+    natural_gems_seen: BTreeSet<i32>,
     fish_products_seen: BTreeSet<i32>,
     first_regrown_tile: Option<(i32, i32, i32)>,
     edge_fresh_xp: bool,
@@ -1970,6 +1974,23 @@ impl GatherSlot {
         }
         self.record_g2_observation(previous.as_ref(), &observation);
         if let Some(previous) = previous {
+            if self.cell == Cell::Mining {
+                for item in observation
+                    .inventory
+                    .values()
+                    .filter(|item| is_mining_gem(item.id))
+                {
+                    let count = |rows: &BTreeMap<i32, InvRow>| {
+                        rows.values()
+                            .filter(|row| row.id == item.id)
+                            .map(|row| row.count)
+                            .sum::<i32>()
+                    };
+                    if count(&observation.inventory) > count(&previous.inventory) {
+                        self.witness.natural_gems_seen.insert(item.id);
+                    }
+                }
+            }
             for (slot, old) in &previous.inventory {
                 if self.cell.products(self.case).contains(&old.id) {
                     if !observation.inventory.contains_key(slot) {
@@ -2574,11 +2595,17 @@ impl GatherSlot {
             ));
         }
         let baseline = self.latest.clone().ok_or("missing Start baseline")?;
-        if baseline.product_count != 0 {
+        let seeded_gem = self.cell == Cell::Mining && self.case == LiveCase::Power;
+        let seeded_count: i32 = baseline
+            .inventory
+            .values()
+            .filter(|row| row.id == SEEDED_MINING_GEM_ID)
+            .map(|row| row.count)
+            .sum();
+        if baseline.product_count != i32::from(seeded_gem) || (seeded_gem && seeded_count != 1) {
             return Err(format!(
-                "{} Start baseline already has {} products",
-                self.name(),
-                baseline.product_count
+                "{} Start baseline must contain only its deterministic gem fixture (mining Power: {seeded_gem}); products={} sapphire={seeded_count}",
+                self.name(), baseline.product_count
             ));
         }
         if self.case == LiveCase::FishBaitGate
@@ -3904,6 +3931,9 @@ fn fixture_plan(
 ) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String> {
     let mut plan = FixturePlan::default();
     match case {
+        LiveCase::Power if cell == Cell::Mining => {
+            plan.inventory_seed.push(("uncut_sapphire".into(), 1));
+        }
         LiveCase::WoodcuttingBank => plan.bank_seed.push(("bronze_axe".into(), 1)),
         LiveCase::WoodcuttingBankUnwieldable => {
             plan.bank_seed.push(("bronze_axe".into(), 1));
@@ -5053,15 +5083,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             );
         }
         let done = match case {
-            LiveCase::Power => {
-                witness.cycles >= REQUIRED_CYCLES
-                    && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
-                    && (cell != Cell::Mining
-                        || witness
-                            .dropped_product_ids
-                            .iter()
-                            .any(|id| matches!(id, 1623 | 1621 | 1619 | 1617)))
-            }
+            LiveCase::Power => power_complete(cell, &witness),
             LiveCase::FishNet => {
                 witness.cycles >= REQUIRED_CYCLES
                     && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
@@ -5310,6 +5332,15 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "fish_products_seen": witness.fish_products_seen,
             "products_seen": witness.products_seen,
             "dropped_product_ids": witness.dropped_product_ids,
+            "seeded_mining_gem": (cell == Cell::Mining && case == LiveCase::Power).then(|| json!({
+                "id": SEEDED_MINING_GEM_ID,
+                "dropped": witness.dropped_product_ids.contains(&SEEDED_MINING_GEM_ID),
+            })),
+            "natural_gems": {
+                "status": if witness.natural_gems_seen.is_empty() { "not_exercised" } else { "observed" },
+                "ids": witness.natural_gems_seen,
+                "dropped_ids": witness.natural_gems_seen.intersection(&witness.dropped_product_ids).copied().collect::<Vec<_>>(),
+            },
             "moved_spot_reacquired": witness.moved_spot_reacquired,
             "no_fish_xp": witness.no_fish_xp,
             "all_oaks_depleted_at_wait": witness.all_oaks_depleted_at_wait,
@@ -5849,4 +5880,41 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_mining_gem(id: i32) -> bool {
+    MINE_PRODUCTS.contains(&id) && ![COPPER_ID, TIN_ID, IRON_ID, COAL_ID].contains(&id)
+}
+
+fn power_complete(cell: Cell, witness: &Witness) -> bool {
+    witness.cycles >= REQUIRED_CYCLES
+        && witness.post_drop_gathers >= REQUIRED_POST_DROP_GATHERS
+        && (cell != Cell::Mining || witness.dropped_product_ids.contains(&SEEDED_MINING_GEM_ID))
+}
+
+#[test]
+fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
+    let mut witness = Witness {
+        cycles: REQUIRED_CYCLES,
+        post_drop_gathers: REQUIRED_POST_DROP_GATHERS,
+        ..Witness::default()
+    };
+    witness.dropped_product_ids.insert(TIN_ID);
+    assert!(!power_complete(Cell::Mining, &witness));
+    witness.dropped_product_ids.insert(1621);
+    assert!(
+        !power_complete(Cell::Mining, &witness),
+        "an incidental emerald cannot substitute for the seeded sapphire"
+    );
+    witness.dropped_product_ids.insert(SEEDED_MINING_GEM_ID);
+    assert!(witness.natural_gems_seen.is_empty());
+    assert!(
+        power_complete(Cell::Mining, &witness),
+        "no natural gem roll is required"
+    );
+    witness.post_drop_gathers = 0;
+    assert!(
+        !power_complete(Cell::Mining, &witness),
+        "seeded disposal cannot substitute for renewed gathering"
+    );
 }
