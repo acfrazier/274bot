@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
+use nav::arrival::ArrivalKind;
 use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
 use nav::router::{
     find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
@@ -30,6 +31,7 @@ struct LiveRouteRefresh {
     radius: i32,
     loc_id: Option<i32>,
     options: FindOptions,
+    arrival: ArrivalKind,
     request_id: u64,
     exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
     authority: Option<script::native::HostAuthority>,
@@ -61,6 +63,7 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     bot.end_native_walk(end);
     bot.route_loc_id = None;
     bot.route_loc_geometry = (false, false);
+    bot.route_arrival = ArrivalKind::Reach;
     bot.route_quest_evidence = None;
     bot.walk_request_id = 0;
     if !manual {
@@ -502,6 +505,13 @@ pub(crate) fn apply_watchdog_nav_action(
     }
 }
 
+fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radius: i32) -> bool {
+    nav::arrival::arrived_in_area(here, to, radius, |tile| {
+        let scene = api::query::SceneQuery::new(snapshot.scene(), None);
+        scene.contains(tile) && scene.walkable(tile)
+    })
+}
+
 /// The armed walk's route ended (arrived, or frozen `'blocked'`): clear it
 /// and publish the settled outcome for the armed request.
 fn settle_route_end(bot: &mut NavBot, blocked: bool) {
@@ -699,7 +709,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     }
     // Resolve arrival before the follow lock: the reach view lives behind
     // the script slot, and the slot locks before navs, never after.
-    let (armed, endpoint, loc_id, estimated_geometry) = {
+    let (armed, endpoint, loc_id, estimated_geometry, arrival) = {
         let all = navs.lock().unwrap();
         all.get(name)
             .filter(|bot| bot.route.is_some() && bot.bank_fetch.is_none())
@@ -709,9 +719,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     bot.route.as_ref().map(|route| route.dest),
                     bot.route_loc_id,
                     bot.route_loc_geometry,
+                    bot.route_arrival,
                 )
             })
-            .unwrap_or((None, None, None, (false, false)))
+            .unwrap_or((None, None, None, (false, false), ArrivalKind::Reach))
     };
     let endpoint_arrival = armed.zip(endpoint).and_then(|((to, radius, ..), from)| {
         loc_id.and_then(|id| api::query::loc_approach::arrived_at(snapshot, from, to, radius, id))
@@ -732,12 +743,15 @@ pub(crate) fn step_nav_bot<D: Driver>(
         .zip(armed)
         .is_some_and(|((x, z, level), (to, radius, ..))| {
             let from = WorldTile { x, z, level };
-            match loc_id {
-                Some(id) if !target_gone => {
-                    api::query::loc_approach::arrived_at(snapshot, from, to, radius, id)
-                        == Some(true)
-                }
-                _ => api::query::is_arrived(from, to, radius, reach),
+            match arrival {
+                ArrivalKind::Area => arrived_in_area(snapshot, from, to, radius),
+                ArrivalKind::Reach => match loc_id {
+                    Some(id) if !target_gone => {
+                        api::query::loc_approach::arrived_at(snapshot, from, to, radius, id)
+                            == Some(true)
+                    }
+                    _ => api::query::is_arrived(from, to, radius, reach),
+                },
             }
         });
     // Refresh newly observable geometry, or a vanished footprint whose old
@@ -759,6 +773,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             && bot.requested_route == armed
             && bot.route.as_ref().map(|route| route.dest) == endpoint
             && bot.route_loc_id == loc_id
+            && bot.route_arrival == arrival
             && bot.bank_fetch.is_none();
         if !still_owns_endpoint {
             (None, false)
@@ -773,6 +788,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 to,
                 radius,
                 loc_id,
+                arrival,
                 options: FindOptions {
                     allow_teleports,
                     allow_wilderness,
@@ -819,6 +835,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             refresh.exclusions.as_deref().cloned().unwrap_or_default(),
             refresh.authority,
             refresh.loc_id,
+            refresh.arrival,
         );
     }
     let defer_estimated_end = estimated_endpoint;

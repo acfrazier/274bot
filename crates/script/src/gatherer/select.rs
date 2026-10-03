@@ -11,11 +11,12 @@ const MAX_PRODUCTS: usize = 8;
 const MAX_AVOID: usize = 8;
 const HAZARD_WAIT_TICKS: u64 = 60;
 const NO_NPC_INDEX: i32 = -1;
+pub const RESOURCE_APPROACH_RADIUS: u16 = 1;
 // NPC_INFO streams nearby actors, not every NPC in the 104-tile map build.
 // The selected 289 engine uses a 15-tile Chebyshev view radius.
 const NPC_VIEW_RADIUS: u32 = 15;
-// Leave one tile of view margin for the existing radius-one walk settlement.
-const OBSERVATION_RADIUS: i32 = NPC_VIEW_RADIUS as i32 - 1;
+// Leave enough view margin for the resource observation walk settlement.
+const OBSERVATION_RADIUS: i32 = NPC_VIEW_RADIUS as i32 - RESOURCE_APPROACH_RADIUS as i32;
 const OBSERVATION_WIDTH: i32 = OBSERVATION_RADIUS * 2 + 1;
 const OBSERVATION_WINDOW_TICKS: u64 = 100;
 const MAX_OBSERVATION_STANDS: u32 = 8;
@@ -92,6 +93,20 @@ fn observation_cells(bounds: SceneRegionInput) -> impl Iterator<Item = SceneRegi
     })
 }
 
+fn observation_stand(cell: SceneRegionInput, here: WorldTile) -> WorldTile {
+    WorldTile {
+        x: here.x.clamp(
+            cell.max_x - OBSERVATION_RADIUS,
+            cell.min_x + OBSERVATION_RADIUS,
+        ),
+        z: here.z.clamp(
+            cell.max_z - OBSERVATION_RADIUS,
+            cell.min_z + OBSERVATION_RADIUS,
+        ),
+        level: cell.level,
+    }
+}
+
 fn region_visible(bounds: SceneRegionInput, here: WorldTile) -> bool {
     bounds.level == here.level
         && [bounds.min_x, bounds.max_x]
@@ -134,17 +149,7 @@ impl FishingPlacementSurvey {
             .filter(|(index, _)| {
                 *index < MAX_OBSERVATION_STANDS as usize && self.covered & (1 << index) == 0
             })
-            .map(|(_, cell)| WorldTile {
-                x: here.x.clamp(
-                    cell.max_x - OBSERVATION_RADIUS,
-                    cell.min_x + OBSERVATION_RADIUS,
-                ),
-                z: here.z.clamp(
-                    cell.max_z - OBSERVATION_RADIUS,
-                    cell.min_z + OBSERVATION_RADIUS,
-                ),
-                level: cell.level,
-            })
+            .map(|(_, cell)| observation_stand(cell, here))
             .min_by_key(|stand| distance(here, *stand))
     }
 }
@@ -219,6 +224,13 @@ pub struct SelectionObservation<'a> {
     pub now: u64,
     pub skill_stat: i32,
     pub fishing: &'a mut FishingSurvey,
+}
+
+pub struct ReturnObservation<'a> {
+    pub here: WorldTile,
+    pub now: u64,
+    pub skill_stat: i32,
+    pub avoided: &'a [AvoidedTile; MAX_AVOID],
 }
 
 pub struct PlacementScene<'a> {
@@ -669,6 +681,104 @@ pub fn select(
         outcome: Selection::Exhausted { wait_until, absent },
         zone_gated,
     }
+}
+
+/// Banking can end inside the gathering bound while its resources remain
+/// unobserved. Return to a selected placement's observation stand, not the
+/// work-area centroid or a fishing actor's occupied tile.
+pub fn resource_return_target(
+    catalog: &GatherCatalog,
+    method_indices: &[usize],
+    settings: &GathererSettings,
+    area: WorkArea,
+    observation: ReturnObservation<'_>,
+) -> Option<TargetPlan> {
+    let preference = settings.target_preference_kind();
+    let mut best = None;
+    for &method_index in method_indices {
+        let Some(method) = catalog.methods().get(method_index) else {
+            continue;
+        };
+        let Ok(method_index) = u16::try_from(method_index) else {
+            continue;
+        };
+        if method.skill == GatherSkill::Fishing {
+            let Some(spots) = complete_spots(method) else {
+                continue;
+            };
+            for spot in spots
+                .iter()
+                .filter(|spot| fishing_spot_eligible(spot, area))
+            {
+                if !known_resource_target(method, spot.entity)
+                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
+                    || avoid_until(spot, method.skill, observation.avoided) > observation.now
+                {
+                    continue;
+                }
+                let bounds = movement_bounds(spot).expect("eligible fishing movement");
+                if observation_cells(bounds).count() > MAX_OBSERVATION_STANDS as usize {
+                    continue;
+                }
+                let Some(stand) = observation_cells(bounds)
+                    .map(|cell| observation_stand(cell, observation.here))
+                    .min_by_key(|stand| distance(observation.here, *stand))
+                else {
+                    continue;
+                };
+                consider_candidate(
+                    &mut best,
+                    preference,
+                    (
+                        method_index,
+                        method,
+                        spot,
+                        PlacementClass::Unloaded,
+                        stand,
+                        NO_NPC_INDEX,
+                        distance(observation.here, stand),
+                    ),
+                    observation.skill_stat,
+                );
+            }
+        } else {
+            let Ok(spots) = catalog.spots(method, &area.region()) else {
+                continue;
+            };
+            for spot in spots {
+                if !known_resource_target(method, spot.entity)
+                    || catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True
+                    || avoid_until(spot, method.skill, observation.avoided) > observation.now
+                {
+                    continue;
+                }
+                consider_candidate(
+                    &mut best,
+                    preference,
+                    (
+                        method_index,
+                        method,
+                        spot,
+                        PlacementClass::Unloaded,
+                        spot.origin,
+                        NO_NPC_INDEX,
+                        distance(observation.here, spot.origin),
+                    ),
+                    observation.skill_stat,
+                );
+            }
+        }
+    }
+    let (method_index, method, spot, _, tile, npc_index, _) = best?;
+    Some(make_plan(
+        catalog,
+        method_index,
+        method,
+        spot,
+        tile,
+        npc_index,
+        observation.skill_stat,
+    ))
 }
 
 fn consider_candidate<'a>(
@@ -1534,6 +1644,79 @@ mod tests {
             assert_eq!(candidate.plan.entity, EntityId::Npc(type_id));
             assert_eq!(candidate.class, PlacementClass::Unloaded);
             assert_eq!(candidate.plan.npc_index, NO_NPC_INDEX);
+        }
+    }
+
+    #[test]
+    fn bank_return_stand_observes_real_harpoon_placements_for_all_area_modes() {
+        use super::super::area::AreaMode;
+
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: 40,
+            ..GathererSettings::default()
+        };
+        for mode in [AreaMode::Auto, AreaMode::Start, AreaMode::Custom] {
+            let area = WorkArea {
+                mode,
+                anchor: WorldTile {
+                    x: 2848,
+                    z: 3426,
+                    level: 0,
+                },
+                radius: settings.radius,
+            };
+            assert!(
+                area.contains(here),
+                "Catherby bank is inside the gathering bound"
+            );
+            let target = resource_return_target(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                ReturnObservation {
+                    here,
+                    now: 1,
+                    skill_stat: 10,
+                    avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                },
+            )
+            .expect("the selected content supplies a resource observation stand");
+            assert_ne!(target.tile, area.anchor);
+            assert!(distance(here, target.tile) > i64::from(NPC_VIEW_RADIUS));
+            assert_eq!(target.npc_index, NO_NPC_INDEX);
+            assert!(
+                complete_spots(method).unwrap().iter().any(|spot| {
+                    spot.entity == target.entity
+                        && fishing_spot_eligible(spot, area)
+                        && observation_cells(movement_bounds(spot).unwrap()).any(|cell| {
+                            let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+                            (-radius..=radius).all(|dx| {
+                                (-radius..=radius).all(|dz| {
+                                    region_visible(
+                                        cell,
+                                        WorldTile {
+                                            x: target.tile.x + dx,
+                                            z: target.tile.z + dz,
+                                            level: target.tile.level,
+                                        },
+                                    )
+                                })
+                            })
+                        })
+                }),
+                "every accepted radius-one arrival observes a selected movement cell"
+            );
         }
     }
 
