@@ -1060,6 +1060,19 @@ pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&st
         })
 }
 
+/// The short text rows (quest display, queue letters) both front ends show
+/// under the status line, as `(label, value)`.
+pub fn script_status_rows(
+    status: &script::native::ScriptStatus,
+) -> impl Iterator<Item = (&str, &str)> {
+    status.fields.iter().filter_map(|field| match &field.value {
+        script::native::StatusValue::Text(value) if matches!(field.key, "display" | "queue") => {
+            Some((field.label, value.as_ref()))
+        }
+        _ => None,
+    })
+}
+
 fn count(rows: &[FleetRow]) -> FleetCounts {
     let mut counts = FleetCounts {
         loaded: rows.len(),

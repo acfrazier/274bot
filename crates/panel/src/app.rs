@@ -2267,14 +2267,8 @@ fn script_section(ui: &Ui, session: &mut Session) {
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
             ui.text_wrapped(reason);
         }
-        for field in native
-            .fields
-            .iter()
-            .filter(|field| matches!(field.key, "display" | "queue"))
-        {
-            if let script::native::StatusValue::Text(value) = &field.value {
-                kv_row(ui, field.label, value);
-            }
+        for (label, value) in frontend_core::views::script_status_rows(native) {
+            kv_row(ui, label, value);
         }
     } else {
         match session.focused_script_last_error() {

@@ -6,6 +6,7 @@ use super::compile::{
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
+use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
@@ -1893,19 +1894,24 @@ impl QueuedQuester {
                 retryable: true,
             };
         }
+        let (reason, status) = self
+            .queue
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.picked && !row.skipped)
+            .find_map(|(index, row)| self.queue.reason(index).map(|reason| (reason, row.status)))
+            .unwrap_or(("no eligible selected quest", QueueStatus::Blocked));
+        // A requirement block can be changed in Script prefs; a parked run
+        // (a refused walk, a failed action) can't, so don't send the user there.
+        let recovery = if status == QueueStatus::Blocked {
+            "review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester"
+        } else {
+            "resolve the condition, then Stop/Start Quester"
+        };
         ScriptFailure {
             code: Arc::from("queue-blocked"),
-            message: format!(
-                "{}; review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester",
-                self.queue
-                    .rows()
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, row)| row.picked && !row.skipped)
-                    .find_map(|(index, _)| self.queue.reason(index))
-                    .unwrap_or("no eligible selected quest")
-            )
-            .into(),
+            message: format!("{reason}; {recovery}").into(),
             retryable: true,
         }
     }
