@@ -546,6 +546,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         let env = ProfileEnvironment {
             home: Some(root.to_path_buf()),
             working_dir: Some(root.to_path_buf()),
+            engine_dir: Some(root.join("engine")),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
@@ -642,6 +643,7 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let env = ProfileEnvironment {
         home: Some(root.to_path_buf()),
         working_dir: Some(root.to_path_buf()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()

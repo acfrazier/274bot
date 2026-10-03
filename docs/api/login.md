@@ -16,7 +16,8 @@ page is the FIFO and handshake policy shared by every profile.
 
 ## Where the server stores this
 
-In the engine checkout (`$ENGINE_DIR`, default `$HOME/experiments/Server/engine`):
+In the engine checkout selected for a local profile (`--engine`, `ENGINE_DIR`,
+or `login_key.engine_dir` in `~/.274bot/servers.json`):
 
 | File | What |
 | --- | --- |
@@ -124,10 +125,10 @@ immediate transport loss rather than waiting for the dead-server deadline.
 Standalone clients enter the Java-style `lostCon` reconnect path; the same
 failure during login reports the ordinary connection error.
 
-`$ENGINE_DIR` defaults depend on revision (274:
-`$HOME/experiments/Server/engine`; 289:
-`$HOME/experiments/lostcity-289/engine`). Cache and nav-pack paths follow
-the resolved profile. Prefer an explicit `--profile`. Cargo `TARGET` is
+Local profiles require an engine root from `--engine`, `ENGINE_DIR`, or the
+selected profile's `login_key.engine_dir` in `~/.274bot/servers.json`, in that
+order. There is no HOME-relative engine default. Cache and nav-pack paths
+follow the resolved profile. Prefer an explicit `--profile`. Cargo `TARGET` is
 the rustc triple, not a world switch.
 
 ## Wiring

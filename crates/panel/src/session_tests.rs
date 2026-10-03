@@ -308,6 +308,7 @@ fn isolated_profile_environment(home: &Path) -> ProfileEnvironment {
     ProfileEnvironment {
         home: Some(home.to_path_buf()),
         working_dir: Some(home.to_path_buf()),
+        engine_dir: Some(home.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -564,15 +565,19 @@ fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
     let mut session = Session::new();
     session.ui.server_revision = 274;
-    configure_isolated_profile(
-        &mut session,
-        ProfileOptions {
-            rs2b2t: true,
-            ..ProfileOptions::default()
-        },
-        &home,
-    )
-    .unwrap();
+    session
+        .configure_profile_with_env(
+            ProfileOptions {
+                rs2b2t: true,
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(home.to_path_buf()),
+                working_dir: Some(home.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
+        .unwrap();
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
@@ -621,6 +626,7 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
             ProfileEnvironment {
                 home: Some(injected.to_path_buf()),
                 working_dir: Some(injected.to_path_buf()),
+                engine_dir: Some(injected.join("engine")),
                 ..ProfileEnvironment::default()
             },
         )
@@ -708,6 +714,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
             ProfileEnvironment {
                 home: Some(iso.dir.clone()),
                 working_dir: Some(iso.dir.clone()),
+                engine_dir: Some(iso.dir.join("engine")),
                 ..ProfileEnvironment::default()
             },
         )
@@ -753,6 +760,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let env = ProfileEnvironment {
         home: Some(root.to_path_buf()),
         working_dir: Some(root.to_path_buf()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
