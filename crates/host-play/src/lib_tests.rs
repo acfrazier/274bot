@@ -1181,7 +1181,7 @@ fn profile_class_requires_tcp_and_an_all_loopback_roster() {
 
 #[test]
 fn builtin_servers_preserve_legacy_vault_associations() {
-    let servers = Servers::builtins(std::path::Path::new("/operator"));
+    let servers = Servers::builtins();
     assert_eq!(servers.resolve("local-274").unwrap().vault, "vault");
     assert_eq!(servers.resolve("local-289").unwrap().vault, "vault-289");
     assert_eq!(servers.resolve("rs2b2t").unwrap().vault, "vault-prod");
@@ -1189,6 +1189,15 @@ fn builtin_servers_preserve_legacy_vault_associations() {
         servers.resolve("public-289").unwrap(),
         servers.resolve("rs2b2t").unwrap()
     );
+    for profile in ["local-274", "local-289"] {
+        assert!(matches!(
+            servers.resolve(profile).unwrap().login_key,
+            LoginKey::EngineDir { engine_dir: None }
+        ));
+    }
+    let json = serde_json::to_value(&servers).unwrap();
+    assert!(json["servers"][1]["login_key"].get("engine_dir").is_none());
+    assert!(json["servers"][2]["login_key"].get("engine_dir").is_none());
 }
 
 #[test]
@@ -1196,7 +1205,7 @@ fn proposed_vault_never_implicitly_reuses_legacy_or_existing_storage() {
     let root = std::env::temp_dir().join(format!("274bot-vault-proposal-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let servers = Servers::builtins(&root);
+    let servers = Servers::builtins();
     assert_eq!(
         proposed_vault("alice", &root, &servers).unwrap(),
         "vault-alice"
@@ -1210,19 +1219,19 @@ fn proposed_vault_never_implicitly_reuses_legacy_or_existing_storage() {
 
 #[test]
 fn servers_reject_ambiguous_names_and_unsafe_vault_or_transport_settings() {
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].name = "PUBLIC-289".into();
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].vault = "../vault-prod".into();
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].allow_plaintext_offhost = true;
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[1].name = "RS2B2T".into();
     assert!(servers.validate().is_err());
 }
@@ -1233,7 +1242,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     let _ = std::fs::remove_dir_all(&root);
     let bot_dir = root.join(".274bot");
     std::fs::create_dir_all(&bot_dir).unwrap();
-    let mut servers = Servers::builtins(&root);
+    let mut servers = Servers::builtins();
     servers.servers[1].vault = "VAULT-PROD".into();
     std::fs::write(
         bot_dir.join("servers.json"),
@@ -1241,7 +1250,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     )
     .unwrap();
 
-    let error = Servers::load(&bot_dir, &root).unwrap_err();
+    let error = Servers::load(&bot_dir).unwrap_err();
     assert!(error.contains("duplicate vault"), "{error}");
     std::fs::remove_dir_all(root).unwrap();
 }

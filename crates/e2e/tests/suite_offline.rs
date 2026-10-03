@@ -40,12 +40,9 @@ fn fixture_manifest() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/native-suite/offline-suite-manifest.json")
 }
 
-/// A disposable working root with the catalog the suite binds and a disposable `$HOME` for
-/// the native profile resolver. A real run points `--catalog` at the `$RS2B0T` clone and
-/// resolves its profile against the operator's home; the suite binds the catalog's
-/// `src/bot/scripts` content and the *resolved* profile paths, so a catalog without that
-/// tree — or a profile the native resolver does not know — is refused rather than recorded
-/// as an unresolved identity.
+/// A disposable working root with the catalog, `$HOME`, and `$ENGINE_DIR` required by the
+/// native profile resolver. The selected profile is real (`local-289`), but its bound paths
+/// are disposable: these tests never open an engine connection or client.
 fn temp_dir(tag: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("274bot-suite-offline-{tag}-{}", std::process::id()));
@@ -105,12 +102,15 @@ fn suite(tmp: &Path, run_dir: &Path, extra: &[&str], env: &[(&str, &str)]) -> Ou
     command.output().expect("the suite binary runs")
 }
 
-/// The suite binary with the disposable profile home in the environment: `HOME`, and the
-/// `USERPROFILE` fallback the native resolver uses on Windows.
+/// The suite binary with disposable `HOME`, `USERPROFILE`, and `ENGINE_DIR` values.
 fn suite_command(tmp: impl AsRef<Path>) -> Command {
     let home = home(tmp.as_ref());
+    let engine = home.join("engine");
     let mut command = Command::new(SUITE);
-    command.env("HOME", &home).env("USERPROFILE", &home);
+    command
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("ENGINE_DIR", engine);
     command
 }
 
