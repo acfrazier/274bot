@@ -443,21 +443,10 @@ const ATTACK: &str = "Attack";
 /// type, so its row stays idle rather than hunting the nearest anything.
 const KEEPER_TYPE: &str = "type";
 
-/// The one selected `cap.prayer` row this fight raises, looked up in the
-/// selected table the way the landed `api::prayer::lookup` looks one up. Not a
-/// second prayer table: the component id the click carries is that row's own.
-#[allow(dead_code)]
-const PROTECT_FROM_MAGIC: &str = "Protect from Magic";
-
 /// A posted `SceneEntity.target_kind` of `2` is a player, so a row whose
 /// `target_kind` is this and whose `target_index` is this token's `self_slot`
 /// is a row whose own posted target is the local player.
 const PLAYER_KIND: i32 = 2;
-
-/// A posted `self_target_kind` of `1` is an npc, so the local player's own
-/// posted target is an npc whose index can be compared with an owned one.
-#[allow(dead_code)]
-const NPC_KIND: i32 = 1;
 
 /// The selected `trail_sextant` param the coordinate trio's own membership
 /// reads: the 50 playable rows that need the trio carry `yes`, and the packed

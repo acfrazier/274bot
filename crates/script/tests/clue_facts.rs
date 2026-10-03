@@ -1519,6 +1519,63 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
     iso.join();
 }
 
+#[test]
+fn v2_clue_run_abandons_a_keeper_row_and_refuses_the_next_begin() {
+    let src = r#"
+export const apiVersion = 2;
+let phase = 0;
+export async function tick(api) {
+  if (phase === 0) {
+    phase = 1;
+    const begin = api.clue.begin();
+    globalThis.__begin = begin;
+    globalThis.__out = null;
+    globalThis.__error = null;
+    try {
+      globalThis.__out = await api.clue.run(begin.value);
+    } catch (error) {
+      globalThis.__error = String(error && error.message ? error.message : error);
+    }
+    return;
+  }
+  if (phase === 1) {
+    phase = 2;
+    globalThis.__begin2 = api.clue.begin();
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(2831, 1)];
+    let spawn = script::isolate_fb::TileInput {
+        x: 3039,
+        z: 3700,
+        level: 0,
+    };
+    let attack = ["Attack".to_string()];
+    let keeper = [clue_npc(21, 202, "Black Heather", spawn, 1, &attack)];
+    let scene = Scene {
+        here: Some(spawn),
+        npcs: &keeper,
+        ..Scene::default()
+    };
+    assert!(
+        live_clue_tick(&iso, 1, &page, &scene).is_empty(),
+        "slice 1 isolate family never posts combat_driver, so a keeper row is abandoned before walk"
+    );
+    let out = iso.probe("globalThis.__out").unwrap();
+    assert_eq!(out["kind"], "done", "{out:?}");
+    assert_eq!(out["value"]["kind"], "abandon", "{out:?}");
+
+    post_scene(&iso, 2, &page, &scene);
+    iso.on_game_tick(2);
+    let begin2 = iso.probe("globalThis.__begin2").unwrap();
+    assert_eq!(begin2["ok"], false, "{begin2:?}");
+    assert_eq!(begin2["error"], "abandoned", "{begin2:?}");
+    iso.join();
+}
+
 const PUZZLE_PIECE_B: i32 = 2749;
 const PUZZLE_COMPONENT: i32 = 6600;
 

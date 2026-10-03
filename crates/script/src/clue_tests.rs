@@ -2728,7 +2728,7 @@ fn the_guarded_dig_membership_is_the_selected_param_set() {
 fn the_selected_protect_from_magic_row_is_the_click_and_the_overlay() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
-        let row = api::prayer::lookup(&data, PROTECT_FROM_MAGIC).expect("prayer row");
+        let row = api::prayer::lookup(&data, "Protect from Magic").expect("prayer row");
         assert_eq!(row.button_com, 5621, "{revision:?}");
         assert_eq!(row.varp, 95, "{revision:?}");
     }

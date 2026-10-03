@@ -355,12 +355,12 @@ pub(crate) fn sherlock_guardian_scenario() -> Scenario {
     });
     steps.push(start_compiled_step());
     steps.push(Step {
-        name: "watch Sherlock replace the seeded hard clue",
+        name: "watch protect acknowledgement, bounded in-flight hit, prayer off, and casket",
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
-            arm: Proof::ClueReplaced {
+            arm: Proof::ClueProtectWindow {
                 seeded: GUARDIAN_CLUE_ID,
             },
             budget_ticks: GUARDIAN_WATCH_TICKS,
@@ -373,7 +373,7 @@ pub(crate) fn sherlock_guardian_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::ClueReplaced {
+        proof: Proof::ClueProtectWindow {
             seeded: GUARDIAN_CLUE_ID,
         },
         companions: vec![],
