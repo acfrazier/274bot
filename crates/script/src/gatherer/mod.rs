@@ -2,8 +2,8 @@
 //!
 //! Start, Custom and bounded Auto use observed resource identity and content
 //! Power drops selected products; Bank mode deposits products and maintains
-//! supplies from loaded bank observations. Combat and death recovery remain
-//! later-stage capabilities.
+//! supplies from loaded bank observations. Death recovery verifies respawn,
+//! reprovisioning, equipment, return and fresh yield; combat is not admitted.
 
 mod area;
 mod card;

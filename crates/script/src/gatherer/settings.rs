@@ -153,7 +153,7 @@ fn default_reserve_teleport() -> String {
     "Off".into()
 }
 fn default_death_policy() -> String {
-    "Stop".into()
+    "Recover".into()
 }
 fn default_max_deaths() -> u8 {
     2
@@ -318,11 +318,15 @@ impl GathererSettings {
                 "an enabled reserve teleport requires at least one cast",
             ));
         }
-        if !self.death_policy.eq_ignore_ascii_case("stop") {
+        if self.death_policy.eq_ignore_ascii_case("recover") {
+            self.death_policy = "Recover".into();
+        } else if self.death_policy.eq_ignore_ascii_case("stop") {
+            self.death_policy = "Stop".into();
+        } else {
             return Err(ConfigError::new(
                 "deathPolicy",
-                "staged-option",
-                "death recovery is introduced in G4a",
+                "invalid-option",
+                "deathPolicy must be Recover or Stop",
             ));
         }
         let resources = self.resources_for(skill);
@@ -690,7 +694,14 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             Some("gatherer-teleports"),
         ),
         number_setting("reserveCasts", "0", "0", "1000"),
-        setting("deathPolicy", "string", Some("Stop"), &["Stop"], None, None),
+        setting(
+            "deathPolicy",
+            "string",
+            Some("Recover"),
+            &["Stop", "Recover"],
+            None,
+            None,
+        ),
         number_setting("maxDeaths", "2", "0", "255"),
     ]
 });
@@ -785,7 +796,8 @@ mod tests {
         assert_eq!(defaults.disposition, "Bank");
         assert_eq!(defaults.bank, "Nearest");
         assert_eq!(defaults.bank_preferences(), BankPreferences::default());
-        assert_eq!(defaults.death_policy, "Stop");
+        assert_eq!(defaults.death_policy, "Recover");
+        assert_eq!(defaults.max_deaths, 2);
 
         let mut bag = SettingsBag::new();
         bag.insert("skill".into(), json!("Mining"));
@@ -806,6 +818,58 @@ mod tests {
             GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
             "invalid-option"
         );
+    }
+
+    #[test]
+    fn death_settings_validate_schema_and_live_application_classification() {
+        let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+
+        let mut bag = SettingsBag::new();
+        bag.insert("deathPolicy".into(), json!("stop"));
+        bag.insert("maxDeaths".into(), json!(0));
+        let stop = GathererSettings::from_bag(&bag).unwrap();
+        assert_eq!(stop.death_policy, "Stop");
+        assert_eq!(stop.max_deaths, 0);
+
+        bag.insert("deathPolicy".into(), json!("rEcOvEr"));
+        bag.insert("maxDeaths".into(), json!(255));
+        let recover = GathererSettings::from_bag(&bag).unwrap();
+        assert_eq!(recover.death_policy, "Recover");
+        assert_eq!(recover.max_deaths, 255);
+
+        bag.insert("deathPolicy".into(), json!("Retreat"));
+        let error = GathererSettings::from_bag(&bag).unwrap_err();
+        assert_eq!(error.field.as_ref(), "deathPolicy");
+        assert_eq!(error.code.as_ref(), "invalid-option");
+
+        bag.insert("deathPolicy".into(), json!("Recover"));
+        bag.insert("maxDeaths".into(), json!(256));
+        assert_eq!(
+            GathererSettings::from_bag(&bag).unwrap_err().code.as_ref(),
+            "invalid-settings"
+        );
+
+        let mut changed = defaults.clone();
+        changed.death_policy = "Stop".into();
+        changed.max_deaths = 1;
+        assert!(!defaults.restart_required_changed(&changed));
+        assert!(!defaults.boundary_changed(&changed));
+
+        let death_policy = schema()
+            .iter()
+            .find(|setting| setting.id == "deathPolicy")
+            .unwrap();
+        assert_eq!(death_policy.default.as_deref(), Some("Recover"));
+        assert_eq!(death_policy.options.len(), 2);
+        assert_eq!(death_policy.options[0].as_str(), "Stop");
+        assert_eq!(death_policy.options[1].as_str(), "Recover");
+        let max_deaths = schema()
+            .iter()
+            .find(|setting| setting.id == "maxDeaths")
+            .unwrap();
+        assert_eq!(max_deaths.default.as_deref(), Some("2"));
+        assert_eq!(max_deaths.min.as_deref(), Some("0"));
+        assert_eq!(max_deaths.max.as_deref(), Some("255"));
     }
 
     #[test]

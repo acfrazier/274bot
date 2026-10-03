@@ -1,8 +1,36 @@
-//! Death latch: only a *new* "Oh dear, you are dead!" line latches.
-use api::snapshot::SnapshotView;
+//! Shared death-message latch and the content-derived normal respawn square.
+use api::snapshot::{SnapshotView, WorldTile};
 
 pub const DEATH_NEEDLE_A: &str = "oh dear";
 pub const DEATH_NEEDLE_B: &str = "you are dead";
+
+/// Normal-player respawn area derived from the 289 death continuation in
+/// `scripts/player/scripts/death.rs2` (the death message at line 27, the
+/// `map_findsquare(0_50_50_21_18, 0, 2, ...)` teleport at line 41, and stat
+/// reset at line 52). The Gatherer contract uses a 3-tile square around the
+/// content's Lumbridge center, `(3221, 3218, 0)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RespawnSquare {
+    center: WorldTile,
+    radius: u8,
+}
+
+impl RespawnSquare {
+    pub fn contains(&self, tile: WorldTile) -> bool {
+        tile.level == self.center.level
+            && tile.x.abs_diff(self.center.x) <= u32::from(self.radius)
+            && tile.z.abs_diff(self.center.z) <= u32::from(self.radius)
+    }
+}
+
+pub const RESPAWN_SQUARE: RespawnSquare = RespawnSquare {
+    center: WorldTile {
+        x: 3221,
+        z: 3218,
+        level: 0,
+    },
+    radius: 3,
+};
 
 #[derive(Default)]
 pub struct DeathLatch {
@@ -80,6 +108,7 @@ mod tests {
     use api::quest_progress::EvidenceStamp;
     use api::selected::RunKey;
     use api::snapshot::{ChatLineView, GameSnapshot, SnapshotView};
+
     fn stamp() -> EvidenceStamp {
         EvidenceStamp {
             run: RunKey {
@@ -187,5 +216,29 @@ mod tests {
         let mut nondeath = DeathLatch::from_watermark(Some(57));
         assert!(!nondeath.observe(SnapshotView::new(Some(&nondeath_ring), stamp())));
         assert_eq!(nondeath.watermark(), Some(1));
+    }
+
+    #[test]
+    fn respawn_square_contains_the_contract_bounds_on_its_plane() {
+        assert!(RESPAWN_SQUARE.contains(WorldTile {
+            x: 3224,
+            z: 3221,
+            level: 0,
+        }));
+        assert!(RESPAWN_SQUARE.contains(WorldTile {
+            x: 3218,
+            z: 3215,
+            level: 0,
+        }));
+        assert!(!RESPAWN_SQUARE.contains(WorldTile {
+            x: 3225,
+            z: 3218,
+            level: 0,
+        }));
+        assert!(!RESPAWN_SQUARE.contains(WorldTile {
+            x: 3221,
+            z: 3218,
+            level: 1,
+        }));
     }
 }
