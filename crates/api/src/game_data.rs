@@ -1151,14 +1151,19 @@ where
 
 /// One pinned row of the selected core's `gather_resources` slice, carried so
 /// the UI never decodes the gathering family. `key` is the selectable setting
-/// value: the resource key for woodcutting/mining, the method id for fishing.
-/// A row with `selectable == false` carries the admission `gap` code; the UI
-/// shows it with that code and Start refuses it.
+/// value: the resource key for woodcutting/mining or the stable grouped key
+/// for fishing. `methods` contains every catalog method admitted by the row;
+/// `aliases` keeps pre-group fishing ids resolvable. A row with
+/// `selectable == false` carries the admission `gap` code.
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GatherResourceOption {
     pub skill: String,
+    /// First method id, retained as the representative method for consumers
+    /// that need one (e.g. resource-level rows).
     pub method: String,
+    pub methods: Vec<String>,
+    pub aliases: Vec<String>,
     pub key: String,
     pub resources: Vec<String>,
     pub label: String,
@@ -1928,15 +1933,20 @@ impl SelectedGameData {
             .filter(move |row| row.skill.eq_ignore_ascii_case(wanted))
     }
 
-    /// One pinned gather option by skill and selectable key (both trimmed,
-    /// ASCII case-insensitive). Used by prepare to resolve a setting value to
-    /// its method.
+    /// One pinned gather option by skill and selectable key or legacy alias
+    /// (both trimmed, ASCII case-insensitive). Used by prepare to resolve a
+    /// setting value to its method group.
     pub fn gather_option(&self, skill: &str, key: &str) -> Option<&GatherResourceOption> {
         let skill = skill.trim();
         let key = key.trim();
-        self.gather_resources
-            .iter()
-            .find(|row| row.skill.eq_ignore_ascii_case(skill) && row.key.eq_ignore_ascii_case(key))
+        self.gather_resources.iter().find(|row| {
+            row.skill.eq_ignore_ascii_case(skill)
+                && (row.key.eq_ignore_ascii_case(key)
+                    || row
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(key)))
+        })
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

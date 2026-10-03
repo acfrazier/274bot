@@ -1007,9 +1007,9 @@ fn unsupported_trio_giver_coverage_does_not_decode() {
 #[test]
 fn gather_resources_decode_and_skill_lookup() {
     let tail = r#", "gather_resources": [
-        {"skill": "mining", "method": "mining.copper", "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
-        {"skill": "woodcutting", "method": "woodcutting.jungle", "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
-        {"skill": "fishing", "method": "fishing.saltfish.op1", "key": "fishing.saltfish.op1", "resources": ["raw_shrimp", "raw_anchovies"], "label": "Raw shrimps / Raw anchovies", "level": 0, "selectable": true, "gap": null}
+        {"skill": "mining", "method": "mining.copper", "methods": ["mining.copper"], "aliases": [], "key": "copper", "resources": ["copper"], "label": "Copper ore", "level": 1, "selectable": true, "gap": null},
+        {"skill": "woodcutting", "method": "woodcutting.jungle", "methods": ["woodcutting.jungle"], "aliases": [], "key": "jungle", "resources": ["jungle"], "label": "Jungle", "selectable": false, "gap": "no-resource-target"},
+        {"skill": "fishing", "method": "fishing.freshfish.op1", "methods": ["fishing.freshfish.op1", "fishing.loc_2027.op1"], "aliases": ["fishing.freshfish.op1", "fishing.loc_2027.op1"], "key": "fishing.lure.tool_309.products_331_335", "resources": ["raw_salmon", "raw_trout"], "label": "Raw trout / Raw salmon — Lure (Fly fishing rod + Feather)", "level": 20, "selectable": true, "gap": null}
     ]"#;
     let data = SelectedGameData::decode(minimal_json(tail).as_bytes(), ClientRevision::R274)
         .expect("gather slice decodes");
@@ -1025,10 +1025,18 @@ fn gather_resources_decode_and_skill_lookup() {
             .map(|row| row.method.as_str()),
         Some("mining.copper")
     );
+    let lure = data
+        .gather_option("fishing", "fishing.loc_2027.op1")
+        .expect("legacy method id resolves to its group");
+    assert_eq!(lure.key, "fishing.lure.tool_309.products_331_335");
     assert_eq!(
-        data.gather_option("fishing", "fishing.saltfish.op1")
+        lure.methods,
+        ["fishing.freshfish.op1", "fishing.loc_2027.op1"]
+    );
+    assert_eq!(
+        data.gather_option("fishing", "fishing.lure.tool_309.products_331_335")
             .map(|row| row.label.as_str()),
-        Some("Raw shrimps / Raw anchovies")
+        Some("Raw trout / Raw salmon — Lure (Fly fishing rod + Feather)")
     );
     assert!(data.gather_option("mining", "coal").is_none());
     let jungle = data
@@ -1040,4 +1048,37 @@ fn gather_resources_decode_and_skill_lookup() {
         jungle.level, 0,
         "an omitted level defaults, it is never invented"
     );
+}
+
+#[test]
+fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        let groups = data.gather_resources_for("fishing").collect::<Vec<_>>();
+        assert_eq!(groups.len(), 12, "{revision:?} fishing group count");
+        let labels = groups
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(labels.len(), groups.len(), "{revision:?} labels are unique");
+        for group in &groups {
+            assert!(!group.methods.is_empty(), "{group:?}");
+            assert_eq!(group.aliases, group.methods, "{group:?}");
+            assert!(group.key.starts_with("fishing."), "{group:?}");
+            assert!(group.key.contains(".tool_"), "{group:?}");
+            assert!(group.key.contains(".products_"), "{group:?}");
+        }
+        let freshfish = data
+            .gather_option("fishing", "fishing.freshfish.op1")
+            .expect("freshfish operation resolves to its group");
+        let loc = data
+            .gather_option("fishing", "fishing.loc_2027.op1")
+            .expect("location operation resolves to its group");
+        assert_eq!(freshfish.key, loc.key, "{revision:?} aliases share a key");
+        assert_eq!(
+            freshfish.methods.len(),
+            2,
+            "{revision:?} shared method group"
+        );
+    }
 }

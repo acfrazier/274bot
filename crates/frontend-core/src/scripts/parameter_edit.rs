@@ -3,6 +3,197 @@ use crate::operations::{OperationId, Outcome};
 use crate::session::OperatorSession;
 use serde_json::Value;
 
+/// Options shared by the panel and TUI, including read-time aliases and
+/// preserved values that are no longer present in the selected facts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParameterOptions {
+    pub values: Vec<String>,
+    pub labels: Vec<String>,
+    aliases: Vec<(String, String)>,
+    case_insensitive: bool,
+}
+
+impl ParameterOptions {
+    fn canonical_option<'a>(&'a self, value: &'a str) -> &'a str {
+        if self.values.iter().any(|option| option == value) {
+            return value;
+        }
+        if self.case_insensitive {
+            if let Some(option) = self
+                .values
+                .iter()
+                .find(|option| option.eq_ignore_ascii_case(value))
+            {
+                return option;
+            }
+        }
+        self.aliases
+            .iter()
+            .find(|(alias, _)| alias.eq_ignore_ascii_case(value))
+            .map(|(_, canonical)| canonical.as_str())
+            .unwrap_or(value)
+    }
+
+    pub fn matches_option(&self, value: &str, option: &str) -> bool {
+        self.canonical_option(value) == option
+    }
+
+    pub fn value_for(&self, value: &str) -> String {
+        self.canonical_option(value).to_owned()
+    }
+
+    pub fn label_for<'a>(&'a self, value: &'a str) -> &'a str {
+        let canonical = self.canonical_option(value);
+        self.values
+            .iter()
+            .position(|option| option == canonical)
+            .and_then(|index| self.labels.get(index))
+            .map(String::as_str)
+            .unwrap_or(value)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn normalize_value(&self, value: &Value) -> Value {
+        match value {
+            Value::String(value) => Value::String(self.value_for(value)),
+            Value::Array(values) => Value::Array(
+                values
+                    .iter()
+                    .map(|value| match value.as_str() {
+                        Some(value) => Value::String(self.value_for(value)),
+                        None => value.clone(),
+                    })
+                    .collect(),
+            ),
+            _ => value.clone(),
+        }
+    }
+}
+
+/// Resolve a schema row once for both front ends. The renderers only choose
+/// among these rows; aliases normalize only after an explicit user pick.
+pub fn resolve_parameter_options(
+    def: &script::SettingDef,
+    bag: &serde_json::Map<String, Value>,
+    loadouts: &script::LoadoutsStore,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ParameterOptions {
+    let base = script::resolve_setting_options_with_labels(def, loadouts, game_data);
+    let mut options = ParameterOptions {
+        values: base.values,
+        labels: base.labels,
+        ..ParameterOptions::default()
+    };
+    if options.labels.len() != options.values.len() {
+        options.labels.clone_from(&options.values);
+    }
+
+    let source = def.options_from.as_deref().unwrap_or_default();
+    options.case_insensitive = source == "gatherer-food" || source.starts_with("gather:");
+    if let Some(skill) = source.strip_prefix("gather:") {
+        if let Some(data) = game_data {
+            for row in data.gather_resources_for(skill) {
+                for alias in &row.aliases {
+                    if !alias.eq_ignore_ascii_case(&row.key) {
+                        options.aliases.push((alias.clone(), row.key.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    if source == "released-path-order" {
+        let candidate_values = options.values.clone();
+        let candidate_labels = options.labels.clone();
+        let picked = bag
+            .get("quests")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let ids = if picked.is_empty() {
+            candidate_values.clone()
+        } else {
+            picked
+                .into_iter()
+                .filter(|id| {
+                    candidate_values
+                        .iter()
+                        .any(|candidate| candidate.as_str() == *id)
+                })
+                .map(str::to_owned)
+                .collect()
+        };
+        options.values.clear();
+        options.labels.clear();
+        for (number, id) in ids.iter().enumerate() {
+            if options.values.iter().any(|existing| existing == id) {
+                continue;
+            }
+            let Some(index) = candidate_values
+                .iter()
+                .position(|candidate| candidate == id)
+            else {
+                continue;
+            };
+            options.values.push(id.clone());
+            options.labels.push(format!(
+                "{}. {}",
+                number + 1,
+                candidate_labels
+                    .get(index)
+                    .map_or(id.as_str(), String::as_str)
+            ));
+        }
+        options.aliases.clear();
+        return options;
+    }
+
+    if source.starts_with("gather:") || source == "gatherer-food" {
+        for value in setting_values(def, bag) {
+            if value.is_empty() {
+                continue;
+            }
+            let resolved = options.canonical_option(&value);
+            if !options.values.iter().any(|option| option == resolved) {
+                options.values.push(value.clone());
+                options.labels.push(format!("Unknown: {value}"));
+            }
+        }
+    }
+    options
+}
+
+fn setting_values(def: &script::SettingDef, bag: &serde_json::Map<String, Value>) -> Vec<String> {
+    let value = bag.get(&def.id).cloned().or_else(|| {
+        def.default.as_deref().map(|default| {
+            serde_json::from_str(default).unwrap_or_else(|_| Value::String(default.to_owned()))
+        })
+    });
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    match def.ty.as_str() {
+        "string" => value
+            .as_str()
+            .map(|value| vec![value.to_owned()])
+            .unwrap_or_default(),
+        "string[]" => {
+            let value = script::coerce_setting_value("string[]", &value);
+            value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Identity of one editable field in one profile's selected card.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParameterEditKey {
@@ -580,8 +771,8 @@ fn validate_edit(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_parameter_text;
-    use script::SettingDef;
+    use super::{parse_parameter_text, resolve_parameter_options};
+    use script::{LoadoutsStore, SettingDef};
 
     fn setting(ty: &str) -> SettingDef {
         SettingDef {
@@ -601,6 +792,99 @@ mod tests {
             help: None,
             item_option_spec: None,
         }
+    }
+
+    fn source_setting(id: &str, ty: &str, source: &str) -> SettingDef {
+        let mut def = setting(ty);
+        def.id = id.into();
+        def.options_from = Some(source.into());
+        def
+    }
+
+    #[test]
+    fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("parameter-options-{}.json", std::process::id())),
+        );
+
+        let resources = source_setting("woodcuttingResources", "string[]", "gather:woodcutting");
+        let mut bag = serde_json::Map::new();
+        bag.insert(
+            resources.id.clone(),
+            serde_json::json!(["removed-resource", "Normal"]),
+        );
+        let options = resolve_parameter_options(&resources, &bag, &loadouts, Some(data.as_ref()));
+        assert!(options.values.contains(&"removed-resource".to_string()));
+        assert_eq!(
+            options.label_for("removed-resource"),
+            "Unknown: removed-resource"
+        );
+        assert!(options.matches_option("Normal", "normal"));
+        assert!(options.matches_option("removed-resource", "removed-resource"));
+        assert_eq!(
+            options.normalize_value(&bag[&resources.id]),
+            serde_json::json!(["removed-resource", "normal"]),
+            "an unknown checked value survives while known values resolve case-insensitively"
+        );
+
+        let fishing = source_setting("fishingMethod", "string", "gather:fishing");
+        bag.insert(
+            fishing.id.clone(),
+            serde_json::json!("fishing.saltfish.op1"),
+        );
+        let fishing_options =
+            resolve_parameter_options(&fishing, &bag, &loadouts, Some(data.as_ref()));
+        let group = data
+            .gather_option("fishing", "fishing.saltfish.op1")
+            .expect("legacy fishing id resolves");
+        assert_eq!(fishing_options.value_for("fishing.saltfish.op1"), group.key);
+        assert_eq!(
+            fishing_options.label_for("fishing.saltfish.op1"),
+            group.label
+        );
+        assert_eq!(
+            bag[&fishing.id], "fishing.saltfish.op1",
+            "resolving an alias does not mutate the setting bag"
+        );
+
+        let food = source_setting("food", "string", "gatherer-food");
+        bag.insert(food.id.clone(), serde_json::json!("lobster"));
+        let food_options = resolve_parameter_options(&food, &bag, &loadouts, Some(data.as_ref()));
+        assert_eq!(food_options.values.first().map(String::as_str), Some(""));
+        assert_eq!(
+            food_options.labels.first().map(String::as_str),
+            Some("None")
+        );
+        assert_eq!(food_options.value_for("lobster"), "Lobster");
+        assert_eq!(food_options.label_for("LOBSTER"), "Lobster");
+
+        let mut order = source_setting("order_override", "string[]", "released-path-order");
+        order.options = vec!["cook".into(), "sheep".into()];
+        order.option_labels = vec!["Cook display".into(), "Sheep display".into()];
+        bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
+        bag.insert("order_override".into(), serde_json::json!(["cook"]));
+        let order_options = resolve_parameter_options(&order, &bag, &loadouts, None);
+        assert_eq!(order_options.values, ["sheep", "cook"]);
+        assert_eq!(
+            order_options.labels,
+            ["1. Sheep display", "2. Cook display"]
+        );
+
+        let unavailable =
+            resolve_parameter_options(&resources, &serde_json::Map::new(), &loadouts, None);
+        assert!(
+            unavailable.is_empty(),
+            "unresolved list sources do not become text fields"
+        );
+        let mut radius = setting("number");
+        radius.id = "radius".into();
+        radius.min = Some("2".into());
+        radius.max = Some("64".into());
+        assert_eq!(
+            parse_parameter_text(&radius, "20", &[]),
+            Ok(serde_json::json!(20))
+        );
     }
 
     #[test]

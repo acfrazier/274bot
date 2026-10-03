@@ -1,5 +1,5 @@
 use super::runner::Gatherer;
-use super::settings::{resolve_methods, schema, GathererSettings};
+use super::settings::{resolve_methods_for_prepare, schema, GathererSettings};
 use super::supply::PreparedSupply;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
@@ -29,6 +29,7 @@ pub struct Prepared {
     pub method_bits: u64,
     pub methods: Arc<[usize]>,
     pub excluded_targets: Arc<str>,
+    pub resource_error: Option<ConfigError>,
     pub products: Arc<[i32]>,
     pub banks: Arc<api::named_banks::NamedBankFacts>,
     pub supply: PreparedSupply,
@@ -51,7 +52,10 @@ pub fn prepare(
     let mut settings = GathererSettings::from_bag(&bag).map_err(StartError::Config)?;
     let catalog =
         api::gather_methods::prepare(&cx.selected, cx.families).map_err(StartError::Facts)?;
-    let (method_bits, methods) = resolve_methods(&settings, &cx.selected, &catalog)?;
+    let prepared = resolve_methods_for_prepare(&settings, &cx.selected, &catalog)?;
+    let method_bits = prepared.bits;
+    let methods = prepared.indices;
+    let resource_error = prepared.resource_error;
     let supply = PreparedSupply::prepare(&mut settings, &cx.selected, &catalog, &methods)
         .map_err(StartError::Config)?;
     let excluded_targets: Arc<str> = methods
@@ -86,6 +90,7 @@ pub fn prepare(
             method_bits,
             methods,
             excluded_targets,
+            resource_error,
             products: products.into(),
         }),
     ))
@@ -99,6 +104,9 @@ pub fn create(
     let prepared = config.get::<Arc<Prepared>>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Gatherer"))
     })?;
+    if let Some(error) = &prepared.resource_error {
+        return Err(StartError::Config(error.clone()));
+    }
     let retained = *retained.gather();
     Ok(Box::new(Gatherer::new(
         run,
