@@ -15,18 +15,22 @@ use std::task::Poll;
 use std::time::Duration;
 
 /// One prayer varp's requested state, shared by toggle and clear operations.
+/// Its only caller is the `load` isolate's prayer machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "load"), allow(dead_code))]
 pub(crate) struct PrayerToggle {
     varp: i32,
     want: OnArg,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "load"), allow(dead_code))]
 pub(crate) enum ToggleProgress {
     Matched,
     Pending,
     TimedOut,
 }
 
+#[cfg_attr(not(feature = "load"), allow(dead_code))]
 impl PrayerToggle {
     pub(crate) const fn new(varp: i32, want: OnArg) -> Self {
         Self { varp, want }

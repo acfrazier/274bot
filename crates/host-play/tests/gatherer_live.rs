@@ -705,7 +705,10 @@ enum LiveCase {
     DeathRespawnRegion,
     DeathNoStock,
     DeathReturnRefused,
+    // Constructed only by the `live-probe` watchdog cells.
+    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
     DeathWatchdogPending,
+    #[cfg_attr(not(feature = "live-probe"), allow(dead_code))]
     DeathWatchdogProving,
     FishNet,
     FishBaitGate,
