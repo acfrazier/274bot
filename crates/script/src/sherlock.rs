@@ -236,6 +236,10 @@ impl Script for Sherlock {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
+        if let Some(failure) = self.blocked.clone() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(failure));
+        }
         if self.hygiene_pending {
             let Some(tables) = self.tables.as_ref() else {
                 self.hygiene_pending = false;
@@ -318,8 +322,12 @@ impl Script for Sherlock {
 
     fn interrupt(&mut self, event: Interrupt) {
         if matches!(event, Interrupt::Pause) {
+            if let Some(id) = self.combat_id.take() {
+                self.outcome = Some(Outcome::cancelled(id));
+            } else if let Some((id, _)) = self.pending.take() {
+                self.outcome = Some(Outcome::cancelled(id));
+            }
             self.fight = None;
-            self.combat_id = None;
             self.hygiene_pending = true;
         }
     }
@@ -343,9 +351,30 @@ impl Sherlock {
             },
             Some(Fight::ClearPrayers(handle)) => match tick.actions.poll(handle, &mut tick.cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => {
+                Poll::Ready(Ok(report)) => {
                     self.fight = None;
-                    self.hygiene_pending = false;
+                    if report.timed_out != 0 {
+                        self.blocked = Some(hygiene_failure(ActionError::Blocked(Arc::from(
+                            "prayer cleanup timed out",
+                        ))));
+                    } else {
+                        self.hygiene_pending = false;
+                    }
+                    Poll::Ready(())
+                }
+                Poll::Ready(Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                )) => {
+                    self.fight = None;
+                    Poll::Ready(())
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fight = None;
+                    self.blocked = Some(hygiene_failure(error));
                     Poll::Ready(())
                 }
             },
@@ -940,9 +969,23 @@ fn action_strings(actions: &[Option<String>]) -> Vec<&str> {
         .collect()
 }
 
+fn hygiene_failure(error: ActionError) -> ScriptFailure {
+    let message = match error {
+        ActionError::Failed(message)
+        | ActionError::Blocked(message)
+        | ActionError::Unavailable(message) => message,
+        _ => Arc::from("prayer hygiene failed"),
+    };
+    ScriptFailure {
+        code: Arc::from("combat-failed"),
+        message,
+        retryable: true,
+    }
+}
+
 /// The posted target pair: `1` an npc, `2` a player, and the `(0, -1)` pair
-/// neither the machine's `targets_me` nor its `we_target` read matches — the
-/// same wire pair the posted scene rows carry.
+/// neither the machine's `targets_me` nor a posted local npc target matches —
+/// the same wire pair the posted scene rows carry.
 fn wire_target(target: Option<ActorTargetView>) -> (i32, i32) {
     match target {
         Some(target) => (
@@ -2107,3 +2150,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "sherlock_native_tests.rs"]
+mod native_tests;
