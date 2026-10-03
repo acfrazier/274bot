@@ -1247,6 +1247,28 @@ mod tests {
     }
 
     #[test]
+    fn dragonfire_and_magic_projectiles_agree_on_the_same_protection_varp() {
+        let mut scene = Scene::new(43);
+        let dragonfire = scene.tables.selected().style_spotanims().iter()
+            .find(|row| row.style == 8 && row.location == "projectile")
+            .expect("selected dragonfire projectile").spotanim_id;
+        let cow = scene.tables.selected().npc_by_config("cow").unwrap().id;
+        scene.npcs[0].r#type = Some(cow as usize);
+        scene.npcs[0].in_combat = true;
+        scene.npcs[0].target = Some(ActorTargetView { kind: ActorKind::Player, index: 1 });
+        scene.projectiles = [88, dragonfire].map(|spotanim| ProjectileView {
+            spotanim, level: 0, src: tile(2800, 3300),
+            target: Some(ActorTargetView { kind: ActorKind::Player, index: 1 }),
+            t1: 0, t2: 30,
+        }).to_vec();
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+        assert_eq!(guard.tick(&scene.view()), Some(GuardOp::IfButton {
+            component: scene.magic().button_com,
+        }), "the incoming volley agrees on Magic, despite the cow's Melee fact");
+    }
+
+    #[test]
     fn first_dose_does_not_leave_drink_pending() {
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
