@@ -137,6 +137,11 @@ impl Family for Clue {
                 "done" | "dead" | "abandon" | "guardian-lost" | "aborted" => {
                     return Step::Done(step)
                 }
+                "combat" => {
+                    return Step::Done(
+                        json!({ "kind": "aborted", "reason": "clue-combat-driver" }),
+                    );
+                }
                 "duel-travel" => {
                     let field = |key| super::verbs::i32_field(&step, key);
                     let (Some(x), Some(z), Some(level), Some(radius)) =

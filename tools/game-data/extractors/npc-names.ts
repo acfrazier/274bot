@@ -177,6 +177,7 @@ export function extractNpcNamesFacts(content: string, scripts: CombatScripts = p
                 dragonfire: combat.dragonfire,
                 attackrate: block?.attackrate ?? null,
                 bespoke: combat.bespoke,
+                counter_protect: combat.counter_protect,
             };
         });
     if (rows.length === 0) throw new Error('npc_names: no extracted rows');

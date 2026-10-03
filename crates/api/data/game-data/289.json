@@ -115323,7 +115323,7 @@
         "rangebonus": 0,
         "undead": null,
         "ap_attack": true,
-        "attack_kind": "mixed",
+        "attack_kind": "magic",
         "forced_max_hit": 20,
         "dragonfire": null,
         "attackrate": 4,
@@ -122243,7 +122243,8 @@
         "forced_max_hit": 20,
         "dragonfire": null,
         "attackrate": 4,
-        "bespoke": true
+        "bespoke": true,
+        "counter_protect": true
       },
       {
         "id": 1265,

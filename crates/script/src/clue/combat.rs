@@ -1,4 +1,11 @@
 use super::*;
+use crate::combat::{
+    AbortReason, Allowances, CombatEnd, CombatReport, CombatRequest, Fallback, IntruderPolicy,
+    Pick, PrayerMode, Style, Tactic, Target, Unprotected,
+};
+use crate::native::ActionError;
+use api::WorldTile;
+use std::sync::Arc;
 
 /// The selected key-keeper step an identified membership row owns: the
 /// `talk_key.keys` row whose own id is the row's, or `None` when the row is not
@@ -26,15 +33,324 @@ pub(super) fn keeper_type(keeper: &TalkKeyKeeper) -> Option<(i32, &str)> {
     let name = keeper.name.as_deref().filter(|name| !name.is_empty())?;
     (keeper.kind == KEEPER_TYPE).then_some((id, name))
 }
+
+/// Verb `encounter`: guardian (wizard) or keeper (key NPC).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Encounter {
+    Guardian,
+    Keeper,
+}
+
+/// One combat hand-off. The only reader of the verb's fields, and the only
+/// place the guardian/keeper radii live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Delegation {
+    pub id: u32,
+    pub npc_type: i32,
+    stand: Tile,
+    pub encounter: Encounter,
+}
+
+impl Delegation {
+    pub(crate) fn parse(verb: &Value) -> Option<Self> {
+        if verb.get("kind").and_then(Value::as_str) != Some("combat") {
+            return None;
+        }
+        let id = verb
+            .get("id")
+            .and_then(Value::as_u64)
+            .and_then(|id| u32::try_from(id).ok())?;
+        if id == 0 {
+            return None;
+        }
+        let npc_type = posted_i32(verb, "npc_type")?;
+        let stand = verb.get("stand")?;
+        let stand = Tile {
+            x: posted_i32(stand, "x")?,
+            z: posted_i32(stand, "z")?,
+            level: posted_i32(stand, "level")?,
+        };
+        let encounter = match verb.get("encounter").and_then(Value::as_str)? {
+            "guardian" => Encounter::Guardian,
+            "keeper" => Encounter::Keeper,
+            _ => return None,
+        };
+        Some(Self {
+            id,
+            npc_type,
+            stand,
+            encounter,
+        })
+    }
+
+    pub(crate) fn request(&self) -> CombatRequest {
+        let (engage_radius, lost_radius) = match self.encounter {
+            Encounter::Guardian => (GUARDIAN_RADIUS as u8, GUARDIAN_RADIUS as u8),
+            Encounter::Keeper => (ARRIVE_RADIUS as u8, GUARDIAN_RADIUS as u8),
+        };
+        CombatRequest {
+            target: Target::Npc {
+                types: Arc::from([self.npc_type]),
+                pick: Pick::Nearest,
+                not_targeting_others: true,
+            },
+            tactic: Tactic::Open,
+            style: Style::Melee,
+            melee_mode: None,
+            kit: None,
+            spells: None,
+            stand: Some(WorldTile {
+                x: self.stand.x,
+                z: self.stand.z,
+                level: self.stand.level,
+            }),
+            search_bounds: None,
+            engage_radius,
+            lost_radius,
+            budget_ticks: 500,
+            allow: Allowances::default(),
+            fallback: Fallback::Abort,
+            intruder: IntruderPolicy::default(),
+            retaliate: true,
+            prayer_mode: PrayerMode::Hold,
+            until_ticks: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum OutcomeEnd {
+    Killed = 0,
+    TargetGone = 1,
+    NoTarget = 2,
+    Died = 3,
+    Budget = 4,
+    Aborted = 5,
+    Cancelled = 6,
+    UserInput = 7,
+    Failed = 8,
+}
+
+const REASON_NONE: u8 = 0;
+const REASON_NO_FOOD: u8 = 1;
+const REASON_DRAGONFIRE: u8 = 2;
+const REASON_NO_AMMO: u8 = 3;
+const REASON_NO_RUNES: u8 = 4;
+const REASON_UNATTACKABLE: u8 = 5;
+const REASON_PREP_FAILED: u8 = 6;
+const REASON_UNRESPONSIVE: u8 = 7;
+const REASON_RETREATED: u8 = 8;
+const REASON_RETREAT_FAILED: u8 = 9;
+const REASON_SAFESPOT_BROKEN: u8 = 10;
+
+/// Compact combat report for the `combat` page field. Built by the driver
+/// from `Poll::Ready`; the machine only reads the JSON.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Outcome {
+    id: u32,
+    engaged_type: i32,
+    ticks: u16,
+    end: OutcomeEnd,
+    reason: u8,
+}
+
+const _: () = assert!(std::mem::size_of::<Outcome>() <= 24);
+
+impl Outcome {
+    pub(crate) fn from_poll(id: u32, result: Result<CombatReport, ActionError>) -> Self {
+        match result {
+            Ok(report) => Self::from_report(id, report),
+            Err(ActionError::Cancelled | ActionError::Stale) => Self::cancelled(id),
+            Err(ActionError::UserInput) => Self::user_input(id),
+            Err(_) => Self::failed(id),
+        }
+    }
+
+    pub(crate) fn from_report(id: u32, report: CombatReport) -> Self {
+        let (end, reason) = match report.end {
+            CombatEnd::Killed => (OutcomeEnd::Killed, REASON_NONE),
+            CombatEnd::TargetGone => (OutcomeEnd::TargetGone, REASON_NONE),
+            CombatEnd::NoTarget => (OutcomeEnd::NoTarget, REASON_NONE),
+            CombatEnd::Died => (OutcomeEnd::Died, REASON_NONE),
+            CombatEnd::Budget => (OutcomeEnd::Budget, REASON_NONE),
+            CombatEnd::Aborted(reason) => (OutcomeEnd::Aborted, abort_reason(reason)),
+        };
+        Self {
+            id,
+            engaged_type: report.engaged_npc_type,
+            ticks: report.ticks,
+            end,
+            reason,
+        }
+    }
+
+    pub(crate) fn cancelled(id: u32) -> Self {
+        Self {
+            id,
+            engaged_type: -1,
+            ticks: 0,
+            end: OutcomeEnd::Cancelled,
+            reason: REASON_NONE,
+        }
+    }
+
+    pub(crate) fn user_input(id: u32) -> Self {
+        Self {
+            id,
+            engaged_type: -1,
+            ticks: 0,
+            end: OutcomeEnd::UserInput,
+            reason: REASON_NONE,
+        }
+    }
+
+    pub(crate) fn failed(id: u32) -> Self {
+        Self {
+            id,
+            engaged_type: -1,
+            ticks: 0,
+            end: OutcomeEnd::Failed,
+            reason: REASON_NONE,
+        }
+    }
+
+    pub(crate) fn page(self) -> Value {
+        let mut page = json!({
+            "id": self.id,
+            "end": self.end_str(),
+            "engaged_type": self.engaged_type,
+            "ticks": self.ticks,
+        });
+        if let Some(reason) = self.reason_str() {
+            page["reason"] = json!(reason);
+        }
+        page
+    }
+
+    fn end_str(self) -> &'static str {
+        match self.end {
+            OutcomeEnd::Killed => "killed",
+            OutcomeEnd::TargetGone => "target_gone",
+            OutcomeEnd::NoTarget => "no_target",
+            OutcomeEnd::Died => "died",
+            OutcomeEnd::Budget => "budget",
+            OutcomeEnd::Aborted => "aborted",
+            OutcomeEnd::Cancelled => "cancelled",
+            OutcomeEnd::UserInput => "user_input",
+            OutcomeEnd::Failed => "failed",
+        }
+    }
+
+    fn reason_str(self) -> Option<&'static str> {
+        Some(match self.reason {
+            REASON_NO_FOOD => "no_food",
+            REASON_DRAGONFIRE => "dragonfire",
+            REASON_NO_AMMO => "no_ammo",
+            REASON_NO_RUNES => "no_runes",
+            REASON_UNATTACKABLE => "unattackable",
+            REASON_PREP_FAILED => "prep_failed",
+            REASON_UNRESPONSIVE => "unresponsive",
+            REASON_RETREATED => "retreated",
+            REASON_RETREAT_FAILED => "retreat_failed",
+            REASON_SAFESPOT_BROKEN => "safespot_broken",
+            _ => return None,
+        })
+    }
+}
+
+fn abort_reason(reason: AbortReason) -> u8 {
+    match reason {
+        AbortReason::Unprotected(Unprotected::NoFood) => REASON_NO_FOOD,
+        AbortReason::Unprotected(Unprotected::Dragonfire) => REASON_DRAGONFIRE,
+        AbortReason::Unprotected(Unprotected::NoAmmo) => REASON_NO_AMMO,
+        AbortReason::Unprotected(Unprotected::NoRunes) => REASON_NO_RUNES,
+        AbortReason::Unattackable => REASON_UNATTACKABLE,
+        AbortReason::PrepFailed(_) => REASON_PREP_FAILED,
+        AbortReason::Unresponsive => REASON_UNRESPONSIVE,
+        AbortReason::Retreated => REASON_RETREATED,
+        AbortReason::RetreatFailed => REASON_RETREAT_FAILED,
+        AbortReason::SafespotBroken => REASON_SAFESPOT_BROKEN,
+    }
+}
+
+fn combat_report(input: &Value, id: u32) -> Option<&Value> {
+    let report = input.get("combat")?;
+    let got = report.get("id").and_then(Value::as_u64)?;
+    (got == u64::from(id)).then_some(report)
+}
+
+fn combat_end(report: &Value) -> &str {
+    report.get("end").and_then(Value::as_str).unwrap_or("")
+}
+
+fn aborted_combat(report: &Value) -> String {
+    let reason = report
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("failed");
+    format!("combat-{reason}")
+}
+
 impl ClueRuntime {
+    /// One helper, read by both delegating arms before anything moves.
+    fn driver_gate(&mut self, input: &Value) -> Option<Value> {
+        if input.get("combat_driver").and_then(Value::as_bool) == Some(true) {
+            None
+        } else {
+            Some(self.abandoned())
+        }
+    }
+
+    fn alloc_delegation(&mut self) -> u32 {
+        self.next_delegation = self.next_delegation.saturating_add(1);
+        if self.next_delegation == 0 {
+            self.next_delegation = 1;
+        }
+        self.next_delegation
+    }
+
+    fn guardian_id(
+        &mut self,
+        row: &TrailMembershipRow,
+        selected: Option<&SelectedGameData>,
+    ) -> Option<i32> {
+        let alias = row
+            .params
+            .iter()
+            .find(|param| param.key == "trail_guardian")
+            .map(|param| param.value.as_str())?;
+        let slot = match alias {
+            "trail_hard" => &mut self.hard_guardian,
+            "trail_hard2" => &mut self.hard2_guardian,
+            _ => return None,
+        };
+        if *slot == 0 {
+            *slot = selected
+                .and_then(|data| data.npc_names())
+                .and_then(|facts| facts.rows.iter().find(|npc| npc.config == alias))
+                .map(|npc| npc.id)
+                .unwrap_or(-1);
+        }
+        (*slot > 0).then_some(*slot)
+    }
+
+    fn combat_verb(&self, id: u32, npc_type: i32, stand: Tile, encounter: Encounter) -> Value {
+        json!({
+            "kind": "combat",
+            "token": self.token,
+            "id": id,
+            "npc_type": npc_type,
+            "stand": { "x": stand.x, "z": stand.z, "level": stand.level },
+            "encounter": match encounter {
+                Encounter::Guardian => "guardian",
+                Encounter::Keeper => "keeper",
+            },
+        })
+    }
+
     /// `Steady` on an identified guarded row: the first Dig, the fight, or the
     /// post-kill redig.
-    ///
-    /// The encounter is this row's own session state: absent until this token's
-    /// first Dig went out, present until a different held row, an abort or the
-    /// reset clears it. Nothing else about it is cached — every call re-reads
-    /// this call's marshalled pages, and the decoded tile is re-read from the
-    /// row's own selected `trail_coord` rather than kept.
     pub(super) fn guarded(
         &mut self,
         row: &TrailMembershipRow,
@@ -42,25 +358,20 @@ impl ClueRuntime {
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
+        if let Some(abandon) = self.driver_gate(input) {
+            return abandon;
+        }
         if self.guardian.is_none() {
-            // No encounter yet: the landed walk-then-Dig, and the Dig that
-            // goes out is the spawn.
             return self.spawn(tile, input);
         }
         if self.guardian.as_ref().is_some_and(|g| g.post_kill) {
-            // The kill was observed: walk back to the decoded tile and Dig
-            // again, repeating while this same clue stays held.
             return self.dig(tile, input);
         }
-        self.fight(guardian_names(row), tile, input, selected)
+        self.fight(row, tile, input, selected)
     }
 
     /// The guarded row's first Dig: the landed walk-then-Dig of the sibling
-    /// unguarded arm, and the verb that spawns the wizard. The encounter is
-    /// created from that Dig and from nothing else — a call that is still
-    /// walking, has no posted `here`, or has no posted Spade waits without one
-    /// (the arrived no-Spade tick as the named `supplies-needed` class) and the
-    /// fight never starts early.
+    /// unguarded arm, and the verb that spawns the wizard.
     pub(super) fn spawn(&mut self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
@@ -68,173 +379,123 @@ impl ClueRuntime {
             Arrival::Arrived if !spade_posted(input) => self.emit(SUPPLIES_NEEDED),
             Arrival::Arrived => {
                 self.guardian = Some(Guardian {
-                    owned: None,
+                    delegation: None,
                     post_kill: false,
+                    lost_since: None,
                 });
                 self.dig_verb()
             }
         }
     }
 
-    /// The fight after the spawn: the frozen mid-fight hitpoints wait, this
-    /// call's posted-npc observation, and only then the Protect from Magic
-    /// overlay and the Attack.
-    ///
-    /// The npc page is this call's own marshalling of `host().snapshot.npcs`,
-    /// so nothing is cached and no scene is scanned. The spawn is observed
-    /// **before** anything is raised: the row this token already owns, or —
-    /// before that Attack — a posted index of the row family's cap-documented
-    /// names inside the frozen radius. A call with neither waits with no click
-    /// and no Attack, so the click is only ever enqueued behind a matching
-    /// spawn and the nearest anything is never Attacked. The encounter then
-    /// owns the Attacked index: the kill is the owned row posted at zero
-    /// health while the page still shows this token's fight on it, or the
-    /// owned index leaving the page inside the frozen grace. An index this
-    /// token never Attacked is never a kill, a disappearance outside the grace
-    /// is a `wait`, and this machine has no `guardian-lost`.
+    /// Observe the spawn and hand the fight to the driver, or resume from a
+    /// combat report. The machine never emits `npc` Attack or `if-button`.
     pub(super) fn fight(
         &mut self,
-        names: &'static [&'static str],
+        row: &TrailMembershipRow,
         tile: Tile,
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
-        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
-            // No posted npc page this call: no spawn is posted, so there is
-            // nothing to observe and nothing to raise the overlay for. The
-            // spawn wait and the kill wait are the same `wait`.
+        if let Some(id) = self.guardian.as_ref().and_then(|g| g.delegation) {
+            if let Some(report) = combat_report(input, id) {
+                return self.apply_guardian_report(report, tile, input, selected, row);
+            }
+            return self.emit("wait");
+        }
+        self.observe_guardian(row, tile, input, selected)
+    }
+
+    fn apply_guardian_report(
+        &mut self,
+        report: &Value,
+        tile: Tile,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+        row: &TrailMembershipRow,
+    ) -> Value {
+        match combat_end(report) {
+            "killed" => {
+                self.kill();
+                self.dig(tile, input)
+            }
+            "died" => self.dead(),
+            "target_gone" | "no_target" => self.ended(GUARDIAN_LOST),
+            "budget" => self.aborted("combat-budget"),
+            "aborted" => self.aborted(&aborted_combat(report)),
+            "failed" => self.aborted("combat-failed"),
+            "cancelled" | "user_input" => {
+                if let Some(guardian) = self.guardian.as_mut() {
+                    guardian.delegation = None;
+                    if guardian.lost_since.is_none() {
+                        guardian.lost_since = Some(self.clock.now());
+                    }
+                }
+                self.observe_guardian(row, tile, input, selected)
+            }
+            _ => self.emit("wait"),
+        }
+    }
+
+    fn observe_guardian(
+        &mut self,
+        row: &TrailMembershipRow,
+        tile: Tile,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        let Some(npc_type) = self.guardian_id(row, selected) else {
             return self.emit("wait");
         };
-        let self_slot = posted_i32(input, "self_slot");
+        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
+            return self.guardian_missing();
+        };
+        if pick_npc(
+            Some(npc_type),
+            guardian_names(row),
+            page,
+            posted_i32(input, "self_slot"),
+            posted_here(input),
+        )
+        .is_none()
+        {
+            return self.guardian_missing();
+        }
+        let id = self.alloc_delegation();
+        if let Some(guardian) = self.guardian.as_mut() {
+            guardian.delegation = Some(id);
+            guardian.lost_since = None;
+        }
+        self.combat_verb(id, npc_type, tile, Encounter::Guardian)
+    }
+
+    fn guardian_missing(&mut self) -> Value {
         let now = self.clock.now();
-        let owned = self
+        let expired = self
             .guardian
             .as_ref()
-            .and_then(|g| g.owned.as_ref())
-            .map(|owned| owned.index);
-        if let Some(index) = owned {
-            // The wizard this token Attacked, read before the overlay: a kill
-            // never clicks, and a page that no longer posts the spawn is not a
-            // reason to raise the prayer.
-            let Some(row) = page
-                .iter()
-                .find(|row| posted_i32(row, "index") == Some(index))
-            else {
-                // The owned index left the page. Inside the frozen grace that
-                // is this token's kill; outside it the wizard is gone without
-                // ever being seen at zero health, so the encounter is lost and
-                // the token dies with it — never a redig.
-                let within = self
-                    .guardian
-                    .as_ref()
-                    .and_then(|g| g.owned.as_ref())
-                    .is_some_and(|owned| {
-                        now.saturating_duration_since(owned.seen_at)
-                            < Duration::from_millis(KILL_GRACE_MS)
-                    });
-                if !within {
-                    return self.ended(GUARDIAN_LOST);
-                }
-                self.kill();
-                return self.dig(tile, input);
-            };
-            // Posted: this call's observation is the last-seen the grace reads.
-            if let Some(owned) = self.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
-                owned.seen_at = now;
-            }
-            if died_owned(row, self_slot, self_target(input)) {
-                self.kill();
-                return self.dig(tile, input);
-            }
-            // Posted and alive: the fight is on, and the Attack is enqueued
-            // once per owned index — this call only reads the overlay below
-            // and never re-Attacks.
-        }
-        // The spawn this call raises the overlay for: the owned wizard just
-        // observed, or — before that Attack — the posted family wizard the
-        // Attack is about to own. A call with neither is the spawn wait.
-        let spawn = if owned.is_some() {
-            None
-        } else {
-            pick_npc(names, page, self_slot, posted_here(input))
-        };
-        if owned.is_none() && spawn.is_none() {
-            return self.emit("wait");
-        }
-        let Some(prayer) = selected.and_then(|data| api::prayer::lookup(data, PROTECT_FROM_MAGIC))
-        else {
-            // The one selected row this fight raises is not in the pin:
-            // nothing is invented in its place and the fight waits.
-            return self.emit("wait");
-        };
-        if posted_i32(input, "varp95") != Some(1) {
-            // Not a proven on: the landed generic `if-button` raises the
-            // row's own selected component. An overlay already up skips the
-            // click, an unobserved one never Attacks, and nothing here nests
-            // the prayer isolate or waits a toggle out.
-            return json!({
-                "kind": "if-button",
-                "token": self.token,
-                "component_id": prayer.button_com,
+            .and_then(|g| g.lost_since)
+            .is_some_and(|since| {
+                now.saturating_duration_since(since) >= Duration::from_millis(KILL_GRACE_MS)
             });
-        }
-        match spawn {
-            // The overlay reads up and the posted spawn is now this token's:
-            // the one Attack for this index, carrying the posted name and the
-            // posted scene index and nothing else.
-            Some((index, name)) => {
-                if let Some(guardian) = self.guardian.as_mut() {
-                    guardian.owned = Some(Owned {
-                        index,
-                        seen_at: now,
-                    });
-                }
-                json!({
-                    "kind": "npc",
-                    "token": self.token,
-                    "name": name,
-                    "action": ATTACK,
-                    // The posted scene index, always present: the host
-                    // matches that identity and refuses a stale one.
-                    "index": index,
-                })
-            }
-            // Owned and still posted: the fight waits for its kill.
-            None => self.emit("wait"),
+        if expired {
+            self.ended(GUARDIAN_LOST)
+        } else {
+            self.emit("wait")
         }
     }
 
-    /// The kill was observed: the owned index is dropped and the walk back
-    /// with its Dig replaces the fight. Only an owned, settled read reaches
-    /// here.
+    /// The kill was reported: drop the delegation and redig.
     pub(super) fn kill(&mut self) {
         if let Some(guardian) = self.guardian.as_mut() {
-            guardian.owned = None;
+            guardian.delegation = None;
             guardian.post_kill = true;
+            guardian.lost_since = None;
         }
     }
 
-    /// `Steady` on an identified key-keeper row: the one key the keeper the
-    /// selected family names drops for this clue, walked to, Attacked and
-    /// Taken, one verb per call.
-    ///
-    /// The membership is the selected `talk_key.keys` row whose own id is this
-    /// step's, read on this arm alone: a talk step belongs to the arm above and
-    /// a keeper is never Talked-to. The held clue stays the riddle the landed
-    /// identify returned, so this is a sibling family and never a second
-    /// identify — and the key in hand is not trail completion.
-    ///
-    /// Inside the arm the hunt is: the key already on the posted pack page ends
-    /// it with the idle `wait` the original riddle keeps; the keeper this
-    /// token's `Attack` went out for is observed first, and only its kill lets
-    /// the pickup run; the walk goes to the published `{x, z, plane}` tile and
-    /// repeats until this call's posted `here` holds; the one `Attack` is only
-    /// ever a posted npc of the keeper's packed type standing on that tile
-    /// carrying the posted `Attack`; and the Take is only ever a posted ground
-    /// row of the key's own id at that same tile. A page with no posted match,
-    /// no posted `here`, a missing slot count or a full pack waits with the
-    /// token live: nothing is invented, nothing is Dropped, no prayer is raised
-    /// and no completion kind is ever emitted here.
+    /// `Steady` on an identified key-keeper row: walk, delegate the fight,
+    /// then Take the key.
     pub(super) fn keys(
         &mut self,
         row: &TrailMembershipRow,
@@ -242,149 +503,88 @@ impl ClueRuntime {
         selected: Option<&SelectedGameData>,
     ) -> Value {
         let Some(key) = key_step(selected, row.id) else {
-            // Not a selected key-keeper membership: the desc-only riddles no
-            // keeper names, the empty-params 2722 and every other identified
-            // row keep the idle they had.
             return self.emit("wait");
         };
         if holds(input, key.key_id) {
-            // The key this keeper drops is already on the posted pack page: the
-            // hunt is over and the original riddle idles. No Attack, no gate
-            // and no completion kind — and a key banked but not held is not
-            // observed at all, because the bank is not a posted page.
             return self.emit("wait");
         }
         let Some(spawn) = key.spawn.as_ref() else {
-            // No published spawn: there is no tile this arm may walk to, and no
-            // coordinate is invented for a keeper the family covered instead.
             return self.emit("wait");
         };
         let Some((keeper_id, keeper_name)) = keeper_type(&key.keeper) else {
-            // A `category` or a bare `name` keeper names no packed npc type, so
-            // its row hunts nothing and idles the way it always did.
             return self.emit("wait");
         };
+        if let Some(abandon) = self.driver_gate(input) {
+            return abandon;
+        }
         let tile = Tile {
             x: spawn.x,
             z: spawn.z,
             level: spawn.plane,
         };
-        let now = self.clock.now();
-        if let Some(index) = self
-            .keeper
-            .as_ref()
-            .and_then(|keeper| keeper.owned.as_ref())
-            .map(|owned| owned.index)
-        {
-            // The keeper this token Attacked, read before anything walks: only
-            // a settled read of that index ends the hunt, and the Attack is
-            // never issued twice for one owned index.
-            let Some(page) = input.get("npcs").and_then(Value::as_array) else {
-                // No posted npc page this call: the owned keeper cannot be
-                // observed at all, so this call waits.
+        if let Some(id) = self.keeper.as_ref().and_then(|keeper| keeper.delegation) {
+            if let Some(report) = combat_report(input, id) {
+                match combat_end(report) {
+                    "killed" => {
+                        if let Some(keeper) = self.keeper.as_mut() {
+                            keeper.delegation = None;
+                            keeper.post_kill = true;
+                        }
+                    }
+                    "died" => return self.dead(),
+                    "target_gone" | "no_target" | "cancelled" | "user_input" => {
+                        if let Some(keeper) = self.keeper.as_mut() {
+                            keeper.delegation = None;
+                        }
+                        return self.emit("wait");
+                    }
+                    "budget" => return self.aborted("combat-budget"),
+                    "aborted" => return self.aborted(&aborted_combat(report)),
+                    "failed" => return self.aborted("combat-failed"),
+                    _ => return self.emit("wait"),
+                }
+            } else {
                 return self.emit("wait");
-            };
-            match page
-                .iter()
-                .find(|posted| posted_i32(posted, "index") == Some(index))
-            {
-                Some(posted) => {
-                    // Posted: this call's observation is the last-seen the
-                    // grace reads.
-                    if let Some(owned) = self.keeper.as_mut().and_then(|k| k.owned.as_mut()) {
-                        owned.seen_at = now;
-                    }
-                    if !died_owned(posted, posted_i32(input, "self_slot"), self_target(input)) {
-                        // Posted and alive: the hunt waits for its kill.
-                        return self.emit("wait");
-                    }
-                }
-                None => {
-                    // The owned index left the page. Inside the frozen grace
-                    // that is this token's kill; outside it the keeper is gone
-                    // without ever being seen at zero health, which is this
-                    // hunt's `wait` and never the wizard encounter's
-                    // `guardian-lost`.
-                    let within = self
-                        .keeper
-                        .as_ref()
-                        .and_then(|keeper| keeper.owned.as_ref())
-                        .is_some_and(|owned| {
-                            now.saturating_duration_since(owned.seen_at)
-                                < Duration::from_millis(KILL_GRACE_MS)
-                        });
-                    if !within {
-                        return self.emit("wait");
-                    }
-                }
-            }
-            if let Some(keeper) = self.keeper.as_mut() {
-                keeper.owned = None;
-                keeper.post_kill = true;
             }
         }
         let after_kill = self.keeper.as_ref().is_some_and(|keeper| keeper.post_kill);
         match arrival(tile, input) {
-            // No posted `here`: there is no arrival claim to make and no walk
-            // to measure, so this tick waits rather than walking blind.
             Arrival::Unknown => self.emit("wait"),
             Arrival::Walking => self.walk(tile),
-            Arrival::Arrived if after_kill => {
-                // The kill is observed: the key lies on its own spawn tile, and
-                // the hunt Takes it.
-                match pick_key(input, key.key_id, tile) {
-                    Some(drop) => {
-                        let Some(size) = posted_inv_size(input) else {
-                            // No posted slot count: the pack's fullness is not
-                            // invented for it.
-                            return self.emit("wait");
-                        };
-                        if occupied(input) >= i64::from(size) {
-                            // A full pack waits — this arm Drops no food to make
-                            // room, unlike the casket's own Take.
-                            return self.emit("wait");
-                        }
-                        json!({
-                            "kind": "obj",
-                            "token": self.token,
-                            "x": drop.tile.x,
-                            "z": drop.tile.z,
-                            "level": drop.tile.level,
-                            "name": drop.name,
-                            "action": TAKE,
-                        })
+            Arrival::Arrived if after_kill => match pick_key(input, key.key_id, tile) {
+                Some(drop) => {
+                    let Some(size) = posted_inv_size(input) else {
+                        return self.emit("wait");
+                    };
+                    if occupied(input) >= i64::from(size) {
+                        return self.emit("wait");
                     }
-                    // Arrived with nothing of the key posted on the tile: wait
-                    // and re-read the page next call.
-                    None => self.emit("wait"),
+                    json!({
+                        "kind": "obj",
+                        "token": self.token,
+                        "x": drop.tile.x,
+                        "z": drop.tile.z,
+                        "level": drop.tile.level,
+                        "name": drop.name,
+                        "action": TAKE,
+                    })
                 }
-            }
+                None => self.emit("wait"),
+            },
             Arrival::Arrived => {
                 match input
                     .get("npcs")
                     .and_then(Value::as_array)
                     .and_then(|page| pick_keeper(keeper_id, keeper_name, page, tile))
                 {
-                    Some((index, name)) => {
+                    Some(_) => {
+                        let id = self.alloc_delegation();
                         self.keeper = Some(Keeper {
-                            owned: Some(Owned {
-                                index,
-                                seen_at: now,
-                            }),
+                            delegation: Some(id),
                             post_kill: false,
                         });
-                        json!({
-                            "kind": "npc",
-                            "token": self.token,
-                            "name": name,
-                            "action": ATTACK,
-                            // The posted scene index, always present: the host
-                            // matches that identity and refuses a stale one.
-                            "index": index,
-                        })
+                        self.combat_verb(id, keeper_id, tile, Encounter::Keeper)
                     }
-                    // Arrived with no posted row of this keeper's type: stay on
-                    // the tile and wait, never chasing a wanderer.
                     None => self.emit("wait"),
                 }
             }

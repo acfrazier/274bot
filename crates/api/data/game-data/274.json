@@ -95167,7 +95167,8 @@
         "vislevel": 65,
         "hitpoints": 80,
         "damagetype": "^crush_style",
-        "dragonfire": false
+        "dragonfire": false,
+        "attack_kind": "magic"
       },
       {
         "id": 1008,
@@ -99513,7 +99514,9 @@
         "vislevel": 108,
         "hitpoints": 120,
         "damagetype": "^stab_style",
-        "dragonfire": false
+        "dragonfire": false,
+        "attack_kind": "mixed",
+        "counter_protect": true
       },
       {
         "id": 1265,

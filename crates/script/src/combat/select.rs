@@ -485,10 +485,43 @@ pub fn wanted_protect<'a>(
 
     for threat in threats.iter(tick) {
         any_threat = true;
-        let mixed = threat.actor.kind == ActorKind::Npc
-            && tables.npc(threat.ident).is_some_and(|row| {
-                row.dragonfire.is_some() || row.attack_kind == Some(NpcAttackKind::Mixed)
-            });
+        let npc_row = (threat.actor.kind == ActorKind::Npc)
+            .then(|| tables.npc(threat.ident))
+            .flatten();
+        if npc_row.is_some_and(|row| row.counter_protect) {
+            let mut best_style = StyleObs::Magic;
+            let mut best_mag = i32::MIN;
+            for style in [StyleObs::Magic, StyleObs::Ranged, StyleObs::Melee] {
+                let Some(magnitude) = residual(threat, style, None, tables, shield, antifire)
+                else {
+                    continue;
+                };
+                if magnitude > best_mag {
+                    best_mag = magnitude;
+                    best_style = style;
+                }
+            }
+            if best_mag > i32::MIN {
+                score_style(
+                    threat,
+                    best_style,
+                    1,
+                    tick,
+                    tables,
+                    shield,
+                    antifire,
+                    &protect_styles,
+                    &mut scores,
+                    &mut unknown,
+                    &mut newest,
+                    &mut largest_known,
+                );
+            }
+            continue;
+        }
+        let mixed = npc_row.is_some_and(|row| {
+            row.dragonfire.is_some() || row.attack_kind == Some(NpcAttackKind::Mixed)
+        });
         for style in [
             StyleObs::Melee,
             StyleObs::Ranged,
@@ -512,37 +545,20 @@ pub fn wanted_protect<'a>(
             if count == 0 {
                 continue;
             }
-            let age = tick.wrapping_sub(threat.last_seen);
-            let event_age = age.saturating_mul(8).saturating_add(u16::from(
-                threat
-                    .recent_position(style)
-                    .unwrap_or(threat.history_len()),
-            ));
-            for (index, protect_style) in protect_styles.into_iter().enumerate() {
-                let possible = can_protect_style(style, protect_style);
-                if !possible {
-                    continue;
-                }
-                let no_protect = residual(threat, style, None, tables, shield, antifire);
-                let with_protect =
-                    residual(threat, style, Some(protect_style), tables, shield, antifire);
-                match (no_protect, with_protect) {
-                    (Some(no), Some(with)) => {
-                        let saving = i64::from(no.saturating_sub(with).max(0)) * i64::from(count);
-                        scores[index] = scores[index].saturating_add(saving);
-                        largest_known = largest_known.max(saving);
-                        if saving > 0 && event_age < newest[index] {
-                            newest[index] = event_age;
-                        }
-                    }
-                    _ => {
-                        unknown[index] = unknown[index].saturating_add(count);
-                        if event_age < newest[index] {
-                            newest[index] = event_age;
-                        }
-                    }
-                }
-            }
+            score_style(
+                threat,
+                style,
+                count,
+                tick,
+                tables,
+                shield,
+                antifire,
+                &protect_styles,
+                &mut scores,
+                &mut unknown,
+                &mut newest,
+                &mut largest_known,
+            );
         }
     }
     if !any_threat {
@@ -559,6 +575,52 @@ pub fn wanted_protect<'a>(
     (scores[best] > 0 || unknown[best] > 0)
         .then(|| protect_fact(tables, style))
         .flatten()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_style(
+    threat: &Threat,
+    style: StyleObs,
+    count: u8,
+    tick: u16,
+    tables: &CombatTables,
+    shield: bool,
+    antifire: bool,
+    protect_styles: &[StyleObs; 3],
+    scores: &mut [i64; 3],
+    unknown: &mut [u8; 3],
+    newest: &mut [u16; 3],
+    largest_known: &mut i64,
+) {
+    let age = tick.wrapping_sub(threat.last_seen);
+    let event_age = age.saturating_mul(8).saturating_add(u16::from(
+        threat
+            .recent_position(style)
+            .unwrap_or(threat.history_len()),
+    ));
+    for (index, protect_style) in protect_styles.iter().copied().enumerate() {
+        if !can_protect_style(style, protect_style) {
+            continue;
+        }
+        let no_protect = residual(threat, style, None, tables, shield, antifire);
+        let with_protect = residual(threat, style, Some(protect_style), tables, shield, antifire);
+        match (no_protect, with_protect) {
+            (Some(no), Some(with)) => {
+                let saving = i64::from(no.saturating_sub(with).max(0)) * i64::from(count);
+                scores[index] = scores[index].saturating_add(saving);
+                *largest_known = (*largest_known).max(saving);
+                if saving > 0 && event_age < newest[index] {
+                    newest[index] = event_age;
+                }
+            }
+            _ => {
+                unknown[index] = unknown[index].saturating_add(count);
+                if event_age < newest[index] {
+                    newest[index] = event_age;
+                }
+            }
+        }
+    }
 }
 
 fn effective_style(threat: &Threat) -> StyleObs {
@@ -639,6 +701,7 @@ mod tests {
             forced_max_hit,
             attackrate: Some(4),
             bespoke: false,
+            counter_protect: false,
         }
     }
 
