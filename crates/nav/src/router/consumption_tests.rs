@@ -475,3 +475,31 @@ fn generous_inventory_does_not_assume_unreachable_charge_returns() {
     .unwrap()
     .is_none());
 }
+
+#[test]
+fn unavailable_charge_returns_do_not_relax_reverse_held_gates() {
+    let (collision, mut graph) = sealed_room(true);
+    graph.edges[0].worn_req.clear();
+    graph.edges[0].item_req = vec![(1704, 1)];
+    let mut unavailable = graph.edges[0].clone();
+    unavailable.item_req.clear();
+    unavailable.consumed_req = vec![(1706, 1)];
+    unavailable.item_returns = vec![(1704, 1)];
+    graph.edges.push(unavailable);
+    graph.rebuild_index(&collision);
+    let state = WorldState {
+        inv: HashMap::from([(995, 10_000)]),
+        ..WorldState::empty()
+    };
+    let search = find_first_with(
+        &collision,
+        &graph,
+        tile(20, 20, 0),
+        &[tile(202, 201, 0)],
+        FindOptions::default(),
+        &state,
+    );
+    assert_eq!(search.route().err(), Some(RouteError::NoPath));
+    assert_eq!(search.proof(), ReverseProof::Unreachable);
+    assert!(search.settled() < 64, "{}", search.settled());
+}

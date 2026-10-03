@@ -398,8 +398,8 @@ cannot constrain a simple path and no returned item must unlock a held gate.
 The proof excludes consumables that cannot be carried initially or acquired
 through usable hops' replacement items, so absent passes and unreachable charge
 families do not force resource tracking.
-Tile-only and resource-key loops compile separately, keeping balance preflight
-and its stack space outside the ordinary walking kernel.
+Backward carried-gate proofs relax only when a returning hop is initially
+usable; unreachable charge families do not widen those proofs.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
