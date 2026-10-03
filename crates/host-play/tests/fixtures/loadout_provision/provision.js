@@ -38,11 +38,15 @@ export default class T extends LoopingBot {
                 globalThis.__done = true;
                 return;
             }
+            if (!Bank.ready()) {
+                throw new Error('ITEMS-2 probe precondition: bank not ready before equip');
+            }
             globalThis.__equipped = await Equipment.equip(weapon);
             globalThis.__done = true;
         } catch (e) {
             globalThis.__err = String(e && e.message ? e.message : e);
             globalThis.__done = true;
+            throw e;
         } finally {
             globalThis.__busy = false;
         }
