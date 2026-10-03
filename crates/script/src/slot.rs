@@ -1553,6 +1553,29 @@ impl SlotScript {
         }
     }
 
+    /// Publish a non-terminal walk warning to the same run/action/request
+    /// fence as a terminal receipt, without clearing that request's authority.
+    pub fn notify_native_walk(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        event: crate::native::WalkEvent,
+    ) {
+        if !authority.live()
+            || authority.request_id().get() != event.request_id
+            || authority.run() != event.evidence.run
+        {
+            return;
+        }
+        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+            return;
+        };
+        if ledger.owner.as_ref().is_some_and(|owner| {
+            owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+        }) {
+            ledger.walk_events.push(event);
+        }
+    }
+
     pub fn complete_native_interaction(
         &mut self,
         authority: &crate::native::HostAuthority,

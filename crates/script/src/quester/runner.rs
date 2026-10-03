@@ -3091,6 +3091,107 @@ mod tests {
     }
 
     #[test]
+    fn unprotectable_walk_publishes_its_cause_and_keeps_working() {
+        use super::super::families::tests::{with_tick, with_tick_output};
+        use crate::native::{HostEffect, WalkEvent, WalkEventKind};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3103, 3163, 2], "source": "test fixture", "radius": 6, "guard": "protect"
+        });
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            data,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut queued_at = None;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert_eq!(script.tick(native).unwrap(), ScriptFlow::Continue);
+            });
+            if ledger.as_ref().is_some_and(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .any(|action| matches!(action.effect, HostEffect::Walk(_)))
+            }) {
+                queued_at = Some(tick);
+                break;
+            }
+        }
+        let tick = queued_at.expect("authored walk queued") + 1;
+        let action = &ledger.as_ref().unwrap().outbox[0];
+        let authority = action.authority();
+        let event = WalkEvent {
+            request_id: action.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: action.run(),
+                tick,
+                sequence: tick,
+            },
+            kind: WalkEventKind::Unprotectable {
+                protect: crate::combat::GuardProtect::Missiles,
+            },
+            detail: Arc::from("Prayer 40 needed for Protect from Missiles"),
+        };
+        ledger.as_mut().unwrap().walk_events.push(event);
+        let cursor = (script.seq_index, script.step_index);
+        let mut capture = Capture::default();
+        for at in tick..tick + 3 {
+            with_tick_output(&snapshot, &mut ledger, at, &mut capture, |native| {
+                assert_eq!(script.tick(native).unwrap(), ScriptFlow::Continue);
+            });
+        }
+        let status = capture.0.last().expect("warning changes status");
+        assert_eq!(status.phase, NativePhase::Working);
+        assert!(status.failure.is_none());
+        assert!(status.fields.iter().any(|field| {
+            field.label == "Walk protection"
+                && field.value
+                    == StatusValue::Text(Arc::from("Prayer 40 needed for Protect from Missiles"))
+        }));
+        assert!(!script.parked && authority.live());
+        assert_eq!((script.seq_index, script.step_index), cursor);
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+    }
+
+    #[test]
     fn user_input_walk_parks_without_attempts_or_repeated_work() {
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};
