@@ -269,8 +269,8 @@ fn missiles_on(snapshot: &GameSnapshot) -> bool {
 
 fn arrived_at(snapshot: &GameSnapshot, dest: WorldTile) -> bool {
     snapshot
-        .local_player()
-        .map(|player| player.player.actor.tile)
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level })
         .is_some_and(|tile| tile.level == dest.level && chebyshev(tile, dest) <= 1)
 }
 
@@ -308,6 +308,7 @@ fn teleport_command(tile: WorldTile) -> String {
 
 fn final_w1_snapshot(snapshot: &GameSnapshot) -> serde_json::Value {
     let mut facts = combat_proof::snapshot_facts(snapshot, Some(u64::from(snapshot.tick())));
+    facts["network_tile"] = facts["tile"].take();
     facts["tile"] = facts
         .pointer("/local_player/tile")
         .cloned()
@@ -459,24 +460,14 @@ fn crossing_prayer_observation(
         .rev()
         .find(|row| {
             row.tick == tick
-                && matches!(
-                    row.phase,
-                    PrayerPhase::Crossing | PrayerPhase::Unspecified
-                )
+                && matches!(row.phase, PrayerPhase::Crossing | PrayerPhase::Unspecified)
         })
         .copied()
 }
 
-fn crossing_observations_all_on(
-    observations: &[PrayerObservation],
-    tick: u32,
-) -> Option<bool> {
+fn crossing_observations_all_on(observations: &[PrayerObservation], tick: u32) -> Option<bool> {
     let mut rows = observations.iter().filter(|row| {
-        row.tick == tick
-            && matches!(
-                row.phase,
-                PrayerPhase::Crossing | PrayerPhase::Unspecified
-            )
+        row.tick == tick && matches!(row.phase, PrayerPhase::Crossing | PrayerPhase::Unspecified)
     });
     let first = rows.next()?;
     Some(
@@ -724,8 +715,7 @@ fn evaluate_crossing_gate(
     if protect_tick > arrival_tick {
         return gate_fail("Protect from Missiles was first observed after arrival");
     }
-    if let Err(reason) =
-        require_crossing_guard_clicks(input, first_launch, arrival_tick, off_tick)
+    if let Err(reason) = require_crossing_guard_clicks(input, first_launch, arrival_tick, off_tick)
     {
         return gate_fail(reason);
     }
@@ -737,9 +727,7 @@ fn evaluate_crossing_gate(
             match crossing_observations_all_on(input.prayer_ticks, tick) {
                 Some(true) => {}
                 Some(false) => {
-                    return gate_fail(format!(
-                        "Missiles was off during crossing at tick {tick}"
-                    ));
+                    return gate_fail(format!("Missiles was off during crossing at tick {tick}"));
                 }
                 None => {
                     return gate_fail(format!(
@@ -848,14 +836,6 @@ fn parse_tile_array(value: &serde_json::Value) -> Option<WorldTile> {
     })
 }
 
-fn parse_tile_object(value: &serde_json::Value) -> Option<WorldTile> {
-    Some(WorldTile {
-        x: i32::try_from(value.get("x")?.as_i64()?).ok()?,
-        z: i32::try_from(value.get("z")?.as_i64()?).ok()?,
-        level: i32::try_from(value.get("level")?.as_i64()?).ok()?,
-    })
-}
-
 fn parse_launch_receipt(value: &serde_json::Value) -> Result<LaunchRecord, String> {
     let tile = |name: &str| {
         value
@@ -929,9 +909,8 @@ fn parse_prayer_phase(value: &serde_json::Value) -> Result<PrayerPhase, String> 
 
 fn receipt_snapshot_at_dest(snapshot: &serde_json::Value, dest: WorldTile) -> bool {
     snapshot
-        .get("local_player")
-        .and_then(|player| player.get("tile"))
-        .and_then(parse_tile_object)
+        .get("tile")
+        .and_then(parse_tile_array)
         .is_some_and(|tile| tile.level == dest.level && chebyshev(tile, dest) <= 1)
 }
 
@@ -1036,14 +1015,19 @@ fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String
         }
     }
     if !legacy_sparse {
-        normalize_same_tick_cleanup(
-            &mut prayer_ticks,
-            off_tick,
-            &click_crossing_observations,
-        );
+        normalize_same_tick_cleanup(&mut prayer_ticks, off_tick, &click_crossing_observations);
     }
     prayer_ticks.extend(click_crossing_observations);
-    prayer_ticks.sort_by_key(|row| (row.tick, row.phase.order()));
+    prayer_ticks.sort_by_key(|row| {
+        // Sparse protect_tick is the post-enable observation, later than
+        // that tick's pre-click snapshot. Cleanup still follows both.
+        let phase_order = match (legacy_sparse, row.phase) {
+            (true, PrayerPhase::Unspecified) => 0,
+            (true, PrayerPhase::Crossing) => 1,
+            (_, phase) => phase.order(),
+        };
+        (row.tick, phase_order)
+    });
 
     let arrival_tick = value
         .get("arrival_tick")
@@ -1225,7 +1209,10 @@ fn append_guard_crossing_observations(
     off_tick: Option<u32>,
 ) {
     let mut click_crossing_observations = Vec::new();
-    for action in actions.iter().filter(|action| action["kind"] == json!("guard")) {
+    for action in actions
+        .iter()
+        .filter(|action| action["kind"] == json!("guard"))
+    {
         let click = guard_click_from_action(action);
         if click.component_id != Some(MISSILES_BUTTON)
             || click.missiles_on_before != Some(true)
@@ -2252,6 +2239,42 @@ fn lifecycle_gate_input<'a>(
 }
 
 #[test]
+fn legacy_sparse_protect_confirmation_follows_the_same_tick_enable_snapshot() {
+    let launches = lifecycle_launches();
+    let receipt = json!({
+        "started": true,
+        "protect_tick": 10,
+        "arrived": true,
+        "arrival_tick": 19,
+        "prayers_off_after_arrival": true,
+        "off_tick": 20,
+        "attack_emitted": false,
+        "launches": launches.iter().copied().map(LaunchRecord::json).collect::<Vec<_>>(),
+        "guard_clicks": [
+            {
+                "tick": 10,
+                "component_id": MISSILES_BUTTON,
+                "snapshot": {"prayer_varps": [{"index": MISSILES_VARP, "value": 0}]}
+            },
+            {
+                "tick": 20,
+                "component_id": MISSILES_BUTTON,
+                "snapshot": {"prayer_varps": [{"index": MISSILES_VARP, "value": 1}]}
+            }
+        ]
+    });
+    let parsed = parse_w1_receipt(&receipt).unwrap();
+    let input = parsed.gate_input();
+    assert!(input.legacy_sparse);
+    assert_eq!(missiles_on_at(&input, 10), Some(true));
+    assert_eq!(missiles_on_at(&input, 15), Some(true));
+    assert_eq!(
+        evaluate_w1_gate(W1Mode::Crossing, &input),
+        W1GateDecision::Pass
+    );
+}
+
+#[test]
 fn w1_gate_rejects_a_prayer_return_after_the_first_off_tick() {
     let launches = lifecycle_launches();
     let prayer_ticks = lifecycle_prayer_observations(Some(22));
@@ -2389,7 +2412,6 @@ fn w1_gate_rejects_any_off_observation_in_a_crossing_phase() {
     );
 }
 
-
 #[test]
 fn w1_gate_rejects_a_non_missiles_guard_click_during_the_crossing() {
     let launches = lifecycle_launches();
@@ -2430,8 +2452,9 @@ fn off_click_snapshot_adds_crossing_evidence_at_its_observed_tick() {
         "tick": 20,
         "component_id": MISSILES_BUTTON,
         "snapshot": {
+            "tile": [dest.x, dest.z, dest.level],
             "prayer_varps": [{"index": MISSILES_VARP, "value": 1}],
-            "local_player": {"tile": {"x": dest.x, "z": dest.z, "level": dest.level}}
+            "local_player": {"tile": {"x": dest.x, "z": dest.z + 3, "level": dest.level}}
         }
     })];
     append_guard_crossing_observations(&mut prayer_ticks, &actions, dest, Some(20));
@@ -2441,7 +2464,8 @@ fn off_click_snapshot_adds_crossing_evidence_at_its_observed_tick() {
         cleanup_prayer_observation(&prayer_ticks, 20).and_then(|row| row.missiles_on),
         Some(false)
     );
-    assert_eq!(prayer_ticks[0].phase, PrayerPhase::Cleanup);
+    assert_eq!(prayer_ticks[0].phase, PrayerPhase::Crossing);
+    assert_eq!(prayer_ticks[1].phase, PrayerPhase::Cleanup);
 }
 
 #[test]
@@ -2462,8 +2486,9 @@ fn off_click_snapshot_away_from_destination_is_not_crossing_evidence() {
         "tick": 20,
         "component_id": MISSILES_BUTTON,
         "snapshot": {
+            "tile": [2842, 3605, 0],
             "prayer_varps": [{"index": MISSILES_VARP, "value": 1}],
-            "local_player": {"tile": {"x": 2842, "z": 3605, "level": 0}}
+            "local_player": {"tile": {"x": dest.x, "z": dest.z, "level": dest.level}}
         }
     })];
     append_guard_crossing_observations(&mut prayer_ticks, &actions, dest, Some(20));
@@ -2493,7 +2518,7 @@ fn retained_same_tick_off_row_is_cleanup_only_with_pre_click_on_evidence() {
 }
 
 #[test]
-fn receipt_arrival_uses_local_actor_tile_not_route_head_tile() {
+fn receipt_arrival_uses_host_network_tile_while_rendered_actor_lags() {
     let dest = WorldTile {
         x: 2880,
         z: 3596,
@@ -2503,12 +2528,12 @@ fn receipt_arrival_uses_local_actor_tile_not_route_head_tile() {
         "tile": [dest.x, dest.z, dest.level],
         "local_player": {"tile": {"x": 2842, "z": 3605, "level": 0}}
     });
-    assert!(!receipt_snapshot_at_dest(&route_head_only, dest));
+    assert!(receipt_snapshot_at_dest(&route_head_only, dest));
     let actor_at_dest = json!({
         "tile": [2842, 3605, 0],
         "local_player": {"tile": {"x": dest.x, "z": dest.z, "level": dest.level}}
     });
-    assert!(receipt_snapshot_at_dest(&actor_at_dest, dest));
+    assert!(!receipt_snapshot_at_dest(&actor_at_dest, dest));
 }
 
 #[test]

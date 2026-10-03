@@ -1,8 +1,8 @@
 //! Host-side protected-walk driver. Hold-mode prayer only: no eat, no attack,
-//! no flick. The host follow sites own one driver per armed route.
+//! no flick. The host native follow site owns one driver per armed route.
 use super::arbiter;
 use super::frame::Frame;
-use super::schedule::{reached, InputEffect, OpKind, Schedule};
+use super::schedule::{elapsed, reached, InputEffect, OpKind, Schedule};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole, StyleWhere};
 use super::threats::{StyleObs, ThreatSet};
@@ -214,6 +214,14 @@ impl WalkGuard {
     }
 
     fn observe_protect(&mut self, frame: &Frame<'_>) {
+        // A late on observation may belong to a user, not the admitted click.
+        // Expire even without a wanted threat, before adopting any protect.
+        if self
+            .pending_protect_tick()
+            .is_some_and(|tick| elapsed(frame.tick, tick) > GUARD_PRAYER_WINDOW_TICKS)
+        {
+            self.schedule.timeout(OpKind::Prayer);
+        }
         if let Some(fact) = select::active_protect(frame, &self.tables)
             .and_then(|style| select::protect_fact(&self.tables, style))
         {
@@ -738,6 +746,23 @@ mod tests {
     }
 
     #[test]
+    fn a_protect_observed_after_the_admission_window_is_not_owned() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let click = guard.tick(&scene.view_at(0)).unwrap();
+        guard.admitted(&click, &scene.view_at(0));
+        scene.set_missiles(true);
+        guard.observe_prayer(&scene.view_at(4));
+        assert_eq!(guard.pending_protect(), None);
+        assert_eq!(
+            guard.end(),
+            GuardOp::IfButton { component: 0 },
+            "an expired dropped enable cannot adopt a later user's protect"
+        );
+    }
+
+    #[test]
     fn missiles_above_prayer_base_are_unprotectable_and_send_no_click() {
         let mut scene = Scene::new(37);
         scene.launch_arrow();
@@ -925,7 +950,12 @@ mod tests {
         let mut guard = scene.begin().unwrap();
         let missiles = scene.missiles().button_com;
         let click = guard.tick(&scene.view_at(0)).unwrap();
-        assert_eq!(click, GuardOp::IfButton { component: missiles });
+        assert_eq!(
+            click,
+            GuardOp::IfButton {
+                component: missiles
+            }
+        );
         guard.admitted(&click, &scene.view_at(0));
 
         guard.observe_prayer(&scene.view_at(1));
@@ -941,7 +971,9 @@ mod tests {
         assert_eq!(guard.pending_protect_tick(), None);
         assert_eq!(
             guard.end(),
-            GuardOp::IfButton { component: missiles },
+            GuardOp::IfButton {
+                component: missiles
+            },
             "ending clears only the newly admitted style and never restores the old one"
         );
     }
