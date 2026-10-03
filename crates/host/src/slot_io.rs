@@ -389,6 +389,9 @@ struct UserInput {
     rx: Option<Receiver<InputEv>>,
     keyboard_enabled: bool,
     release_pending: bool,
+    /// Keys this user channel applied. The release latch must not clear
+    /// `key_held` bits set with `GameShell::apply_key` outside `SlotInput`.
+    held_keys: [bool; 128],
 }
 
 impl UserInput {
@@ -398,6 +401,21 @@ impl UserInput {
         self.release_pending = true;
         if let Some(rx) = &self.rx {
             while rx.try_recv().is_ok() {}
+        }
+    }
+
+    fn note_key(&mut self, ch: i32, down: bool) {
+        if ch > 0 && ch < 128 {
+            self.held_keys[ch as usize] = down;
+        }
+    }
+
+    fn release_held_keys(&mut self, shell: &mut GameShell) {
+        for (ch, held) in self.held_keys.iter_mut().enumerate().skip(1) {
+            if *held {
+                shell.apply_key(false, 0, ch as i32);
+                *held = false;
+            }
         }
     }
 }
@@ -434,6 +452,7 @@ impl SlotInput {
                 rx: None,
                 keyboard_enabled: true,
                 release_pending: false,
+                held_keys: [false; 128],
             }),
             authority: NativeInputAuthority::new(),
             mouse: Mutex::new(MouseState::new()),
@@ -462,10 +481,15 @@ impl SlotInput {
     /// Panel/window keyboard focus is independent of mouse click-through.
     /// Losing it detaches outstanding user holds; new mouse input still
     /// works while new keys are gated. No queued synthetic ups are needed.
+    /// Re-enable latches that release without discarding undrained click-through.
     pub fn set_keyboard_enabled(&self, on: bool) {
         let mut user = self.rx.lock().unwrap();
         if user.keyboard_enabled != on {
-            user.detach();
+            if on {
+                user.release_pending = true;
+            } else {
+                user.detach();
+            }
             user.keyboard_enabled = on;
         }
     }
@@ -481,6 +505,8 @@ impl SlotInput {
     pub fn prefer_cpu(&self) -> bool {
         self.prefer_cpu.load(Ordering::Relaxed)
     }
+    /// Replace the user receiver. Releases keys this channel held and does
+    /// not re-press a key the operator is still holding.
     pub fn connect_rx(&self, rx: Receiver<InputEv>) {
         let mut user = self.rx.lock().unwrap();
         user.detach();
@@ -512,11 +538,7 @@ impl SlotInput {
         let mut user = self.rx.lock().unwrap();
         let mut mouse = self.mouse.lock().unwrap();
         if user.release_pending {
-            for ch in 1..shell.key_held.len() {
-                if shell.key_held[ch] != 0 {
-                    shell.apply_key(false, 0, ch as i32);
-                }
-            }
+            user.release_held_keys(shell);
             Self::release_user_mouse(shell, &mut mouse);
             if mouse.pending == MouseOwner::User {
                 shell.clear_unlatched_click();
@@ -525,10 +547,16 @@ impl SlotInput {
             user.release_pending = false;
         }
         let enabled = !discard && self.enabled.load(Ordering::Relaxed);
-        let Some(rx) = &user.rx else {
-            return;
-        };
-        while let Ok(ev) = rx.try_recv() {
+        loop {
+            let ev = {
+                let Some(rx) = user.rx.as_ref() else {
+                    return;
+                };
+                match rx.try_recv() {
+                    Ok(ev) => ev,
+                    Err(_) => break,
+                }
+            };
             match ev {
                 InputEv::Move { x, y } if enabled => shell.apply_mouse_move(x, y),
                 InputEv::Down { button, x, y } if enabled => {
@@ -539,6 +567,7 @@ impl SlotInput {
                 InputEv::Up => Self::release_user_mouse(shell, &mut mouse),
                 InputEv::Key { down, ch } if !down || (enabled && user.keyboard_enabled) => {
                     shell.apply_key(down, 0, ch);
+                    user.note_key(ch, down);
                 }
                 InputEv::Move { .. } | InputEv::Down { .. } | InputEv::Key { .. } => {}
             }
@@ -1349,6 +1378,79 @@ mod tests {
         assert_eq!(shell.key_held[65], 1);
         assert_eq!(shell.poll_key(), 65);
         assert_eq!(shell.mouse_button, 0);
+    }
+
+    #[test]
+    fn keyboard_reenable_keeps_undrained_click() {
+        let input = live_input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        input.set_enabled(true);
+        let mut shell = GameShell::new();
+        input.set_keyboard_enabled(false);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 20,
+            y: 30,
+        })
+        .unwrap();
+        input.set_keyboard_enabled(true);
+        assert_eq!(input.consume_native_frame(&mut shell), MouseOwner::User);
+        assert_eq!(shell.mouse_button, 1);
+        assert_eq!(
+            (
+                shell.mouse_click_button,
+                shell.mouse_click_x,
+                shell.mouse_click_y
+            ),
+            (1, 20, 30)
+        );
+    }
+
+    #[test]
+    fn release_latch_preserves_non_user_keys() {
+        let input = live_input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        input.set_enabled(true);
+        let mut shell = GameShell::new();
+        input.drain(&mut shell);
+        shell.apply_key(true, 0, 65);
+        tx.send(InputEv::Key { down: true, ch: 1 }).unwrap();
+        input.drain(&mut shell);
+        assert_eq!((shell.key_held[1], shell.key_held[65]), (1, 1));
+        input.set_enabled(false);
+        input.drain(&mut shell);
+        assert_eq!(shell.key_held[1], 0);
+        assert_eq!(shell.key_held[65], 1);
+        assert_eq!(shell.poll_key(), 65);
+        assert_eq!(
+            shell.poll_key(),
+            -1,
+            "latch up must not enter the chat ring"
+        );
+    }
+
+    #[test]
+    fn same_slot_connect_rx_releases_without_repress() {
+        let input = live_input();
+        let (tx, rx) = std::sync::mpsc::channel();
+        input.connect_rx(rx);
+        input.set_enabled(true);
+        tx.send(InputEv::Key { down: true, ch: 65 }).unwrap();
+        let mut shell = GameShell::new();
+        input.drain(&mut shell);
+        assert_eq!(shell.key_held[65], 1);
+        assert_eq!(shell.poll_key(), 65);
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        input.connect_rx(rx2);
+        input.drain(&mut shell);
+        assert_eq!(shell.key_held[65], 0);
+        assert_eq!(shell.poll_key(), -1, "same-slot reattach must not re-press");
+        tx2.send(InputEv::Key { down: true, ch: 2 }).unwrap();
+        input.drain(&mut shell);
+        assert_eq!(shell.key_held[2], 1);
+        assert_eq!(shell.key_held[65], 0);
     }
 
     #[test]
