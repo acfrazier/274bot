@@ -1094,6 +1094,14 @@ impl FishBankTripReceipt {
             .sum()
     }
 
+    fn bank_increased_for(&self, id: i32, bank_after: &BTreeMap<i32, i32>) -> bool {
+        self.expected_items.get(&id).is_some_and(|expected| {
+            let before = self.bank_before.get(&id).copied().unwrap_or(0);
+            let after = bank_after.get(&id).copied().unwrap_or(0);
+            after.saturating_sub(before) >= *expected
+        })
+    }
+
     fn observe_deposit(
         &mut self,
         inventory_after: &BTreeMap<i32, i32>,
@@ -1123,11 +1131,10 @@ impl FishBankTripReceipt {
         if bank_loaded {
             self.bank_loaded = true;
             self.bank_after = bank_after.clone();
-            self.bank_increased = self.expected_items.iter().all(|(id, expected)| {
-                let before = self.bank_before.get(id).copied().unwrap_or(0);
-                let after = bank_after.get(id).copied().unwrap_or(0);
-                after.saturating_sub(before) >= *expected
-            });
+            self.bank_increased = self
+                .expected_items
+                .keys()
+                .all(|id| self.bank_increased_for(*id, bank_after));
         }
         let casket_delta = self
             .bank_after
@@ -2210,8 +2217,17 @@ impl GatherSlot {
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
-        // Inventory and equipment arrive in separate packets. A removed tool
-        // must reappear in an observed container within the settlement bound.
+        // Inventory, equipment and bank counts arrive in separate packets.
+        // Incidental deposits settle only after their expected bank increase;
+        // protected tools still must reappear in inventory or equipment.
+        let bank_counts = if !self.unsettled_items.is_empty()
+            && self.witness.pending_fish_bank_trip.is_some()
+            && self.snapshot.bank_loaded()
+        {
+            self.snapshot_bank_counts()
+        } else {
+            BTreeMap::new()
+        };
         self.unsettled_items.retain(|&(id, count), _| {
             !observation
                 .inventory
@@ -2222,6 +2238,14 @@ impl GatherSlot {
                     .equipment()
                     .iter()
                     .any(|item| item.def.id == id && item.count == count)
+                && !self
+                    .witness
+                    .pending_fish_bank_trip
+                    .as_ref()
+                    .is_some_and(|receipt| {
+                        receipt.expected_incidentals.contains_key(&id)
+                            && receipt.bank_increased_for(id, &bank_counts)
+                    })
         });
         if let Some((&(id, count), _)) = self
             .unsettled_items
@@ -6476,6 +6500,13 @@ mod fish_bank_receipt_tests {
         );
         assert_eq!(first.expected_product_count(), 26);
         assert_eq!(first.expected_incidentals.get(&CASKET_ID), Some(&1));
+        assert!(!first.bank_increased_for(CASKET_ID, &BTreeMap::new()));
+        assert!(first.bank_increased_for(CASKET_ID, &first_bank));
+        assert!(!first.bank_increased_for(HARPOON_ID, &carried_tool));
+        let mut existing_casket = first.clone();
+        existing_casket.bank_before = counts(&[(CASKET_ID, 1)]);
+        assert!(!existing_casket.bank_increased_for(CASKET_ID, &first_bank));
+        assert!(existing_casket.bank_increased_for(CASKET_ID, &counts(&[(CASKET_ID, 2)])));
         first
             .observe_deposit(&carried_tool, true, &first_bank, 27, true)
             .unwrap();
