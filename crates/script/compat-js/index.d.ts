@@ -1457,11 +1457,11 @@ export function retreatAim(a: RetreatAim): {
 /** Whether melee has to walk to its target rather than hold a tile and wait for one. */
 export function chaseMode(style: Style, fireAtRange: boolean): boolean;
 export const PROTECT_FROM_MELEE = "Protect from Melee";
-/** The overhead a style keeps up on the site, or null. */
+/** Site/advisory overhead helper; the live Hunt fight picker is native. */
 export function prayerFor(style: Style, fireAtRange: boolean): string | null;
 export const PRAYER_SIP_FLOOR = 8;
 export const PRAYER_SIP_FRACTION = 0.15;
-/** Whether the prayer pool is low enough to sip: under the floor, or under the fraction of the level. */
+/** Whether to sip at the native C5 floor: max(3, max - (7 + floor(max / 4))). */
 export function prayerSipDue(points: number, max: number): boolean;
 export const LOOT_REACH = 10;
 export const LOOT_REACH_OPEN = 14;

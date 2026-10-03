@@ -20,6 +20,7 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
+use api::snapshot::{ActorKind, ProjectileView};
 use flatbuffers::{
     root_with_opts, FlatBufferBuilder, InvalidFlatbuffer, VerifierOptions, WIPOffset,
 };
@@ -32,10 +33,10 @@ pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand, Booth, Carry,
-    ChatLine, ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch,
-    MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
-    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface, Snapshot,
-    Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
+    ChatLine, ChatOption, Collision, CombatProjectile, CombatStyle, InspectHop, Interact,
+    InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow,
+    PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface,
+    Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -201,7 +202,7 @@ pub struct ChatOptionInput<'a> {
     pub com_id: i32,
 }
 
-/// One inv/bank/equipment row posted from `ItemView`.
+/// One inv/bank/equipment row posted from the live snapshot.
 #[derive(Clone, Copy)]
 pub struct ItemRowInput<'a> {
     pub name: Option<&'a str>,
@@ -470,6 +471,9 @@ pub struct NativeFactsInput<'a> {
     /// Bank item packet generation (`-1` while closed), not the open/close
     /// session identity. `None` omits the slot and keeps the last value.
     pub bank_snapshot_generation: Option<i64>,
+    /// Live projectile classification inputs from the already-observed game
+    /// snapshot. `None` omits the page; `Some(&[])` explicitly clears it.
+    pub projectiles: Option<&'a [ProjectileView]>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -1168,6 +1172,8 @@ pub struct SnapshotFingerprint {
     /// nothing — one family, so a delta cannot post one half.
     pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
+    /// `(spotanim, target player slot)` — only policy-relevant projectile facts.
+    pub projectiles: Option<Vec<(i32, Option<i32>)>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
     pub user_move_intent_seq: u64,
 
@@ -1459,6 +1465,20 @@ impl SnapshotFingerprint {
                 generation: board.generation,
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
+            projectiles: native.projectiles.map(|rows| {
+                rows.iter()
+                    .map(|projectile| {
+                        (
+                            projectile.spotanim,
+                            projectile.target.and_then(|target| {
+                                (target.kind == ActorKind::Player)
+                                    .then(|| i32::try_from(target.index).ok())
+                                    .flatten()
+                            }),
+                        )
+                    })
+                    .collect()
+            }),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
             user_move_intent_seq: input.user_move_intent_seq,
             walk_outcome_seq: native.walk_outcome_seq,
@@ -1570,6 +1590,7 @@ pub struct DeltaMask {
     pub ours: bool,
     pub npcs: bool,
     pub locs: bool,
+    pub projectiles: bool,
     pub players: bool,
     pub ground: bool,
     pub equipment: bool,
@@ -1680,6 +1701,7 @@ impl DeltaMask {
             players: true,
             ground: true,
             equipment: true,
+            projectiles: true,
             chat_open: true,
             chat_continue: true,
             chat_text: true,
@@ -1782,6 +1804,7 @@ impl DeltaMask {
             ours: next.ours != last.ours,
             npcs: next.npcs != last.npcs,
             locs: next.locs != last.locs,
+            projectiles: next.projectiles != last.projectiles,
             players: next.players != last.players,
             ground: next.ground != last.ground,
             equipment: next.equipment != last.equipment,
@@ -2445,6 +2468,17 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let projectiles_off = if mask.projectiles {
+        native.projectiles.map(|rows| {
+            let offsets = rows
+                .iter()
+                .map(|projectile| combat_projectile_off(b, projectile))
+                .collect::<Vec<_>>();
+            b.create_vector(&offsets)
+        })
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -2799,6 +2833,9 @@ fn encode_snapshot_masked_into(
     if let Some(off) = api_progress_slot {
         table.add_api_progress(off);
     }
+    if let Some(off) = projectiles_off {
+        table.add_projectiles(off);
+    }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
     let root = table.finish();
@@ -2810,6 +2847,22 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'
     table.add_x(t.x);
     table.add_z(t.z);
     table.add_level(t.level);
+    table.finish()
+}
+fn combat_projectile_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    projectile: &ProjectileView,
+) -> WIPOffset<CombatProjectile<'b>> {
+    let mut table = CombatProjectileBuilder::new(b);
+    table.add_spotanim(projectile.spotanim);
+    if let Some(target) = projectile
+        .target
+        .filter(|target| target.kind == ActorKind::Player)
+    {
+        if let Ok(index) = i32::try_from(target.index) {
+            table.add_target_player_index(index);
+        }
+    }
     table.finish()
 }
 /// The largest encoded settings vector admitted for `gather-run`.

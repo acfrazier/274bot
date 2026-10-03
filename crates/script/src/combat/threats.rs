@@ -460,6 +460,38 @@ impl ThreatSet {
         self.retire_expired(tick);
         events
     }
+    /// Hunt's isolate publishes the same actor identity, target, and
+    /// in-combat facts in compact scene rows. Retain native fact-backed
+    /// threat hints without reconstructing `NpcView` or a `Frame`.
+    pub fn observe_hunt(
+        &mut self,
+        npcs: impl IntoIterator<Item = (i32, i32, bool, i32, i32)>,
+        local_player_slot: i32,
+        tables: &CombatTables,
+        tick: u16,
+    ) {
+        self.expire_unknown(tick);
+        self.expire_rows(tick);
+        self.clear_npc_hints();
+        for (npc_index, ident, in_combat, target_kind, target_index) in npcs {
+            if !in_combat || target_kind != 2 || target_index != local_player_slot {
+                continue;
+            }
+            let Ok(index) = u16::try_from(npc_index) else {
+                continue;
+            };
+            let actor = ActorRef {
+                kind: ActorKind::Npc,
+                index,
+            };
+            self.forget_reused_slot(actor, ident);
+            let Some(row_index) = self.ensure_npc(actor, ident, tables, tick) else {
+                continue;
+            };
+            self.rows[row_index].set_fact_live(true);
+        }
+        self.retire_expired(tick);
+    }
 
     /// Live rows, including an NPC's current in-combat hint and recent event rows.
     pub fn iter(&self, tick: u16) -> impl Iterator<Item = &Threat> {
@@ -626,7 +658,7 @@ impl ThreatSet {
             return;
         }
         self.forget_reused_slot(actor, ident);
-        let Some(row_index) = self.ensure_npc(npc, actor, ident, tables, tick) else {
+        let Some(row_index) = self.ensure_npc(actor, ident, tables, tick) else {
             return;
         };
         let row = &mut self.rows[row_index];
@@ -1056,7 +1088,7 @@ impl ThreatSet {
                     .and_then(|id| i32::try_from(id).ok())
                     .unwrap_or(-1);
                 self.forget_reused_slot(actor, ident);
-                self.ensure_npc(npc, actor, ident, tables, tick)
+                self.ensure_npc(actor, ident, tables, tick)
             }
             ActorKind::Player => {
                 let player = frame
@@ -1077,7 +1109,6 @@ impl ThreatSet {
 
     fn ensure_npc(
         &mut self,
-        _npc: &NpcView,
         actor: ActorRef,
         ident: i32,
         tables: &CombatTables,

@@ -18,6 +18,9 @@ pub(super) struct HoldRuntime {
     dest: Option<Tile>,
     walk_token: Option<u64>,
     after_sustain: bool,
+    threats: ThreatSet,
+    pending_protect: Option<i32>,
+    tables: Option<Arc<CombatTables>>,
     rotate_index: Option<i32>,
 }
 
@@ -31,7 +34,15 @@ impl HoldRuntime {
             walk_token: None,
             after_sustain: false,
             rotate_index: None,
+            threats: ThreatSet::default(),
+            pending_protect: None,
+            tables: hunt_combat_tables(),
         }
+    }
+
+    fn protect_click(&mut self) -> Option<i32> {
+        let tables = self.tables.as_deref()?;
+        protect_button(&mut self.threats, &mut self.pending_protect, tables)
     }
 
     fn now(&self) -> Instant {
@@ -192,6 +203,9 @@ fn hold_next_effect(rt: &mut HoldRuntime, proj: &Projection, reply: Option<&Valu
     if rt.clock.frozen() {
         return rt.emit(json!({ "kind": "wait" }));
     }
+    if let Some(component_id) = rt.protect_click() {
+        return rt.emit(json!({ "kind": "if-button", "component_id": component_id }));
+    }
     match rt.mode {
         HoldMode::Idle => hold_start(rt, proj),
         HoldMode::NeedWalk => hold_emit_walk(rt, proj),
@@ -337,5 +351,20 @@ impl HuntKind for HoldKind {
 
     fn validate(_token: u64, proj: &Projection) -> bool {
         hold_validate_inner(proj, &observation())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_consumer_emits_the_native_missiles_if_button() {
+        let button_com = super::super::seed_protect_observation();
+        let mut runtime = HoldRuntime::new(23);
+        let projection = super::super::parse_projection(&serde_json::json!({}));
+
+        let effect = hold_next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button_com);
     }
 }

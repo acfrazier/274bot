@@ -4,6 +4,7 @@ mod arbiter;
 pub mod frame;
 pub mod guard;
 mod machine;
+pub mod policy;
 pub mod prayer;
 pub mod request;
 pub mod schedule;
@@ -15,6 +16,7 @@ pub mod style {
 }
 pub use guard::{GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::Combat;
+pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};
 pub use prayer::{begin_clear_prayers, ClearPrayers, Hygiene, PrayerSweepReport};
 pub use request::*;
 pub use select::{facts, ident, retaliate, taken_by_another};

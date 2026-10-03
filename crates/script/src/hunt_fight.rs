@@ -25,6 +25,7 @@ pub use walk_spot::{
     walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive,
 };
 
+use crate::combat::{policy, tables::CombatTables, threats::ThreatSet};
 use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
 use crate::machine::Ended;
 use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
@@ -33,6 +34,7 @@ use api::snapshot::WorldTile;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const FIGHT_MS: u64 = 120_000;
@@ -75,6 +77,9 @@ thread_local! {
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
     /// Test seam: a forced line-of-sight answer. Never set from a snapshot.
     static LOS_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+}
+fn hunt_combat_tables() -> Option<Arc<CombatTables>> {
+    crate::supply_v2::selected_data().and_then(|data| CombatTables::build(data).ok())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -409,6 +414,9 @@ struct FightRuntime {
     skip: HashMap<i32, Instant>,
     seen: HashMap<i32, Sighting>,
     pending_npc: Option<FightNpc>,
+    tables: Option<Arc<CombatTables>>,
+    threats: ThreatSet,
+    pending_protect: Option<i32>,
     idle_then: IdleThen,
     idle_after_sustain: bool,
     wait_until: Option<Instant>,
@@ -446,6 +454,9 @@ impl FightRuntime {
             skip: HashMap::new(),
             seen: HashMap::new(),
             pending_npc: None,
+            tables: hunt_combat_tables(),
+            threats: ThreatSet::default(),
+            pending_protect: None,
             idle_then: IdleThen::Continue,
             idle_after_sustain: false,
             wait_until: None,
@@ -460,6 +471,10 @@ impl FightRuntime {
 
     fn now(&self) -> Instant {
         self.clock.now()
+    }
+    fn protect_click(&mut self) -> Option<i32> {
+        let tables = self.tables.as_deref()?;
+        protect_button(&mut self.threats, &mut self.pending_protect, tables)
     }
 
     fn apply_freeze(&mut self, paused: bool, held: bool) {
@@ -819,7 +834,66 @@ fn token_of(input: &Value) -> u64 {
         .and_then(|t| t.as_u64().or_else(|| t.as_i64().map(|i| i as u64)))
         .unwrap_or(0)
 }
-
+/// Select the native per-tick protect from borrowed isolate scene pages.
+/// `pending` prevents a queued toggle from being emitted again before the
+/// resulting prayer varp is observed on.
+fn protect_button(
+    threats: &mut ThreatSet,
+    pending: &mut Option<i32>,
+    tables: &CombatTables,
+) -> Option<i32> {
+    observed::with(|scene| {
+        let session = scene.since_login();
+        let local_slot = session.self_slot()?;
+        let npcs = session.npcs()?;
+        let projectiles = session.projectiles()?;
+        let varps = session.varps()?;
+        let tick = scene.session_tick().unwrap_or_default() as u16;
+        threats.observe_hunt(
+            npcs.iter().map(|npc| {
+                (
+                    npc.index,
+                    npc.id,
+                    npc.in_combat,
+                    npc.target_kind,
+                    npc.target_index,
+                )
+            }),
+            local_slot,
+            tables,
+            tick,
+        );
+        let local_index = usize::try_from(local_slot).ok()?;
+        let wanted = policy::wanted_protect_hunt(
+            threats,
+            local_index,
+            projectiles.iter().map(|projectile| {
+                (
+                    projectile.spotanim,
+                    projectile
+                        .target_player_index
+                        .and_then(|index| usize::try_from(index).ok()),
+                )
+            }),
+            tables,
+            tick,
+            false,
+            false,
+        )?;
+        if varps
+            .iter()
+            .any(|row| row.index == wanted.varp && row.value == 1)
+        {
+            *pending = None;
+            return None;
+        }
+        if *pending == Some(wanted.varp) {
+            return None;
+        }
+        *pending = Some(wanted.varp);
+        Some(wanted.button_com)
+    })
+}
 fn observation() -> FightObservation {
     observed::with(FightObservation::from_scene)
 }
@@ -1746,6 +1820,9 @@ fn next_effect(rt: &mut FightRuntime, proj: &Projection, reply: Option<&Value>) 
     if rt.clock.frozen() {
         return rt.emit(json!({ "kind": "wait" }));
     }
+    if let Some(component_id) = rt.protect_click() {
+        return rt.emit(json!({ "kind": "if-button", "component_id": component_id }));
+    }
     match rt.mode {
         Mode::Idle => rt.start_execute(proj),
         Mode::Status => {
@@ -2090,4 +2167,58 @@ pub(crate) fn reset(token: u64) {
 pub(crate) fn interrupt_watch(token: u64) {
     FightKind::ensure(token);
     with_runtime(token, FightRuntime::interrupt_watch);
+}
+#[cfg(test)]
+fn seed_protect_observation() -> i32 {
+    crate::supply_v2::configure(Some(
+        api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("R289 combat test data"),
+    ));
+    let tables = hunt_combat_tables().expect("selected Hunt combat tables");
+    let cow_id = tables
+        .selected()
+        .npc_by_config("cow")
+        .expect("R289 cow content")
+        .id;
+    let missiles = tables
+        .prayer(crate::combat::tables::PrayerRole::Protect, 1)
+        .expect("Protect from Missiles");
+    let (button_com, varp) = (missiles.button_com, missiles.varp);
+    observed::replace(1, true, |post| {
+        post.self_slot(1)
+            .npcs(vec![EntityRow {
+                index: 7,
+                id: cow_id,
+                in_combat: true,
+                target_kind: 2,
+                target_index: 1,
+                ..EntityRow::default()
+            }])
+            .projectiles(vec![observed::ProjectileRow {
+                spotanim: 9,
+                target_player_index: Some(1),
+            }])
+            .varps(vec![observed::VarpRow {
+                index: varp,
+                value: 0,
+            }]);
+    });
+    button_com
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fight_consumer_emits_the_native_missiles_if_button() {
+        let button_com = seed_protect_observation();
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        runtime.mode = Mode::Status;
+        let projection = parse_projection(&json!({}));
+
+        let effect = next_effect(&mut runtime, &projection, None);
+        assert_eq!(effect["kind"], "if-button");
+        assert_eq!(effect["component_id"], button_com);
+    }
 }
