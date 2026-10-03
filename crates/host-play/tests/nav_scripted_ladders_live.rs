@@ -29,6 +29,28 @@ fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) 
     host::publish_snapshot(snapshot, client, pump.drain_client(client));
 }
 
+fn save_arrival_frame(client: &mut Client) -> PathBuf {
+    let evidence_dir =
+        PathBuf::from(std::env::var_os("NAV_GANGPLANK_EVIDENCE_DIR").expect("evidence directory"));
+    std::fs::create_dir_all(&evidence_dir).expect("create gangplank evidence directory");
+    let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
+    let client::render::backend::FrameOutput::PixMap(pixels) = renderer.mainredraw(client) else {
+        panic!("CPU arrival capture returned a GPU frame");
+    };
+    let mut ppm = format!("P6\n{} {}\n255\n", pixels.width, pixels.height).into_bytes();
+    ppm.reserve(pixels.pixels.len() * 3);
+    for pixel in pixels.pixels {
+        ppm.extend_from_slice(&[
+            ((pixel >> 16) & 0xff) as u8,
+            ((pixel >> 8) & 0xff) as u8,
+            (pixel & 0xff) as u8,
+        ]);
+    }
+    let path = evidence_dir.join("gangplank-2084-arrival.ppm");
+    std::fs::write(&path, ppm).expect("write gangplank arrival framebuffer");
+    path
+}
+
 fn wait_for(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
@@ -257,4 +279,430 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
     };
     assert_eq!(cellar_landing, Some(expected_landing), "{receipt}");
     assert_eq!(receipt["scene_state"], 2);
+}
+
+/// A fresh account is staged on the east stand of the Viking seer ladder.
+/// The route and live settlement must both use the actual take-off tile, not
+/// the blocked ladder-top tile at the loc anchor.
+#[test]
+#[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_RELATIVE_LADDER_RECEIPT and disposable HOME"]
+fn live_viking_seer_ladder_uses_player_relative_landing() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "nr".into());
+    assert!(!prefix.is_empty());
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let receipt_path =
+        PathBuf::from(std::env::var_os("NAV_RELATIVE_LADDER_RECEIPT").expect("receipt path"));
+    let origin = WorldTile {
+        x: 2632,
+        z: 3663,
+        level: 0,
+    };
+    let destination = WorldTile { level: 2, ..origin };
+    let delta = WorldTile {
+        x: 0,
+        z: 0,
+        level: 2,
+    };
+    let profile = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(45594),
+        http_port: Some(2080),
+        engine_dir: Some(PathBuf::from(
+            std::env::var_os("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),
+        )),
+        nav_pack: Some(PathBuf::from(
+            std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
+        )),
+        ..ProfileOptions::default()
+    }
+    .resolve(None)
+    .expect("local profile")
+    .bind()
+    .expect("bound local profile");
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
+    let world = template.world().expect("explicit world pack");
+    let ladder_edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 4163)
+        .expect("Viking seer ladder edge in packed world");
+    assert_eq!(ladder_edge.player_delta, Some(delta));
+    assert_eq!(
+        ladder_edge.at,
+        WorldTile {
+            x: 2631,
+            z: 3663,
+            level: 0,
+        }
+    );
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        origin,
+        destination,
+        FindOptions::default(),
+        &nav::WorldState::empty().with_map_members(profile.map_members()),
+    )
+    .expect("non-anchor Viking seer ladder route");
+    let planned_edge = route
+        .legs
+        .iter()
+        .find_map(|leg| match leg {
+            Leg::Transport { edge } if edge.loc_id == 4163 => Some(edge.clone()),
+            _ => None,
+        })
+        .expect("route crosses Viking seer ladder");
+    assert_eq!(planned_edge.to, destination);
+
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .unwrap();
+    client.draw = false;
+    client.maininit();
+    assert!(!client.error_loading);
+    assert!(interact::login(&mut client, &name, &name, false));
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame() && s.attached() && s.scene_state() == 2
+    });
+    // The new account is staged at the real non-anchor take-off stand; this
+    // ladder has no quest, skill, or varp gate in its content handler.
+    interact::seed_at(&mut client, origin.level, origin.x, origin.z);
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame()
+            && s.scene_state() == 2
+            && api::snapshot::ReadContext::new(s).world_tile() == Some(origin)
+    });
+    let mut traveller = Traveller::new();
+    let observed_tile = Cell::new(None);
+    let sent_tile = Cell::new(None);
+    let mut saw_attempt = false;
+    let mut observed_landing = None;
+    let mut events = Vec::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&world.graph.edges),
+        on_event: Some(Box::new(|event| {
+            if matches!(
+                &event,
+                TravelEvent::TransportAttempt {
+                    expected_id: 4163,
+                    refusal: None,
+                    ..
+                }
+            ) {
+                saw_attempt = true;
+                sent_tile.set(observed_tile.get());
+            }
+            events.push(format!("{event:?}"));
+        })),
+        ..TravelOptions::default()
+    };
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut last_tick = None;
+    let outcome = loop {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        let here = api::snapshot::ReadContext::new(&snapshot).world_tile();
+        observed_tile.set(here);
+        if observed_landing.is_none() {
+            if let (Some(sent), Some(here)) = (sent_tile.get(), here) {
+                if here != sent {
+                    observed_landing = Some(here);
+                }
+            }
+        }
+        if last_tick != Some(snapshot.tick()) {
+            last_tick = Some(snapshot.tick());
+            if let Some(outcome) =
+                traveller.follow(&mut client, &snapshot, route.clone(), &mut options)
+            {
+                break Some(outcome);
+            }
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    drop(options);
+    let sent = sent_tile.get();
+    let expected_landing = sent.map(|sent| WorldTile {
+        x: sent.x.checked_add(delta.x).expect("landing x fits"),
+        z: sent.z.checked_add(delta.z).expect("landing z fits"),
+        level: sent
+            .level
+            .checked_add(delta.level)
+            .expect("landing level fits"),
+    });
+    let receipt = json!({
+        "account": name,
+        "loc_id": 4163,
+        "origin": origin,
+        "destination": destination,
+        "delta": delta,
+        "route": format!("{route:?}"),
+        "planned_edge": {"at": planned_edge.at, "to": planned_edge.to, "player_delta": planned_edge.player_delta},
+        "events": events,
+        "attempt": saw_attempt,
+        "sent_tile": sent,
+        "observed_landing": observed_landing,
+        "expected_landing": expected_landing,
+        "outcome": format!("{outcome:?}"),
+        "final_tile": snapshot.tile(),
+        "ingame": snapshot.ingame(),
+        "scene_state": snapshot.scene_state()
+    });
+    if let Some(parent) = receipt_path.parent() {
+        std::fs::create_dir_all(parent).expect("receipt directory");
+    }
+    std::fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
+    )
+    .expect("write receipt");
+    println!("{}", serde_json::to_string_pretty(&receipt).unwrap());
+    client.logout();
+    assert!(
+        matches!(outcome, Some(TravelOutcome::Arrived { at }) if at == destination),
+        "{receipt}"
+    );
+    assert!(saw_attempt, "{receipt}");
+    assert_eq!(sent, Some(origin), "{receipt}");
+    assert_eq!(observed_landing, expected_landing, "{receipt}");
+    assert_eq!(expected_landing, Some(destination), "{receipt}");
+    assert_eq!(
+        snapshot.tile(),
+        Some((destination.x, destination.z, destination.level))
+    );
+    assert_eq!(snapshot.scene_state(), 2);
+}
+
+/// Live Karamja ship-plank proof. A fresh account is teleported onto the
+/// Port Sarim ship deck, then crosses `karamjashipplank_off` from the same
+/// non-anchor takeoff observed in the reported defect.
+#[test]
+#[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_GANGPLANK_RECEIPT, NAV_GANGPLANK_EVIDENCE_DIR and disposable HOME"]
+fn live_karamja_gangplank_2084_uses_player_relative_landing() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "gp3".into());
+    assert!(!prefix.is_empty());
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let receipt_path =
+        PathBuf::from(std::env::var_os("NAV_GANGPLANK_RECEIPT").expect("receipt path"));
+    let origin = WorldTile {
+        x: 3030,
+        z: 3217,
+        level: 1,
+    };
+    let destination = WorldTile {
+        x: 3027,
+        z: 3217,
+        level: 0,
+    };
+    let delta = WorldTile {
+        x: -3,
+        z: 0,
+        level: -1,
+    };
+    let profile = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(45594),
+        http_port: Some(2080),
+        cache_dir: Some(PathBuf::from(
+            std::env::var_os("BOT_CACHE_DIR").expect("copied BOT_CACHE_DIR"),
+        )),
+        engine_dir: Some(PathBuf::from(
+            std::env::var_os("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),
+        )),
+        nav_pack: Some(PathBuf::from(
+            std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
+        )),
+        ..ProfileOptions::default()
+    }
+    .resolve(None)
+    .expect("local profile")
+    .bind()
+    .expect("bound local profile");
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
+    let world = template.world().expect("explicit world pack");
+    let plank_edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 2084)
+        .expect("Karamja ship gangplank edge in packed world");
+    assert_eq!(plank_edge.player_delta, Some(delta));
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        origin,
+        destination,
+        FindOptions::default(),
+        &nav::WorldState::empty().with_map_members(profile.map_members()),
+    )
+    .expect("route across Karamja ship gangplank");
+    let (transport_index, planned_edge) = route
+        .legs
+        .iter()
+        .enumerate()
+        .find_map(|(index, leg)| match leg {
+            Leg::Transport { edge } if edge.loc_id == 2084 => Some((index, edge.clone())),
+            _ => None,
+        })
+        .expect("route crosses gangplank 2084");
+    let planned_takeoff = route.legs[..transport_index]
+        .iter()
+        .rev()
+        .find_map(|leg| match leg {
+            Leg::Walk { tiles } => tiles.last().copied(),
+            Leg::Transport { .. } => None,
+        })
+        .unwrap_or(origin);
+    assert_eq!(
+        planned_edge.landing_from(planned_takeoff),
+        Some(destination)
+    );
+    assert_eq!(planned_edge.to, destination);
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .unwrap();
+    client.draw = false;
+    client.maininit();
+    assert!(!client.error_loading);
+    assert!(interact::login(&mut client, &name, &name, false));
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame() && s.attached() && s.scene_state() == 2
+    });
+    interact::seed_at(&mut client, origin.level, origin.x, origin.z);
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame()
+            && s.scene_state() == 2
+            && api::snapshot::ReadContext::new(s).world_tile() == Some(origin)
+    });
+
+    let mut traveller = Traveller::new();
+    let observed_tile = Cell::new(None);
+    let sent_tile = Cell::new(None);
+    let mut saw_attempt = false;
+    let mut observed_landing = None;
+    let mut events = Vec::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        edges: Some(&world.graph.edges),
+        on_event: Some(Box::new(|event| {
+            if matches!(
+                &event,
+                TravelEvent::TransportAttempt {
+                    expected_id: 2084,
+                    refusal: None,
+                    ..
+                }
+            ) {
+                saw_attempt = true;
+                sent_tile.set(observed_tile.get());
+            }
+            events.push(format!("{event:?}"));
+        })),
+        ..TravelOptions::default()
+    };
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut last_tick = None;
+    let outcome = loop {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        let here = api::snapshot::ReadContext::new(&snapshot).world_tile();
+        observed_tile.set(here);
+        if observed_landing.is_none() {
+            if let (Some(sent), Some(here)) = (sent_tile.get(), here) {
+                if here != sent && here.level == destination.level {
+                    observed_landing = Some(here);
+                }
+            }
+        }
+        if last_tick != Some(snapshot.tick()) {
+            last_tick = Some(snapshot.tick());
+            if let Some(outcome) =
+                traveller.follow(&mut client, &snapshot, route.clone(), &mut options)
+            {
+                break Some(outcome);
+            }
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    drop(options);
+    let sent = sent_tile.get();
+    let expected_landing = sent.map(|sent| WorldTile {
+        x: sent.x.checked_add(delta.x).expect("landing x fits"),
+        z: sent.z.checked_add(delta.z).expect("landing z fits"),
+        level: sent
+            .level
+            .checked_add(delta.level)
+            .expect("landing level fits"),
+    });
+    // Headless traversal keeps rendering disabled; enable one frame so the retained
+    // arrival PNG shows the actual settled scene instead of a blank framebuffer.
+    client.draw = true;
+    let framebuffer = save_arrival_frame(&mut client);
+    let receipt = json!({
+        "account": name,
+        "loc_id": 2084,
+        "origin": origin,
+        "destination": destination,
+        "delta": delta,
+        "route": format!("{route:?}"),
+        "framebuffer_ppm": framebuffer.display().to_string(),
+        "planned_edge": {"at": planned_edge.at, "to": planned_edge.to, "player_delta": planned_edge.player_delta},
+        "events": events,
+        "attempt": saw_attempt,
+        "sent_tile": sent,
+        "observed_landing": observed_landing,
+        "expected_landing": expected_landing,
+        "outcome": format!("{outcome:?}"),
+        "final_tile": snapshot.tile(),
+        "ingame": snapshot.ingame(),
+        "scene_state": snapshot.scene_state()
+    });
+    if let Some(parent) = receipt_path.parent() {
+        std::fs::create_dir_all(parent).expect("receipt directory");
+    }
+    std::fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
+    )
+    .expect("write receipt");
+    println!("{}", serde_json::to_string_pretty(&receipt).unwrap());
+    client.logout();
+    assert!(
+        matches!(outcome, Some(TravelOutcome::Arrived { at }) if at == destination),
+        "{receipt}"
+    );
+    assert_eq!(sent, Some(planned_takeoff), "{receipt}");
+    assert_eq!(observed_landing, expected_landing, "{receipt}");
+    assert_eq!(expected_landing, Some(destination), "{receipt}");
+    assert_eq!(
+        snapshot.tile(),
+        Some((destination.x, destination.z, destination.level))
+    );
+    assert_eq!(snapshot.scene_state(), 2);
 }
