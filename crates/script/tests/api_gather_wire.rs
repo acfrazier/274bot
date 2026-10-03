@@ -526,6 +526,8 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
             bank: Arc::from("—"),
             last_progress: 12,
             deaths: 0,
+            recoveries: 0,
+            recovery_step: 0,
             absent: 0,
             zone_gated: 0,
             excluded_targets: Arc::from(""),

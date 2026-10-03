@@ -980,8 +980,8 @@ export interface GatherSettings {
   reserveTeleport?: 'Off';
   /** 0..1000, default 0 */
   reserveCasts?: number;
-  /** default "Stop" */
-  deathPolicy?: 'Stop';
+  /** default "Recover" */
+  deathPolicy?: 'Stop' | 'Recover';
   /** 0..255, default 2 */
   maxDeaths?: number;
 }
@@ -1006,6 +1006,8 @@ export interface GatherStatus {
   bank: string;
   last_progress: number;
   deaths: number;
+  recoveries: number;
+  recovery_step: number;
   absent: number;
   zone_gated: number;
   excluded_targets: string;

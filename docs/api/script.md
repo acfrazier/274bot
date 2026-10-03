@@ -160,6 +160,10 @@ before the two held pieces are reattached. Recovery is bounded to twelve
 seconds, including time for the flying head to land. If it cannot settle,
 Gatherer revalidates the headless tool as missing and makes a replacement-tool
 bank trip instead of remaining held until the watchdog restarts it.
+A blast-broken tool follows the same observed missing-tool bank path; the
+Gatherer does not repair tools or implement a second lost-head handler.
+Owned random events revoke gathering work while held. Release revalidates
+inventory, equipment and the work area before dispatch; foreign events do not hold.
 
 Incidental uncut gems are power-dropped along with mining products. Tools,
 fishing bait and other non-products are kept. If protected items fill the pack
@@ -195,7 +199,7 @@ Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
 An unchanged page still fails after eight ticks rather than waiting indefinitely.
 
-The compiled Gatherer card schema is version 3. `disposition` defaults to
+The compiled Gatherer card schema is version 4. `disposition` defaults to
 `Bank`; `Power` drops selected gathering products, while `Bank` returns to the
 selected bank and deposits them. Bank mode also makes a trip when no inventory
 slot is free; Power mode can still take a supply-only trip. `bank` defaults to
@@ -242,8 +246,21 @@ cannot pay for one cast; once due, the whole selected rune-cost batch is
 planned to the configured cast count. Stocking those runes does not enable
 teleport walking: `allowTeleports` remains a separate opt-in. Unread bank
 contents are pending, not empty; missing stock is reported only after a loaded
-bank observation. `deathPolicy` remains `Stop` only; automatic death recovery
-is not part of this stage. Shop provisioning is not offered.
+bank observation. `deathPolicy` defaults to `Recover`; `Stop` blocks retryably
+on death, with **Retry** explicitly consenting to recovery. `maxDeaths` defaults
+to 2; exceeding it requires Stop/Start.
+
+Recovery observes restored HP in the Lumbridge respawn square (no region change
+is required), waits three ticks, re-observes kept supplies, uses the existing
+bank trip if needed, verifies equipment and requires an arrived return walk.
+Only a fresh product **and** XP gain increments `recoveries`. `recovery_step`
+reports 1–5 for the pending sequence, 6 while proving yield and 0 when idle.
+A second death before recovery and a completed disposal blocks with `died-again`.
+Retry retains the failed step, including a refused return. Watchdog recreation
+and reconnect retain both the step and chat watermark, so old deaths cannot
+re-latch and gap deaths are still detected. No-stock failures remain
+`supply-missing`; missing respawn evidence is `respawn-not-observed`.
+Shop provisioning and self-defence are not offered.
 Skill, resource and location changes remain pending until the slot restarts.
 Bank and supply settings apply at a pending boundary, never midway through a
 bank batch.

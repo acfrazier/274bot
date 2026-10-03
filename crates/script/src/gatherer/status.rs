@@ -26,6 +26,8 @@ pub struct StatusData {
     pub bank: Arc<str>,
     pub last_progress: u64,
     pub deaths: u8,
+    pub recoveries: u8,
+    pub recovery_step: u8,
     pub absent: u16,
     pub zone_gated: u16,
     pub excluded_targets: Arc<str>,
@@ -81,6 +83,18 @@ macro_rules! status_rows {
                 $data.last_progress as i64
             ),
             $emit!("deaths", "Deaths", Integer, i64::from($data.deaths)),
+            $emit!(
+                "recoveries",
+                "Recoveries",
+                Integer,
+                i64::from($data.recoveries)
+            ),
+            $emit!(
+                "recovery_step",
+                "Recovery step",
+                Integer,
+                i64::from($data.recovery_step)
+            ),
             $emit!("absent", "Absent", Integer, i64::from($data.absent)),
             $emit!(
                 "zone_gated",
@@ -213,6 +227,8 @@ mod tests {
             bank: Arc::from(""),
             last_progress: 7,
             deaths: 0,
+            recoveries: 0,
+            recovery_step: 0,
             absent: 0,
             zone_gated: 0,
             excluded_targets: Arc::from(""),

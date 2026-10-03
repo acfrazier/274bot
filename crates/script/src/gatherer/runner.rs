@@ -23,6 +23,9 @@ use api::snapshot::{ItemView, StatView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
 
+#[path = "recover.rs"]
+mod recover;
+
 const MAX_AVOID: usize = 8;
 const WAIT_GAMEPLAY_TICKS: u64 = 800; // Eight minutes at 600 ms per server tick.
 const IDLE_AVOID_TICKS: u64 = 60;
@@ -131,7 +134,12 @@ pub struct Gatherer {
     last_gameplay_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
-    death: crate::quester::death::DeathLatch,
+    death: crate::native::death::DeathLatch,
+    respawn_deadline: Option<std::time::Duration>,
+    respawn_settle: Option<u64>,
+    proving_runs: u8,
+    recovery_reprovisions: u8,
+    proof_evidence: u8,
     retained: GatherRetained,
     failure: Option<ScriptFailure>,
     paused: bool,
@@ -155,7 +163,7 @@ impl Gatherer {
         prepared: Arc<Prepared>,
         retained: GatherRetained,
     ) -> Self {
-        let death = crate::quester::death::DeathLatch::from_watermark(retained.death_seq);
+        let death = crate::native::death::DeathLatch::from_watermark(retained.death_seq);
         Self {
             run,
             config,
@@ -183,6 +191,11 @@ impl Gatherer {
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
             death,
+            respawn_deadline: None,
+            respawn_settle: None,
+            proving_runs: 0,
+            recovery_reprovisions: 0,
+            proof_evidence: 0,
             retained,
             failure: None,
             paused: false,
@@ -628,6 +641,13 @@ impl Gatherer {
             worn: false,
         });
         self.dirty = true;
+        // Recovery owns supply/equip admission until its observed step 4.
+        if matches!(
+            self.retained.recovery,
+            RecoveryState::Pending { step: 1..=3 | 5 }
+        ) {
+            return Validation::Ready;
+        }
         // Resume revalidates the area and account facts, not the retained
         // trip's supply/equipment boundary. Never equip inside an open bank.
         if self.trip != TripStep::Idle && self.trip != TripStep::Validate {
@@ -857,11 +877,24 @@ impl Gatherer {
         // runner owns this baseline across machine completion and reselection.
         let previous = self.observed_progress;
         self.observed_progress = current;
+        if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
+            return;
+        }
         if let (Some((products, xp, tile)), Some((old_products, old_xp, old_tile))) =
             (current, previous)
         {
             let gained = products.saturating_sub(old_products);
             let xp = xp.saturating_sub(old_xp).max(0);
+            if self.retained.recovery == RecoveryState::Proving {
+                // Inventory and XP can be published on adjacent frames.
+                // Count positive deltas, not a total that disposal can lower.
+                self.proof_evidence |= u8::from(gained > 0) | (u8::from(xp > 0) << 1);
+                if self.proof_evidence == 3 {
+                    self.retained.recovery = RecoveryState::Idle;
+                    self.retained.recoveries = self.retained.recoveries.saturating_add(1);
+                    self.set_event(&format!("recovered after death {}", self.retained.deaths));
+                }
+            }
             if tile != old_tile || xp != 0 {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
@@ -877,6 +910,7 @@ impl Gatherer {
     }
 
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
+        self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
             self.wait_until = None;
@@ -916,6 +950,16 @@ impl Gatherer {
             }
         }
         self.dirty = true;
+        if self.retained.recovery == RecoveryState::Proving {
+            self.proving_runs = self.proving_runs.saturating_add(1);
+            if self.proving_runs >= 3 {
+                self.fail(
+                    "recovery-no-yield",
+                    "three gather runs without product and XP",
+                    true,
+                );
+            }
+        }
     }
 
     fn handle_drop(&mut self, result: DropResult, tick: &mut NativeTick<'_>) {
@@ -936,7 +980,13 @@ impl Gatherer {
                     true,
                 );
             }
-            DropEnd::Cleared => self.set_event("drop confirmed by empty slots"),
+            DropEnd::Cleared => {
+                if self.retained.recovery == RecoveryState::Idle {
+                    self.retained.haul_since_death = true;
+                    self.sync_retained(tick);
+                }
+                self.set_event("drop confirmed by empty slots");
+            }
             DropEnd::Blocked { remaining } => {
                 self.fail(
                     "inventory-blocked",
@@ -949,6 +999,10 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
+        if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
+            self.finish_recovery_return(result, tick);
+            return;
+        }
         if result.end == WalkEnd::UserInput {
             self.target = None;
             self.fail("manual-movement", "cancelled by user input", true);
@@ -1054,7 +1108,11 @@ impl Gatherer {
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
-                    self.action_failure(error);
+                    if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
+                        self.fail("return-failed", format!("return-failed:{error:?}"), true);
+                    } else {
+                        self.action_failure(error);
+                    }
                 }
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -1120,7 +1178,7 @@ impl Gatherer {
                 Poll::Ready(Ok(deposited)) => {
                     self.fence.seal();
                     self.retained.deposited = self.retained.deposited.saturating_add(deposited);
-                    if deposited > 0 {
+                    if deposited > 0 && self.retained.recovery == RecoveryState::Idle {
                         self.retained.haul_since_death = true;
                     }
                     self.sync_retained(tick);
@@ -1169,7 +1227,12 @@ impl Gatherer {
                 Poll::Pending => self.active = Active::Close(handle),
                 Poll::Ready(Ok(_)) => {
                     self.fence.seal();
-                    self.advance_trip(TripStep::Validate);
+                    if self.retained.recovery == (RecoveryState::Pending { step: 3 }) {
+                        self.advance_trip(TripStep::Idle);
+                        self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
+                    } else {
+                        self.advance_trip(TripStep::Validate);
+                    }
                     self.needs_validate = true;
                     self.set_event("bank closed; validating equipment");
                 }
@@ -1455,6 +1518,9 @@ impl Gatherer {
         if self.paused {
             return ("paused", NativePhase::Waiting);
         }
+        if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
+            return ("recovering", NativePhase::Working);
+        }
         if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
             return ("banking", NativePhase::Working);
         }
@@ -1480,6 +1546,11 @@ impl Gatherer {
 
     fn status_data(&self, inventory: Option<&[ItemView]>) -> StatusData {
         let (phase, _) = self.phase();
+        let inventory = if self.retained.recovery == (RecoveryState::Pending { step: 1 }) {
+            None
+        } else {
+            inventory
+        };
         let count = |id| {
             inventory.map_or(-1, |rows| {
                 rows.iter()
@@ -1530,6 +1601,12 @@ impl Gatherer {
             bank: Arc::clone(&self.bank_label),
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
+            recoveries: self.retained.recoveries,
+            recovery_step: match self.retained.recovery {
+                RecoveryState::Idle => 0,
+                RecoveryState::Pending { step } => step,
+                RecoveryState::Proving => 6,
+            },
             absent: self.absent,
             zone_gated: self.zone_gated,
             excluded_targets: Arc::clone(&self.prepared.excluded_targets),
@@ -1595,26 +1672,38 @@ impl Script for Gatherer {
             self.cancel_active();
             self.needs_validate = true;
             self.rebaseline_gameplay = true;
-            self.death = crate::quester::death::DeathLatch::from_watermark(self.retained.death_seq);
+            self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
             self.set_event("run key changed; revalidating");
+        }
+        if !tick.cx.eligible {
+            // The host posts guardian holds through eligibility, including
+            // frames with no explicit Interrupt::Hold callback.
+            self.cancel_active();
+            self.needs_validate = true;
+            self.rebaseline_gameplay = true;
+            self.set_event("held; revalidation required");
         }
         if !tick.cx.eligible || self.paused {
             self.publish(tick);
             return Ok(ScriptFlow::Continue);
         }
         if self.observe_death(tick) {
-            self.cancel_active();
-            self.retained.deaths = self.retained.deaths.saturating_add(1);
-            self.retained.recovery = RecoveryState::Pending { step: 1 };
-            self.sync_retained(tick);
-            self.fail("died", "died", false);
-            self.set_event("death observed");
+            self.latch_recovery(tick);
         }
         if self.failure.is_some() {
             self.publish(tick);
             return Ok(ScriptFlow::Blocked(self.failure.clone().unwrap()));
         }
+        let recoveries = self.retained.recoveries;
         self.observe_progress(tick);
+        if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
+            self.poll_recovery(tick);
+            self.publish(tick);
+            return Ok(match &self.failure {
+                Some(failure) => ScriptFlow::Blocked(failure.clone()),
+                None => ScriptFlow::Continue,
+            });
+        }
         if self.active_matches_none() {
             let disposal_due = tick
                 .cx
@@ -1648,6 +1737,9 @@ impl Script for Gatherer {
             // takes precedence over waiting or widening.
             self.begin_idle(tick);
         }
+        if self.retained.recoveries != recoveries {
+            self.set_event(&format!("recovered after death {}", self.retained.deaths));
+        }
         self.publish(tick);
         Ok(ScriptFlow::Continue)
     }
@@ -1671,7 +1763,9 @@ impl Script for Gatherer {
             self.dirty = true;
             return Ok(SettingsApply::PendingBoundary);
         }
-        self.pending = Some(next);
+        self.prepared = Arc::clone(prepared);
+        self.config = next;
+        self.pending = None;
         self.needs_validate = true;
         self.dirty = true;
         Ok(SettingsApply::Applied)
@@ -1695,6 +1789,11 @@ impl Script for Gatherer {
             self.area = None;
         }
         self.clear_failure();
+        self.respawn_deadline = None;
+        self.respawn_settle = None;
+        self.proving_runs = 0;
+        self.proof_evidence = 0;
+        self.recovery_reprovisions = 0;
         self.wait_until = None;
         self.needs_validate = true;
         self.rebaseline_gameplay = true;
@@ -1724,7 +1823,7 @@ impl Script for Gatherer {
     }
 
     fn recovery_anchor(&self) -> Option<WorldTile> {
-        (self.trip == TripStep::Idle)
+        (self.trip == TripStep::Idle && self.retained.recovery == RecoveryState::Idle)
             .then_some(self.retained.anchor)
             .flatten()
     }
