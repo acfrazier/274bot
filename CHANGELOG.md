@@ -46,7 +46,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   Server-side tabs and sound only change at the next login; while the two
   differ the panel and TUI say so and offer **Relog now**, which logs out and
   back in through the normal login queue (with a warning if a script is
-  running).
+  running). If the connection drops, the next Log in keeps the memory mode
+  already in use, and the notice says so instead of promising that login will
+  apply a queued change. A change you make after logging out yourself still
+  applies on the next Log in.
 - On local-engine profiles the panel's tutorial check no longer leaves a
   "Click to continue" box over the chat: it is clicked away once per box, and
   only while the box is showing, so chat options are never mis-clicked.
@@ -168,6 +171,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - Input-method (IME) candidate windows now follow the text caret at fractional
   and Retina display scales, for typing in languages such as Chinese, Japanese
   or Korean.
+- A click in the game view made while a panel field has the keyboard is kept
+  when focus returns to the game. Leaving a panel field or the window still
+  releases keys and mouse buttons you were holding, and no longer clears keys
+  the bot is holding on its own.
 
 ### TUI
 
@@ -179,6 +186,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 
 - Food choices in script settings now list every food the game heals with,
   best heal first, instead of a fixed list of 25.
+- Starting a script waits if a settings change is still being saved, including
+  when you edit those settings again before the first save finishes. The start
+  is not reported as a failure while it waits, and it does not run on the
+  older settings.
 
 ### Audio
 
