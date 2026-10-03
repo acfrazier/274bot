@@ -1760,3 +1760,113 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
         "later observations and Pause-fence restoration must not refresh older walking decisions"
     );
 }
+
+#[derive(Debug, Clone)]
+struct CapturedStatusLine {
+    level: api::hostlog::Level,
+    source: api::hostlog::Source,
+    message: String,
+}
+
+#[derive(Default)]
+struct StatusLineSink(std::sync::Mutex<Vec<CapturedStatusLine>>);
+
+impl api::hostlog::Sink for StatusLineSink {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.slot == Some("status-change-test") {
+            self.0.lock().unwrap().push(CapturedStatusLine {
+                level: record.level,
+                source: record.source,
+                message: record.message.to_owned(),
+            });
+        }
+    }
+}
+
+static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(std::sync::Mutex::new(Vec::new()));
+
+fn status_line_test_status(phase: NativePhase, failure: Option<ScriptFailure>) -> ScriptStatus {
+    ScriptStatus {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        card: crate::CompiledId("Gatherer"),
+        phase,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([]),
+        failure,
+    }
+}
+
+#[test]
+fn native_status_logs_each_phase_or_failure_change_once() {
+    const SLOT: &str = "status-change-test";
+    assert!(
+        api::hostlog::install_sink(&STATUS_LINE_SINK),
+        "the script test process has one host-log sink"
+    );
+    let mut output = Output {
+        account: SLOT.to_owned(),
+        ..Output::default()
+    };
+
+    output.status(status_line_test_status(NativePhase::Working, None));
+    output.status(status_line_test_status(NativePhase::Working, None));
+    output.status(status_line_test_status(NativePhase::Waiting, None));
+
+    let failure = ScriptFailure {
+        code: Arc::from("walk-ended"),
+        message: Arc::from("walk ended with Failed"),
+        retryable: false,
+    };
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(failure.clone()),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(failure.clone()),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            message: Arc::from("walk ended with a different reason"),
+            ..failure
+        }),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            code: Arc::from("walk-ended"),
+            message: Arc::from("walk ended with a different reason"),
+            retryable: false,
+        }),
+    ));
+
+    let lines = STATUS_LINE_SINK.0.lock().unwrap();
+    assert_eq!(
+        lines.len(),
+        4,
+        "initial phase, two phase transitions, and one changed failure; identical statuses add none"
+    );
+    assert_eq!(lines[0].level, api::hostlog::Level::Info);
+    assert_eq!(lines[1].level, api::hostlog::Level::Info);
+    assert!(lines[1].message.contains("phase=waiting"));
+    assert_eq!(lines[2].level, api::hostlog::Level::Info);
+    assert!(lines[2].message.contains("phase=blocked"));
+    assert!(lines[2].message.contains("failure=walk-ended"));
+    assert!(lines[2].message.contains("walk ended with Failed"));
+    assert_eq!(lines[3].level, api::hostlog::Level::Info);
+    assert!(lines[3]
+        .message
+        .contains("walk ended with a different reason"));
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.source == api::hostlog::Source::Script),
+        "native status updates use the script log source"
+    );
+}
