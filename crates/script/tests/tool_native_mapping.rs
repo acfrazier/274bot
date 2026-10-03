@@ -157,9 +157,7 @@ globalThis.__out = {
         return 1;
     })),
     boomCalls: boom,
-    tiered: hasAllTools([{
-        kind: 'tiered', skill: 'mining', tiers: [{ name: 'Rune pickaxe', level: 41 }, { name: 'Steel pickaxe', level: 6 }]
-    }], (s) => { tiered.push('skill:' + s); return 30; },
+    tiered: hasAllTools([pickaxeReq()], (s) => { tiered.push('skill:' + s); return 30; },
         (n) => { tiered.push(n); return n === 'Steel pickaxe'; }),
     tieredCalls: tiered,
     // `reqs.every` skips holes; an explicit undefined slot is read.
@@ -186,7 +184,7 @@ globalThis.__out = {
             "boom": "THREW Error: inv boom",
             "boomCalls": ["A", "B"],
             "tiered": true,
-            "tieredCalls": ["skill:mining", "Steel pickaxe"],
+            "tieredCalls": ["skill:mining", "Mithril pickaxe", "Steel pickaxe"],
             "sparse": true,
             "sparseCalls": ["Tinderbox"],
             "undefinedSlot": "THREW TypeError: Cannot read properties of undefined (reading 'kind')",
@@ -206,19 +204,7 @@ fn tool_restock_plan_preserves_exact_and_tiered_callback_order() {
 const log = [];
 const stocked = [];
 const tieredLog = [];
-const tieredReq = {
-    kind: 'tiered',
-    skill: 'mining',
-    label: 'pickaxe',
-    equip: true,
-    tiers: [
-        { name: 'Rune pickaxe', level: 41 },
-        { name: 'Adamant pickaxe', level: 31 },
-        { name: 'Mithril pickaxe', level: 21 },
-        { name: 'Steel pickaxe', level: 6 },
-        { name: 'Bronze pickaxe', level: 0 },
-    ],
-};
+const tieredReq = pickaxeReq();
 globalThis.__out = {
     plan: toolRestockPlan([{ name: 'Tinderbox', min: 2, restock: 4, equip: true }, { name: 'Hammer' }], null,
         (n) => { log.push('inv:' + n); return n === 'Hammer' ? 0 : 1; },
@@ -268,12 +254,7 @@ globalThis.__out = {
 fn tiered_helpers_use_native_tools_and_preserve_helper_results() {
     let actual = probe(
         r#"
-const tiers = [
-    { name: 'Rune pickaxe', level: 41 },
-    { name: 'Steel pickaxe', level: 6 },
-    { name: 'Bronze pickaxe', level: 0 },
-];
-const req = { kind: 'tiered', skill: 'mining', tiers, label: 'pickaxe', equip: true };
+const req = pickaxeReq();
 const bankReq = { ...req };
 const bankCalls = [];
 const axe = axeReq(false);
@@ -291,7 +272,7 @@ globalThis.__out = {
         (n) => { bankCalls.push('bank:' + n); return n === 'Steel pickaxe' ? 1 : 0; }),
     bankCalls,
     bankAlreadyBest: bankHasBetterGatherTool([bankReq], () => 30,
-        (n) => n === 'Steel pickaxe' ? 1 : 0, () => 1),
+        () => 1, () => 1),
     exactBankNotTool: bankHasBetterGatherTool([{ name: 'Hammer' }], null, () => 0, () => 1),
 };
 "#,
@@ -300,7 +281,7 @@ globalThis.__out = {
     assert_eq!(
         actual,
         json!({
-            "keep": ["Hammer", "Rune pickaxe", "Steel pickaxe", "Bronze pickaxe"],
+            "keep": ["Hammer", "Rune pickaxe", "Adamant pickaxe", "Mithril pickaxe", "Steel pickaxe", "Iron pickaxe", "Bronze pickaxe"],
             "missing": ["pickaxe", "Hammer"],
             "label": "Steel pickaxe + Hammer",
             "fallbackLabel": "pickaxe (bronze→rune) + Hammer",
@@ -310,6 +291,7 @@ globalThis.__out = {
             "bankBetter": true,
             "bankCalls": [
                 "skill:mining",
+                "inv:Mithril pickaxe", "bank:Mithril pickaxe",
                 "inv:Steel pickaxe", "bank:Steel pickaxe",
                 "inv:Steel pickaxe", "bank:Steel pickaxe",
             ],
@@ -320,39 +302,22 @@ globalThis.__out = {
 }
 
 #[test]
-fn tool_tiers_are_projected_from_the_posted_native_content() {
+fn tiered_axe_helpers_follow_native_selection_without_a_woodcutting_gate() {
     let actual = probe(
         r#"
-const tools = globalThis.__rs2b0t_host.content.gather_tools;
-tools.axes = [{ name: 'Black axe', use_level: null, wield_attack: 10 }];
-tools.pickaxes = [
-    { name: 'Steel pickaxe', use_level: 6, wield_attack: 5 },
-    { name: 'Iron pickaxe', use_level: 0, wield_attack: 1 },
-];
-const axes = globalThis.__rs2b0t_tools('toolTiers', 'axes');
-const pickaxes = globalThis.__rs2b0t_tools('toolTiers', 'pickaxes');
+const count = (name) => name === 'Steel axe' ? 1 : 0;
+const req = axeReq();
 globalThis.__out = {
-    axes,
-    pickaxes,
-    woodcuttingZero: hasToolReq({ kind: 'tiered', skill: 'woodcutting', tiers: axes }, () => 0, (n) => n === 'Black axe' ? 1 : 0),
-    miningFive: hasToolReq({ kind: 'tiered', skill: 'mining', tiers: pickaxes }, () => 5, (n) => n === 'Steel pickaxe' ? 1 : 0),
-    miningSix: hasToolReq({ kind: 'tiered', skill: 'mining', tiers: pickaxes }, () => 6, (n) => n === 'Steel pickaxe' ? 1 : 0),
+    native: bestAxe(NaN, (name) => count(name)),
+    hasReq: hasToolReq(req, () => NaN, count),
+    label: toolKitLabel([req], () => NaN, count),
 };
 "#,
         "__out",
     );
     assert_eq!(
         actual,
-        json!({
-            "axes": [{"name": "Black axe", "level": 0, "attackLevel": 10}],
-            "pickaxes": [
-                {"name": "Steel pickaxe", "level": 6, "attackLevel": 5},
-                {"name": "Iron pickaxe", "level": 0, "attackLevel": 1},
-            ],
-            "woodcuttingZero": true,
-            "miningFive": false,
-            "miningSix": true,
-        })
+        json!({"native": "Steel axe", "hasReq": true, "label": "Steel axe"})
     );
 }
 

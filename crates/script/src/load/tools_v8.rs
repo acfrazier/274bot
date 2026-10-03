@@ -2,8 +2,8 @@
 //! export: `__rs2b0t_tools(op, ...args)`.
 //!
 //! Callback-bearing operations walk the frozen loops in Rust and invoke the
-//! script's own callbacks in order. Native gates come from
-//! [`crate::gather_tools`], and tier lists are projected from posted content.
+//! script's own callbacks in order. Native candidate lists and gates come from
+//! [`crate::gather_tools`]; JS tier arrays are projections of native facts.
 
 use super::callback_v8::{
     self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll,
@@ -68,30 +68,18 @@ fn tool_tiers<'s>(
     scope: &mut v8::HandleScope<'s>,
     kind: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let global = scope.get_current_context().global(scope);
-    let host = get(scope, global.into(), "__rs2b0t_host")?;
-    if host.is_null_or_undefined() {
-        return Ok(v8::Array::new(scope, 0).into());
-    }
-    let content = get(scope, host, "content")?;
-    if !cb::truthy(scope, content) {
-        return Ok(v8::Array::new(scope, 0).into());
-    }
-    let tables = get(scope, content, "gather_tools")?;
-    if !tables.is_object() || tables.is_function() {
-        return Ok(v8::Array::new(scope, 0).into());
-    }
     let kind = cb::to_string(scope, kind)?;
-    let rows = get(scope, tables, &kind)?;
-    let Ok(rows) = v8::Local::<v8::Array>::try_from(rows) else {
-        return Ok(v8::Array::new(scope, 0).into());
+    let kind = match kind.as_str() {
+        "axes" => ToolKind::Axe,
+        "pickaxes" => ToolKind::Pickaxe,
+        _ => return Ok(v8::Array::new(scope, 0).into()),
     };
-    let tiers = v8::Array::new(scope, 0);
-    let length = rows.length();
+    let rows = kind.candidates();
+    let tiers = v8::Array::new(scope, rows.len() as i32);
     let poll = Poll::default();
-    for index in 0..length {
+    for (index, tool) in rows.iter().enumerate() {
         let scope = &mut v8::EscapableHandleScope::new(scope);
-        let flow = project_tool_tier_iteration(scope, &poll, rows.into(), tiers, index);
+        let flow = project_tool_tier_iteration(scope, &poll, tool, tiers, index as u32);
         cb::iteration(scope, flow)?;
     }
     Ok(tiers.into())
@@ -100,36 +88,29 @@ fn tool_tiers<'s>(
 fn project_tool_tier_iteration<'s>(
     scope: &mut v8::HandleScope<'s>,
     poll: &Poll,
-    rows: v8::Local<'s, v8::Value>,
+    tool: &api::gather_tools::GatherTool,
     tiers: v8::Local<'s, v8::Array>,
     index: u32,
 ) -> JsResult<'s, Flow<'s>> {
     poll.check(scope)?;
-    let row = cb::get_index(scope, rows, index)?;
-    let name = get(scope, row, "name")?;
-    let use_level = get(scope, row, "use_level")?;
-    let level = if use_level.is_null_or_undefined() {
-        cb::num(scope, 0.0)
-    } else {
-        use_level
-    };
-    let wield_attack = get(scope, row, "wield_attack")?;
+    let name = cb::string(scope, tool.name);
+    let level = cb::num(scope, f64::from(tool.use_level.unwrap_or(0)));
     let tier = cb::object(scope, &[("name", name), ("level", level)])?;
-    if !wield_attack.is_null_or_undefined() {
+    if let Some(wield_attack) = tool.wield_attack {
         let key = cb::string(scope, "attackLevel");
+        let attack_level = cb::num(scope, f64::from(wield_attack));
         cb::catching(scope, |s| {
             tier.to_object(s)?
-                .create_data_property(s, key.cast(), wield_attack)
+                .create_data_property(s, key.cast(), attack_level)
         })?;
     }
-    let out_index = tiers.length();
-    cb::catching(scope, |s| tiers.set_index(s, out_index, tier))?;
+    cb::catching(scope, |s| tiers.set_index(s, index, tier))?;
     Ok(Flow::Continue(None))
 }
 
-/// `bestAxe` / `bestPickaxe`: frozen `bestFromTiers(level, TABLE, available)`
-/// over the selected-revision table. `level >= use_level` converts the
-/// caller's level at each gated candidate; `available(name)` is truthy-tested.
+/// `bestAxe` / `bestPickaxe` use the native selected-revision table. The
+/// caller's level is converted at each gated candidate and `available(name)`
+/// is truthy-tested.
 fn best<'s>(
     scope: &mut v8::HandleScope<'s>,
     kind: ToolKind,
@@ -137,18 +118,7 @@ fn best<'s>(
     available: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let available = Callback::plain(scope, available, "available");
-    let hit = gather_tools::best_tool(
-        scope,
-        kind,
-        |scope, need| {
-            let need = cb::num(scope, f64::from(need));
-            cb::ge(scope, level, need)
-        },
-        |scope, name| {
-            let name = cb::string(scope, name);
-            available.truthy(scope, &[name])
-        },
-    )?;
+    let hit = native_best_tool(scope, kind, level, TierAvailability::Truthy(available))?;
     Ok(nullable(scope, hit))
 }
 
@@ -180,14 +150,15 @@ fn tier_available<'s>(
     name: v8::Local<'s, v8::Value>,
     availability: TierAvailability<'s>,
 ) -> JsResult<'s, bool> {
-    let zero = cb::num(scope, 0.0);
     match availability {
         TierAvailability::Truthy(available) => available.truthy(scope, &[name]),
         TierAvailability::Positive(count) => {
+            let zero = cb::num(scope, 0.0);
             let have = count.call(scope, &[name])?;
             cb::gt(scope, have, zero)
         }
         TierAvailability::InventoryOrBank { inventory, bank } => {
+            let zero = cb::num(scope, 0.0);
             let in_inventory = inventory.call(scope, &[name])?;
             if cb::gt(scope, in_inventory, zero)? {
                 return Ok(true);
@@ -196,6 +167,25 @@ fn tier_available<'s>(
             cb::gt(scope, in_bank, zero)
         }
     }
+}
+fn native_best_tool<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    kind: ToolKind,
+    level: v8::Local<'s, v8::Value>,
+    availability: TierAvailability<'s>,
+) -> JsResult<'s, Option<&'static str>> {
+    gather_tools::best_tool(
+        scope,
+        kind,
+        |scope, need| {
+            let need = cb::num(scope, f64::from(need));
+            cb::ge(scope, level, need)
+        },
+        |scope, name| {
+            let name = cb::string(scope, name);
+            tier_available(scope, name, availability)
+        },
+    )
 }
 
 fn best_from_tiers_with<'s>(
@@ -332,7 +322,7 @@ fn every_iteration<'s>(
     }
 }
 
-/// Frozen `hasToolReq(req, skillLevel, count)` for exact and tiered rows.
+/// Frozen `hasToolReq(req, skillLevel, count)` for exact and native tiered rows.
 fn has_tool_req<'s>(
     scope: &mut v8::HandleScope<'s>,
     req: v8::Local<'s, v8::Value>,
@@ -343,9 +333,11 @@ fn has_tool_req<'s>(
     if is_tiered(scope, kind) {
         let skill = get(scope, req, "skill")?;
         let level = skill_level.call(scope, &[skill])?;
-        let tiers = get(scope, req, "tiers")?;
-        let best = best_from_tiers_with(scope, level, tiers, TierAvailability::Positive(count))?;
-        return Ok(best.is_some_and(|name| !name.is_null()));
+        let Some(kind) = tiered_tool_kind(scope, skill) else {
+            return Ok(false);
+        };
+        let best = native_best_tool(scope, kind, level, TierAvailability::Positive(count))?;
+        return Ok(best.is_some());
     }
     let name = get(scope, req, "name")?;
     let have = count.call(scope, &[name])?;
@@ -361,6 +353,15 @@ fn has_tool_req<'s>(
 fn is_tiered(scope: &mut v8::HandleScope, kind: v8::Local<v8::Value>) -> bool {
     kind.is_string() && kind.to_rust_string_lossy(scope) == "tiered"
 }
+
+fn tiered_tool_kind(scope: &mut v8::HandleScope, skill: v8::Local<v8::Value>) -> Option<ToolKind> {
+    if !skill.is_string() {
+        return None;
+    }
+    let skill = skill.to_rust_string_lossy(scope);
+    ToolKind::for_skill(&skill)
+}
+
 fn tool_keep_names<'s>(
     scope: &mut v8::HandleScope<'s>,
     reqs: v8::Local<'s, v8::Value>,
@@ -558,10 +559,13 @@ fn tool_kit_label_iteration<'s>(
     let label = if is_tiered(scope, kind) {
         let skill = get(scope, req, "skill")?;
         let level = skill_level.call(scope, &[skill])?;
-        let tiers = get(scope, req, "tiers")?;
-        match best_from_tiers_with(scope, level, tiers, TierAvailability::Positive(count))? {
-            Some(held) if !held.is_null_or_undefined() => held,
-            _ => {
+        let held = match tiered_tool_kind(scope, skill) {
+            Some(kind) => native_best_tool(scope, kind, level, TierAvailability::Positive(count))?,
+            None => None,
+        };
+        match held {
+            Some(name) => cb::string(scope, name),
+            None => {
                 let label = get(scope, req, "label")?;
                 let label = cb::to_string(scope, label)?;
                 cb::string(scope, &format!("{label} (bronze→rune)"))
@@ -583,19 +587,39 @@ fn restock_plan<'s>(
     inv_count: v8::Local<'s, v8::Value>,
     bank_count: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let (plan, _) = restock_plan_with_better(scope, reqs, skill_level, inv_count, bank_count)?;
+    Ok(plan.into())
+}
+
+fn restock_plan_with_better<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    reqs: v8::Local<'s, v8::Value>,
+    skill_level: v8::Local<'s, v8::Value>,
+    inv_count: v8::Local<'s, v8::Value>,
+    bank_count: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, (v8::Local<'s, v8::Array>, bool)> {
     let skill_level = Callback::plain(scope, skill_level, "skillLevel");
     let inv_count = Callback::plain(scope, inv_count, "invCount");
     let bank_count = Callback::plain(scope, bank_count, "bankCount");
     let plan = v8::Array::new(scope, 0);
     let rows = ForOf::open(scope, reqs, "reqs")?;
+    let mut better = false;
     loop {
         let scope = &mut v8::EscapableHandleScope::new(scope);
-        let flow = restock_iteration(scope, &rows, plan, skill_level, inv_count, bank_count);
+        let flow = restock_iteration(
+            scope,
+            &rows,
+            plan,
+            skill_level,
+            inv_count,
+            bank_count,
+            &mut better,
+        );
         if let Flow::Break(_) = cb::iteration(scope, flow)? {
             break;
         }
     }
-    Ok(plan.into())
+    Ok((plan, better))
 }
 
 fn restock_iteration<'s>(
@@ -605,12 +629,15 @@ fn restock_iteration<'s>(
     skill_level: Callback<'s>,
     inv_count: Callback<'s>,
     bank_count: Callback<'s>,
+    better: &mut bool,
 ) -> JsResult<'s, Flow<'s>> {
     let Some(req) = rows.step(scope)? else {
         return Ok(Flow::Break(None));
     };
-    let step = restock_row(scope, req, skill_level, inv_count, bank_count);
-    if let Some(step) = rows.body(scope, step)? {
+    let row = restock_row(scope, req, skill_level, inv_count, bank_count);
+    let (is_tiered, step) = rows.body(scope, row)?;
+    if let Some(step) = step {
+        *better |= is_tiered;
         let len = plan.length();
         cb::catching(scope, |s| plan.set_index(s, len, step))?;
     }
@@ -623,10 +650,11 @@ fn restock_row<'s>(
     skill_level: Callback<'s>,
     inv_count: Callback<'s>,
     bank_count: Callback<'s>,
-) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
+) -> JsResult<'s, (bool, Option<v8::Local<'s, v8::Value>>)> {
     let kind = get(scope, req, "kind")?;
     if is_tiered(scope, kind) {
-        return tiered_restock_row(scope, req, skill_level, inv_count, bank_count);
+        return tiered_restock_row(scope, req, skill_level, inv_count, bank_count)
+            .map(|step| (true, step));
     }
     let min = get(scope, req, "min")?;
     let min = if min.is_null_or_undefined() {
@@ -645,12 +673,12 @@ fn restock_row<'s>(
     let need = cb::sub(scope, target, have)?;
     let zero = cb::num(scope, 0.0);
     if cb::le(scope, need, zero)? {
-        return Ok(None);
+        return Ok((false, None));
     }
     let name = get(scope, req, "name")?;
     let available = bank_count.call(scope, &[name])?;
     if cb::le(scope, available, zero)? {
-        return Ok(None);
+        return Ok((false, None));
     }
     let name = get(scope, req, "name")?;
     // `Math.min(need, available)`: ToNumber of each argument, in order.
@@ -664,10 +692,13 @@ fn restock_row<'s>(
     let qty = cb::num(scope, qty);
     let equip = get(scope, req, "equip")?;
     let equip = v8::Boolean::new(scope, equip.is_true()).into();
-    Ok(Some(cb::object(
-        scope,
-        &[("name", name), ("qty", qty), ("equip", equip)],
-    )?))
+    Ok((
+        false,
+        Some(cb::object(
+            scope,
+            &[("name", name), ("qty", qty), ("equip", equip)],
+        )?),
+    ))
 }
 
 fn tiered_restock_row<'s>(
@@ -679,22 +710,22 @@ fn tiered_restock_row<'s>(
 ) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
     let skill = get(scope, req, "skill")?;
     let level = skill_level.call(scope, &[skill])?;
-    let tiers = get(scope, req, "tiers")?;
-    let best = best_from_tiers_with(
+    let Some(kind) = tiered_tool_kind(scope, skill) else {
+        return Ok(None);
+    };
+    let Some(name) = native_best_tool(
         scope,
+        kind,
         level,
-        tiers,
         TierAvailability::InventoryOrBank {
             inventory: inv_count,
             bank: bank_count,
         },
-    )?;
-    let Some(name) = best else {
+    )?
+    else {
         return Ok(None);
     };
-    if !cb::truthy(scope, name) {
-        return Ok(None);
-    }
+    let name = cb::string(scope, name);
     let zero = cb::num(scope, 0.0);
     let have = inv_count.call(scope, &[name])?;
     if cb::gt(scope, have, zero)? {
@@ -712,7 +743,6 @@ fn tiered_restock_row<'s>(
         &[("name", name), ("qty", qty), ("equip", equip)],
     )?))
 }
-
 fn bank_has_better_tool<'s>(
     scope: &mut v8::HandleScope<'s>,
     reqs: v8::Local<'s, v8::Value>,
@@ -720,78 +750,6 @@ fn bank_has_better_tool<'s>(
     inv_count: v8::Local<'s, v8::Value>,
     bank_count: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let steps = restock_plan(scope, reqs, skill_level, inv_count, bank_count)?;
-    let length = array_length(scope, steps)?;
-    let poll = Poll::default();
-    let mut better = false;
-    for index in 0..length {
-        let scope = &mut v8::EscapableHandleScope::new(scope);
-        let flow = bank_step_iteration(scope, &poll, steps, reqs, index);
-        if let Flow::Break(_) = cb::iteration(scope, flow)? {
-            better = true;
-            break;
-        }
-    }
+    let (_, better) = restock_plan_with_better(scope, reqs, skill_level, inv_count, bank_count)?;
     Ok(v8::Boolean::new(scope, better).into())
-}
-
-fn bank_step_iteration<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    poll: &Poll,
-    steps: v8::Local<'s, v8::Value>,
-    reqs: v8::Local<'s, v8::Value>,
-    index: u32,
-) -> JsResult<'s, Flow<'s>> {
-    poll.check(scope)?;
-    if !has_index(scope, steps, index)? {
-        return Ok(Flow::Continue(None));
-    }
-    let step = cb::get_index(scope, steps, index)?;
-    if bank_step_has_tiered_req(scope, reqs, step, poll)? {
-        Ok(Flow::Break(None))
-    } else {
-        Ok(Flow::Continue(None))
-    }
-}
-fn bank_step_has_tiered_req<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    reqs: v8::Local<'s, v8::Value>,
-    step: v8::Local<'s, v8::Value>,
-    poll: &Poll,
-) -> JsResult<'s, bool> {
-    let find = get(scope, reqs, "find")?;
-    if !find.is_function() {
-        return Err(cb::type_error(scope, "reqs.find is not a function"));
-    }
-    let req_len = array_length(scope, reqs)?;
-    for req_index in 0..req_len {
-        poll.check(scope)?;
-        let req = cb::get_index(scope, reqs, req_index)?;
-        let kind = get(scope, req, "kind")?;
-        if !is_tiered(scope, kind) {
-            continue;
-        }
-        let tiers = get(scope, req, "tiers")?;
-        let some = get(scope, tiers, "some")?;
-        if !some.is_function() {
-            return Err(cb::type_error(scope, "tiers.some is not a function"));
-        }
-        let tier_len = array_length(scope, tiers)?;
-        for tier_index in 0..tier_len {
-            poll.check(scope)?;
-            if !has_index(scope, tiers, tier_index)? {
-                continue;
-            }
-            let tier = cb::get_index(scope, tiers, tier_index)?;
-            let name = get(scope, tier, "name")?;
-            let name = cb::call_method(scope, name, "toLowerCase", &[], "toLowerCase")?;
-            let step_name = get(scope, step, "name")?;
-            let step_name = cb::call_method(scope, step_name, "toLowerCase", &[], "toLowerCase")?;
-            if name.strict_equals(step_name) {
-                let kind = get(scope, req, "kind")?;
-                return Ok(is_tiered(scope, kind));
-            }
-        }
-    }
-    Ok(false)
 }
