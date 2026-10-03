@@ -477,6 +477,8 @@ pub struct NativeFactsInput<'a> {
     /// `Some(&[])` explicitly clears it. Encoding keeps at most
     /// `MAX_PROJECTILES_PER_SNAPSHOT` projectiles targeted at `self_slot`.
     pub projectiles: Option<&'a [ProjectileView]>,
+    /// Host-published native fingerprint for the current chat modal page.
+    pub chat_page_fingerprint: u64,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -795,6 +797,7 @@ impl<'a> Snapshot<'a> {
         has_api_gather => VT_API_GATHER,
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
+        has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1251,6 +1254,7 @@ pub struct SnapshotFingerprint {
     /// The current page identity; only a new `(token, kind)` is posted.
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
+    pub chat_page_fingerprint: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1545,6 +1549,7 @@ impl SnapshotFingerprint {
             api_gather: native.api_gather.map(ApiGatherFp::from),
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
+            chat_page_fingerprint: native.chat_page_fingerprint,
         }
     }
 }
@@ -1704,6 +1709,7 @@ pub struct DeltaMask {
     pub api_gather_outcome: bool,
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
+    pub chat_page_fingerprint: bool,
 }
 
 impl DeltaMask {
@@ -1800,6 +1806,7 @@ impl DeltaMask {
             api_gather: true,
             api_gather_outcome: true,
             api_progress: true,
+            chat_page_fingerprint: true,
         }
     }
 
@@ -1922,6 +1929,7 @@ impl DeltaMask {
             api_gather_outcome: next.api_gather_outcome.is_some()
                 && next.api_gather_outcome != last.api_gather_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
+            chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
         }
     }
 }
@@ -2873,6 +2881,9 @@ fn encode_snapshot_masked_into(
     }
     if let Some(off) = projectiles_off {
         table.add_projectiles(off);
+    }
+    if mask.chat_page_fingerprint {
+        table.add_chat_page_fingerprint(native.chat_page_fingerprint);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -5172,6 +5183,121 @@ pub(crate) mod tests {
         assert_eq!(view.route_inspect_refused_id_2(), 0);
         assert_eq!(view.route_inspect_refused_id_3(), 0);
         assert_eq!(view.route_inspect_unobserved(), 0);
+    }
+
+    #[test]
+    fn chat_page_fingerprint_round_trips_as_a_delta_scalar() {
+        let native = |chat_page_fingerprint| NativeFactsInput {
+            chat_page_fingerprint,
+            ..NativeFactsInput::default()
+        };
+        crate::observed::on_reset();
+        let mut input = empty_input(1);
+        let (keyframe_bytes, fp) =
+            encode_snapshot_delta_with_native(None, &input, NativeFactsInput::default(), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert!(
+            keyframe.has_chat_page_fingerprint(),
+            "a zero-valued keyframe scalar is still present"
+        );
+        assert_eq!(keyframe.chat_page_fingerprint(), 0);
+        crate::observed::apply(&keyframe);
+
+        let fingerprint = 0xfedc_ba98_7654_3210;
+        input.tick = 2;
+        let (changed_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(fingerprint), false);
+        let changed = decode_snapshot(&changed_bytes).expect("changed delta");
+        assert!(changed.has_chat_page_fingerprint());
+        assert_eq!(changed.chat_page_fingerprint(), fingerprint);
+        assert!(
+            !changed.has_ingame(),
+            "only the fingerprint changed apart from always-posted fields"
+        );
+        crate::observed::apply(&changed);
+        crate::observed::with(|scene| {
+            assert_eq!(scene.latest().chat_page_fingerprint(), Some(fingerprint));
+            assert_eq!(
+                scene.since_login().chat_page_fingerprint(),
+                Some(fingerprint)
+            );
+        });
+
+        input.tick = 3;
+        let (unchanged_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(fingerprint), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged delta");
+        assert!(
+            !unchanged.has_chat_page_fingerprint(),
+            "an unchanged scalar is omitted"
+        );
+        crate::observed::apply(&unchanged);
+        crate::observed::with(|scene| {
+            assert_eq!(
+                scene.latest().chat_page_fingerprint(),
+                Some(fingerprint),
+                "omission retains the latest observed scalar"
+            );
+            assert_eq!(
+                scene.since_login().chat_page_fingerprint(),
+                Some(fingerprint)
+            );
+        });
+
+        input.tick = 4;
+        input.ingame = false;
+        let (logout_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(fingerprint), false);
+        let logout = decode_snapshot(&logout_bytes).expect("logout delta");
+        assert!(logout.has_ingame());
+        assert!(
+            !logout.has_chat_page_fingerprint(),
+            "logout does not need to resend an unchanged fingerprint"
+        );
+        crate::observed::apply(&logout);
+        crate::observed::with(|scene| {
+            assert_eq!(scene.latest().chat_page_fingerprint(), Some(fingerprint));
+            assert_eq!(
+                scene.since_login().chat_page_fingerprint(),
+                None,
+                "logout hides the prior session's scalar"
+            );
+        });
+
+        input.tick = 5;
+        input.ingame = true;
+        let (login_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(fingerprint), false);
+        let login = decode_snapshot(&login_bytes).expect("login delta");
+        assert!(!login.has_chat_page_fingerprint());
+        crate::observed::apply(&login);
+        crate::observed::with(|scene| {
+            assert_eq!(
+                scene.since_login().chat_page_fingerprint(),
+                None,
+                "an omitted scalar stays unobserved in the new session"
+            );
+        });
+
+        input.tick = 6;
+        let (clear_bytes, _) = encode_snapshot_delta_with_native(
+            Some(&fp),
+            &input,
+            NativeFactsInput::default(),
+            false,
+        );
+        let clear = decode_snapshot(&clear_bytes).expect("zero clear");
+        assert!(
+            clear.has_chat_page_fingerprint(),
+            "zero is an explicit clear"
+        );
+        assert_eq!(clear.chat_page_fingerprint(), 0);
+        assert!(!clear.has_ingame());
+        crate::observed::apply(&clear);
+        crate::observed::with(|scene| {
+            assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
+            assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
+        });
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.
