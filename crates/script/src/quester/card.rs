@@ -1,24 +1,25 @@
 //! Compiled card `Quester`: prepare validates settings + release index only.
-use super::compile::{compile_path, path_bytes, INDEX_JSON};
-use super::runner::Quester;
+use super::compile::{path_bytes, INDEX_JSON};
+use super::queue::{Queue, QueueSettings, ReleaseIndex};
+use super::runner::QueuedQuester;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
     StartError,
 };
-use crate::CompiledId;
+use crate::{CompiledId, SettingDef};
 use api::quest_facts::QuestCatalog;
 use api::selected::RunKey;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Quester"),
     name: "Quester",
     description: "Runs authored quest Paths from live observation.",
     category: "Quests",
-    schema_version: 2,
-    schema: || &[],
-    per_account_settings: &[],
+    schema_version: 3,
+    schema: settings_schema,
+    per_account_settings: &["partner_account", "gang"],
     prepare,
     create,
 };
@@ -27,39 +28,100 @@ pub const CARD: CompiledCard = CompiledCard {
 #[serde(deny_unknown_fields)]
 struct QuesterSettings {
     #[serde(default)]
-    quest: Option<String>,
+    quests: Vec<String>,
+    #[serde(default)]
+    order_override: Vec<String>,
+    #[serde(default)]
+    skip: Vec<String>,
+    #[serde(default)]
+    partner_account: Option<String>,
+    #[serde(default)]
+    gang: Option<String>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReleaseIndex {
-    schema: u16,
-    paths: Vec<ReleasePath>,
+static RELEASE_INDEX: LazyLock<ReleaseIndex> =
+    LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
+
+fn settings_schema() -> &'static [SettingDef] {
+    static SETTINGS: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
+        vec![
+            setting(
+                "quests",
+                "string[]",
+                "[]",
+                "Quests",
+                "Empty selects all released quests.",
+                &[],
+            ),
+            setting(
+                "order_override",
+                "string[]",
+                "[]",
+                "Order override",
+                "Prioritize these selected quest ids; remaining quests retain release order.",
+                &[],
+            ),
+            setting(
+                "skip",
+                "string[]",
+                "[]",
+                "Skip",
+                "Do not run these released quest ids.",
+                &[],
+            ),
+            setting(
+                "partner_account",
+                "string",
+                "",
+                "Partner account",
+                "Configured account profile used by partner quests.",
+                &[],
+            ),
+            setting(
+                "gang",
+                "string",
+                "",
+                "Gang",
+                "Explicit partner-quest gang for this account.",
+                &["phoenix", "blackarm"],
+            ),
+        ]
+    });
+    &SETTINGS
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReleasePath {
-    id: String,
-    file: String,
+
+fn setting(
+    id: &str,
+    ty: &str,
+    default: &str,
+    label: &str,
+    help: &str,
+    options: &[&str],
+) -> SettingDef {
+    SettingDef {
+        id: id.into(),
+        ty: ty.into(),
+        default: Some(default.into()),
+        label: Some(label.into()),
+        min: None,
+        max: None,
+        step: None,
+        options: options.iter().map(|option| (*option).into()).collect(),
+        option_labels: options.iter().map(|option| (*option).into()).collect(),
+        group: Some("Quester".into()),
+        show_if: None,
+        options_from: None,
+        csv_toggle: None,
+        help: Some(help.into()),
+        item_option_spec: None,
+    }
 }
-static RELEASE_INDEX: std::sync::LazyLock<ReleaseIndex> =
-    std::sync::LazyLock::new(|| serde_json::from_str(INDEX_JSON).expect("released Path index"));
 
 fn released(index: &ReleaseIndex, id: &str) -> bool {
-    let Some(expected) = (match id {
-        "cook" => Some("cook.json"),
-        "sheep" => Some("sheep.json"),
-        "runemysteries" => Some("runemysteries.json"),
-        "romeojuliet" => Some("romeojuliet.json"),
-        _ => None,
-    }) else {
-        return false;
-    };
     index.schema == 1
-        && index
-            .paths
-            .iter()
-            .any(|path| path.id == id && path.file == expected)
+        && index.paths.iter().any(|path| {
+            path.id == id && path.file.strip_suffix(".json") == Some(id) && path_bytes(id).is_some()
+        })
 }
 
 /// The released document gate shared by the card and script progress API.
@@ -71,44 +133,43 @@ pub fn released_path(id: &str) -> Option<&'static [u8]> {
 
 #[cfg(feature = "load")]
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
-    static ROWS: std::sync::LazyLock<Vec<crate::api_progress::QuestPathRow>> =
-        std::sync::LazyLock::new(|| {
-            RELEASE_INDEX
-                .paths
-                .iter()
-                .filter_map(|entry| released_path(&entry.id))
-                .map(|bytes| {
-                    let document: super::path::PathDocument =
-                        serde_json::from_slice(bytes).expect("released Path document");
-                    let progress = document.roles[0]
-                        .progress
-                        .as_ref()
-                        .expect("released Path progress");
-                    let mut stages = [
-                        &progress.colour.not_started,
-                        &progress.colour.in_progress,
-                        &progress.colour.complete,
-                    ]
-                    .into_iter()
-                    .chain(progress.rules.iter().map(|rule| &rule.stage))
-                    .map(|stage| Arc::clone(&stage.0))
-                    .collect::<Vec<_>>();
-                    stages.sort_unstable_by_key(|stage| {
-                        stage
-                            .rsplit_once(':')
-                            .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
-                            .unwrap_or(u32::MAX)
-                    });
-                    stages.dedup();
-                    crate::api_progress::QuestPathRow {
-                        id: Arc::clone(&document.id.0),
-                        display: document.display_name.into(),
-                        journal: !progress.rules.is_empty(),
-                        stages: stages.into(),
-                    }
-                })
-                .collect()
-        });
+    static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
+        RELEASE_INDEX
+            .paths
+            .iter()
+            .filter_map(|entry| released_path(&entry.id))
+            .map(|bytes| {
+                let document: super::path::PathDocument =
+                    serde_json::from_slice(bytes).expect("released Path document");
+                let progress = document.roles[0]
+                    .progress
+                    .as_ref()
+                    .expect("released Path progress");
+                let mut stages = [
+                    &progress.colour.not_started,
+                    &progress.colour.in_progress,
+                    &progress.colour.complete,
+                ]
+                .into_iter()
+                .chain(progress.rules.iter().map(|rule| &rule.stage))
+                .map(|stage| Arc::clone(&stage.0))
+                .collect::<Vec<_>>();
+                stages.sort_unstable_by_key(|stage| {
+                    stage
+                        .rsplit_once(':')
+                        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok())
+                        .unwrap_or(u32::MAX)
+                });
+                stages.dedup();
+                crate::api_progress::QuestPathRow {
+                    id: Arc::clone(&document.id.0),
+                    display: document.display_name.into(),
+                    journal: !progress.rules.is_empty(),
+                    stages: stages.into(),
+                }
+            })
+            .collect()
+    });
     &ROWS
 }
 
@@ -116,7 +177,7 @@ struct Prepared {
     selected: Arc<api::game_data::SelectedGameData>,
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
-    quest: String,
+    queue: Queue<'static>,
 }
 
 fn prepare(
@@ -142,21 +203,55 @@ fn prepare(
         bag.iter().map(|(key, value)| (key.as_str(), value)),
     ))
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
-    let quest = settings.quest.unwrap_or_else(|| "cook".into());
-    if released_path(&quest).is_none() {
-        return Err(StartError::Config(ConfigError::new(
-            "quest",
-            "unknown-path",
-            "choose cook, sheep, runemysteries, or romeojuliet",
-        )));
+    let gang = match settings
+        .gang
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        None | Some("") => None,
+        Some("phoenix") => Some(super::pair::Gang::Phoenix),
+        Some("blackarm") => Some(super::pair::Gang::BlackArm),
+        Some(_) => {
+            return Err(StartError::Config(ConfigError::new(
+                "gang",
+                "invalid-value",
+                "choose phoenix or blackarm",
+            )))
+        }
+    };
+    let queue_settings = QueueSettings {
+        quests: settings.quests,
+        order_override: settings.order_override,
+        skip: settings.skip,
+        partner_account: settings.partner_account.and_then(|account| {
+            let account = account.trim();
+            (!account.is_empty()).then(|| super::pair::AccountKey(Arc::from(account)))
+        }),
+        gang,
+    };
+    for entry in &RELEASE_INDEX.paths {
+        if released_path(&entry.id).is_none() {
+            return Err(StartError::Unavailable(Arc::from(format!(
+                "release index Path is unavailable: {} ({})",
+                entry.id, entry.file
+            ))));
+        }
     }
+    let queue = Queue::from_index(&RELEASE_INDEX, queue_settings).map_err(|error| {
+        StartError::Config(ConfigError::new(
+            error.field,
+            "invalid-queue",
+            error.message,
+        ))
+    })?;
     let quests =
         QuestCatalog::from_identity(cx.selected.quest_identity()).map_err(StartError::Facts)?;
     let prepared = Prepared {
         selected: Arc::clone(&cx.selected),
         quests: Arc::new(quests),
         banks: Arc::clone(&cx.banks),
-        quest,
+        queue,
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -175,26 +270,12 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    let bytes = released_path(&prepared.quest).ok_or_else(|| {
-        StartError::Config(ConfigError::new(
-            "quest",
-            "unknown-path",
-            "Path is not released",
-        ))
-    })?;
-    let path = compile_path(bytes, &prepared.selected, &prepared.quests).map_err(|err| {
-        let message = match err.detail.as_deref() {
-            Some(detail) => format!("compile: {}: {detail}", err.code),
-            None => format!("compile: {}", err.code),
-        };
-        StartError::Unavailable(Arc::from(message))
-    })?;
-    Ok(Box::new(Quester::new(
+    Ok(Box::new(QueuedQuester::new(
         run,
-        path,
         Arc::clone(&prepared.selected),
         Arc::clone(&prepared.quests),
         Arc::clone(&prepared.banks),
+        prepared.queue.clone(),
     )))
 }
 
@@ -232,9 +313,10 @@ mod tests {
     }
 
     #[test]
-    fn release_index_requires_schema_and_exact_path_identity() {
-        for id in ["cook", "sheep", "runemysteries", "romeojuliet"] {
+    fn release_index_is_authoritative_and_includes_imp_when_embedded() {
+        for id in ["cook", "sheep", "runemysteries", "romeojuliet", "imp"] {
             assert!(released(INDEX_JSON, id), "{id} missing from release index");
+            assert!(released_path(id).is_some(), "{id} body is not embedded");
         }
         assert!(released(
             r#"{"schema":1,"paths":[{"id":"other","file":"other.json"},{"id":"cook","file":"cook.json"}]}"#,
@@ -252,5 +334,34 @@ mod tests {
         ] {
             assert!(!released(rejected, "cook"), "accepted {rejected}");
         }
+    }
+
+    #[test]
+    fn settings_replace_the_single_quest_setting_and_keep_partner_per_account() {
+        let ids = settings_schema()
+            .iter()
+            .map(|setting| setting.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            [
+                "quests",
+                "order_override",
+                "skip",
+                "partner_account",
+                "gang"
+            ]
+        );
+        assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
+
+        let mut bag = SettingsBag::new();
+        bag.insert("quest".into(), serde_json::Value::String("cook".into()));
+        let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+            bag.iter().map(|(key, value)| (key.as_str(), value)),
+        ));
+        assert!(
+            settings.is_err(),
+            "obsolete single-quest setting must be rejected"
+        );
     }
 }

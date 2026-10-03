@@ -13,6 +13,8 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
     let mut doc = super::super::compile::decode_cook().unwrap();
+    // Isolate progress transitions from the independently tested provisioning service.
+    doc.quest.as_mut().unwrap().owns_inventory = true;
     let step = &mut doc.roles[0].sequences[1].steps[0];
     step.kind = "wait".into();
     step.args = serde_json::json!({"until":{"All":[]},"max_ticks":10});
@@ -430,11 +432,10 @@ fn no_match_parks_with_raw_lines_and_no_invented_stage() {
         script.progress().unwrap().stage,
         Knowledge::Unknown(_)
     ));
-    assert!(script
-        .journal_text
-        .as_ref()
-        .unwrap()
-        .contains("unrecognised content branch"));
+    assert!(
+        script.journal_text.is_none(),
+        "published journal text is not resent"
+    );
 }
 
 #[test]
@@ -852,7 +853,9 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
 
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-    let document = serde_json::from_str(super::super::compile::RUNE_MYSTERIES_JSON).unwrap();
+    let mut document: crate::quester::path::PathDocument =
+        serde_json::from_str(super::super::compile::RUNE_MYSTERIES_JSON).unwrap();
+    document.quest.as_mut().unwrap().owns_inventory = true;
     let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
     let spoken = "@str@I spoke to Duke Horacio";
     let talisman_pending =
@@ -979,12 +982,10 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
 fn sheep_complete_snapshot() -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-    let path = super::super::compile::compile_path(
-        super::super::compile::SHEEP_JSON.as_bytes(),
-        &data,
-        &quests,
-    )
-    .unwrap();
+    let mut document: crate::quester::path::PathDocument =
+        serde_json::from_str(super::super::compile::SHEEP_JSON).unwrap();
+    document.quest.as_mut().unwrap().owns_inventory = true;
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_quest_statuses(

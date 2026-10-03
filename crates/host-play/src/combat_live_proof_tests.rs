@@ -16,7 +16,10 @@ use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use host::{FrameBuf, Pump};
-use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
+use scenario::{
+    Proof, RunnerStatus, Scenario, ScenarioRunner, ScriptInjectValue, ScriptSettingInject, Step,
+    StepKind, Wait,
+};
 use script::quester::compile::{compile_path, CompiledPath};
 use script::quester::runner::Quester;
 use serde_json::{json, Value};
@@ -31,6 +34,10 @@ const IMP_START: WorldTile = WorldTile {
     z: 3222,
     level: 0,
 };
+const IMP_QUESTER_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quests",
+    value: ScriptInjectValue::StrList(&["imp"]),
+}];
 const WARLORD_ANCHOR: WorldTile = WorldTile {
     x: 2457,
     z: 3302,
@@ -641,6 +648,7 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
 fn scenario_for(case: Case, stand: WorldTile, capture: Arc<Mutex<CombatCapture>>) -> Scenario {
     let mut scenario =
         scenario::quester_stage(case.label(), "Imp Catcher", "imp", 0, case.items(), stand);
+    scenario.settings.script_settings_inject = Some(IMP_QUESTER_SETTINGS);
     let stand_index = scenario
         .steps
         .iter()

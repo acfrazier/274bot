@@ -18,6 +18,10 @@ pub struct Watchdog {
 }
 
 impl Watchdog {
+    pub fn unchanged(&self) -> u8 {
+        self.same
+    }
+
     pub fn observe(
         &mut self,
         stage: Option<&FactKey>,

@@ -224,9 +224,9 @@ fn run_quester_sheep() -> Result<(), String> {
     }
     let start_settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
         .ok_or("quester_sheep has no compiled Start settings")?;
-    if start_settings.len() != 1 || start_settings.get("quest") != Some(&json!("sheep")) {
+    if start_settings.len() != 1 || start_settings.get("quests") != Some(&json!(["sheep"])) {
         return Err(format!(
-            "quester_sheep must Start Quester with exactly {{\"quest\":\"sheep\"}}, got {start_settings:?}"
+            "quester_sheep must Start Quester with exactly {{\"quests\":[\"sheep\"]}}, got {start_settings:?}"
         ));
     }
     let deadline = scenario.settings.deadline;
