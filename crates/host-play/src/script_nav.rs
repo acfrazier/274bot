@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
+use nav::arrival::ArrivalKind;
 use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
@@ -114,6 +115,8 @@ pub(crate) struct NavBot {
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
     /// Explicit loc identity; tile walks never infer it from scene contents.
     pub(crate) route_loc_id: Option<i32>,
+    /// Settlement mode for the current armed route and its live refreshes.
+    pub(crate) route_arrival: ArrivalKind,
     /// Arm-time estimate inputs: target in scene, footprint modeled.
     pub(crate) route_loc_geometry: (bool, bool),
     /// Request exclusions retained for reconnect carry and retransmission gates.
@@ -406,6 +409,13 @@ impl ScriptWalkArm {
             self.refuse_native(authority);
             return false;
         }
+        if request.arrival == ArrivalKind::Area && request.loc_id.is_some() {
+            self.refuse_native_with_detail(
+                authority,
+                Some(Arc::from("Area arrival cannot be combined with loc_id")),
+            );
+            return false;
+        }
         let protect = request.protect;
         let guard = if protect {
             let view = SnapshotView::new(
@@ -462,6 +472,7 @@ impl ScriptWalkArm {
             exclusions,
             Some(authority),
             request.loc_id,
+            request.arrival,
         );
         if queued {
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
@@ -485,6 +496,7 @@ impl ScriptWalkArm {
         exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
         loc_id: Option<i32>,
+        arrival: ArrivalKind,
     ) -> bool {
         self.queue_route_impl(
             to.x,
@@ -499,6 +511,7 @@ impl ScriptWalkArm {
             exclusions,
             authority,
             loc_id,
+            arrival,
         )
     }
 
@@ -550,18 +563,10 @@ impl ScriptWalkArm {
         if !authority.live() {
             return;
         }
-        let request_id = authority.request_id().get();
         let mut navs = self.navs.lock().unwrap();
-        let bot = navs.entry(self.name.clone()).or_default();
-        bot.refuse_native(authority);
-        if bot
-            .native_end
-            .as_ref()
-            .is_some_and(|(owner, _)| owner.request_id().get() == request_id)
-        {
-            bot.walk_outcome_request_id = request_id;
-            bot.walk_outcome_detail = detail;
-        }
+        navs.entry(self.name.clone())
+            .or_default()
+            .refuse_native_with_detail(authority, detail);
     }
 
     fn refuse(
@@ -571,9 +576,10 @@ impl ScriptWalkArm {
         allow_teleports: bool,
         request_id: u64,
         native: Option<&script::native::HostAuthority>,
+        detail: Option<Arc<str>>,
     ) {
         match native {
-            Some(authority) => self.refuse_native(authority.clone()),
+            Some(authority) => self.refuse_native_with_detail(authority.clone(), detail),
             None => self.publish_refusal(to, radius, allow_teleports, request_id),
         }
     }
@@ -603,6 +609,7 @@ impl ScriptWalkArm {
             ScriptRouteExclusions::default(),
             None,
             None,
+            ArrivalKind::Reach,
         )
     }
 
@@ -639,6 +646,7 @@ impl ScriptWalkArm {
             ScriptRouteExclusions::default(),
             None,
             None,
+            ArrivalKind::Reach,
         )
     }
 
@@ -666,6 +674,7 @@ impl ScriptWalkArm {
             exclusions,
             None,
             None,
+            ArrivalKind::Reach,
         )
     }
 
@@ -695,6 +704,7 @@ impl ScriptWalkArm {
             exclusions,
             None,
             None,
+            ArrivalKind::Reach,
         )
     }
 
@@ -726,6 +736,7 @@ impl ScriptWalkArm {
             ScriptRouteExclusions::default(),
             None,
             loc_id,
+            ArrivalKind::Reach,
         )
         .then_some(receiver)
     }
@@ -742,6 +753,7 @@ impl ScriptWalkArm {
         request_id: u64,
         native: Option<&script::native::HostAuthority>,
         loc_id: Option<i32>,
+        arrival: ArrivalKind,
     ) -> Option<bool> {
         if native.is_some() && bot.native_walk.as_ref().is_some_and(|owner| !owner.live()) {
             // The owner cancelled or replaced its previous walk: that follow
@@ -749,7 +761,14 @@ impl ScriptWalkArm {
             super::script_walk::abort_walk_on_bot(bot);
         }
         let refuse = |bot: &mut NavBot| match native {
-            Some(owner) => bot.refuse_native(owner.clone()),
+            Some(owner) => bot.refuse_native_with_detail(
+                owner.clone(),
+                Some(Arc::from(format!(
+                    "native walk refused: route admission is blocked by active work; \
+                     {:?} target {to:?}, radius {radius}",
+                    arrival
+                ))),
+            ),
             None => bot.note_failure(bot.route_generation, request_id, to, radius, key.2),
         };
         if bot.bank_fetch.is_some()
@@ -770,6 +789,7 @@ impl ScriptWalkArm {
         if bot.requested_route == Some(key)
             && bot.requested_exclusions.as_deref() == exclusions.as_deref()
             && bot.route_loc_id == loc_id
+            && bot.route_arrival == arrival
             && (bot.route_worker.is_some() || bot.route.is_some() || bot.pending_route.is_some())
         {
             // Same-id retransmission and legacy request_id 0 keep the
@@ -813,6 +833,7 @@ impl ScriptWalkArm {
         exclusions: ScriptRouteExclusions,
         authority: Option<script::native::HostAuthority>,
         loc_id: Option<i32>,
+        arrival: ArrivalKind,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -830,6 +851,12 @@ impl ScriptWalkArm {
                 opts.allow_teleports,
                 request_id,
                 authority.as_ref(),
+                authority.as_ref().map(|_| {
+                    Arc::from(format!(
+                        "native walk refused: no player tile for {:?} arrival to {to:?}, radius {radius}",
+                        arrival
+                    ))
+                }),
             );
             return false;
         };
@@ -845,6 +872,12 @@ impl ScriptWalkArm {
                 opts.allow_teleports,
                 request_id,
                 authority.as_ref(),
+                authority.as_ref().map(|_| {
+                    Arc::from(format!(
+                        "native walk refused: no navigation world for {:?} arrival to {to:?}, radius {radius}",
+                        arrival
+                    ))
+                }),
             );
             return false;
         };
@@ -899,6 +932,7 @@ impl ScriptWalkArm {
                 request_id,
                 authority.as_ref(),
                 loc_id,
+                arrival,
             ) {
                 return result;
             }
@@ -937,6 +971,7 @@ impl ScriptWalkArm {
                 request_id,
                 authority.as_ref(),
                 loc_id,
+                arrival,
             ) {
                 return result;
             }
@@ -962,6 +997,7 @@ impl ScriptWalkArm {
             bot.walk_outcome_detail = None;
             bot.requested_route = Some(key);
             bot.route_loc_id = loc_id;
+            bot.route_arrival = arrival;
             bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority;
@@ -974,6 +1010,7 @@ impl ScriptWalkArm {
                 to,
                 radius,
                 loc_id,
+                arrival,
                 opts,
                 state: self.state.clone(),
                 bank: self.bank.clone(),
@@ -1095,6 +1132,20 @@ impl ScriptWalkArm {
                             .is_none()
                             .then(|| crate::walk_map::LEGACY_ZONES_DETAIL.to_owned())
                     });
+                let route_detail = if authority.is_some()
+                    && matches!(&outcome, &RouteOutcome::NoPath)
+                {
+                    let context = format!(
+                        "native walk route failed: {:?} arrival from {:?} to {:?} within radius {}",
+                        request.arrival, request.from, request.to, request.radius
+                    );
+                    Some(match route_detail {
+                        Some(detail) => format!("{detail}; {context}"),
+                        None => context,
+                    })
+                } else {
+                    route_detail
+                };
                 if let (Some(keys), Some(table)) =
                     (blocked.as_ref(), request.world.graph.zones.as_ref())
                 {
@@ -1276,10 +1327,11 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) to: WorldTile,
     pub(crate) radius: i32,
     pub(crate) loc_id: Option<i32>,
+    pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Explicit live-loc footprint goals; otherwise use the plain anchor radius.
+    /// Explicit live-loc footprint goals; otherwise use the request's tile-area rule.
     pub(crate) live_candidates: Option<Vec<WorldTile>>,
     /// Frozen request exclusions: every search keeps out of rects and carries
     /// the original wire entries across a resume for arm-time re-resolution.
@@ -1298,7 +1350,7 @@ impl ScriptRouteRequest {
                 self.from,
                 self.to,
                 self.radius,
-                self.loc_id.is_some(),
+                self.loc_id.is_some() || self.arrival == ArrivalKind::Area,
             )
         }
     }
@@ -1318,7 +1370,7 @@ impl ScriptRouteRequest {
         }
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
-        let bank_targets = if self.radius <= 0 {
+        let bank_targets = if self.radius <= 0 || self.arrival == ArrivalKind::Area {
             targets
         } else {
             self.live_candidates
@@ -1682,6 +1734,9 @@ impl ScriptRouteRequest {
                 self.avoid(),
             );
         }
+        if self.arrival == ArrivalKind::Area {
+            return self.calculate_solid(targets, &[], state);
+        }
 
         // Only explicitly identified live footprints use operable stands.
         // Off-scene/unknown targets retain the ordinary anchor-radius estimate.
@@ -1734,11 +1789,24 @@ impl NavBot {
     }
 
     /// A native walk the host refused to arm: nothing was routed for it.
-    pub(crate) fn refuse_native(&mut self, owner: script::native::HostAuthority) {
+    pub(crate) fn refuse_native_with_detail(
+        &mut self,
+        owner: script::native::HostAuthority,
+        detail: Option<Arc<str>>,
+    ) {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         if owner.live() {
+            let request_id = owner.request_id().get();
             self.native_end = Some((owner, script::native::WalkEnd::Refused));
+            if self
+                .native_end
+                .as_ref()
+                .is_some_and(|(owner, _)| owner.request_id().get() == request_id)
+            {
+                self.walk_outcome_request_id = request_id;
+                self.walk_outcome_detail = detail;
+            }
         }
     }
 
@@ -1747,6 +1815,13 @@ impl NavBot {
     /// crossing whose quest evidence was unproven at send time names the
     /// gates to acquire, or blocks honestly when evidence disproves them.
     pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav::traveller::TravelOutcome) {
+        if self.walk_request_id == 0
+            || self.route_request_id != self.walk_request_id
+            || self.walk_outcome_request_id != self.walk_request_id
+            || self.walk_outcome_generation != self.route_generation
+        {
+            return;
+        }
         use api::selected::Truth;
         let end = match outcome {
             nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
@@ -1764,6 +1839,14 @@ impl NavBot {
             _ => None,
         };
         self.native_walk_failure = end.map(|end| (self.walk_request_id, end));
+        if self
+            .native_walk
+            .as_ref()
+            .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
+        {
+            self.walk_outcome_detail =
+                Some(Arc::from(format!("native follow failed: {outcome:?}")));
+        }
     }
 
     /// Older armed-route results may publish only after the current wait

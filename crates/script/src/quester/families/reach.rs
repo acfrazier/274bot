@@ -521,6 +521,7 @@ pub fn walk_request(
         target: tile,
         loc_id,
         radius,
+        arrival: nav::arrival::ArrivalKind::Reach,
         options: crate::FindOptions::default(),
         required_after,
         evidence: None,

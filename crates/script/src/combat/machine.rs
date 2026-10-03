@@ -1857,6 +1857,7 @@ impl Combat {
             target: tile,
             loc_id: None,
             radius: 1,
+            arrival: nav::arrival::ArrivalKind::Reach,
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
