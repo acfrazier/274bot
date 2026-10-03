@@ -12,8 +12,7 @@ use nav::router::{
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
-use script::combat::{GuardOp, GuardProtect};
-use script::native::WalkEnd;
+use script::combat::{GuardFailure, GuardOp, GuardProtect};
 
 use super::play_status::lock_statuses;
 use super::{
@@ -69,7 +68,7 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     // Bank work and carried routes share the revoked walk's ownership.
     bot.bank_fetch = None;
     bot.carried_walk = None;
-    bot.walk_guard = None;
+    owe_walk_guard_off(bot);
 }
 
 fn guard_view(snapshot: &GameSnapshot) -> SnapshotView<'_> {
@@ -87,62 +86,143 @@ fn guard_view(snapshot: &GameSnapshot) -> SnapshotView<'_> {
     )
 }
 
-fn unprotectable_detail(protect: GuardProtect) -> Arc<str> {
-    Arc::from(match protect {
-        GuardProtect::Magic => "magic",
-        GuardProtect::Missiles => "missiles",
-        GuardProtect::Melee => "melee",
+fn unprotectable_detail(protect: GuardProtect, reason: GuardFailure) -> Arc<str> {
+    let (level, name) = match protect {
+        GuardProtect::Magic => (37, "Protect from Magic"),
+        GuardProtect::Missiles => (40, "Protect from Missiles"),
+        GuardProtect::Melee => (43, "Protect from Melee"),
+    };
+    Arc::from(match reason {
+        GuardFailure::PrayerLevel => format!("Prayer {level} needed for {name}"),
+        GuardFailure::NoPrayerPoints => {
+            format!("No Prayer points or prayer potion available for {name}")
+        }
     })
 }
 
 pub(crate) fn apply_guard_op<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
-    op: GuardOp,
+    op: &GuardOp,
     account: Option<&str>,
-) {
+) -> bool {
     let _ = account;
-    match op {
-        GuardOp::IfButton { component } if component > 0 => {
-            #[cfg(test)]
-            if let Some(account) = account {
-                crate::combat_proof::record_guard(account, snapshot, "if-button", Some(component));
-            }
+    let (sent, kind, component) = match op {
+        GuardOp::IfButton { component } if *component > 0 => {
             let ctx = ReadContext::new(snapshot);
-            if let Some(widget) = ctx.component(component) {
-                let _ = Interactions::new(snapshot, driver).if_button(widget);
-            } else {
-                let _ = api::interact::press(driver, component);
-            }
+            let sent = ctx.component(*component).is_some_and(|widget| {
+                matches!(
+                    Interactions::new(snapshot, driver).if_button(widget),
+                    api::interact::SendResult::Sent { .. }
+                )
+            });
+            (sent, "if-button", Some(*component))
         }
         GuardOp::Drink { name } => {
-            #[cfg(test)]
-            if let Some(account) = account {
-                crate::combat_proof::record_guard(account, snapshot, "drink", None);
-            }
-            if let Some(item) = snapshot.inventory().iter().find(|row| {
-                row.def
-                    .name
-                    .as_deref()
-                    .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
-            }) {
-                let _ = Interactions::new(snapshot, driver)
-                    .interact(OpTarget::Item(item), ActionSpec::Label("Drink".into()));
+            let sent = snapshot
+                .inventory()
+                .iter()
+                .find(|row| {
+                    row.def
+                        .name
+                        .as_deref()
+                        .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
+                })
+                .is_some_and(|item| {
+                    matches!(
+                        Interactions::new(snapshot, driver)
+                            .interact(OpTarget::Item(item), ActionSpec::Label("Drink".into())),
+                        api::interact::SendResult::Sent { .. }
+                    )
+                });
+            (sent, "drink", None)
+        }
+        _ => return false,
+    };
+    #[cfg(test)]
+    if sent {
+        if let Some(account) = account {
+            crate::combat_proof::record_guard(account, snapshot, kind, component);
+        }
+    }
+    let _ = (kind, component);
+    sent
+}
+
+/// A retired toggle belongs to the host until its fresh varp can discharge it.
+/// In-flight switches owe the new protect, never an off-click on the old style.
+pub(crate) struct WalkGuardOff {
+    component: i32,
+    awaiting_on: bool,
+}
+
+pub(super) fn owe_walk_guard_off(bot: &mut NavBot) {
+    if let Some(guard) = bot.walk_guard.take() {
+        let awaiting_on = guard.pending_protect().is_some();
+        if let GuardOp::IfButton { component } = guard.end() {
+            if component > 0 && bot.walk_guard_off.is_none() {
+                bot.walk_guard_off = Some(WalkGuardOff {
+                    component,
+                    awaiting_on,
+                });
             }
         }
-        GuardOp::IfButton { .. } | GuardOp::Locked { .. } | GuardOp::Unprotectable { .. } => {}
     }
 }
 
 pub(crate) fn finish_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
-    guard: &mut Option<script::combat::WalkGuard>,
+    bot: &mut NavBot,
     account: Option<&str>,
 ) {
-    if let Some(mut guard) = guard.take() {
-        guard.observe_prayer(&guard_view(snapshot));
-        apply_guard_op(driver, snapshot, guard.end(), account);
+    let Some(off) = bot.walk_guard_off.as_ref() else {
+        return;
+    };
+    // Death deactivates all prayers on the server, and a disconnected session
+    // cannot admit a click. Session reset discards its temporary-varp debt.
+    if snapshot
+        .stats()
+        .iter()
+        .any(|stat| stat.index == 3 && stat.effective == 0)
+    {
+        bot.walk_guard_off = None;
+        return;
+    }
+    if !snapshot.ingame() || snapshot.scene_state() != 2 {
+        return;
+    }
+    let Ok(data) = api::game_data::for_revision(api::selected::ClientRevision::R289) else {
+        return;
+    };
+    let Some(fact) = data
+        .prayers()
+        .iter()
+        .find(|fact| fact.button_com == off.component)
+    else {
+        return;
+    };
+    let Some(value) = snapshot
+        .varps()
+        .iter()
+        .find(|row| row.index == fact.varp)
+        .map(|row| row.value)
+    else {
+        return;
+    };
+    if value == 1 {
+        if apply_guard_op(
+            driver,
+            snapshot,
+            &GuardOp::IfButton {
+                component: off.component,
+            },
+            account,
+        ) {
+            bot.walk_guard_off = None;
+        }
+    } else if !off.awaiting_on {
+        bot.walk_guard_off = None;
     }
 }
 
@@ -153,14 +233,12 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     account: Option<&str>,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
-    let op = guard.tick(&guard_view(snapshot))?;
-    match &op {
-        GuardOp::Unprotectable { .. } | GuardOp::Locked { .. } => Some(op),
-        _ => {
-            apply_guard_op(driver, snapshot, op.clone(), account);
-            Some(op)
-        }
+    let view = guard_view(snapshot);
+    let op = guard.tick(&view)?;
+    if apply_guard_op(driver, snapshot, &op, account) {
+        guard.admitted(&op, &view);
     }
+    Some(op)
 }
 
 /// The single takeover seam, called before frontend and script consumers.
@@ -486,6 +564,24 @@ pub(crate) fn step_nav_bot<D: Driver>(
     map_members: bool,
     reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
 ) {
+    {
+        let mut all = navs.lock().unwrap();
+        if let Some(bot) = all.get_mut(name) {
+            if snapshot
+                .stats()
+                .iter()
+                .any(|stat| stat.index == 3 && stat.effective == 0)
+            {
+                bot.walk_guard = None;
+                bot.walk_guard_off = None;
+            } else if bot.walk_guard_off.is_some() {
+                finish_walk_guard(driver, snapshot, bot, Some(name));
+                // Never let a new guard enable protection in the same pump
+                // that an older route's off-click is still being processed.
+                return;
+            }
+        }
+    }
     // The random-event freeze: the follow is not stepped while the
     // guardian holds the slot, and the armed route stays latched so it
     // resumes when the hold lifts. BankBudget steps freeze the same way.
@@ -674,7 +770,8 @@ pub(crate) fn step_nav_bot<D: Driver>(
         if bot.route.is_some() {
             // `requested_route == armed`: the arrival above is for this walk.
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
-                finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
+                owe_walk_guard_off(bot);
+                finish_walk_guard(driver, snapshot, bot, Some(name));
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
@@ -686,11 +783,24 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                         )
                     });
-                    if let Some(GuardOp::Unprotectable { protect }) =
+                    if let Some(GuardOp::Unprotectable { protect, reason }) =
                         tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
                     {
-                        abort_walk_on_bot_with_end(bot, WalkEnd::Unprotectable);
-                        bot.walk_outcome_detail = Some(unprotectable_detail(protect));
+                        if let Some(owner) = bot.native_walk.as_ref().filter(|owner| owner.live()) {
+                            bot.walk_guard_events.push((
+                                owner.clone(),
+                                script::native::WalkEvent {
+                                    request_id: owner.request_id().get(),
+                                    evidence: EvidenceStamp {
+                                        run: owner.run(),
+                                        tick: u64::from(snapshot.tick()),
+                                        sequence: u64::from(snapshot.tick()),
+                                    },
+                                    kind: script::native::WalkEventKind::Unprotectable { protect },
+                                    detail: unprotectable_detail(protect, reason),
+                                },
+                            ));
+                        }
                     }
                     let skip_follow = bot.route.is_none()
                         || bot
@@ -722,7 +832,8 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         }
                     }
                     if bot.route.is_none() {
-                        finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
+                        owe_walk_guard_off(bot);
+                        finish_walk_guard(driver, snapshot, bot, Some(name));
                     }
                 }
             }

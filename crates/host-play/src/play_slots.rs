@@ -513,6 +513,12 @@ pub(super) fn reset_slot_session_work(
         Some(carry) => hold_script_nav(navs, name, carry),
         None => reset_script_nav(navs, name),
     }
+    // Prayer varps are temporary: relog starts all-off. Do not carry a toggle
+    // from the old session into the new one, even if its route is held.
+    if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+        bot.walk_guard = None;
+        bot.walk_guard_off = None;
+    }
 }
 
 /// Reset one session boundary of the slot thread. A drop relogs when a login
@@ -1563,7 +1569,7 @@ fn spawn_slot_thread(
                             let nav_key = (c.gens.player, here);
                             if nav_step_due(&mut last_nav_step, nav_key, hold, exclusive, || {
                                 slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.route.is_some() || b.bank_fetch.is_some()
+                                    b.route.is_some() || b.bank_fetch.is_some() || b.walk_guard_off.is_some()
                                 })
                             }) {
                                 step_nav_bot(
@@ -1604,7 +1610,7 @@ fn spawn_slot_thread(
                                     .get(name)
                                     .is_some_and(|q| !q.is_empty())
                                 || slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.route.is_some() || b.bank_fetch.is_some()
+                                    b.route.is_some() || b.bank_fetch.is_some() || b.walk_guard_off.is_some()
                                 })
                         }
                     },

@@ -91,6 +91,83 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+## Walk Guard W1 live and receipt replay
+
+The ignored W1 fixtures stage the `death-plateau-throwers` crossing against the
+local R289 engine. The live gate retains the ranged-queue delay, protect timing,
+and no-Attack proofs. It also records one Missiles/all-prayer row per game tick
+from the first projectile launch through the first all-prayers-off tick and the
+three following ticks. A later in-crossing launch without Missiles, any
+non-Missiles guard click before arrival, or a prayer returning during the
+post-off watch fails the same gate used by offline replay.
+
+Use the isolated worktree's nav pack and retained cache snapshot. The host
+connects through builder ports `45594/2080`, forwarded to the local engine's
+`44594/1080` endpoints. Both the test's generated HOME and the launcher HOME
+are under the evidence directory:
+
+```sh
+WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+ENGINE_DIR=/path/to/matching/local-289/engine
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$EVIDENCE/launcher-home"
+cd "$WT"
+export CARGO_HOME RUSTUP_HOME
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+BOT_LIVE_NAME_PREFIX=wg \
+BOT_ENGINE_DIR="$ENGINE_DIR" \
+WORLD_ENGINE_DIR="$ENGINE_DIR" \
+BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_protected_crossing -- --exact --ignored --nocapture --test-threads=1
+```
+
+The separate `live_walk_guard_w1_stop_mid_crossing` test uses the real
+`ScriptStartHandle::stop` API after Missiles is observed on during the crossing
+and before arrival. It requires every prayer to turn off within four ticks of
+Stop and remain off for three more observed ticks:
+
+```sh
+WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+ENGINE_DIR=/path/to/matching/local-289/engine
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$EVIDENCE/launcher-home"
+cd "$WT"
+export CARGO_HOME RUSTUP_HOME
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+BOT_LIVE_NAME_PREFIX=wg \
+BOT_ENGINE_DIR="$ENGINE_DIR" \
+WORLD_ENGINE_DIR="$ENGINE_DIR" \
+BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_stop_mid_crossing -- --exact --ignored --nocapture --test-threads=1
+```
+
+Both modes save a real final scene PNG with a matching JSON/Core record in a
+per-run capture folder under `WALK-GUARD-LIFECYCLE-1`; inspect that image alongside
+the receipt before accepting the live proof. The explicit navigation pack must
+have its matching `.navpack.json`, `.navreach`, `.navflags`, `.navcanlight`, and
+`.navpois` files beside it.
+
+The ignored offline replay applies that same gate to the retained bad receipt
+`wgkiu3hcw6` and passing receipts `wg9l6smxhw` and
+`REVIEW-WALK-GUARD-OPUS/W1-wgefe0xaj8_0`. Legacy receipts without per-tick
+rows use only their guard-click prayer varps, recorded protect/off observations,
+and holds between clicks; the replay output marks that their three post-off
+ticks were not directly recorded. It does not fabricate per-tick rows. The
+replay table is written to
+`WALK-GUARD-LIFECYCLE-1/W1-lifecycle-replay.json`:
+
+```sh
+cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts -- --exact --ignored --nocapture
+```
+
 ## JS API v2 GatherQuest sample checks
 
 The `host_js` integration test renders `crates/script/host-js/index.d.ts` from

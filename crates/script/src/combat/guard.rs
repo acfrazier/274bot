@@ -35,9 +35,15 @@ pub enum GuardFailure {
 /// events, never an exclusive combat batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardOp {
-    IfButton { component: i32 },
-    Drink { name: Arc<str> },
-    Locked { until: u16 },
+    IfButton {
+        component: i32,
+    },
+    Drink {
+        name: Arc<str>,
+    },
+    Locked {
+        until: u16,
+    },
     Unprotectable {
         protect: GuardProtect,
         reason: GuardFailure,
@@ -225,8 +231,7 @@ impl WalkGuard {
 
     /// Successfully sent protection click that has not yet been observed on.
     pub fn pending_protect(&self) -> Option<i32> {
-        (self.schedule.pending(OpKind::Prayer) && self.pending_com > 0)
-            .then_some(self.pending_com)
+        (self.schedule.pending(OpKind::Prayer) && self.pending_com > 0).then_some(self.pending_com)
     }
 
     /// Commit a proposal only after its host interaction was successfully sent.
@@ -882,7 +887,12 @@ mod tests {
         let mut guard = scene.begin().unwrap();
         let missiles = scene.missiles().button_com;
         let click = guard.tick(&scene.view_at(0)).unwrap();
-        assert_eq!(click, GuardOp::IfButton { component: missiles });
+        assert_eq!(
+            click,
+            GuardOp::IfButton {
+                component: missiles
+            }
+        );
         guard.admitted(&click, &scene.view_at(0));
 
         guard.observe_prayer(&scene.view_at(1));
@@ -891,7 +901,12 @@ mod tests {
             Some(missiles),
             "an unrelated old active style cannot acknowledge the switch"
         );
-        assert_eq!(guard.end(), GuardOp::IfButton { component: missiles });
+        assert_eq!(
+            guard.end(),
+            GuardOp::IfButton {
+                component: missiles
+            }
+        );
     }
 
     #[test]
@@ -1008,6 +1023,74 @@ mod tests {
                 component: melee_component
             }),
             "the onset observed during the lock must survive the attacker's disappearance"
+        );
+    }
+
+    #[test]
+    fn mixed_melee_and_thrower_can_switch_on_each_projectile_edge() {
+        let mut scene = Scene::new(43);
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let thrower = data.npc_by_config("death_troll_thrower1").unwrap();
+        scene.npcs[0].r#type = Some(thrower.id as usize);
+        scene.npcs[0].name = thrower.display.clone();
+        scene.launch_style(276);
+        let melee_row = data.npc_by_config("khazard_warlord").unwrap();
+        let mut melee_npc = scene.npcs[0].clone();
+        melee_npc.index = 8;
+        melee_npc.r#type = Some(melee_row.id as usize);
+        melee_npc.name = melee_row.display.clone();
+        melee_npc.animation = data
+            .style_seqs()
+            .iter()
+            .find(|row| {
+                scene
+                    .tables
+                    .style_seq(row.seq_id)
+                    .is_some_and(|mask| mask.contains(super::super::tables::StyleMask::MELEE))
+            })
+            .unwrap()
+            .seq_id;
+        melee_npc.animation_frame = 0;
+        scene.npcs.push(melee_npc);
+        scene.refresh();
+        let missiles = scene.missiles().button_com;
+        let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap().clone();
+        let mut guard = scene.begin().unwrap();
+        let first = guard.tick(&scene.view_at(10)).unwrap();
+        assert_eq!(
+            first,
+            GuardOp::IfButton {
+                component: missiles
+            }
+        );
+        guard.admitted(&first, &scene.view_at(10));
+        scene.set_missiles(true);
+        scene.projectiles.clear();
+        scene.refresh();
+        let second = guard.tick(&scene.view_at(11)).unwrap();
+        assert_eq!(
+            second,
+            GuardOp::IfButton {
+                component: melee.button_com
+            },
+            "without the projectile override the stronger melee threat wins"
+        );
+        guard.admitted(&second, &scene.view_at(11));
+        scene.set_missiles(false);
+        scene.set_protect_varp(melee.varp, true);
+        scene.launch_style(276);
+        let third = guard.tick(&scene.view_at(12)).unwrap();
+        assert_eq!(
+            third,
+            GuardOp::IfButton {
+                component: missiles
+            },
+            "the next thrower projectile overrides the same retained melee threat"
+        );
+        guard.admitted(&third, &scene.view_at(12));
+        assert!(
+            guard.blocks_follow(12),
+            "each admitted switch skips that tick's follow"
         );
     }
 

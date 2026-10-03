@@ -3,8 +3,8 @@
 use super::*;
 use script::native::walk::Walk;
 use script::native::{
-    ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkReceipt,
-    WalkRequest,
+    ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
+    WalkEventKind, WalkReceipt, WalkRequest,
 };
 use std::task::Poll;
 
@@ -22,6 +22,7 @@ struct Walker {
     later_target: Option<WorldTile>,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
+    events: Vec<WalkEvent>,
 }
 
 /// One native `Walk` to `(4, 0, 0)`, begun on the first eligible tick and
@@ -41,6 +42,9 @@ impl Script for WalkerScript {
             shared.begun = 0;
         }
         if let Some(handle) = &self.handle {
+            while let Some(event) = tick.actions.take_walk_event(handle, &mut tick.cx) {
+                shared.events.push(event);
+            }
             if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
                 shared.result = Some(result.clone());
                 shared.results.push(result);
@@ -290,7 +294,7 @@ impl Rig {
         step_nav_bot(
             &mut self.driver,
             "alice",
-            Some((0, 0, 0)),
+            self.snapshot.tile(),
             &self.snapshot,
             &self.navs,
             &self.statuses,
@@ -477,6 +481,51 @@ fn seed_protect_frame(snapshot: &mut GameSnapshot, prayer_base: i32) {
     });
 }
 
+fn seed_prayer_widgets(snapshot: &mut GameSnapshot) {
+    use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
+    snapshot.seed_main_modal(
+        5608,
+        [5621, 5622, 5623]
+            .into_iter()
+            .map(|component_id| WidgetView {
+                kind: WidgetKind::Widget,
+                component_id,
+                layer_id: 5608,
+                parent_id: 5608,
+                root_component_id: 5608,
+                root: WidgetRoot::Main,
+                type_: 4,
+                button_type: 1,
+                client_code: 0,
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+                scroll_height: 0,
+                scroll_position: 0,
+                hidden: false,
+                text: None,
+                alternate_text: None,
+                button_text: None,
+                target_verb: None,
+                target_base: None,
+                target_mask: 0,
+                model_type: 0,
+                model_id: 0,
+                alternate_model_type: 0,
+                alternate_model_id: 0,
+                scripts: None,
+                script_comparators: None,
+                script_operands: None,
+                varp_bindings: Vec::new(),
+                colour: 0,
+                actions: Vec::new(),
+                items: Vec::new(),
+            })
+            .collect(),
+    );
+}
+
 fn seed_missile_launch(snapshot: &mut GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let row = data.npc_by_config("ardougne_archer").unwrap();
@@ -542,6 +591,241 @@ fn seed_missile_launch(snapshot: &mut GameSnapshot) {
     }]);
 }
 
+fn seed_protect_state(snapshot: &mut GameSnapshot, varp: Option<i32>) {
+    let mut rows = snapshot.varps().to_vec();
+    for row in &mut rows {
+        row.value = i32::from(Some(row.index) == varp);
+    }
+    snapshot.seed_varps(rows);
+}
+
+fn protected_rig() -> Rig {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    rig
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GuardEndSeam {
+    Stop,
+    Pause,
+    Cancel,
+    Manual,
+    CarryHold,
+    OwnerRevoked,
+}
+
+fn check_guard_end(seam: GuardEndSeam) {
+    for was_on in [true, false] {
+        let mut rig = protected_rig();
+        seed_protect_state(&mut rig.snapshot, was_on.then_some(96));
+        rig.step();
+        assert!(rig.driver.if_button_components.is_empty());
+        match seam {
+            GuardEndSeam::Stop => {
+                rig.slot().lock().unwrap().stop();
+                reset_script_nav(&rig.navs, "alice");
+            }
+            GuardEndSeam::Pause => {
+                pause_script(&mut rig.slot().lock().unwrap(), &rig.navs, "alice");
+            }
+            GuardEndSeam::Cancel => abort_script_walk(&rig.navs, "alice"),
+            GuardEndSeam::Manual => {
+                rig.navs
+                    .lock()
+                    .unwrap()
+                    .get_mut("alice")
+                    .unwrap()
+                    .cancel_for_manual_input();
+            }
+            GuardEndSeam::CarryHold => hold_script_nav(&rig.navs, "alice", None),
+            GuardEndSeam::OwnerRevoked => {
+                rig.slot().lock().unwrap().stop();
+                rig.step();
+            }
+        }
+        assert!(
+            rig.driver.if_button_components.is_empty(),
+            "{seam:?} cannot click without the pump driver"
+        );
+        rig.snapshot.seed_tick(2);
+        rig.step();
+        let expected = if was_on { vec![5622] } else { vec![] };
+        assert_eq!(
+            rig.driver.if_button_components, expected,
+            "{seam:?} must discharge only an observed-on protect on the next pump"
+        );
+        rig.step();
+        rig.snapshot.seed_tick(3);
+        rig.step();
+        assert_eq!(
+            rig.driver.if_button_components, expected,
+            "{seam:?} must not double-toggle a stale on observation"
+        );
+    }
+}
+
+#[test]
+fn stop_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Stop);
+}
+
+#[test]
+fn pause_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Pause);
+}
+
+#[test]
+fn cancel_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Cancel);
+}
+
+#[test]
+fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
+    let mut rig = protected_rig();
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.step();
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice");
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(
+        rig.driver.if_button_components.is_empty(),
+        "a conditional off must not turn an already-off protect back on"
+    );
+}
+
+#[test]
+fn manual_takeover_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Manual);
+}
+
+#[test]
+fn carry_hold_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::CarryHold);
+}
+
+#[test]
+fn owner_revocation_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::OwnerRevoked);
+}
+
+fn check_pending_arrival(previous: Option<i32>) {
+    let mut rig = protected_rig();
+    rig.snapshot.seed_tick(2);
+    seed_protect_state(&mut rig.snapshot, previous);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    // T+1: the route ends before the enable/switch has been acknowledged.
+    let mut client = nav_client();
+    client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    nav_snapshot_at(&mut client, &mut rig.snapshot, 4, 0);
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    seed_protect_state(&mut rig.snapshot, previous);
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].route.is_none(),
+        "T+1 really ends the route before the pending protect is observed"
+    );
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "arrival cannot toggle an old style while the new protect is in flight"
+    );
+    // T+2: the server applies the in-flight protect after the walk ended.
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "the late acknowledged protect must receive its single off-click"
+    );
+    rig.step();
+    rig.snapshot.seed_tick(5);
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+}
+
+#[test]
+fn arrival_before_protect_acknowledgement_owes_the_late_off() {
+    check_pending_arrival(None);
+}
+
+#[test]
+fn arrival_during_a_pending_protect_switch_does_not_double_toggle() {
+    check_pending_arrival(Some(97));
+}
+
+#[test]
+fn a_missing_prayer_widget_does_not_admit_or_log_a_guard_click() {
+    let mut rig = protected_rig();
+    seed_missile_launch(&mut rig.snapshot);
+    rig.snapshot.seed_main_modal(-1, Vec::new());
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(rig.driver.if_button_components.is_empty());
+    assert!(!rig.navs.lock().unwrap()["alice"]
+        .walk_guard
+        .as_ref()
+        .unwrap()
+        .blocks_follow(2));
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "a refused proposal spends no pacing"
+    );
+}
+
+#[test]
+fn relog_discards_temporary_prayer_debt_without_a_click() {
+    let mut rig = protected_rig();
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.step();
+    crate::play_slots::reset_slot_session_work(
+        "alice",
+        &rig.scripts,
+        &rig.cheats,
+        &Arc::new(Mutex::new(HashMap::new())),
+        &rig.navs,
+        false,
+    );
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
+#[test]
+fn death_discards_protect_without_a_toggle() {
+    let mut rig = protected_rig();
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.step();
+    abort_script_walk(&rig.navs, "alice");
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .unwrap()
+        .effective = 0;
+    rig.snapshot.seed_stats(stats);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
 #[test]
 fn unprotectable_is_delivered_to_the_walk_owner() {
     let mut rig = open_rig(false);
@@ -552,28 +836,104 @@ fn unprotectable_is_delivered_to_the_walk_owner() {
     rig.wait_routed();
     seed_missile_launch(&mut rig.snapshot);
     rig.step();
-    rig.observe(2);
-    let receipt = rig
-        .shared
-        .lock()
-        .result
-        .clone()
-        .expect("Unprotectable must complete the walk")
-        .expect("Unprotectable is a successful host terminal");
-    assert_eq!(
-        receipt.end,
-        WalkEnd::Unprotectable,
-        "the host must deliver Unprotectable to the walk owner"
+    assert!(
+        rig.walk_armed(),
+        "Unprotectable must leave the route following"
     );
-    assert_eq!(
-        receipt.detail.as_deref(),
-        Some("missiles"),
-        "Unprotectable must keep the wanted protection style on the receipt"
+    rig.observe(2);
+    assert_eq!(rig.end(), None, "the warning must not complete its walk");
+    {
+        let shared = rig.shared.lock();
+        assert_eq!(shared.events.len(), 1);
+        assert_eq!(
+            shared.events[0].kind,
+            WalkEventKind::Unprotectable {
+                protect: script::combat::GuardProtect::Missiles
+            }
+        );
+        assert_eq!(
+            shared.events[0].detail.as_ref(),
+            "Prayer 40 needed for Protect from Missiles"
+        );
+    }
+    for tick in 3..6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    assert!(
+        rig.walk_armed(),
+        "the owner still follows the unprotected crossing"
     );
     assert!(
-        rig.driver.if_button_components.is_empty(),
-        "Unprotectable must not send a prayer packet, got {:?}",
-        rig.driver.if_button_components
+        rig.driver.move_calls > 0,
+        "the route keeps issuing follow work"
+    );
+    assert_eq!(
+        rig.shared.lock().events.len(),
+        1,
+        "the owner sees the warning once"
+    );
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
+#[test]
+fn exhausted_guard_reports_once_and_keeps_the_walk_following() {
+    let mut rig = protected_rig();
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 5)
+        .unwrap()
+        .effective = 0;
+    rig.snapshot.seed_stats(stats);
+    seed_missile_launch(&mut rig.snapshot);
+    for tick in 2..6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    let shared = rig.shared.lock();
+    assert!(shared.result.is_none());
+    assert_eq!(shared.events.len(), 1);
+    assert_eq!(
+        shared.events[0].kind,
+        WalkEventKind::Unprotectable {
+            protect: script::combat::GuardProtect::Missiles,
+        }
+    );
+    assert_eq!(
+        shared.events[0].detail.as_ref(),
+        "No Prayer points or prayer potion available for Protect from Missiles"
+    );
+    assert!(rig.walk_armed());
+    assert!(rig.driver.move_calls > 0);
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
+#[test]
+fn unprotectable_keeps_another_held_style_managed_until_the_walk_ends() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_protect_frame(&mut rig.snapshot, 37);
+    seed_prayer_widgets(&mut rig.snapshot);
+    seed_protect_state(&mut rig.snapshot, Some(95));
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    rig.observe(2);
+    assert!(rig.walk_armed());
+    assert_eq!(rig.shared.lock().events.len(), 1);
+    assert!(rig.driver.if_button_components.is_empty());
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5621],
+        "the retained Magic still owes its off"
     );
 }
 

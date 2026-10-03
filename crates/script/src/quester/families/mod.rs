@@ -49,7 +49,7 @@ fn walk_step_evidence(
         WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
             "walk needs live quest evidence: {gates:?}"
         )))),
-        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused | WalkEnd::Unprotectable => {
+        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => {
             static REASON: std::sync::LazyLock<Arc<str>> =
                 std::sync::LazyLock::new(|| Arc::from("walk failed"));
             Err(ActionError::Blocked(
@@ -1044,15 +1044,26 @@ impl StepPlan for WalkPlan {
         request.cross = self.cross.clone();
         request.protect = self.protect;
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
-        Ok(Box::new(WalkRun { handle }))
+        Ok(Box::new(WalkRun {
+            handle,
+            warning: None,
+        }))
     }
 }
 
 struct WalkRun {
     handle: ActionHandle<Walk>,
+    warning: Option<Arc<str>>,
 }
 impl StepRun for WalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        while let Some(event) = cx
+            .tick
+            .actions
+            .take_walk_event(&self.handle, &mut cx.tick.cx)
+        {
+            self.warning = Some(event.detail);
+        }
         match cx.tick.actions.poll(&self.handle, &mut cx.tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(receipt)) => {
@@ -1066,6 +1077,11 @@ impl StepRun for WalkRun {
         }
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
+        self.warning
+            .as_ref()
+            .map(|warning| ("Walk protection", warning))
+    }
 }
 
 #[derive(Deserialize)]
