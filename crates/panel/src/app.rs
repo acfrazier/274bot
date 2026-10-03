@@ -3326,8 +3326,10 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ) {
                     for opt in opts {
                         let selected = opt == &current;
-                        let shown = resolved.label_for(opt);
-                        if ui.selectable_config(shown).selected(selected).build() {
+                        // Two options can share a label (e.g. two fishing methods that
+                        // catch the same fish); the value keeps their ImGui IDs apart.
+                        let shown = format!("{}##{opt}", resolved.label_for(opt));
+                        if ui.selectable_config(&shown).selected(selected).build() {
                             persist_profile_setting(
                                 session,
                                 &selection,
