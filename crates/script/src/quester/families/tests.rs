@@ -693,10 +693,13 @@ fn bank_pick_for_plan(
             with_step_banks(tick, banks, |cx| run.poll(cx))
         });
         if let Some(request) = ledger.as_ref().and_then(|ledger| {
-            ledger.outbox.iter().find_map(|action| match &action.effect {
-                HostEffect::BankPick(request) => Some(request.clone()),
-                _ => None,
-            })
+            ledger
+                .outbox
+                .iter()
+                .find_map(|action| match &action.effect {
+                    HostEffect::BankPick(request) => Some(request.clone()),
+                    _ => None,
+                })
         }) {
             return Ok(request);
         }
@@ -866,7 +869,9 @@ fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
             Err(crate::native::ActionError::Unavailable(reason))
                 if reason.as_ref() == "required bank is not in the bank catalog"
         ));
-        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     });
 }
 

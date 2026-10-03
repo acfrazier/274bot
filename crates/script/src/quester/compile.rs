@@ -339,9 +339,7 @@ fn compile_uncached(
     let empty_recipes = HashMap::new();
     let (bank, bank_required) = match &header.bank {
         super::path::QuestBankDocument::Nearest(_) => (None, false),
-        super::path::QuestBankDocument::Tile {
-            tile, required, ..
-        } => (
+        super::path::QuestBankDocument::Tile { tile, required, .. } => (
             Some(NamedBank::new(
                 "Path bank",
                 api::WorldTile {

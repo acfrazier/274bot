@@ -323,13 +323,7 @@ impl StepPlan for BankPlan {
                 cx.banks,
             )
         } else {
-            BankRun::new(
-                self.bank,
-                memo_ids,
-                actions,
-                self.partial_ok,
-                cx.banks,
-            )
+            BankRun::new(self.bank, memo_ids, actions, self.partial_ok, cx.banks)
         };
         Ok(Box::new(run))
     }
