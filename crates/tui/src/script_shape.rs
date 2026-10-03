@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use frontend_core::views::{script_status_label, script_status_reason};
+use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 use script::{JsCard, LoadStage, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -541,14 +541,8 @@ impl Widget for ScriptPane<'_> {
                 if let Some(reason) = script_status_reason(status) {
                     lines.push(Line::from(reason));
                 }
-                for field in status
-                    .fields
-                    .iter()
-                    .filter(|field| matches!(field.key, "display" | "queue"))
-                {
-                    if let script::native::StatusValue::Text(value) = &field.value {
-                        lines.push(Line::from(format!("{}: {value}", field.label)));
-                    }
+                for (label, value) in script_status_rows(status) {
+                    lines.push(Line::from(format!("{label}: {value}")));
                 }
             }
         }

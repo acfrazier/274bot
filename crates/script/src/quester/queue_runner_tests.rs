@@ -160,3 +160,26 @@ fn excluding_the_entire_default_queue_is_an_actionable_block() {
     assert!(failure.message.contains("Skip"));
     assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
 }
+
+#[test]
+fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
+    let (mut queued, _) = fixture(cook_settings());
+    queued.queue.mark_parked(
+        0,
+        Arc::from("no route: blocked by danger zones: White Wolf Mountain"),
+    );
+    let parked = queued.blocked().message;
+    assert!(parked.starts_with("no route: blocked by danger zones: White Wolf Mountain; "));
+    assert!(parked.contains("Stop/Start Quester"));
+    assert!(
+        !parked.contains("Script prefs"),
+        "a refused walk can't be fixed in Script prefs: {parked}"
+    );
+
+    queued
+        .queue
+        .mark_blocked(0, Arc::from("need 20 quest points"));
+    let blocked = queued.blocked().message;
+    assert!(blocked.starts_with("need 20 quest points; "));
+    assert!(blocked.contains("Script prefs"));
+}
