@@ -1262,9 +1262,11 @@ mod api_gather_seat {
     }
 
     fn run(slot: &mut SlotScript, token: u64) {
+        let mut settings = SettingsBag::new();
+        settings.insert("disposition".into(), serde_json::json!("Power"));
         slot.consume_api_control(&InteractReq::GatherRun {
             request_id: token,
-            settings: Arc::new(SettingsBag::new()),
+            settings: Arc::new(settings),
         });
     }
 

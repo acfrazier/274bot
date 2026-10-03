@@ -2093,13 +2093,14 @@ fn with_sheep_step<R>(
     let evidence = tick.cx.evidence();
     let progress = [counted_sheep_progress(&selected, evidence, remaining)];
     let bank = crate::quester::bank_memo::BankMemo::default();
+    let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
     f(&mut StepContext {
         tick,
         quests: &quests,
         progress: &progress,
         required_after: evidence,
         bank: &bank,
-        banks: &Arc::new(api::named_banks::NamedBankFacts::empty()),
+        banks: &banks,
     })
 }
 
@@ -3443,10 +3444,9 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
                     "route to the NPC's side, not an adjacent tile across the barrier"
                 );
             }
-            HostEffect::Interaction(_) => {
+            HostEffect::Interaction(_) | HostEffect::BankPick(_) => {
                 panic!("geometric proximity cannot bypass closed clipping")
             }
-            HostEffect::BankPick(_) => panic!("NPC approach cannot select a bank"),
         }
         assert!(
             with_tick_reach(&snapshot, &blocked, &mut ledger, 3, |tick| {

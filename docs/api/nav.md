@@ -459,6 +459,10 @@ owner, and live route-less walking composers stop through the shared intent
 sequence. Already operator-paused or reconnect-carried script work keeps its
 existing Resume behavior.
 
+Native walks retain their action when a correlated host `RouteEnded` arrives
+before the observed player finishes moving. They settle on observed arrival
+or a stationary route end, bounded by the existing active walk deadline.
+This does not relax the requested radius.
 The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” defaults to ON. It gates only
 the pause of the script that owns the cancelled walk; it never gates intent

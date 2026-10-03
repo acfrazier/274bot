@@ -520,11 +520,6 @@ fn synchronous_refusals_stop_idempotence_settings_limit_and_control_forgery() {
             serde_json::json!({"kind": "refused", "reason": "invalid-settings"}),
         ),
         (
-            "staged_bank",
-            serde_json::json!({"disposition": "Bank"}),
-            serde_json::json!({"kind": "refused", "reason": "invalid-setting:disposition:staged-option"}),
-        ),
-        (
             "missing_custom_tile",
             serde_json::json!({"location": "Custom"}),
             serde_json::json!({"kind": "refused", "reason": "invalid-setting:customTile:required"}),

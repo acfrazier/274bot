@@ -81,7 +81,7 @@ impl WidenCursor {
                     })
                     || avoided
                         .iter()
-                        .any(|entry| entry.until > now && entry.tile == spot.origin)
+                        .any(|entry| u64::from(entry.until) > now && entry.tile == spot.origin)
                     || tried.iter().any(|entry| {
                         u64::from(entry.until) > now
                             && distance(entry.tile, spot.origin) <= i32::from(radius)
@@ -124,7 +124,7 @@ impl WidenCursor {
                         })
                         && !avoided
                             .iter()
-                            .any(|entry| entry.until > now && entry.tile == spot.origin)
+                            .any(|entry| u64::from(entry.until) > now && entry.tile == spot.origin)
                         && !tried.iter().any(|entry| {
                             u64::from(entry.until) > now
                                 && distance(entry.tile, spot.origin) <= i32::from(radius)

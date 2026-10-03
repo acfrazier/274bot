@@ -2593,32 +2593,143 @@ fn inv_box_still_beats_a_proved_lost_net() {
 }
 
 #[test]
-fn lost_tool_handle_in_inv_uses_on_ground_head() {
+fn lost_tool_takes_ground_head_before_reattaching_held_pieces() {
+    for (head_id, handle_id, head_name, handle_name) in [
+        (520, 492, "Axe head", "Axe handle"),
+        (490, 466, "Pickaxe head", "Pickaxe handle"),
+    ] {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_ground_obj(&mut c, 0, 0, head_id, Some(head_name));
+        plant_inv_named(&mut c, handle_id, Some(handle_name));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::LostTool));
+        assert!(status.hold);
+        assert_eq!(drv.menus.len(), 1, "pick up the head, do not use on ground");
+        assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+
+        c.ground_obj[0][0][0] = None;
+        plant_inv_named(&mut c, head_id, Some(head_name));
+        c.set_iface_mut(
+            301,
+            IfTypeMut {
+                link_obj_type: Some(vec![handle_id + 1, head_id + 1, 0]),
+                link_obj_number: Some(vec![1, 1, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+        drv.menus.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 600, None);
+        assert!(
+            status.hold,
+            "wait for the server to combine the held pieces"
+        );
+        assert_eq!(drv.menus.len(), 2);
+        assert_eq!(drv.menus[0].1, MiniMenuAction::USEHELD_START);
+        assert_eq!(drv.menus[1].1, MiniMenuAction::USEHELD_ONHELD);
+
+        plant_inv_named(&mut c, 1359, Some("Rune axe"));
+        drv.menus.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 1200, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold && !status.ours);
+        assert!(drv.menus.is_empty());
+    }
+}
+
+#[test]
+fn lost_tool_unsettled_recovery_releases_gatherer_before_watchdog() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_ground_obj(&mut c, 0, 0, 503, Some("Bronze axe head"));
-    plant_inv_named(&mut c, 504, Some("Bronze axe handle"));
+    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    for now in [12_000, 12_600, 600_000] {
+        drv.menus.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, now, None);
+        assert_eq!(status.kind, Some(RandomKind::LostTool));
+        assert!(
+            !status.hold && !status.ours,
+            "release the missing-tool bank trip"
+        );
+        assert!(drv.menus.is_empty(), "do not repeat a failed recovery");
+    }
+}
 
+#[test]
+fn lost_tool_full_pack_drops_a_product_before_taking_the_head() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    plant_inv_ops(
+        &mut c,
+        1623,
+        Some("Uncut sapphire"),
+        [None, None, None, None, Some("Drop")],
+    );
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![493, 1624]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold);
+    assert_eq!(drv.menus.len(), 1);
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_HELD5);
+    assert_eq!(drv.menus[0].2, 1623, "drop permitted junk, not the handle");
+
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    drv.menus.clear();
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    assert_eq!(drv.menus.len(), 1);
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+}
+
+#[test]
+fn lost_tool_never_attaches_an_axe_handle_to_a_pickaxe_head() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_ground_obj(&mut c, 0, 0, 490, Some("Pickaxe head"));
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
     assert_eq!(status.kind, Some(RandomKind::LostTool));
-    assert!(status.hold, "the reattach holds while in flight");
-    assert_eq!(
-        drv.menus.len(),
-        2,
-        "use-on arms select then the ground target"
-    );
-    assert_eq!(drv.menus[0].1, MiniMenuAction::USEHELD_START);
-    assert_eq!(
-        drv.menus[1].1,
-        MiniMenuAction::USEHELD_ONOBJ,
-        "the handle is used on the ground head"
-    );
+    assert!(status.hold, "wait boundedly for the matching axe head");
+    assert!(drv.menus.is_empty());
 }
 
 #[test]
@@ -2626,7 +2737,7 @@ fn lost_tool_without_ground_head_sends_no_reattach() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_inv_named(&mut c, 504, Some("Bronze axe handle"));
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -2637,7 +2748,13 @@ fn lost_tool_without_ground_head_sends_no_reattach() {
     assert_eq!(status.kind, Some(RandomKind::LostTool));
     assert!(drv.menus.is_empty(), "no head: no fake reattach");
     assert!(drv.actions.is_empty());
-    assert!(!status.hold, "nothing in flight: no hold");
+    assert!(status.hold, "allow the flying head to land before banking");
+    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 600, None);
+    assert!(status.hold);
+    assert_eq!(drv.menus.len(), 1);
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
 }
 
 #[test]

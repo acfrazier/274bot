@@ -16,11 +16,25 @@
 //! orchestrator tunnel `45594`.
 //!
 //! `LIVE=1 cargo test -p host-play --lib live_bankbudget_fetch_from_the_street -- --ignored --nocapture --test-threads=1`
+//!
+//! The Mage Arena ignored proof runs a real-Play native Select/Open/Deposit/
+//! Withdraw/Close script at the cellar without manufacturing a packed stand.
+//! It saves JSON and a CPU-rendered PNG below `LIVE_EVIDENCE_DIR`.
+//!
+//! `LIVE=1 GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --lib live_mage_teller_native_real_play_receipt -- --ignored --nocapture --test-threads=1`
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use api::named_banks::BankPreferences;
+use script::bank::{
+    AccessKind, Close, Deposit, DepositArgs, Open, OpenArgs, Select, SelectArgs, Withdraw,
+    WithdrawArgs, Withdrawal,
+};
+use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
 
 use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -828,5 +842,1037 @@ fn live_bankbudget_fetch_from_the_street() {
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
+    }
+}
+const LAW_RUNE_ID: i32 = 563;
+const MAGE_CELLAR: WorldTile = WorldTile {
+    x: 2535,
+    z: 4713,
+    level: 0,
+};
+const MAGE_BANK_NAME: &str = "Mage Arena";
+const MAGE_NPC_NAME: &str = "Gundai";
+const MAGE_BANK_CHOICE: &str = "I'd like to access my bank account";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TellerOutcome {
+    Passed,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Default)]
+struct TellerTrace {
+    started_at: Option<[i32; 3]>,
+    selected_bank: Option<String>,
+    selected_kind: Option<String>,
+    access_kind: Option<String>,
+    access_npc: Option<String>,
+    access_choice: Option<String>,
+    access_operation: Option<String>,
+    access_op_code: Option<i32>,
+    access_tile: Option<[i32; 3]>,
+    open_loaded: bool,
+    inventory_law_before: Option<i32>,
+    bank_law_before: Option<i32>,
+    deposited: Option<u32>,
+    inventory_law_after_deposit: Option<i32>,
+    bank_law_after_deposit: Option<i32>,
+    withdrew_complete: Option<bool>,
+    inventory_law_after_withdraw: Option<i32>,
+    bank_law_after_withdraw: Option<i32>,
+    closed_observed: bool,
+    final_tile: Option<[i32; 3]>,
+    final_bank_open: Option<bool>,
+    final_inventory_law: Option<i32>,
+    live_tile: Option<[i32; 3]>,
+    live_bank_open: Option<bool>,
+    live_inventory_law: Option<i32>,
+    failure: Option<String>,
+    outcome: Option<TellerOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TellerPrep {
+    WaitLogin,
+    SkipTutorial,
+    Logout,
+    WaitRelog,
+    Teleport,
+    WaitCellar,
+    ClearInventory,
+    WaitClear,
+    SeedLawRune,
+    WaitSeed,
+    Ready,
+    Failed,
+}
+
+struct TellerLive {
+    phase: TellerPrep,
+    last_action: Instant,
+    started: Instant,
+    offline_seen: bool,
+    trace: TellerTrace,
+    evidence_dir: PathBuf,
+    terminal_at: Option<Instant>,
+    capture_started: bool,
+    capture_written: bool,
+    capture_error: Option<String>,
+}
+
+impl TellerLive {
+    fn new(evidence_dir: PathBuf) -> Self {
+        Self {
+            phase: TellerPrep::WaitLogin,
+            last_action: Instant::now() - Duration::from_secs(1),
+            started: Instant::now(),
+            offline_seen: false,
+            trace: TellerTrace::default(),
+            evidence_dir,
+            terminal_at: None,
+            capture_started: false,
+            capture_written: false,
+            capture_error: None,
+        }
+    }
+
+    fn fail(&mut self, message: String) {
+        if !self.capture_started {
+            self.trace.failure = Some(message.clone());
+            self.trace.outcome = Some(TellerOutcome::Failed(message));
+            self.terminal_at = Some(Instant::now());
+        }
+        self.phase = TellerPrep::Failed;
+    }
+
+    fn pass(&mut self) {
+        self.trace.outcome = Some(TellerOutcome::Passed);
+        self.terminal_at = Some(Instant::now());
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TellerStep {
+    Select,
+    Open,
+    Deposit,
+    Withdraw,
+    Close,
+    Done,
+}
+
+struct TellerScript {
+    facts: Arc<api::named_banks::NamedBankFacts>,
+    live: Arc<Mutex<TellerLive>>,
+    step: TellerStep,
+    select: Option<ActionHandle<Select>>,
+    open: Option<ActionHandle<Open>>,
+    deposit: Option<ActionHandle<Deposit>>,
+    withdraw: Option<ActionHandle<Withdraw>>,
+    close: Option<ActionHandle<Close>>,
+    access: Option<Arc<script::bank::BankStandAccess>>,
+}
+
+impl TellerScript {
+    fn new(facts: Arc<api::named_banks::NamedBankFacts>, live: Arc<Mutex<TellerLive>>) -> Self {
+        Self {
+            facts,
+            live,
+            step: TellerStep::Select,
+            select: None,
+            open: None,
+            deposit: None,
+            withdraw: None,
+            close: None,
+            access: None,
+        }
+    }
+
+    fn blocked(&self, message: impl Into<String>) -> ScriptFlow {
+        let message = message.into();
+        let mut live = self.live.lock();
+        if live.trace.outcome.is_none() {
+            live.trace.failure = Some(message.clone());
+            live.trace.outcome = Some(TellerOutcome::Failed(message.clone()));
+            live.terminal_at = Some(Instant::now());
+        }
+        ScriptFlow::Blocked(ScriptFailure {
+            code: "mage-bank-live-proof".into(),
+            message: message.into(),
+            retryable: false,
+        })
+    }
+}
+
+fn count_item(items: &[api::snapshot::ItemView], id: i32) -> i32 {
+    items
+        .iter()
+        .filter(|item| item.def.id == id)
+        .map(|item| item.count)
+        .sum()
+}
+
+fn tile_tuple(tile: WorldTile) -> [i32; 3] {
+    [tile.x, tile.z, tile.level]
+}
+fn observed_item_count(items: Option<&[api::snapshot::ItemView]>, id: i32) -> Option<i32> {
+    items.map(|items| count_item(items, id))
+}
+
+impl Script for TellerScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.step == TellerStep::Done {
+            return Ok(ScriptFlow::Complete);
+        }
+        let Some(here) = tick.cx.snapshot().here().map(|observed| observed.value) else {
+            return Ok(ScriptFlow::Continue);
+        };
+        if self.live.lock().trace.started_at.is_none() {
+            if here != MAGE_CELLAR {
+                return Ok(self.blocked(format!(
+                    "native teller proof started outside Mage cellar: {here:?}"
+                )));
+            }
+            self.live.lock().trace.started_at = Some(tile_tuple(here));
+        }
+
+        match self.step {
+            TellerStep::Select => {
+                if self.select.is_none() {
+                    let args = SelectArgs {
+                        facts: Arc::clone(&self.facts),
+                        from: MAGE_CELLAR,
+                        preferences: BankPreferences {
+                            use_mage_bank: true,
+                            use_zanaris_bank: false,
+                        },
+                        allow_wilderness: true,
+                        explicit: Some(Arc::from(MAGE_BANK_NAME)),
+                    };
+                    match tick.actions.begin::<Select>(args, &mut tick.cx) {
+                        Ok(handle) => self.select = Some(handle),
+                        Err(error) => {
+                            return Ok(
+                                self.blocked(format!("native Select begin failed: {error:?}"))
+                            );
+                        }
+                    }
+                    return Ok(ScriptFlow::Continue);
+                }
+                let result = tick
+                    .actions
+                    .poll(self.select.as_ref().expect("Select handle"), &mut tick.cx);
+                match result {
+                    Poll::Pending => Ok(ScriptFlow::Continue),
+                    Poll::Ready(Err(error)) => {
+                        self.select = None;
+                        Ok(self.blocked(format!("native Select failed: {error:?}")))
+                    }
+                    Poll::Ready(Ok(selected)) => {
+                        self.select = None;
+                        let Some(bank) = self.facts.banks().get(selected.bank_index as usize)
+                        else {
+                            return Ok(self.blocked(format!(
+                                "native Select returned invalid bank index {}",
+                                selected.bank_index
+                            )));
+                        };
+                        let Some(access) = selected.access else {
+                            return Ok(self.blocked(format!(
+                                "native Select returned no production access metadata for {}",
+                                bank.name
+                            )));
+                        };
+                        let access_kind = access.kind.as_str().to_owned();
+                        let access_npc = access.name.as_deref().map(str::to_owned);
+                        let access_choice = access.choose.as_deref().map(str::to_owned);
+                        let access_operation = bank
+                            .definition
+                            .and_then(|definition| definition.npc)
+                            .map(|operation| operation.op.to_owned());
+                        let access_op_code = access.stand_op;
+                        let access_tile = tile_tuple(selected.access_tile);
+                        {
+                            let mut live = self.live.lock();
+                            live.trace.selected_bank = Some(bank.name.to_owned());
+                            live.trace.selected_kind = Some(format!("{:?}", selected.kind));
+                            live.trace.access_kind = Some(access_kind.clone());
+                            live.trace.access_npc = access_npc.clone();
+                            live.trace.access_choice = access_choice.clone();
+                            live.trace.access_operation = access_operation.clone();
+                            live.trace.access_op_code = Some(access_op_code);
+                            live.trace.access_tile = Some(access_tile);
+                        }
+                        if bank.name != MAGE_BANK_NAME
+                            || selected.kind == script::bank::PickKind::NoCandidate
+                            || access.kind != AccessKind::Teller
+                            || access_npc.as_deref() != Some(MAGE_NPC_NAME)
+                            || access_choice.as_deref() != Some(MAGE_BANK_CHOICE)
+                            || access_operation.as_deref() != Some("Talk-to")
+                        {
+                            return Ok(self.blocked(format!(
+                                "native Select did not resolve the Mage Arena teller metadata: bank={} kind={:?} access={access_kind:?} npc={access_npc:?} op={access_operation:?}/{access_op_code} choose={access_choice:?}",
+                                bank.name, selected.kind
+                            )));
+                        }
+                        self.access = Some(access);
+                        self.step = TellerStep::Open;
+                        Ok(ScriptFlow::Continue)
+                    }
+                }
+            }
+            TellerStep::Open => {
+                if self.open.is_none() {
+                    let snapshot = tick.cx.snapshot();
+                    let inventory = observed_item_count(
+                        snapshot.inventory().map(|observed| observed.value),
+                        LAW_RUNE_ID,
+                    );
+                    if inventory != Some(1) {
+                        return Ok(self.blocked(format!(
+                            "Mage cellar Start lacks exactly one seeded law rune: inventory={inventory:?}"
+                        )));
+                    }
+                    self.live.lock().trace.inventory_law_before = inventory;
+                    let Some(access) = self.access.as_ref().cloned() else {
+                        return Ok(self.blocked("native Open has no selected Teller access"));
+                    };
+                    match tick
+                        .actions
+                        .begin::<Open>(OpenArgs { access }, &mut tick.cx)
+                    {
+                        Ok(handle) => self.open = Some(handle),
+                        Err(error) => {
+                            return Ok(self.blocked(format!("native Open begin failed: {error:?}")));
+                        }
+                    }
+                    return Ok(ScriptFlow::Continue);
+                }
+                let result = tick
+                    .actions
+                    .poll(self.open.as_ref().expect("Open handle"), &mut tick.cx);
+                match result {
+                    Poll::Pending => Ok(ScriptFlow::Continue),
+                    Poll::Ready(Err(error)) => {
+                        self.open = None;
+                        Ok(self.blocked(format!("native Open failed: {error:?}")))
+                    }
+                    Poll::Ready(Ok(())) => {
+                        self.open = None;
+                        let snapshot = tick.cx.snapshot();
+                        let loaded = snapshot.bank().is_some();
+                        let bank = observed_item_count(
+                            snapshot.bank().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        let open = snapshot
+                            .bank_session()
+                            .is_some_and(|observed| observed.value.open);
+                        {
+                            let mut live = self.live.lock();
+                            live.trace.open_loaded = loaded && open;
+                            live.trace.bank_law_before = bank;
+                        }
+                        if !loaded || !open || bank.is_none() {
+                            return Ok(self.blocked(format!(
+                                "native Open returned without an observed loaded bank: loaded={loaded} open={open} law_rune={bank:?}"
+                            )));
+                        }
+                        self.step = TellerStep::Deposit;
+                        Ok(ScriptFlow::Continue)
+                    }
+                }
+            }
+            TellerStep::Deposit => {
+                if self.deposit.is_none() {
+                    match tick.actions.begin::<Deposit>(
+                        DepositArgs {
+                            products: Arc::from([LAW_RUNE_ID]),
+                            keep: Arc::from([]),
+                        },
+                        &mut tick.cx,
+                    ) {
+                        Ok(handle) => self.deposit = Some(handle),
+                        Err(error) => {
+                            return Ok(
+                                self.blocked(format!("native Deposit begin failed: {error:?}"))
+                            );
+                        }
+                    }
+                    return Ok(ScriptFlow::Continue);
+                }
+                let result = tick
+                    .actions
+                    .poll(self.deposit.as_ref().expect("Deposit handle"), &mut tick.cx);
+                match result {
+                    Poll::Pending => Ok(ScriptFlow::Continue),
+                    Poll::Ready(Err(error)) => {
+                        self.deposit = None;
+                        Ok(self.blocked(format!("native Deposit failed: {error:?}")))
+                    }
+                    Poll::Ready(Ok(deposited)) => {
+                        self.deposit = None;
+                        let snapshot = tick.cx.snapshot();
+                        let inventory = observed_item_count(
+                            snapshot.inventory().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        let bank = observed_item_count(
+                            snapshot.bank().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        let before = self.live.lock().trace.bank_law_before;
+                        {
+                            let mut live = self.live.lock();
+                            live.trace.deposited = Some(deposited);
+                            live.trace.inventory_law_after_deposit = inventory;
+                            live.trace.bank_law_after_deposit = bank;
+                        }
+                        let expected_bank = before.and_then(|count| count.checked_add(1));
+                        if deposited != 1 || inventory != Some(0) || bank != expected_bank {
+                            return Ok(self.blocked(format!(
+                                "native Deposit transfer was not observed: deposited={deposited} inventory={inventory:?} bank={bank:?} expected_bank={expected_bank:?}"
+                            )));
+                        }
+                        self.step = TellerStep::Withdraw;
+                        Ok(ScriptFlow::Continue)
+                    }
+                }
+            }
+            TellerStep::Withdraw => {
+                if self.withdraw.is_none() {
+                    match tick.actions.begin::<Withdraw>(
+                        WithdrawArgs {
+                            withdrawals: Arc::from([Withdrawal {
+                                id: LAW_RUNE_ID,
+                                name: Arc::from("Law rune"),
+                                target: 1,
+                            }]),
+                        },
+                        &mut tick.cx,
+                    ) {
+                        Ok(handle) => self.withdraw = Some(handle),
+                        Err(error) => {
+                            return Ok(
+                                self.blocked(format!("native Withdraw begin failed: {error:?}"))
+                            );
+                        }
+                    }
+                    return Ok(ScriptFlow::Continue);
+                }
+                let result = tick.actions.poll(
+                    self.withdraw.as_ref().expect("Withdraw handle"),
+                    &mut tick.cx,
+                );
+                match result {
+                    Poll::Pending => Ok(ScriptFlow::Continue),
+                    Poll::Ready(Err(error)) => {
+                        self.withdraw = None;
+                        Ok(self.blocked(format!("native Withdraw failed: {error:?}")))
+                    }
+                    Poll::Ready(Ok(complete)) => {
+                        self.withdraw = None;
+                        let snapshot = tick.cx.snapshot();
+                        let inventory = observed_item_count(
+                            snapshot.inventory().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        let bank = observed_item_count(
+                            snapshot.bank().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        let before = self.live.lock().trace.bank_law_before;
+                        {
+                            let mut live = self.live.lock();
+                            live.trace.withdrew_complete = Some(complete);
+                            live.trace.inventory_law_after_withdraw = inventory;
+                            live.trace.bank_law_after_withdraw = bank;
+                        }
+                        if !complete || inventory != Some(1) || bank != before {
+                            return Ok(self.blocked(format!(
+                                "native Withdraw transfer was not observed: complete={complete} inventory={inventory:?} bank={bank:?} expected_bank={before:?}"
+                            )));
+                        }
+                        self.step = TellerStep::Close;
+                        Ok(ScriptFlow::Continue)
+                    }
+                }
+            }
+            TellerStep::Close => {
+                if self.close.is_none() {
+                    match tick.actions.begin::<Close>((), &mut tick.cx) {
+                        Ok(handle) => self.close = Some(handle),
+                        Err(error) => {
+                            return Ok(
+                                self.blocked(format!("native Close begin failed: {error:?}"))
+                            );
+                        }
+                    }
+                    return Ok(ScriptFlow::Continue);
+                }
+                let result = tick
+                    .actions
+                    .poll(self.close.as_ref().expect("Close handle"), &mut tick.cx);
+                match result {
+                    Poll::Pending => Ok(ScriptFlow::Continue),
+                    Poll::Ready(Err(error)) => {
+                        self.close = None;
+                        Ok(self.blocked(format!("native Close failed: {error:?}")))
+                    }
+                    Poll::Ready(Ok(())) => {
+                        self.close = None;
+                        let snapshot = tick.cx.snapshot();
+                        let final_open =
+                            snapshot.bank_session().map(|observed| observed.value.open);
+                        let final_tile = snapshot.here().map(|observed| tile_tuple(observed.value));
+                        let inventory = observed_item_count(
+                            snapshot.inventory().map(|observed| observed.value),
+                            LAW_RUNE_ID,
+                        );
+                        {
+                            let mut live = self.live.lock();
+                            live.trace.closed_observed = final_open == Some(false);
+                            live.trace.final_bank_open = final_open;
+                            live.trace.final_tile = final_tile;
+                            live.trace.final_inventory_law = inventory;
+                        }
+                        let validation = validate_teller_trace(&self.live.lock().trace);
+                        if let Err(error) = validation {
+                            return Ok(self.blocked(error));
+                        }
+                        self.live.lock().pass();
+                        self.step = TellerStep::Done;
+                        Ok(ScriptFlow::Complete)
+                    }
+                }
+            }
+            TellerStep::Done => Ok(ScriptFlow::Complete),
+        }
+    }
+}
+fn validate_teller_trace(trace: &TellerTrace) -> Result<(), String> {
+    let expected_deposit_bank = trace.bank_law_before.and_then(|count| count.checked_add(1));
+    let valid = trace.started_at == Some(tile_tuple(MAGE_CELLAR))
+        && trace.selected_bank.as_deref() == Some(MAGE_BANK_NAME)
+        && trace.selected_kind.as_deref() != Some("NoCandidate")
+        && trace.access_kind.as_deref() == Some("npc")
+        && trace.access_npc.as_deref() == Some(MAGE_NPC_NAME)
+        && trace.access_choice.as_deref() == Some(MAGE_BANK_CHOICE)
+        && trace.access_operation.as_deref() == Some("Talk-to")
+        && trace.open_loaded
+        && trace.inventory_law_before == Some(1)
+        && trace.bank_law_before.is_some()
+        && trace.deposited == Some(1)
+        && trace.inventory_law_after_deposit == Some(0)
+        && trace.bank_law_after_deposit == expected_deposit_bank
+        && trace.withdrew_complete == Some(true)
+        && trace.inventory_law_after_withdraw == Some(1)
+        && trace.bank_law_after_withdraw == trace.bank_law_before
+        && trace.closed_observed
+        && trace.final_tile.is_some()
+        && trace.final_bank_open == Some(false)
+        && trace.final_inventory_law == Some(1);
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "native Mage Arena bank receipt did not prove Select/Open/Deposit/Withdraw/Close: {trace:#?}"
+        ))
+    }
+}
+type TellerProfile = (
+    Arc<super::ServerProfile>,
+    Arc<SharedClientTemplate>,
+    Arc<api::game_data::SelectedGameData>,
+    Arc<api::named_banks::NamedBankFacts>,
+);
+
+fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
+    let required_path = |key: &str| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("{key} must point at the local 289 fixture"))
+    };
+    let nav_pack = required_path("GATHERER_NAV_PACK")?;
+    let engine_dir = required_path("GATHERER_ENGINE_DIR")?;
+    let catalog_root = required_path("GATHERER_CATALOG_ROOT")?;
+    for (name, path) in [
+        ("GATHERER_NAV_PACK", &nav_pack),
+        ("GATHERER_ENGINE_DIR", &engine_dir),
+        ("GATHERER_CATALOG_ROOT", &catalog_root),
+    ] {
+        if !path.is_absolute() {
+            return Err(format!("{name} must be absolute: {}", path.display()));
+        }
+    }
+    let port = std::env::var("GATHERER_GAME_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(45594);
+    let http_port = std::env::var("GATHERER_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2080);
+    let options = ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(port),
+        http_port: Some(http_port),
+        nav_pack: Some(nav_pack),
+        nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
+        engine_dir: Some(engine_dir),
+        vault_path: Some(scratch.join("vault")),
+        unpack_dir: Some(scratch.join("unpack")),
+        catalog_root: Some(catalog_root),
+        ..ProfileOptions::default()
+    };
+    let profile = options.resolve(None)?.bind()?;
+    if profile.profile_class() != super::ProfileClass::Local
+        || profile.client().game_host() != "127.0.0.1"
+    {
+        return Err("native teller proof requires a loopback local engine".into());
+    }
+    let selected = profile
+        .game_data()
+        .ok_or("native teller proof needs selected 289 game data")?;
+    let template = SharedClientTemplate::load(Arc::clone(&profile))?;
+    let world = template
+        .world()
+        .ok_or("native teller proof needs the selected navigation world")?;
+    if world.named_bank_facts().is_none() {
+        world.bind_named_bank_facts(&selected)?;
+    }
+    let facts = Arc::clone(
+        world
+            .named_bank_facts()
+            .ok_or("selected template has no bound named-bank facts")?,
+    );
+    let mage = facts
+        .banks()
+        .iter()
+        .find(|bank| bank.name == MAGE_BANK_NAME)
+        .ok_or("selected game data has no Mage Arena bank definition")?;
+    let definition = mage
+        .definition
+        .ok_or("Mage Arena bank has no selected definition")?;
+    let npc = definition
+        .npc
+        .ok_or("Mage Arena bank definition has no teller NPC")?;
+    if npc.name != MAGE_NPC_NAME
+        || npc.op != "Talk-to"
+        || definition.choose != Some(MAGE_BANK_CHOICE)
+    {
+        return Err(format!(
+            "unexpected Mage Arena teller metadata: npc={npc:?} choose={:?}",
+            definition.choose
+        ));
+    }
+    Ok((profile, template, selected, facts))
+}
+
+fn teller_evidence_dir(account: &str) -> PathBuf {
+    let root = std::env::var_os("LIVE_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/Volumes/dev-scratch/274bot-evidence/GATHERER-G3-1"));
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    root.join(format!("gatherer_mage_teller_{account}_utc-{epoch}Z"))
+}
+
+fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
+    let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
+    let was_draw = client.draw;
+    client.set_draw(true);
+    let frame = renderer.mainredraw(client);
+    client.set_draw(was_draw);
+    let client::render::backend::FrameOutput::PixMap(pixels) = frame else {
+        return Err("real Client render did not return a CPU PixMap".into());
+    };
+    let mut rgba = Vec::with_capacity(pixels.pixels.len() * 4);
+    for pixel in &pixels.pixels {
+        let pixel = *pixel;
+        rgba.extend_from_slice(&[
+            ((pixel >> 16) & 0xff) as u8,
+            ((pixel >> 8) & 0xff) as u8,
+            (pixel & 0xff) as u8,
+            u8::MAX,
+        ]);
+    }
+    let file = std::fs::File::create(path)
+        .map_err(|error| format!("create {}: {error}", path.display()))?;
+    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|error| format!("write {} header: {error}", path.display()))?;
+    writer
+        .write_image_data(&rgba)
+        .map_err(|error| format!("write {} pixels: {error}", path.display()))
+}
+
+fn save_teller_evidence(
+    client: &mut Client,
+    directory: &Path,
+    account: &str,
+    trace: &TellerTrace,
+) -> Result<(), String> {
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_secs();
+    let step = if matches!(trace.outcome, Some(TellerOutcome::Passed)) {
+        "01-final"
+    } else {
+        "FAIL-final"
+    };
+    let png_path = directory.join(format!("{epoch}Z_{step}.png"));
+    let json_path = directory.join(format!("{epoch}Z_{step}.json"));
+    let png_result = write_teller_png(client, &png_path);
+    let outcome = match trace.outcome.as_ref() {
+        Some(TellerOutcome::Passed) => "passed",
+        Some(TellerOutcome::Failed(_)) => "failed",
+        None => "incomplete",
+    };
+    let receipt = serde_json::json!({
+        "scenario": "gatherer_mage_teller_native_real_play",
+        "account": account,
+        "origin": tile_tuple(MAGE_CELLAR),
+        "seed": {
+            "id": LAW_RUNE_ID,
+            "count": 1,
+            "classification": "unrelated consumable; not a gathered product",
+        },
+        "started_at": trace.started_at,
+        "selection": {
+            "bank": trace.selected_bank,
+            "kind": trace.selected_kind,
+            "access_kind": trace.access_kind,
+            "npc": trace.access_npc,
+            "choose": trace.access_choice,
+            "operation": trace.access_operation,
+            "op_code": trace.access_op_code,
+            "access_tile": trace.access_tile,
+        },
+        "open_loaded": trace.open_loaded,
+        "deposit": {
+            "observed_count": trace.deposited,
+            "inventory_law_runes_after": trace.inventory_law_after_deposit,
+            "bank_law_runes_after": trace.bank_law_after_deposit,
+            "bank_law_runes_before": trace.bank_law_before,
+        },
+        "withdraw": {
+            "complete": trace.withdrew_complete,
+            "inventory_law_runes_after": trace.inventory_law_after_withdraw,
+            "bank_law_runes_after": trace.bank_law_after_withdraw,
+        },
+        "close": {
+            "observed": trace.closed_observed,
+            "bank_open_after": trace.final_bank_open,
+        },
+        "final": {
+            "tile": trace.final_tile,
+            "inventory_law_runes": trace.final_inventory_law,
+            "live_tile": trace.live_tile,
+            "live_bank_open": trace.live_bank_open,
+            "live_inventory_law_runes": trace.live_inventory_law,
+        },
+        "outcome": outcome,
+        "failure": trace.failure,
+        "image": {
+            "format": "PNG",
+            "path": png_path,
+            "renderer": "real Client CpuPix3D framebuffer",
+            "error": png_result.as_ref().err(),
+        },
+    });
+    let bytes = serde_json::to_vec_pretty(&receipt)
+        .map_err(|error| format!("encode {}: {error}", json_path.display()))?;
+    std::fs::write(&json_path, bytes)
+        .map_err(|error| format!("write {}: {error}", json_path.display()))?;
+    png_result
+}
+fn teller_frame(client: &mut Client, shared: &Mutex<TellerLive>, account: &str) {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    let now = Instant::now();
+    let capture = {
+        let mut live = shared.lock();
+        if client.ingame && client.scene_state == 2 {
+            live.trace.live_tile = snapshot.tile().map(|(x, z, level)| [x, z, level]);
+            live.trace.live_bank_open = Some(snapshot.bank_component_id() >= 0);
+            live.trace.live_inventory_law = Some(count_item(snapshot.inventory(), LAW_RUNE_ID));
+        }
+        if live.trace.outcome.is_none()
+            && now.duration_since(live.started) > Duration::from_secs(180)
+        {
+            let message = format!(
+                "Mage cellar setup timed out in {:?}; tile={:?}",
+                live.phase,
+                snapshot.tile()
+            );
+            live.fail(message);
+        }
+
+        match live.phase {
+            TellerPrep::WaitLogin => {
+                if client.ingame && client.scene_state == 2 && snapshot.local_player().is_some() {
+                    live.phase = TellerPrep::SkipTutorial;
+                    live.last_action = now;
+                }
+            }
+            TellerPrep::SkipTutorial
+                if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
+            {
+                let _ = interact::cheat(client, "setvar tutorial 1000");
+                live.last_action = now;
+                live.phase = TellerPrep::Logout;
+            }
+            TellerPrep::Logout
+                if now.duration_since(live.last_action) >= Duration::from_secs(2) =>
+            {
+                let ifaces = Arc::clone(&client.ifaces);
+                if interact::logout(client, &ifaces) {
+                    live.offline_seen = false;
+                    live.phase = TellerPrep::WaitRelog;
+                    live.last_action = now;
+                } else {
+                    live.fail("tutorial relog logout interface was unavailable".into());
+                }
+            }
+            TellerPrep::WaitRelog => {
+                if !client.ingame {
+                    live.offline_seen = true;
+                } else if live.offline_seen
+                    && client.scene_state == 2
+                    && snapshot.local_player().is_some()
+                    && snapshot.inventory_size() > 0
+                {
+                    live.phase = TellerPrep::Teleport;
+                    live.last_action = now;
+                }
+            }
+            TellerPrep::Teleport
+                if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
+            {
+                let _ = interact::cheat(client, &tele_args(MAGE_CELLAR));
+                live.last_action = now;
+                live.phase = TellerPrep::WaitCellar;
+            }
+            TellerPrep::WaitCellar => {
+                if snapshot.tile() == Some((MAGE_CELLAR.x, MAGE_CELLAR.z, MAGE_CELLAR.level))
+                    && snapshot.bank_component_id() < 0
+                {
+                    live.phase = TellerPrep::ClearInventory;
+                    live.last_action = now;
+                } else if snapshot.bank_component_id() >= 0
+                    && now.duration_since(live.last_action) >= Duration::from_secs(2)
+                {
+                    let _ = interact::Interactions::new(&snapshot, client).close_modal();
+                    live.last_action = now;
+                }
+            }
+            TellerPrep::ClearInventory
+                if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
+            {
+                let _ = interact::cheat(client, "~clearinv");
+                live.last_action = now;
+                live.phase = TellerPrep::WaitClear;
+            }
+            TellerPrep::WaitClear => {
+                if snapshot.inventory().is_empty() {
+                    live.phase = TellerPrep::SeedLawRune;
+                    live.last_action = now;
+                }
+            }
+            TellerPrep::SeedLawRune
+                if now.duration_since(live.last_action) >= Duration::from_millis(400) =>
+            {
+                let _ = interact::cheat(client, "give lawrune 1");
+                live.last_action = now;
+                live.phase = TellerPrep::WaitSeed;
+            }
+            TellerPrep::WaitSeed => {
+                let law_runes = count_item(snapshot.inventory(), LAW_RUNE_ID);
+                let only_law_runes = snapshot
+                    .inventory()
+                    .iter()
+                    .all(|item| item.def.id == LAW_RUNE_ID);
+                if snapshot.tile() == Some((MAGE_CELLAR.x, MAGE_CELLAR.z, MAGE_CELLAR.level))
+                    && law_runes == 1
+                    && only_law_runes
+                    && snapshot.bank_component_id() < 0
+                {
+                    live.phase = TellerPrep::Ready;
+                }
+            }
+            TellerPrep::Ready | TellerPrep::Failed => {}
+            TellerPrep::SkipTutorial
+            | TellerPrep::Logout
+            | TellerPrep::Teleport
+            | TellerPrep::ClearInventory
+            | TellerPrep::SeedLawRune => {}
+        }
+
+        if matches!(live.trace.outcome.as_ref(), Some(TellerOutcome::Passed))
+            && live
+                .terminal_at
+                .is_some_and(|at| now.duration_since(at) >= Duration::from_secs(8))
+            && !(live.trace.live_tile == live.trace.final_tile
+                && live.trace.live_bank_open == Some(false)
+                && live.trace.live_inventory_law == Some(1))
+        {
+            let message = format!(
+                "final live frame did not show closed Mage bank at the cellar with one law rune: {:?}",
+                live.trace
+            );
+            live.fail(message);
+        }
+        let failure_ready = matches!(live.trace.outcome.as_ref(), Some(TellerOutcome::Failed(_)));
+        let pass_ready = matches!(live.trace.outcome.as_ref(), Some(TellerOutcome::Passed))
+            && live.trace.live_tile == live.trace.final_tile
+            && live.trace.live_bank_open == Some(false)
+            && live.trace.live_inventory_law == Some(1);
+        if !live.capture_started && (failure_ready || pass_ready) {
+            live.capture_started = true;
+            Some((live.evidence_dir.clone(), live.trace.clone()))
+        } else {
+            None
+        }
+    };
+    if let Some((directory, trace)) = capture {
+        let result = save_teller_evidence(client, &directory, account, &trace);
+        let mut live = shared.lock();
+        live.capture_written = true;
+        if let Err(error) = result {
+            live.capture_error = Some(error);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT and a local 289 engine"]
+fn live_mage_teller_native_real_play_receipt() {
+    assert!(
+        live(),
+        "live_mage_teller_native_real_play_receipt requires LIVE=1"
+    );
+    let home = install_throwaway_home();
+    let (_profile, template, selected, facts) =
+        live_teller_profile(&home.path).expect("load selected local 289 teller facts");
+    let account = super::mint_live_names(1)
+        .pop()
+        .expect("mint one disposable Mage Arena teller account");
+    let evidence_dir = teller_evidence_dir(&account);
+    std::fs::create_dir_all(&evidence_dir).expect("create Mage Arena evidence directory");
+    let state = Arc::new(Mutex::new(TellerLive::new(evidence_dir.clone())));
+    let frame_state = Arc::clone(&state);
+    let frame_account = account.clone();
+    let play = run_with_template(
+        template,
+        true,
+        vec![Profile {
+            username: account.clone(),
+            password: account.clone().into(),
+            uid: 274_279_004,
+            settings: ProfileSettings::default(),
+        }],
+        |_| (None, None),
+        move |client, _, _| teller_frame(client, &frame_state, &frame_account),
+    )
+    .expect("start real Play for Mage Arena teller proof");
+    assert_eq!(
+        play.named_banks().banks(),
+        facts.banks(),
+        "Play and the native test script must use the same selected named-bank facts"
+    );
+    let start = play.script_start_handle();
+    let deadline = Instant::now() + Duration::from_secs(210);
+    let capture_deadline = deadline + Duration::from_secs(20);
+    let mut script_started = false;
+
+    loop {
+        let now = Instant::now();
+        let should_start = {
+            let mut live = state.lock();
+            if live.trace.outcome.is_none() && now >= deadline {
+                let message = format!(
+                    "Mage cellar preparation/native action timed out in {:?}",
+                    live.phase
+                );
+                live.fail(message);
+            }
+            live.phase == TellerPrep::Ready && !script_started
+        };
+        if should_start {
+            script_started = true;
+            match start.start_test_script(
+                &account,
+                Box::new(TellerScript::new(Arc::clone(&facts), Arc::clone(&state))),
+                Some(Arc::clone(&selected)),
+            ) {
+                Ok(run) => {
+                    if play.script_native_run(&account) == Some(run) {
+                        play.wake(&account);
+                    } else {
+                        state
+                            .lock()
+                            .fail("real Play did not publish the started native teller run".into());
+                    }
+                }
+                Err(error) => state.lock().fail(format!(
+                    "real Play rejected the native teller script: {error}"
+                )),
+            }
+        }
+
+        let completed_capture = {
+            let live = state.lock();
+            live.capture_written
+                .then(|| (live.trace.clone(), live.capture_error.clone()))
+        };
+        if let Some((trace, capture_error)) = completed_capture {
+            if let Some(error) = capture_error {
+                panic!("Mage Arena live evidence capture failed: {error}; trace={trace:#?}");
+            }
+            match trace.outcome.clone() {
+                Some(TellerOutcome::Passed) => {
+                    validate_teller_trace(&trace)
+                        .unwrap_or_else(|error| panic!("Mage Arena receipt failed: {error}"));
+                    assert!(
+                        script_started,
+                        "native Teller receipt completed without starting its test Script"
+                    );
+                    println!(
+                        "PASS: live_mage_teller_native_real_play_receipt evidence={}",
+                        evidence_dir.display()
+                    );
+                    return;
+                }
+                Some(TellerOutcome::Failed(message)) => {
+                    panic!(
+                        "FAIL: live_mage_teller_native_real_play_receipt: {message}; evidence={}",
+                        evidence_dir.display()
+                    );
+                }
+                None => panic!(
+                    "FAIL: Mage Arena evidence was saved without a terminal result: {trace:#?}"
+                ),
+            }
+        }
+        if now >= capture_deadline {
+            let live = state.lock();
+            panic!(
+                "FAIL: Mage Arena teller proof did not save final/failure evidence; phase={:?} trace={:#?}",
+                live.phase, live.trace
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }

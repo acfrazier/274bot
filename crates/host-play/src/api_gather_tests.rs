@@ -20,7 +20,7 @@ export function tick(api) {
   globalThis.__lastPage = page;
   if (!globalThis.__started) {
     globalThis.__started = true;
-    globalThis.__run = api.gather.run({ skill: 'Woodcutting' });
+    globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
     globalThis.__run.then(value => { globalThis.__runResult = value; });
     api.request({ op: 'held', name: 'Logs', action: 'Drop' });
     globalThis.__rs2b0t_run_override({ energyMin: 77 });

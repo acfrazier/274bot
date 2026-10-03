@@ -11,6 +11,7 @@
 //! access option. Both end with the frozen `openedReady` item-list wait.
 //! Log lines go to the caller's `log` through the callback path.
 
+use crate::bank::npc;
 use crate::bank_op::BankView;
 use crate::bank_open::{BankOpen, BankOpenArgs};
 use crate::dialog::{CHOICE_TICKS, CONTINUE_TICKS, PAGE_ACK_MS};
@@ -33,10 +34,6 @@ pub const STEP_WALK_MS: u64 = 15_000;
 pub const BOOTH_WALK_MS: u64 = 60_000;
 /// Frozen object-dialogue continue → bank open wait.
 pub const DIALOG_OPEN_MS: u64 = 4_000;
-/// Frozen banker dialogue open wait.
-pub const NPC_DIALOG_MS: u64 = 6_000;
-/// Frozen wait for the bank after the banker dialogue.
-pub const NPC_OPEN_MS: u64 = 3_000;
 
 const LOG: usize = 0;
 
@@ -45,7 +42,6 @@ struct Chat {
     tick: u64,
     modal: i32,
     can_continue: bool,
-    options: Vec<String>,
 }
 
 impl Chat {
@@ -56,14 +52,8 @@ impl Chat {
                 tick: scene.tick().unwrap_or(0),
                 modal: session.chat_modal_id().unwrap_or(-1),
                 can_continue: session.chat_continue().unwrap_or(false),
-                options: session.chat_options().cloned().unwrap_or_default(),
             }
         })
-    }
-
-    /// `ChatDialog.isOpen()`.
-    fn open(&self) -> bool {
-        self.modal != -1
     }
 }
 
@@ -708,225 +698,123 @@ pub(crate) struct NpcAccessArgs {
     pub(crate) choose: String,
 }
 
-enum NpcPhase {
-    Attempt(u32),
-    WaitDialog(u32),
-    Delay(u32, u64),
-    Drive(u32, u32),
-    Press(u32, u32, Press),
-    Settle(u32),
-    AfterLoop,
-    Ready(Ready),
-    Finish(bool),
-}
-
-const NPC_ATTEMPTS: u32 = 3;
-const NPC_PRESSES: u32 = 12;
-
-/// One awaited frozen `Bank.openNpcAccess(access, log)`.
+/// Compat adapter for the shared M-279 NPC bank-access policy.
 pub(crate) struct NpcAccess {
     name: String,
     op: String,
     choose: String,
-    phase: NpcPhase,
+    core: npc::NpcAccess,
     line: Option<String>,
     log_hook: Option<usize>,
 }
 
-struct Banker {
-    name: String,
-    action: String,
-    index: i32,
+struct NpcContext<'a, 'frame> {
+    cx: &'a mut Cx<'frame>,
 }
 
-/// `Npcs.query().name(name).action(op).nearest()`.
-fn banker(name: &str, op: &str) -> Option<Banker> {
-    let wanted = name.trim().to_lowercase();
-    let op = op.to_lowercase();
-    observed::with(|scene| {
-        scene
-            .since_login()
-            .npcs()?
-            .iter()
-            .filter(|npc| {
-                npc.name
-                    .as_deref()
-                    .is_some_and(|got| got.trim().to_lowercase() == wanted)
-            })
-            .filter_map(|npc| {
-                let action = npc
-                    .actions
-                    .iter()
-                    .find(|a| present(a) && a.to_lowercase() == op)?;
-                Some((
-                    npc.distance,
-                    Banker {
-                        name: npc.name_or_empty().to_string(),
-                        action: action.to_string(),
-                        index: npc.index,
-                    },
-                ))
-            })
-            .min_by_key(|(distance, _)| *distance)
-            .map(|(_, banker)| banker)
-    })
+impl npc::Context for NpcContext<'_, '_> {
+    type Error = std::convert::Infallible;
+
+    fn bank_open(&self) -> bool {
+        BankView::now().open
+    }
+
+    fn bank_loaded(&self) -> bool {
+        BankView::now().ready()
+    }
+
+    fn chat(&self) -> npc::Chat {
+        observed::with(|scene| {
+            let session = scene.since_login();
+            npc::Chat {
+                tick: scene.tick().unwrap_or(0),
+                modal: session.chat_modal_id().unwrap_or(-1),
+                can_continue: session.chat_continue().unwrap_or(false),
+            }
+        })
+    }
+
+    fn banker(&self, name: &str, op: npc::NpcOp<'_>) -> Option<npc::Banker> {
+        observed::with(|scene| {
+            scene
+                .since_login()
+                .npcs()?
+                .iter()
+                .filter(|banker| npc::name_matches(banker.name_or_empty(), name))
+                .filter_map(|banker| {
+                    banker
+                        .actions
+                        .iter()
+                        .enumerate()
+                        .find(|(index, action)| npc::action_matches(action, *index, op))
+                        .map(|(_, action)| (banker, action))
+                })
+                .min_by_key(|(banker, _)| banker.distance)
+                .map(|(banker, action)| npc::Banker {
+                    name: banker.name_or_empty().to_string(),
+                    action: action.to_string(),
+                    index: banker.index,
+                })
+        })
+    }
+
+    fn choice(&self, choose: &str) -> Option<i32> {
+        observed::with(|scene| {
+            scene
+                .since_login()
+                .chat_options()?
+                .iter()
+                .position(|option| npc::option_matches(option, choose))
+                .and_then(|index| i32::try_from(index + 1).ok())
+        })
+    }
+
+    fn arm(&mut self, millis: u64) {
+        self.cx.clock().arm(millis);
+    }
+
+    fn expired(&mut self) -> bool {
+        self.cx.clock().bound_reached()
+    }
+
+    fn emit(&mut self, request: InteractReq) -> Result<(), Self::Error> {
+        self.cx.emit(request);
+        Ok(())
+    }
 }
 
 impl NpcAccess {
-    /// One `openNpcAccess`; `log_hook` is the caller's `log` hook, if any.
     pub(crate) fn new(args: NpcAccessArgs, log_hook: Option<usize>) -> Self {
         Self {
             name: args.name,
             op: args.op,
             choose: args.choose,
-            phase: NpcPhase::Attempt(0),
+            core: npc::NpcAccess::new(),
             line: None,
             log_hook,
         }
     }
 
-    /// Drive the opener; it reads its own log calls' replies.
     pub(crate) fn run(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         loop {
             if let Some(step) = log_first(&mut self.line, self.log_hook, cx) {
                 return step;
             }
-            if let Some(step) = self.decide(cx) {
-                return step;
+            let intent = npc::Intent {
+                name: &self.name,
+                op: npc::NpcOp::Name(&self.op),
+                choose: &self.choose,
+            };
+            let step = self
+                .core
+                .step(intent, &mut NpcContext { cx })
+                .unwrap_or_else(|error| match error {});
+            match step {
+                npc::Step::Wait => return Step::Wait,
+                npc::Step::Done(open) => return Step::Done(open),
+                npc::Step::Note(note) => self.line = Some(note.message(&self.name)),
             }
         }
-    }
-
-    fn say(&mut self, line: String, next: NpcPhase) {
-        self.line = Some(line);
-        self.phase = next;
-    }
-
-    fn decide(&mut self, cx: &mut Cx<'_>) -> Option<Step<bool>> {
-        let phase = std::mem::replace(&mut self.phase, NpcPhase::Finish(false));
-        match phase {
-            NpcPhase::Attempt(attempt) => {
-                if attempt >= NPC_ATTEMPTS || BankView::now().open {
-                    self.phase = NpcPhase::AfterLoop;
-                    return None;
-                }
-                let chat = Chat::now();
-                if chat.open() || chat.can_continue {
-                    self.phase = NpcPhase::Drive(attempt, 0);
-                    return None;
-                }
-                match banker(&self.name, &self.op) {
-                    None => {
-                        let name = self.name.clone();
-                        let until = posted_tick().saturating_add(1);
-                        self.say(
-                            format!("no '{name}' in the scene to bank with"),
-                            NpcPhase::Delay(attempt, until),
-                        );
-                    }
-                    Some(banker) => {
-                        cx.clock().arm(NPC_DIALOG_MS);
-                        cx.emit(InteractReq::Npc {
-                            name: banker.name,
-                            action: banker.action,
-                            index: Some(banker.index),
-                        });
-                        self.phase = NpcPhase::WaitDialog(attempt);
-                        return Some(Step::Wait);
-                    }
-                }
-            }
-            NpcPhase::WaitDialog(attempt) => {
-                let chat = Chat::now();
-                if chat.open() || chat.can_continue || BankView::now().open {
-                    self.phase = NpcPhase::Drive(attempt, 0);
-                } else if cx.clock().bound_reached() {
-                    let name = self.name.clone();
-                    self.say(
-                        format!("'{name}' never opened a dialogue"),
-                        NpcPhase::Attempt(attempt + 1),
-                    );
-                } else {
-                    self.phase = NpcPhase::WaitDialog(attempt);
-                    return Some(Step::Wait);
-                }
-            }
-            NpcPhase::Delay(attempt, until) => {
-                if posted_tick() < until {
-                    self.phase = NpcPhase::Delay(attempt, until);
-                    return Some(Step::Wait);
-                }
-                self.phase = NpcPhase::Attempt(attempt + 1);
-            }
-            NpcPhase::Drive(attempt, presses) => {
-                if presses >= NPC_PRESSES || BankView::now().open {
-                    cx.clock().arm(NPC_OPEN_MS);
-                    self.phase = NpcPhase::Settle(attempt);
-                    return None;
-                }
-                let chat = Chat::now();
-                let choose = self.choose.to_lowercase();
-                let option = chat.options.iter().position(|option| {
-                    !choose.is_empty() && option.to_lowercase().contains(&choose)
-                });
-                let press = match option {
-                    Some(index) => Press::send(
-                        InteractReq::Answer {
-                            option: i32::try_from(index + 1).unwrap_or(i32::MAX),
-                        },
-                        true,
-                        &chat,
-                        cx,
-                    ),
-                    None if chat.can_continue => {
-                        Press::send(InteractReq::ContinueDialog, false, &chat, cx)
-                    }
-                    None => {
-                        cx.clock().arm(NPC_OPEN_MS);
-                        self.phase = NpcPhase::Settle(attempt);
-                        return None;
-                    }
-                };
-                self.phase = NpcPhase::Press(attempt, presses, press);
-                return Some(Step::Wait);
-            }
-            NpcPhase::Press(attempt, presses, mut press) => {
-                if press.poll(cx).is_none() {
-                    self.phase = NpcPhase::Press(attempt, presses, press);
-                    return Some(Step::Wait);
-                }
-                self.phase = NpcPhase::Drive(attempt, presses + 1);
-            }
-            NpcPhase::Settle(attempt) => {
-                if BankView::now().open || cx.clock().bound_reached() {
-                    self.phase = NpcPhase::Attempt(attempt + 1);
-                } else {
-                    self.phase = NpcPhase::Settle(attempt);
-                    return Some(Step::Wait);
-                }
-            }
-            NpcPhase::AfterLoop => {
-                let next = NpcPhase::Ready(Ready { armed: false });
-                if BankView::now().open {
-                    self.phase = next;
-                } else {
-                    let name = self.name.clone();
-                    self.say(format!("could not get {name} to open the bank"), next);
-                }
-            }
-            NpcPhase::Ready(mut ready) => match ready.step(cx) {
-                Readied::Wait => {
-                    self.phase = NpcPhase::Ready(ready);
-                    return Some(Step::Wait);
-                }
-                Readied::Done(ok, line) => match line {
-                    Some(line) => self.say(line, NpcPhase::Finish(ok)),
-                    None => return Some(Step::Done(ok)),
-                },
-            },
-            NpcPhase::Finish(ok) => return Some(Step::Done(ok)),
-        }
-        None
     }
 }
 
@@ -1199,6 +1087,29 @@ mod tests {
         assert!(tick().is_empty());
         assert_eq!(machine::take(handle), Take::Pending, "inside the wait");
         machine::tests::expire_deadlines();
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// The shared NPC policy keeps the frozen compat `open == true`
+    /// result when the bank list stays unloaded past its readiness wait.
+    #[test]
+    fn npc_access_preserves_open_result_after_unloaded_timeout() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(2852, 2952))
+                .bank_open(true)
+                .bank_loaded(false);
+        });
+        let handle = start(
+            "bank_npc_access",
+            json!({ "name": "Banker", "op": "Bank", "choose": "access" }),
+        );
+        assert!(tick().is_empty());
+        assert_eq!(machine::take(handle), Take::Pending);
+        machine::tests::expire_deadlines();
+        observed::post(2, |_| {});
         assert!(tick().is_empty());
         done(handle, true);
     }

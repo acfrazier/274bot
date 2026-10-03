@@ -415,6 +415,7 @@ impl ResolvedSettingOptions {
 /// W1c equipment idents resolve from borrowed `equipment_names` facts; `AXES`
 /// / `DROP_DB` stay empty. `gather:<skill>` resolves from the pinned
 /// `gather_resources` slice and `named-banks` from the frozen `BANK_CATALOG`.
+/// `gatherer-teleports` combines a literal `Off` with available selected spell facts.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
@@ -434,7 +435,13 @@ pub fn resolve_setting_options_with_labels(
             from.split(',')
                 .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
         });
-    if !def.options.is_empty() && !mixed_equipment_options {
+    if !def.options.is_empty()
+        && !mixed_equipment_options
+        && !matches!(
+            def.options_from.as_deref(),
+            Some("named-banks" | "gatherer-teleports")
+        )
+    {
         return ResolvedSettingOptions::from_values(def.options.clone());
     }
     if def.options_from.as_deref() == Some("loadouts") {
@@ -470,12 +477,27 @@ pub fn resolve_setting_options_with_labels(
             return resolve_gather_options(skill, game_data);
         }
         if from == "named-banks" {
-            return ResolvedSettingOptions::from_values(
+            let mut values = def.options.clone();
+            values.extend(
                 api::named_banks::BANK_CATALOG
                     .iter()
-                    .map(|bank| bank.name.to_string())
-                    .collect(),
+                    .map(|bank| bank.name.to_string()),
             );
+            return ResolvedSettingOptions::from_values(values);
+        }
+        if from == "gatherer-teleports" {
+            let mut values = def.options.clone();
+            if let Some(data) = game_data {
+                for spell in data.teleports().iter().filter(|spell| spell.available()) {
+                    if !values
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(&spell.name))
+                    {
+                        values.push(spell.name.clone());
+                    }
+                }
+            }
+            return ResolvedSettingOptions::from_values(values);
         }
         if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
             return ResolvedSettingOptions::from_values(
@@ -1463,21 +1485,43 @@ mod tests {
     }
 
     #[test]
-    fn resolve_named_banks_lists_catalog_names() {
+    fn resolve_named_banks_keeps_nearest_before_catalog_names() {
         let (_scratch, path) = tmp_path();
         let store = LoadoutsStore::at(path);
-        let banks = resolve_setting_options(&equipment_from("named-banks"), &store, None);
-        assert!(!banks.is_empty());
-        assert_eq!(banks[0], "Varrock East");
-        assert!(banks.contains(&"Varrock West".to_string()));
-        assert_eq!(
-            banks,
+        let mut def = equipment_from("named-banks");
+        def.options.push("Nearest".into());
+        let banks = resolve_setting_options(&def, &store, None);
+        let mut expected = vec!["Nearest".to_string()];
+        expected.extend(
             api::named_banks::BANK_CATALOG
                 .iter()
-                .map(|bank| bank.name.to_string())
-                .collect::<Vec<_>>(),
-            "names follow the frozen catalog order"
+                .map(|bank| bank.name.to_string()),
         );
+        assert_eq!(banks, expected);
+    }
+
+    #[test]
+    fn resolve_gatherer_teleports_uses_only_available_selected_spell_facts() {
+        let (_scratch, path) = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let mut def = equipment_from("gatherer-teleports");
+        def.options.push("Off".into());
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let resolved = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        let mut expected = vec!["Off".to_string()];
+        for spell in data.teleports().iter().filter(|spell| spell.available()) {
+            if !expected
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(&spell.name))
+            {
+                expected.push(spell.name.clone());
+            }
+        }
+        assert_eq!(resolved.values, expected);
+        assert_eq!(resolved.labels, expected);
+
+        let no_facts = resolve_setting_options_with_labels(&def, &store, None);
+        assert_eq!(no_facts.values, ["Off"]);
     }
 }
 
