@@ -651,6 +651,7 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     slot.bind_incarnation(incarnation);
     let mut bag = SettingsBag::new();
     bag.insert("disposition".into(), serde_json::json!("Power"));
+    bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
     slot.start_compiled(
         "gatherer-lifecycle",
         crate::CompiledId("Gatherer"),
@@ -833,7 +834,7 @@ fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
 }
 
 #[test]
-fn gatherer_death_observation_cancels_undrained_drop_without_retry() {
+fn gatherer_stop_policy_death_cancels_undrained_drop_until_retry() {
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(85);
     let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -850,7 +851,7 @@ fn gatherer_death_observation_cancels_undrained_drop_without_retry() {
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died");
-    assert!(!failure.retryable);
+    assert!(failure.retryable);
     gatherer_tick(&mut slot, &snapshot, tick + 2);
     assert!(
         !slot.has_native_actions(),
@@ -1264,6 +1265,7 @@ mod api_gather_seat {
     fn run(slot: &mut SlotScript, token: u64) {
         let mut settings = SettingsBag::new();
         settings.insert("disposition".into(), serde_json::json!("Power"));
+        settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
         slot.consume_api_control(&InteractReq::GatherRun {
             request_id: token,
             settings: Arc::new(settings),

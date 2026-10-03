@@ -315,13 +315,13 @@ the card default (`skill` `"Woodcutting"`, `woodcuttingResources`
 `["normal"]`, `miningResources` `["copper","tin"]`, `fishingMethod`
 `"fishing.saltfish.op1"`, `targetPreference` `"Best tier"`, `location`
 `"Start"`, `customTile` only when `location` is `"Custom"`, `radius` 2..64
-default 12, `disposition` `"Power"`, `allowTeleports`/`allowWilderness`
-`false`, `deathPolicy` `"Stop"`, `maxDeaths` 0..255 default 2). `GatherStatus`
-is keyed exactly as the card publishes it (`gatherer::status::KEYS`, 22 keys:
+default 12, `disposition` `"Bank"`, `allowTeleports`/`allowWilderness`
+`false`, `deathPolicy` `"Recover"` (or `"Stop"`), `maxDeaths` 0..255 default 2). `GatherStatus`
+is keyed exactly as the card publishes it (`gatherer::status::KEYS`, 24 keys:
 `skill`, `method`, `phase`, `area`, `target`, `tool`, `bank`,
 `excluded_targets`, `last_event` as strings; `bait`, `food`, `coins`,
 `yielded`, `dropped`, `deposited`, `trips`, `xp`, `xp_per_hour`,
-`last_progress`, `deaths`, `absent`, `zone_gated` as numbers).
+`last_progress`, `deaths`, `recoveries`, `recovery_step`, `absent`, `zone_gated` as numbers).
 `xp_per_hour` is -1 below five minutes elapsed.
 
 | Method | OK | Errors |

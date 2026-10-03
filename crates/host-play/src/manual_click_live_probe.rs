@@ -76,7 +76,7 @@ impl Play {
         here: api::snapshot::WorldTile,
     ) -> Result<(), String> {
         if let Some(cell) = script_slot(&self.scripts, name) {
-            let mut slot = cell.lock().unwrap();
+            let slot = cell.lock().unwrap();
             if !matches!(slot.watchdog().state(), script::WatchdogState::Armed) {
                 return Ok(());
             }
@@ -92,12 +92,32 @@ impl Play {
                     })?,
             )
             .map_err(|error| error.to_string())?;
+            drop(slot);
+            self.manual_click_live_age_gameplay_with_xp(name, here, &xp)?;
+        }
+        Ok(())
+    }
+
+    /// Age the same production watchdog using observed native XP when no
+    /// JavaScript isolate exists (compiled cards).
+    #[doc(hidden)]
+    pub fn manual_click_live_age_gameplay_with_xp(
+        &self,
+        name: &str,
+        here: api::snapshot::WorldTile,
+        xp: &[i32],
+    ) -> Result<(), String> {
+        if let Some(cell) = script_slot(&self.scripts, name) {
+            let mut slot = cell.lock().unwrap();
+            if !matches!(slot.watchdog().state(), script::WatchdogState::Armed) {
+                return Ok(());
+            }
             slot.feed_watchdog(
                 std::time::Instant::now()
                     - script::watchdog::WEDGE
                     - std::time::Duration::from_secs(1),
                 Some((here.x, here.z, here.level)),
-                &xp,
+                xp,
                 false,
                 true,
                 &[script::shim::InteractReq::NoteProgress],
@@ -107,7 +127,7 @@ impl Play {
             let action = slot.feed_watchdog(
                 std::time::Instant::now(),
                 Some((here.x, here.z, here.level)),
-                &xp,
+                xp,
                 false,
                 true,
                 &[script::shim::InteractReq::LoopSettled],

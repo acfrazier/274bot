@@ -17,6 +17,7 @@ use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
 
 mod actions;
+pub mod death;
 pub(crate) mod ledger;
 mod owner;
 pub mod walk;
