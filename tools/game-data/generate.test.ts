@@ -2579,9 +2579,8 @@ for (const { revision, root } of gatheringPins) {
     else assert.deepEqual(intercepted, [], '274 content has no yield intercepts, so none are invented');
     assert.equal(intercepted.includes('mining.iron') || intercepted.includes('fishing.memberfish.op1'), false, `${revision} iron and big-net yields are not intercepted`);
     assert.equal(facts.zones.some((zone) => zone.effect === 'product-substituted' && zone.methods.includes('mining.gold') && !zone.methods.includes('mining.iron')), true);
-    // gather_resources slice: pinned per-skill option rows; admission from the
-    // family's own cells, never a hand table. Labels need obj display names,
-    // so keys/gaps/selectability pin here and label joins pin synthetically below.
+    // gather_resources: woodcutting/mining resource rows and grouped fishing
+    // options carry full method membership plus the old fishing ids as aliases.
     const resourceRows = gatherResources(facts, new Map());
     const rowByKey = new Map(resourceRows.map((row) => [`${row.skill}:${row.key}`, row]));
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
@@ -2589,9 +2588,24 @@ for (const { revision, root } of gatheringPins) {
         assert.equal(new Set(keys).size, keys.length, `${revision} ${skill} option keys are unique`);
     }
     assert.deepEqual(
-        resourceRows.map((row) => row.method),
-        facts.methods.flatMap((method) => (method.skill === 'fishing' ? [method.id] : method.resources.map(() => method.id))),
-        `${revision} resource rows follow the family in content order`,
+        resourceRows.filter((row) => row.skill !== 'fishing').map((row) => row.method),
+        facts.methods.flatMap((method) => (method.skill === 'fishing' ? [] : method.resources.map(() => method.id))),
+        `${revision} woodcutting/mining resource rows follow family content order`,
+    );
+    const fishingRows = resourceRows.filter((row) => row.skill === 'fishing');
+    assert.equal(fishingRows.length, 12, `${revision} fishing groups`);
+    assert.equal(new Set(fishingRows.map((row) => row.label)).size, fishingRows.length, `${revision} fishing labels are unique`);
+    assert.deepEqual(
+        fishingRows.flatMap((row) => row.methods).sort(),
+        facts.methods.filter((method) => method.skill === 'fishing').map((method) => method.id).sort(),
+        `${revision} every fishing method belongs to one group`,
+    );
+    assert.equal(
+        fishingRows.every((row) => row.methods.length > 0
+            && row.method === row.methods[0]
+            && JSON.stringify(row.aliases) === JSON.stringify(row.methods)),
+        true,
+        `${revision} fishing members and legacy aliases are sorted together`,
     );
     const resourceRow = (skill: string, key: string): GatherResourceWire => {
         const found = rowByKey.get(`${skill}:${key}`);
@@ -2611,11 +2625,17 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(resourceRow('mining', 'iron').selectable, true);
     assert.equal(resourceRow('woodcutting', 'jungle').selectable, false);
     assert.equal(resourceRow('woodcutting', 'jungle').gap, 'no-resource-target');
-    assert.equal(resourceRow('fishing', 'fishing.saltfish.op1').selectable, true);
-    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').selectable, false);
-    assert.equal(resourceRow('fishing', 'fishing.category_633.op1').gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
+    const saltfish = resourceRow('fishing', 'fishing.net.tool_303.products_317_321');
+    assert.equal(saltfish.selectable, true);
+    assert.equal(saltfish.aliases.includes('fishing.saltfish.op1'), true);
+    const karambwan = fishingRows.find((row) => row.aliases.includes('fishing.category_633.op1'));
+    assert.ok(karambwan, `${revision} the karambwan alias resolves to a fishing group`);
+    assert.equal(karambwan.selectable, false);
+    assert.equal(karambwan.gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
+    const bigNetRow = fishingRows.find((row) => row.aliases.includes('fishing.memberfish.op1'));
+    assert.ok(bigNetRow, `${revision} the big-net alias resolves to a fishing group`);
     assert.equal(
-        resourceRow('fishing', 'fishing.memberfish.op1').gap,
+        bigNetRow.gap,
         revision === 289 ? 'monkey-form-forbidden' : null,
         `${revision} the 289 monkey-form gate refuses big-net; 274 has no such gate`,
     );
@@ -2946,15 +2966,62 @@ assert.equal(gatherMethodGap(synBigNet), 'monkey-form-forbidden');
 
 const synNames = new Map([[1521, 'Oak logs'], [335, 'Raw trout'], [331, 'Raw salmon']]);
 assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
-    { skill: 'woodcutting', method: 'woodcutting.oak', key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, gap: null },
+    { skill: 'woodcutting', method: 'woodcutting.oak', methods: ['woodcutting.oak'], aliases: [], key: 'oak', resources: ['oak'], label: 'Oak logs', level: 15, selectable: true, gap: null },
 ]);
 assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
-    { skill: 'woodcutting', method: 'woodcutting.jungle', key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, gap: 'no-resource-target' },
+    { skill: 'woodcutting', method: 'woodcutting.jungle', methods: ['woodcutting.jungle'], aliases: [], key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, gap: 'no-resource-target' },
 ], 'a refused method keeps its row with a humanized fallback label');
 const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
-assert.deepEqual(gatherResources(synFacts([synFresh]), synNames), [
-    { skill: 'fishing', method: 'fishing.freshfish.op1', key: 'fishing.freshfish.op1', resources: ['raw_trout', 'raw_salmon'], label: 'Raw trout / Raw salmon', level: 20, selectable: true, gap: null },
-], 'fishing keys on the method id and labels join every product');
+const synFreshAlias = synMethod('fishing.freshfish.op2', 'fishing', ['raw_salmon', 'raw_trout'], synKnownIds([{ item: 331, level: 30 }, { item: 335, level: 20 }]), synKnownIds([]));
+const freshGroups = gatherResources(synFacts([synFresh, synFreshAlias]), synNames);
+assert.deepEqual(freshGroups, [
+    {
+        skill: 'fishing',
+        method: 'fishing.freshfish.op1',
+        methods: ['fishing.freshfish.op1', 'fishing.freshfish.op2'],
+        aliases: ['fishing.freshfish.op1', 'fishing.freshfish.op2'],
+        key: 'fishing.mine.tool_none.products_331_335',
+        resources: ['raw_salmon', 'raw_trout'],
+        label: 'Raw trout / Raw salmon — Mine (Unknown tool)',
+        level: 20,
+        selectable: true,
+        gap: null,
+    },
+], 'fishing keys sort product ids, while members and legacy ids form one option');
+assert.deepEqual(
+    gatherResources(synFacts([synFreshAlias, synFresh]), synNames),
+    freshGroups,
+    'fishing group keys and rows do not depend on product discovery order',
+);
+const cappedProducts = synMethod(
+    'fishing.capped.op1',
+    'fishing',
+    ['p1', 'p2', 'p3', 'p4', 'p5'],
+    synKnownIds([
+        { item: 1, level: 1 },
+        { item: 2, level: 2 },
+        { item: 3, level: 3 },
+        { item: 4, level: 4 },
+        { item: 5, level: 5 },
+    ]),
+    synKnownIds([]),
+);
+const cappedNames = new Map([[1, 'One'], [2, 'Two'], [3, 'Three'], [4, 'Four'], [5, 'Five']]);
+assert.equal(
+    gatherResources(synFacts([cappedProducts]), cappedNames)[0]?.label,
+    'One / Two / Three +2 more — Mine (Unknown tool)',
+    'fishing labels cap product names at three',
+);
+const duplicateLabelA = synMethod('fishing.same.op1', 'fishing', ['raw_trout'], synKnownIds([{ item: 335, level: 20 }]), synKnownIds([]), {
+    tools: synKnownIds([{ item: 10, level: 1 }]),
+});
+const duplicateLabelB = synMethod('fishing.same.op2', 'fishing', ['raw_trout'], synKnownIds([{ item: 335, level: 20 }]), synKnownIds([]), {
+    tools: synKnownIds([{ item: 11, level: 1 }]),
+});
+assert.throws(
+    () => gatherResources(synFacts([duplicateLabelA, duplicateLabelB]), new Map([[335, 'Raw trout'], [10, 'Shared tool'], [11, 'Shared tool']])),
+    /fishing labels are not unique/,
+);
 const synUnnamed = synMethod('woodcutting.oak', 'woodcutting', ['oak'], synKnownIds([{ item: 99999, level: 15 }]), synKnownIds([]));
-assert.equal(gatherResources(synFacts([synUnnamed]), new Map())[0].label, 'Oak', 'an unjoined product id falls back instead of inventing a name');
+assert.equal(gatherResources(synFacts([synUnnamed]), new Map())[0]?.label, 'Oak', 'an unjoined product id falls back instead of inventing a name');
 console.log('generate fixture passed');

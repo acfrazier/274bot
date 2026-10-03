@@ -1277,15 +1277,17 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
 export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
 
 /**
- * One pinned row of the selected core's `gather_resources` slice. `key` is the
- * selectable setting value: the resource key for woodcutting/mining (one row
- * per resource) or the method id for fishing (one row per method, which can
- * name several resources). `gap` is present exactly when the method fails
- * admission; the UI shows such rows with their gap code and Start refuses them.
+ * One pinned row of the selected core's `gather_resources` slice. Woodcutting
+ * and mining publish one row per resource; fishing publishes one row per
+ * `(operation, tools, bait, products)` group. `methods` is the complete set of
+ * catalog methods admitted by this option. `aliases` retains pre-group
+ * fishing method ids so existing settings continue to resolve.
  */
 export type GatherResourceWire = {
     skill: SkillName;
     method: string;
+    methods: string[];
+    aliases: string[];
     key: string;
     resources: string[];
     label: string;
@@ -1340,6 +1342,46 @@ export function gatherResourceLabel(method: MethodWire, itemNames: ReadonlyMap<n
     return method.resources.map(humanizeResourceKey).join(' / ');
 }
 
+function factItemIds(fact: Know<{ item: number }[]>): number[] {
+    return fact.state === 'unknown' ? [] : [...new Set(fact.value.map((row) => row.item))].sort((a, b) => a - b);
+}
+
+function fishingIdentity(method: MethodWire): string {
+    const tools = factItemIds(method.tools);
+    const bait = factItemIds(method.consumes);
+    const products = factItemIds(method.products);
+    if (method.op === null || method.tools.state === 'unknown' || method.consumes.state === 'unknown' || method.products.state === 'unknown') {
+        return `unknown:${method.id}`;
+    }
+    return JSON.stringify([method.op.label, tools, bait, products]);
+}
+
+function fishingKey(method: MethodWire): string {
+    const operation = method.op?.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
+    const tools = factItemIds(method.tools);
+    const products = factItemIds(method.products);
+    return `fishing.${operation}.tool_${tools.length === 0 ? 'none' : tools.join('_')}.products_${products.length === 0 ? 'none' : products.join('_')}`;
+}
+
+function fishingLabel(method: MethodWire, itemNames: ReadonlyMap<number, string>): string {
+    const products = method.products.state === 'unknown' ? [] : method.products.value;
+    const productNames = products
+        .map((product) => itemNames.get(product.item))
+        .filter((name): name is string => name !== undefined && name !== '');
+    const names = productNames.length > 0
+        ? productNames
+        : method.resources.map(humanizeResourceKey);
+    const productLabel = names.length > 3
+        ? `${names.slice(0, 3).join(' / ')} +${names.length - 3} more`
+        : names.join(' / ');
+    const toolNames = factItemIds(method.tools).map((id) => itemNames.get(id) ?? 'Unknown tool');
+    const baitNames = factItemIds(method.consumes).map((id) => itemNames.get(id) ?? 'Unknown bait');
+    const op = method.op?.label ?? 'Unknown operation';
+    const equipment = toolNames.length === 0 ? 'Unknown tool' : toolNames.join(' + ');
+    const bait = baitNames.length === 0 ? '' : ` + ${baitNames.join(' + ')}`;
+    return `${productLabel} — ${op} (${equipment}${bait})`;
+}
+
 /** Minimum product level of one method; 0 when it names no product rows. */
 export function gatherMethodLevel(method: MethodWire): number {
     const products = method.products.state === 'unknown' ? [] : method.products.value;
@@ -1350,18 +1392,70 @@ export function gatherMethodLevel(method: MethodWire): number {
 /**
  * The pinned per-skill option rows the selected core carries so the UI never
  * decodes the family: every method in content order, selectable or refused
- * with its gap code. Labels come from the family's own product facts, never a
- * hand table.
+ * with its gap code. Fishing groups are keyed from stable item ids and labels
+ * must be unique (including refused rows).
  */
 export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<number, string>): GatherResourceWire[] {
-    return facts.methods.flatMap((method) => {
+    const rows: GatherResourceWire[] = [];
+    for (const method of facts.methods) {
+        if (method.skill === 'fishing') continue;
         const gap = gatherMethodGap(method);
         const label = gatherResourceLabel(method, itemNames);
         const level = gatherMethodLevel(method);
         const selectable = gap === null;
-        if (method.skill === 'fishing') {
-            return [{ skill: method.skill, method: method.id, key: method.id, resources: [...method.resources], label, level, selectable, gap }];
+        for (const resource of method.resources) {
+            rows.push({
+                skill: method.skill,
+                method: method.id,
+                methods: [method.id],
+                aliases: [],
+                key: resource,
+                resources: [...method.resources],
+                label,
+                level,
+                selectable,
+                gap,
+            });
         }
-        return method.resources.map((resource) => ({ skill: method.skill, method: method.id, key: resource, resources: [...method.resources], label, level, selectable, gap }));
-    });
+    }
+
+    const fishingGroups = new Map<string, MethodWire[]>();
+    for (const method of facts.methods) {
+        if (method.skill !== 'fishing') continue;
+        const identity = fishingIdentity(method);
+        const group = fishingGroups.get(identity);
+        if (group === undefined) fishingGroups.set(identity, [method]);
+        else group.push(method);
+    }
+    for (const members of fishingGroups.values()) {
+        const methods = [...members].sort((a, b) => a.id.localeCompare(b.id));
+        const representative = methods[0];
+        if (representative === undefined) continue;
+        const methodIds = methods.map((method) => method.id);
+        const gaps = methods.map(gatherMethodGap);
+        const gap = gaps.find((reason) => reason !== null) ?? null;
+        rows.push({
+            skill: 'fishing',
+            method: representative.id,
+            methods: methodIds,
+            aliases: [...methodIds],
+            key: fishingKey(representative),
+            resources: [...new Set(methods.flatMap((method) => method.resources))].sort(),
+            label: fishingLabel(representative, itemNames),
+            level: Math.min(...methods.map(gatherMethodLevel)),
+            selectable: gaps.every((reason) => reason === null),
+            gap,
+        });
+    }
+
+    const fishingRows = rows.filter((row) => row.skill === 'fishing');
+    const labels = fishingRows.map((row) => row.label);
+    if (new Set(labels).size !== labels.length) {
+        throw new Error(`gather_resources: fishing labels are not unique: ${labels.join(' | ')}`);
+    }
+    const keys = fishingRows.map((row) => row.key);
+    if (new Set(keys).size !== keys.length) {
+        throw new Error(`gather_resources: fishing keys are not unique: ${keys.join(', ')}`);
+    }
+    return rows;
 }

@@ -6,8 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use script::{
-    coerce_setting_value, format_setting_value, resolve_setting_options_with_labels,
-    setting_visible, LoadoutsStore, ResolvedSettingOptions, SettingDef,
+    coerce_setting_value, format_setting_value, setting_visible, LoadoutsStore, SettingDef,
 };
 
 /// Mutable params-pane state: form open, cursor, and in-progress edit.
@@ -21,6 +20,8 @@ pub struct ParamsState {
     pub scratch: String,
     pub choice_cursor: usize,
     pub choice_selected: Vec<String>,
+    pub choice_search: String,
+    pub choice_searchable: bool,
     pub error: Option<String>,
     /// Apply-to-all confirmation line (scope and the y/n keys) while one
     /// is prepared.
@@ -73,8 +74,13 @@ impl<'a> ParamsPane<'a> {
             .collect()
     }
 
-    fn resolved_options(&self, def: &SettingDef) -> ResolvedSettingOptions {
-        resolve_setting_options_with_labels(def, self.loadouts, self.game_data)
+    fn resolved_options(&self, def: &SettingDef) -> frontend_core::scripts::ParameterOptions {
+        frontend_core::scripts::resolve_parameter_options(
+            def,
+            self.bag,
+            self.loadouts,
+            self.game_data,
+        )
     }
 
     /// Centered overlay; leaves the surrounding map/status cells alone.
@@ -202,12 +208,23 @@ impl<'a> ParamsPane<'a> {
             self.cancel_edit();
             return ParamsKey::Cancel;
         }
+        let searchable = opts.values.len() > 16;
         match code {
             crossterm::event::KeyCode::Esc => {
                 self.cancel_edit();
                 ParamsKey::Cancel
             }
             crossterm::event::KeyCode::Enter => self.commit_choices(def),
+            crossterm::event::KeyCode::Backspace if searchable => {
+                self.state.choice_search.pop();
+                self.state.choice_cursor = 0;
+                ParamsKey::None
+            }
+            crossterm::event::KeyCode::Char(ch) if searchable && ch != ' ' => {
+                self.state.choice_search.push(ch);
+                self.state.choice_cursor = 0;
+                ParamsKey::None
+            }
             crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                 if self.state.choice_cursor > 0 {
                     self.state.choice_cursor -= 1;
@@ -215,17 +232,28 @@ impl<'a> ParamsPane<'a> {
                 ParamsKey::Up
             }
             crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-                if self.state.choice_cursor + 1 < opts.values.len() {
+                if self.state.choice_cursor + 1 < self.choice_indices(&opts).len() {
                     self.state.choice_cursor += 1;
                 }
                 ParamsKey::Down
             }
             crossterm::event::KeyCode::Char(' ') => {
-                let Some(opt) = opts.values.get(self.state.choice_cursor) else {
+                let visible = self.choice_indices(&opts);
+                let Some(index) = visible.get(self.state.choice_cursor).copied() else {
                     return ParamsKey::None;
                 };
-                if let Some(i) = self.state.choice_selected.iter().position(|s| s == opt) {
-                    self.state.choice_selected.remove(i);
+                let Some(opt) = opts.values.get(index) else {
+                    return ParamsKey::None;
+                };
+                if self
+                    .state
+                    .choice_selected
+                    .iter()
+                    .any(|value| opts.matches_option(value, opt))
+                {
+                    self.state
+                        .choice_selected
+                        .retain(|value| !opts.matches_option(value, opt));
                 } else {
                     self.state.choice_selected.push(opt.clone());
                 }
@@ -233,6 +261,20 @@ impl<'a> ParamsPane<'a> {
             }
             _ => ParamsKey::None,
         }
+    }
+
+    fn choice_indices(&self, options: &frontend_core::scripts::ParameterOptions) -> Vec<usize> {
+        let query = self.state.choice_search.to_lowercase();
+        options
+            .values
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| {
+                let label = options.label_for(value).to_lowercase();
+                let value_matches = value.to_lowercase().contains(&query);
+                (query.is_empty() || label.contains(&query) || value_matches).then_some(index)
+            })
+            .collect()
     }
 
     fn activate(&mut self, rows: &[&SettingDef], enter: bool) -> ParamsKey {
@@ -252,19 +294,22 @@ impl<'a> ParamsPane<'a> {
             };
         }
         let opts = self.resolved_options(def);
+        if def.options_from.is_some() && opts.is_empty() {
+            return ParamsKey::None;
+        }
         if def.ty == "string" && !opts.is_empty() {
-            let cur = self
+            let stored = self
                 .bag
                 .get(&def.id)
                 .and_then(|v| v.as_str())
                 .or(def.default.as_deref())
-                .unwrap_or("")
-                .to_string();
+                .unwrap_or("");
+            let cur = opts.value_for(stored);
             let next = opts
                 .values
                 .iter()
-                .position(|o| o == &cur)
-                .map(|i| opts.values[(i + 1) % opts.values.len()].clone())
+                .position(|option| option == &cur)
+                .map(|index| opts.values[(index + 1) % opts.values.len()].clone())
                 .unwrap_or_else(|| opts.values[0].clone());
             return if self.persist(&def.id, serde_json::json!(next)) {
                 ParamsKey::Toggle
@@ -279,6 +324,8 @@ impl<'a> ParamsPane<'a> {
             self.state.editing = true;
             self.state.multi_select = true;
             self.state.choice_cursor = 0;
+            self.state.choice_search.clear();
+            self.state.choice_searchable = opts.values.len() > 16;
             self.state.choice_selected = current_string_list(self.bag.get(&def.id));
             self.state.scratch.clear();
             self.state.error = None;
@@ -344,6 +391,8 @@ impl<'a> ParamsPane<'a> {
         self.state.scratch.clear();
         self.state.choice_selected.clear();
         self.state.choice_cursor = 0;
+        self.state.choice_search.clear();
+        self.state.choice_searchable = false;
         self.state.error = None;
     }
 
@@ -378,7 +427,12 @@ impl<'a> ParamsPane<'a> {
         }
         if self.state.editing {
             if self.state.multi_select {
-                "space toggle · enter save · esc cancel".into()
+                if self.state.choice_searchable {
+                    "type to search · backspace clear · space toggle · enter save · esc cancel"
+                        .into()
+                } else {
+                    "space toggle · enter save · esc cancel".into()
+                }
             } else {
                 "enter save · esc cancel".into()
             }
@@ -400,10 +454,37 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn display_value(bag: &serde_json::Map<String, serde_json::Value>, def: &SettingDef) -> String {
-    bag.get(&def.id)
-        .map(format_setting_value)
-        .unwrap_or_else(|| "—".into())
+fn display_value(
+    bag: &serde_json::Map<String, serde_json::Value>,
+    def: &SettingDef,
+    options: &frontend_core::scripts::ParameterOptions,
+) -> String {
+    let value = bag.get(&def.id).cloned().or_else(|| {
+        def.default.as_deref().map(|default| {
+            serde_json::from_str(default)
+                .unwrap_or_else(|_| serde_json::Value::String(default.to_owned()))
+        })
+    });
+    let Some(value) = value else {
+        return "—".into();
+    };
+    let value = options.normalize_value(&value);
+    match &value {
+        serde_json::Value::String(value) => options.label_for(value).to_owned(),
+        serde_json::Value::Array(values) => {
+            let labels = values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|value| options.label_for(value))
+                .collect::<Vec<_>>();
+            if labels.is_empty() {
+                "—".into()
+            } else {
+                labels.join(", ")
+            }
+        }
+        _ => format_setting_value(&value),
+    }
 }
 
 impl Widget for ParamsPane<'_> {
@@ -432,23 +513,46 @@ impl Widget for ParamsPane<'_> {
                 let opts = self.resolved_options(def);
                 let label = def.label.as_deref().unwrap_or(&def.id);
                 lines.push(Line::from(format!("{label} choices")));
-                cursor_line = 1 + self
-                    .state
-                    .choice_cursor
-                    .min(opts.values.len().saturating_sub(1));
-                for (i, opt) in opts.values.iter().enumerate() {
-                    let mark = if i == self.state.choice_cursor {
-                        "> "
+                if opts.values.len() > 16 {
+                    let query = if self.state.choice_search.is_empty() {
+                        "type to filter"
                     } else {
-                        "  "
+                        &self.state.choice_search
                     };
-                    let tick = if self.state.choice_selected.iter().any(|s| s == opt) {
-                        "[x]"
-                    } else {
-                        "[ ]"
-                    };
-                    let shown = opts.labels.get(i).map(String::as_str).unwrap_or(opt);
-                    lines.push(Line::from(format!("{mark}{tick} {shown}")));
+                    lines.push(Line::from(format!("search: {query}")));
+                }
+                let indices = self.choice_indices(&opts);
+                let start = lines.len();
+                if indices.is_empty() {
+                    cursor_line = start;
+                    lines.push(Line::from("no matching options"));
+                } else {
+                    cursor_line = start
+                        + self
+                            .state
+                            .choice_cursor
+                            .min(indices.len().saturating_sub(1));
+                    for (row, index) in indices.into_iter().enumerate() {
+                        let Some(opt) = opts.values.get(index) else {
+                            continue;
+                        };
+                        let mark = if row == self.state.choice_cursor {
+                            "> "
+                        } else {
+                            "  "
+                        };
+                        let tick = if self
+                            .state
+                            .choice_selected
+                            .iter()
+                            .any(|selected| opts.matches_option(selected, opt))
+                        {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        lines.push(Line::from(format!("{mark}{tick} {}", opts.label_for(opt))));
+                    }
                 }
             }
         } else {
@@ -468,7 +572,12 @@ impl Widget for ParamsPane<'_> {
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
                 } else {
-                    display_value(self.bag, def)
+                    let options = self.resolved_options(def);
+                    if def.options_from.is_some() && options.is_empty() {
+                        "options unavailable".to_string()
+                    } else {
+                        display_value(self.bag, def, &options)
+                    }
                 };
                 lines.push(Line::from(format!("{mark}{label}: {value}")));
             }
@@ -1136,5 +1245,209 @@ mod tests {
             text.contains("custom"),
             "prefix chip must remain first: {text:?}"
         );
+    }
+
+    #[test]
+    fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
+        let dir = temp_dir("gather-picker");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let mut resources = setting(
+            "woodcuttingResources",
+            "string[]",
+            None,
+            Some("Woodcutting resources"),
+            &[],
+        );
+        resources.options_from = Some("gather:woodcutting".into());
+        let mut radius = setting("radius", "number", Some("12"), Some("Radius"), &[]);
+        radius.min = Some("2".into());
+        radius.max = Some("64".into());
+        let schema = vec![resources, radius];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        bag.insert(
+            "woodcuttingResources".into(),
+            serde_json::json!(["removed-resource"]),
+        );
+        let mut state = ParamsState {
+            open: true,
+            cursor: 1,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            type_replace(&mut pane, "20");
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(pane.bag.get("radius"), Some(&serde_json::json!(20)));
+            assert_eq!(
+                pane.bag.get("woodcuttingResources"),
+                Some(&serde_json::json!(["removed-resource"])),
+                "editing another setting must not reject or rewrite an unknown resource"
+            );
+            assert_eq!(pane.on_key(KeyCode::Up), ParamsKey::Up);
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert!(pane.state.multi_select);
+            assert_eq!(
+                pane.state.choice_selected,
+                ["removed-resource"],
+                "unknown resources remain checked in the picker"
+            );
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("Unknown: removed-resource"),
+            "unknown resource must have an explicit removable label: {text:?}"
+        );
+    }
+
+    #[test]
+    fn multiselect_picker_searches_lists_larger_than_sixteen() {
+        let dir = temp_dir("picker-search");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let mut quests = setting("quests", "string[]", None, Some("Quests"), &[]);
+        quests.options = (0..18).map(|index| format!("quest-{index:02}")).collect();
+        quests.option_labels = (0..18).map(|index| format!("Quest {index:02}")).collect();
+        let schema = vec![quests];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Quester", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Quester"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert!(pane.state.choice_searchable);
+            pane.on_key(KeyCode::Char('1'));
+            pane.on_key(KeyCode::Char('7'));
+            assert_eq!(pane.state.choice_search, "17");
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Quester"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("search: 17"),
+            "search query must paint: {text:?}"
+        );
+        assert!(
+            text.contains("Quest 17"),
+            "filtered quest must paint: {text:?}"
+        );
+        assert!(
+            !text.contains("Quest 16"),
+            "unmatched quests must be hidden: {text:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_picker_without_facts_is_disabled_not_a_text_box() {
+        let dir = temp_dir("picker-unavailable");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let mut resources = setting(
+            "woodcuttingResources",
+            "string[]",
+            None,
+            Some("Woodcutting resources"),
+            &[],
+        );
+        resources.options_from = Some("gather:woodcutting".into());
+        let schema = vec![resources];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+            assert!(!pane.state.editing);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("options unavailable"), "{text:?}");
     }
 }

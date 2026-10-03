@@ -298,7 +298,19 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
     const gatherItemNames = new Map<number, string>();
     for (const item of payload.items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
-    assertEqual(JSON.stringify(payload.gather_resources), JSON.stringify(gatherResources(gathering.payload, gatherItemNames)), `${revision} core gather_resources is the family's admitted option slice`);
+    const gatherRows = gatherResources(gathering.payload, gatherItemNames);
+    assertEqual(JSON.stringify(payload.gather_resources), JSON.stringify(gatherRows), `${revision} core gather_resources is the family's admitted option slice`);
+    const fishingOptions = gatherRows.filter((row) => row.skill === 'fishing');
+    const fishingLabels = fishingOptions.map((row) => row.label);
+    if (new Set(fishingLabels).size !== fishingLabels.length) throw new Error(`${revision}: fishing gather labels are not unique`);
+    for (const row of fishingOptions) {
+        if (row.methods.length === 0
+            || JSON.stringify(row.methods) !== JSON.stringify([...row.methods].sort())
+            || row.method !== row.methods[0]
+            || JSON.stringify(row.aliases) !== JSON.stringify(row.methods)) {
+            throw new Error(`${revision}: fishing group methods/aliases are not stable: ${JSON.stringify(row)}`);
+        }
+    }
     // Content pins: the family and the writer could agree and both be wrong, so anchor a few facts to the pinned content.
     const gatherFacts = gathering.payload;
     const aliases = new Map(gatherFacts.entities.map((row) => { const [kind, id, alias] = row.split(' '); return [`${kind}:${id}`, alias]; }));
