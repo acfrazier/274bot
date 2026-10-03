@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
 
-const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1";
+const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2";
 const MISSILES_VARP: i32 = 96;
 const MISSILES_BUTTON: i32 = 5622;
 const PRAYER_STABLE_TICKS: u32 = 3;
@@ -149,6 +149,9 @@ fn death_plateau_throwers_has_a_standable_protected_crossing() {
     }
     let world = nav::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
     let (start, dest) = pick_crossing(&world);
+    let attacker_stage = thrower_stage_tile(&world, start, dest);
+    assert!(world.collision.standable(attacker_stage));
+    assert!((3..=5).contains(&chebyshev(start, attacker_stage)));
     assert_ne!(start, dest, "crossing must move");
     assert_eq!(start.level, 0);
     assert_eq!(dest.level, 0);
@@ -265,9 +268,51 @@ fn missiles_on(snapshot: &GameSnapshot) -> bool {
 }
 
 fn arrived_at(snapshot: &GameSnapshot, dest: WorldTile) -> bool {
-    snapshot.tile().is_some_and(|(x, z, level)| {
-        level == dest.level && (x - dest.x).abs().max((z - dest.z).abs()) <= 1
-    })
+    snapshot
+        .local_player()
+        .map(|player| player.player.actor.tile)
+        .is_some_and(|tile| tile.level == dest.level && chebyshev(tile, dest) <= 1)
+}
+
+fn thrower_stage_tile(
+    world: &nav::world::NavWorld,
+    start: WorldTile,
+    dest: WorldTile,
+) -> WorldTile {
+    let direction = (dest.x - start.x).signum();
+    for distance in 3..=5 {
+        for lateral in [0, 1, -1, 2, -2] {
+            let tile = WorldTile {
+                x: start.x + direction * distance,
+                z: start.z + lateral,
+                level: start.level,
+            };
+            if world.collision.standable(tile) {
+                return tile;
+            }
+        }
+    }
+    panic!("no standable thrower stage tile at least three tiles ahead of {start:?}");
+}
+
+fn teleport_command(tile: WorldTile) -> String {
+    format!(
+        "tele {},{},{},{},{}",
+        tile.level,
+        tile.x.div_euclid(64),
+        tile.z.div_euclid(64),
+        tile.x.rem_euclid(64),
+        tile.z.rem_euclid(64)
+    )
+}
+
+fn final_w1_snapshot(snapshot: &GameSnapshot) -> serde_json::Value {
+    let mut facts = combat_proof::snapshot_facts(snapshot, Some(u64::from(snapshot.tick())));
+    facts["tile"] = facts
+        .pointer("/local_player/tile")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    facts
 }
 
 fn prayers_active(snapshot: &GameSnapshot) -> bool {
@@ -318,8 +363,34 @@ struct LaunchRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrayerPhase {
+    /// Older per-tick receipts did not distinguish crossing from cleanup.
+    Unspecified,
+    Crossing,
+    Cleanup,
+}
+
+impl PrayerPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unspecified => "observed",
+            Self::Crossing => "crossing",
+            Self::Cleanup => "cleanup",
+        }
+    }
+    fn order(self) -> u8 {
+        match self {
+            Self::Crossing => 0,
+            Self::Unspecified => 1,
+            Self::Cleanup => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PrayerObservation {
     tick: u32,
+    phase: PrayerPhase,
     missiles_on: Option<bool>,
     prayers_active: Option<bool>,
 }
@@ -328,6 +399,7 @@ struct PrayerObservation {
 struct GuardClick {
     tick: u32,
     component_id: Option<i32>,
+    missiles_on_before: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -378,11 +450,88 @@ fn exact_prayer_observation(
         .copied()
 }
 
+fn crossing_prayer_observation(
+    observations: &[PrayerObservation],
+    tick: u32,
+) -> Option<PrayerObservation> {
+    observations
+        .iter()
+        .rev()
+        .find(|row| {
+            row.tick == tick
+                && matches!(
+                    row.phase,
+                    PrayerPhase::Crossing | PrayerPhase::Unspecified
+                )
+        })
+        .copied()
+}
+
+fn crossing_observations_all_on(
+    observations: &[PrayerObservation],
+    tick: u32,
+) -> Option<bool> {
+    let mut rows = observations.iter().filter(|row| {
+        row.tick == tick
+            && matches!(
+                row.phase,
+                PrayerPhase::Crossing | PrayerPhase::Unspecified
+            )
+    });
+    let first = rows.next()?;
+    Some(
+        std::iter::once(first)
+            .chain(rows)
+            .all(|row| row.missiles_on == Some(true)),
+    )
+}
+
+/// Reclassify only a same-tick false sample as cleanup when the off-click's
+/// captured pre-click state proves Missiles was still on at that tick.
+fn normalize_same_tick_cleanup(
+    observations: &mut [PrayerObservation],
+    off_tick: Option<u32>,
+    click_crossing_observations: &[PrayerObservation],
+) {
+    let Some(off_tick) = off_tick else {
+        return;
+    };
+    if !click_crossing_observations
+        .iter()
+        .any(|row| row.tick == off_tick && row.missiles_on == Some(true))
+    {
+        return;
+    }
+    for observation in observations.iter_mut().filter(|row| {
+        row.tick == off_tick
+            && row.phase == PrayerPhase::Unspecified
+            && row.missiles_on == Some(false)
+    }) {
+        observation.phase = PrayerPhase::Cleanup;
+    }
+}
+
+fn cleanup_prayer_observation(
+    observations: &[PrayerObservation],
+    tick: u32,
+) -> Option<PrayerObservation> {
+    observations
+        .iter()
+        .rev()
+        .find(|row| {
+            row.tick == tick && matches!(row.phase, PrayerPhase::Cleanup | PrayerPhase::Unspecified)
+        })
+        .copied()
+}
+
 fn missiles_on_at(input: &W1GateInput<'_>, tick: u32) -> Option<bool> {
-    if let Some(observation) = exact_prayer_observation(input.prayer_ticks, tick) {
-        if let Some(on) = observation.missiles_on {
-            return Some(on);
-        }
+    let observation = if input.legacy_sparse {
+        exact_prayer_observation(input.prayer_ticks, tick)
+    } else {
+        crossing_prayer_observation(input.prayer_ticks, tick)
+    };
+    if let Some(on) = observation.and_then(|row| row.missiles_on) {
+        return Some(on);
     }
     if !input.legacy_sparse {
         return None;
@@ -403,7 +552,46 @@ fn missiles_on_at(input: &W1GateInput<'_>, tick: u32) -> Option<bool> {
 }
 
 fn prayer_active_at(input: &W1GateInput<'_>, tick: u32) -> Option<bool> {
-    exact_prayer_observation(input.prayer_ticks, tick)?.prayers_active
+    cleanup_prayer_observation(input.prayer_ticks, tick)?.prayers_active
+}
+
+fn require_crossing_guard_clicks(
+    input: &W1GateInput<'_>,
+    first_launch: u32,
+    arrival_tick: u32,
+    off_tick: u32,
+) -> Result<(), String> {
+    if input.guard_clicks.len() != 2 {
+        return Err(format!(
+            "W1 requires exactly two guard clicks (one enable and one off-click), observed {}",
+            input.guard_clicks.len()
+        ));
+    }
+
+    let mut enables = 0;
+    let mut off_clicks = 0;
+    for click in input.guard_clicks {
+        if click.component_id != Some(MISSILES_BUTTON) {
+            return Err("non-Missiles guard click during the crossing".into());
+        }
+        match click.missiles_on_before {
+            Some(false) if (first_launch..=arrival_tick).contains(&click.tick) => {
+                enables += 1;
+            }
+            Some(true) if (arrival_tick..=off_tick).contains(&click.tick) => {
+                off_clicks += 1;
+            }
+            Some(false) => return Err("Missiles enable click was outside the crossing".into()),
+            Some(true) => return Err("Missiles off-click was outside arrival cleanup".into()),
+            None => return Err("guard click has no pre-click Missiles observation".into()),
+        }
+    }
+    if enables != 1 || off_clicks != 1 {
+        return Err(format!(
+            "W1 requires one Missiles enable and one off-click, observed {enables} enables and {off_clicks} off-clicks"
+        ));
+    }
+    Ok(())
 }
 
 fn stable_off_decision(
@@ -530,7 +718,36 @@ fn evaluate_crossing_gate(
     let Some(arrival_tick) = arrival_bound else {
         return W1GateDecision::Pending;
     };
+    let Some(protect_tick) = input.protect_tick else {
+        return W1GateDecision::Pending;
+    };
+    if protect_tick > arrival_tick {
+        return gate_fail("Protect from Missiles was first observed after arrival");
+    }
+    if let Err(reason) =
+        require_crossing_guard_clicks(input, first_launch, arrival_tick, off_tick)
+    {
+        return gate_fail(reason);
+    }
     if !input.legacy_sparse {
+        for tick in protect_tick..=arrival_tick {
+            if tick > input.current_tick {
+                return W1GateDecision::Pending;
+            }
+            match crossing_observations_all_on(input.prayer_ticks, tick) {
+                Some(true) => {}
+                Some(false) => {
+                    return gate_fail(format!(
+                        "Missiles was off during crossing at tick {tick}"
+                    ));
+                }
+                None => {
+                    return gate_fail(format!(
+                        "missing crossing prayer observation at tick {tick}"
+                    ));
+                }
+            }
+        }
         for tick in first_launch..=off_tick.saturating_add(PRAYER_STABLE_TICKS) {
             if tick > input.current_tick {
                 return W1GateDecision::Pending;
@@ -541,16 +758,6 @@ fn evaluate_crossing_gate(
                 ));
             }
         }
-    }
-    if input.guard_clicks.iter().any(|click| {
-        click.tick >= first_launch
-            && click.tick <= arrival_tick
-            && click.component_id != Some(MISSILES_BUTTON)
-    }) {
-        return gate_fail("non-Missiles guard click during the crossing");
-    }
-    if input.guard_clicks.is_empty() {
-        return gate_fail("W1 receipt is missing walk-guard clicks");
     }
     stable_off_decision(input, off_tick, input.current_tick)
 }
@@ -705,21 +912,27 @@ fn prayer_observation_from_snapshot(
     };
     Some(PrayerObservation {
         tick,
+        phase: PrayerPhase::Unspecified,
         missiles_on,
         prayers_active,
     })
 }
 
+fn parse_prayer_phase(value: &serde_json::Value) -> Result<PrayerPhase, String> {
+    match value.get("phase").and_then(serde_json::Value::as_str) {
+        None | Some("observed") => Ok(PrayerPhase::Unspecified),
+        Some("crossing") => Ok(PrayerPhase::Crossing),
+        Some("cleanup") => Ok(PrayerPhase::Cleanup),
+        Some(phase) => Err(format!("unknown prayer observation phase {phase}")),
+    }
+}
+
 fn receipt_snapshot_at_dest(snapshot: &serde_json::Value, dest: WorldTile) -> bool {
-    let top_level = snapshot.get("tile").and_then(parse_tile_array);
-    let local = snapshot
+    snapshot
         .get("local_player")
         .and_then(|player| player.get("tile"))
-        .and_then(parse_tile_object);
-    [top_level, local]
-        .into_iter()
-        .flatten()
-        .any(|tile| tile.level == dest.level && chebyshev(tile, dest) <= 1)
+        .and_then(parse_tile_object)
+        .is_some_and(|tile| tile.level == dest.level && chebyshev(tile, dest) <= 1)
 }
 
 fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String> {
@@ -730,29 +943,43 @@ fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String
         .iter()
         .map(parse_launch_receipt)
         .collect::<Result<Vec<_>, _>>()?;
+    let dest = value.get("dest").and_then(parse_tile_array);
     let guard_rows = value
         .get("guard_clicks")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "receipt has no guard_clicks array".to_owned())?;
     let mut guard_clicks = Vec::with_capacity(guard_rows.len());
     let mut legacy_observations = Vec::with_capacity(guard_rows.len());
+    let mut click_crossing_observations = Vec::with_capacity(guard_rows.len());
     for row in guard_rows {
         if row.get("accepted").and_then(serde_json::Value::as_bool) == Some(false) {
             continue;
         }
         let tick = parse_receipt_tick(row, "tick")?;
+        let component_id = row
+            .get("component_id")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|id| i32::try_from(id).ok());
+        let click_observation = row
+            .get("snapshot")
+            .and_then(|snapshot| prayer_observation_from_snapshot(snapshot, tick));
         guard_clicks.push(GuardClick {
             tick,
-            component_id: row
-                .get("component_id")
-                .and_then(serde_json::Value::as_i64)
-                .and_then(|id| i32::try_from(id).ok()),
+            component_id,
+            missiles_on_before: click_observation.and_then(|observation| observation.missiles_on),
         });
-        if let Some(observation) = row
-            .get("snapshot")
-            .and_then(|snapshot| prayer_observation_from_snapshot(snapshot, tick))
-        {
+        if let Some(observation) = click_observation {
             legacy_observations.push(observation);
+            if component_id == Some(MISSILES_BUTTON)
+                && observation.missiles_on == Some(true)
+                && row.get("snapshot").is_some_and(|snapshot| {
+                    dest.is_some_and(|dest| receipt_snapshot_at_dest(snapshot, dest))
+                })
+            {
+                let mut crossing = observation;
+                crossing.phase = PrayerPhase::Crossing;
+                click_crossing_observations.push(crossing);
+            }
         }
     }
 
@@ -776,6 +1003,7 @@ fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String
             .map(|row| {
                 Ok(PrayerObservation {
                     tick: parse_receipt_tick(row, "tick")?,
+                    phase: parse_prayer_phase(row)?,
                     missiles_on: row.get("missiles_on").and_then(serde_json::Value::as_bool),
                     prayers_active: row
                         .get("prayers_active")
@@ -791,6 +1019,7 @@ fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String
         if let Some(tick) = protect_tick {
             prayer_ticks.push(PrayerObservation {
                 tick,
+                phase: PrayerPhase::Crossing,
                 missiles_on: Some(true),
                 prayers_active: Some(true),
             });
@@ -799,20 +1028,29 @@ fn parse_w1_receipt(value: &serde_json::Value) -> Result<ParsedW1Receipt, String
             if let Some(tick) = off_tick {
                 prayer_ticks.push(PrayerObservation {
                     tick,
+                    phase: PrayerPhase::Cleanup,
                     missiles_on: Some(false),
                     prayers_active: Some(false),
                 });
             }
         }
     }
-    prayer_ticks.sort_by_key(|row| row.tick);
+    if !legacy_sparse {
+        normalize_same_tick_cleanup(
+            &mut prayer_ticks,
+            off_tick,
+            &click_crossing_observations,
+        );
+    }
+    prayer_ticks.extend(click_crossing_observations);
+    prayer_ticks.sort_by_key(|row| (row.tick, row.phase.order()));
 
     let arrival_tick = value
         .get("arrival_tick")
         .and_then(serde_json::Value::as_u64)
         .and_then(|tick| u32::try_from(tick).ok())
         .or_else(|| {
-            let dest = value.get("dest").and_then(parse_tile_array)?;
+            let dest = dest?;
             guard_rows.iter().find_map(|row| {
                 let accepted = row.get("accepted").and_then(serde_json::Value::as_bool);
                 if accepted == Some(false) {
@@ -968,6 +1206,52 @@ fn attribute_due_impact(launches: &mut [LaunchRecord], tick: u32) {
     launch.observed_delay = Some(tick.saturating_sub(launch.tick));
 }
 
+fn guard_click_from_action(action: &serde_json::Value) -> GuardClick {
+    let tick = action["tick"].as_u64().unwrap_or_default() as u32;
+    let observation = action
+        .get("snapshot")
+        .and_then(|snapshot| prayer_observation_from_snapshot(snapshot, tick));
+    GuardClick {
+        tick,
+        component_id: action["component_id"].as_i64().map(|id| id as i32),
+        missiles_on_before: observation.and_then(|row| row.missiles_on),
+    }
+}
+
+fn append_guard_crossing_observations(
+    prayer_ticks: &mut Vec<PrayerObservation>,
+    actions: &[serde_json::Value],
+    dest: WorldTile,
+    off_tick: Option<u32>,
+) {
+    let mut click_crossing_observations = Vec::new();
+    for action in actions.iter().filter(|action| action["kind"] == json!("guard")) {
+        let click = guard_click_from_action(action);
+        if click.component_id != Some(MISSILES_BUTTON)
+            || click.missiles_on_before != Some(true)
+            || !action
+                .get("snapshot")
+                .is_some_and(|snapshot| receipt_snapshot_at_dest(snapshot, dest))
+        {
+            continue;
+        }
+        if let Some(mut observation) = action
+            .get("snapshot")
+            .and_then(|snapshot| prayer_observation_from_snapshot(snapshot, click.tick))
+        {
+            observation.phase = PrayerPhase::Crossing;
+            click_crossing_observations.push(observation);
+        }
+    }
+    normalize_same_tick_cleanup(prayer_ticks, off_tick, &click_crossing_observations);
+    for observation in click_crossing_observations {
+        if !prayer_ticks.contains(&observation) {
+            prayer_ticks.push(observation);
+        }
+    }
+    prayer_ticks.sort_by_key(|row| (row.tick, row.phase.order()));
+}
+
 struct LiveState {
     account: String,
     runner: ScenarioRunner,
@@ -978,7 +1262,9 @@ struct LiveState {
     quests: Arc<QuestCatalog>,
     path: Arc<CompiledPath>,
     capture: Arc<Mutex<CombatCapture>>,
+    start: WorldTile,
     dest: WorldTile,
+    attacker_stage: WorldTile,
     launch_tick: Option<u32>,
     protect_tick: Option<u32>,
     started: bool,
@@ -1002,19 +1288,23 @@ struct LiveState {
 }
 
 impl LiveState {
-    fn remember_prayer_observation(&mut self, tick: u32) {
+    fn remember_prayer_observation(&mut self, tick: u32, phase: PrayerPhase) {
         let observation = PrayerObservation {
             tick,
+            phase,
             missiles_on: Some(missiles_on(&self.snapshot)),
             prayers_active: Some(prayers_active(&self.snapshot)),
         };
-        if let Some(last) = self.prayer_ticks.last_mut() {
-            if last.tick == tick {
-                *last = observation;
-                return;
-            }
+        if let Some(existing) = self
+            .prayer_ticks
+            .iter_mut()
+            .rev()
+            .find(|row| row.tick == tick && row.phase == phase)
+        {
+            *existing = observation;
+        } else {
+            self.prayer_ticks.push(observation);
         }
-        self.prayer_ticks.push(observation);
     }
 
     fn remember_tile(&mut self, tick: u32, tile: WorldTile) {
@@ -1041,7 +1331,10 @@ impl LiveState {
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
-        self.last_tile = self.snapshot.tile();
+        self.last_tile = self.snapshot.local_player().map(|player| {
+            let tile = player.player.actor.tile;
+            (tile.x, tile.z, tile.level)
+        });
         let tick = self.snapshot.tick();
         if let Some((x, z, level)) = self.last_tile {
             self.remember_tile(tick, WorldTile { x, z, level });
@@ -1088,11 +1381,21 @@ impl LiveState {
                 }
             }
         }
-        if self.started
-            && !self.attacker_staged
-            && send_cheat(client, "npcadd death_troll_thrower1")
-        {
-            self.attacker_staged = true;
+        if self.started && !self.attacker_staged {
+            let stage_command = teleport_command(self.attacker_stage);
+            let start_command = teleport_command(self.start);
+            if send_cheat(client, &stage_command)
+                && send_cheat(client, "npcadd death_troll_thrower1")
+                && send_cheat(client, &start_command)
+            {
+                self.attacker_staged = true;
+            } else {
+                combat_proof::mark_invalid(
+                    &self.account,
+                    "could not stage the first ranged thrower away from the route start",
+                );
+                return;
+            }
         }
         if self.attacker_staged
             && !self.second_attacker_staged
@@ -1121,7 +1424,13 @@ impl LiveState {
             self.stop_off_tick = Some(tick);
         }
         if self.started {
-            self.remember_prayer_observation(tick);
+            let phase = if !prayers_active(&self.snapshot) && (self.arrived || self.stop_requested)
+            {
+                PrayerPhase::Cleanup
+            } else {
+                PrayerPhase::Crossing
+            };
+            self.remember_prayer_observation(tick, phase);
         }
         let me = self.snapshot.self_slot() as usize;
         let loop_cycle = self.snapshot.hitmarks().map(|hitmarks| hitmarks.loop_cycle);
@@ -1246,7 +1555,7 @@ fn run_live_w1(mode: W1Mode) {
     );
     std::env::set_var("BOT_LIVE_NAME_PREFIX", "wg");
     std::fs::create_dir_all(EVIDENCE_DIR)
-        .expect("create WALK-GUARD-LIFECYCLE-1 evidence directory");
+        .expect("create WALK-GUARD-LIFECYCLE-1/r2 evidence directory");
     let home = ThrowawayHome::enter().expect("create isolated HOME");
     let options = profile_options(&home.path).expect("W1 live prerequisites");
     let template = options
@@ -1286,7 +1595,9 @@ fn run_live_w1(mode: W1Mode) {
         quests,
         path,
         capture: Arc::clone(&capture),
+        start,
         dest,
+        attacker_stage: thrower_stage_tile(world.as_ref(), start, dest),
         launch_tick: None,
         protect_tick: None,
         started: false,
@@ -1390,11 +1701,15 @@ fn run_live_w1(mode: W1Mode) {
             .actions
             .iter()
             .filter(|action| action["kind"] == json!("guard"))
-            .map(|action| GuardClick {
-                tick: action["tick"].as_u64().unwrap_or_default() as u32,
-                component_id: action["component_id"].as_i64().map(|id| id as i32),
-            })
+            .map(guard_click_from_action)
             .collect();
+        let mut prayer_ticks = current.prayer_ticks.clone();
+        append_guard_crossing_observations(
+            &mut prayer_ticks,
+            &capture_snapshot.actions,
+            current.dest,
+            current.off_tick,
+        );
         let attack_emitted = capture_snapshot.actions.iter().any(|action| {
             action["request"]["op"] == json!("npc")
                 && action["request"]["action"] == json!("Attack")
@@ -1407,7 +1722,7 @@ fn run_live_w1(mode: W1Mode) {
             arrival_tick: current.arrival_tick,
             prayers_off_after_arrival: current.prayers_off_after_arrival,
             off_tick: current.off_tick,
-            prayer_ticks: &current.prayer_ticks,
+            prayer_ticks: &prayer_ticks,
             guard_clicks: &guard_clicks,
             attack_emitted: Some(attack_emitted),
             current_tick: current.snapshot.tick(),
@@ -1450,13 +1765,20 @@ fn run_live_w1(mode: W1Mode) {
         .or(snapshot.stop_off_tick)
         .map(|tick| tick.saturating_add(PRAYER_STABLE_TICKS))
         .unwrap_or_else(|| snapshot.snapshot.tick());
-    let prayer_ticks: Vec<serde_json::Value> = snapshot
-        .prayer_ticks
+    let mut observed_prayer_ticks = snapshot.prayer_ticks.clone();
+    append_guard_crossing_observations(
+        &mut observed_prayer_ticks,
+        &capture_snapshot.actions,
+        snapshot.dest,
+        snapshot.off_tick.or(snapshot.stop_off_tick),
+    );
+    let prayer_ticks: Vec<serde_json::Value> = observed_prayer_ticks
         .iter()
         .filter(|row| row.tick >= observation_start && row.tick <= observation_end)
         .map(|row| {
             json!({
                 "tick": row.tick,
+                "phase": row.phase.as_str(),
                 "missiles_on": row.missiles_on,
                 "prayers_active": row.prayers_active,
             })
@@ -1496,6 +1818,11 @@ fn run_live_w1(mode: W1Mode) {
         "start": [start.x, start.z, start.level],
         "dest": [dest.x, dest.z, dest.level],
         "attacker_staged": snapshot.attacker_staged,
+        "attacker_stage": [
+            snapshot.attacker_stage.x,
+            snapshot.attacker_stage.z,
+            snapshot.attacker_stage.level
+        ],
         "prayer": prayer,
         "runner": format!("{:?}", snapshot.runner.status()),
         "launches": snapshot
@@ -1518,10 +1845,7 @@ fn run_live_w1(mode: W1Mode) {
             .map(|action| action["kind"].clone())
             .collect::<Vec<_>>(),
         "last_status": capture_snapshot.statuses.last(),
-        "final_snapshot": combat_proof::snapshot_facts(
-            &snapshot.snapshot,
-            Some(u64::from(snapshot.snapshot.tick())),
-        ),
+        "final_snapshot": final_w1_snapshot(&snapshot.snapshot),
     });
     let path = PathBuf::from(EVIDENCE_DIR).join(format!("W1-{account}-receipt.json"));
     let pixels = shot_buffer.snapshot();
@@ -1536,7 +1860,7 @@ fn run_live_w1(mode: W1Mode) {
         ]);
     }
     let capture_dir = PathBuf::from(EVIDENCE_DIR).join(format!(
-        "WALK-GUARD-LIFECYCLE-1_W1_{mode_name}_{account}_{}",
+        "WALK-GUARD-LIFECYCLE-1_R2_W1_{mode_name}_{account}_{}",
         scenario::shot::stamp_utc(SystemTime::now())
     ));
     let capture_path = scenario::shot::write_shot(
@@ -1624,6 +1948,22 @@ fn contradictory_w1_launches() -> Vec<LaunchRecord> {
             Some(1),
         ),
     ]
+}
+
+#[test]
+fn npc_ranged_queue_distance_one_has_one_tick_delay() {
+    let launch = launch_row(
+        20,
+        [2845, 3602, 0],
+        [2844, 3602, 0],
+        1,
+        364,
+        381,
+        Some(21),
+        Some(1),
+    );
+    assert_eq!(npc_ranged_queue_ticks(1), 1);
+    assert_eq!(queue_mismatch(&[launch]), None);
 }
 
 #[test]
@@ -1825,6 +2165,7 @@ fn first_launch_tick_does_not_skip_a_source_near_the_route_start() {
         "selecting the later launch would hide the 13-tick delay"
     );
 }
+
 fn lifecycle_launches() -> Vec<LaunchRecord> {
     vec![
         launch_row(
@@ -1853,14 +2194,35 @@ fn lifecycle_launches() -> Vec<LaunchRecord> {
 fn lifecycle_prayer_observations(return_tick: Option<u32>) -> Vec<PrayerObservation> {
     (10..=23)
         .map(|tick| {
+            let crossing = tick <= 19;
             let active = tick < 20 || return_tick == Some(tick);
             PrayerObservation {
                 tick,
-                missiles_on: Some(active),
+                phase: if crossing {
+                    PrayerPhase::Crossing
+                } else {
+                    PrayerPhase::Cleanup
+                },
+                missiles_on: Some(crossing),
                 prayers_active: Some(active),
             }
         })
         .collect()
+}
+
+fn lifecycle_guard_clicks() -> [GuardClick; 2] {
+    [
+        GuardClick {
+            tick: 10,
+            component_id: Some(MISSILES_BUTTON),
+            missiles_on_before: Some(false),
+        },
+        GuardClick {
+            tick: 20,
+            component_id: Some(MISSILES_BUTTON),
+            missiles_on_before: Some(true),
+        },
+    ]
 }
 
 fn lifecycle_gate_input<'a>(
@@ -1893,10 +2255,7 @@ fn lifecycle_gate_input<'a>(
 fn w1_gate_rejects_a_prayer_return_after_the_first_off_tick() {
     let launches = lifecycle_launches();
     let prayer_ticks = lifecycle_prayer_observations(Some(22));
-    let guard_clicks = [GuardClick {
-        tick: 10,
-        component_id: Some(MISSILES_BUTTON),
-    }];
+    let guard_clicks = lifecycle_guard_clicks();
     let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
     let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
     assert!(
@@ -1911,10 +2270,7 @@ fn w1_gate_rejects_a_later_launch_without_missiles() {
     let mut prayer_ticks = lifecycle_prayer_observations(None);
     prayer_ticks[5].missiles_on = Some(false);
     prayer_ticks[5].prayers_active = Some(true);
-    let guard_clicks = [GuardClick {
-        tick: 10,
-        component_id: Some(MISSILES_BUTTON),
-    }];
+    let guard_clicks = lifecycle_guard_clicks();
     let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
     let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
     assert!(
@@ -1924,18 +2280,129 @@ fn w1_gate_rejects_a_later_launch_without_missiles() {
 }
 
 #[test]
+fn w1_gate_rejects_a_mid_crossing_missiles_lapse_between_launches() {
+    let launches = lifecycle_launches();
+    let mut prayer_ticks = lifecycle_prayer_observations(None);
+    for row in prayer_ticks
+        .iter_mut()
+        .filter(|row| (12..=13).contains(&row.tick))
+    {
+        row.missiles_on = Some(false);
+        row.prayers_active = Some(false);
+    }
+    let guard_clicks = lifecycle_guard_clicks();
+    let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
+    let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
+    assert!(
+        matches!(&decision, W1GateDecision::Fail(reason) if reason.contains("Missiles was off during crossing at tick 12")),
+        "every crossing tick must keep Missiles on, even between launches: {decision:?}"
+    );
+}
+
+#[test]
+fn w1_gate_rejects_a_missing_crossing_prayer_observation() {
+    let launches = lifecycle_launches();
+    let mut prayer_ticks = lifecycle_prayer_observations(None);
+    prayer_ticks.retain(|row| row.tick != 12);
+    let guard_clicks = lifecycle_guard_clicks();
+    let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
+    let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
+    assert!(
+        matches!(&decision, W1GateDecision::Fail(reason) if reason.contains("missing crossing prayer observation at tick 12")),
+        "a missing crossing tick is not an on observation: {decision:?}"
+    );
+}
+
+#[test]
+fn w1_gate_rejects_an_extra_guard_click() {
+    let launches = lifecycle_launches();
+    let prayer_ticks = lifecycle_prayer_observations(None);
+    let pair = lifecycle_guard_clicks();
+    let guard_clicks = [
+        pair[0],
+        GuardClick {
+            tick: 18,
+            component_id: Some(MISSILES_BUTTON),
+            missiles_on_before: Some(true),
+        },
+        pair[1],
+    ];
+    let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
+    let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
+    assert!(
+        matches!(&decision, W1GateDecision::Fail(reason) if reason.contains("exactly two guard clicks")),
+        "only one enable and one off-click are allowed: {decision:?}"
+    );
+}
+
+#[test]
+fn w1_gate_accepts_arrival_and_cleanup_in_distinct_same_tick_phases() {
+    let launches = lifecycle_launches();
+    let mut prayer_ticks = lifecycle_prayer_observations(None);
+    prayer_ticks.retain(|row| row.tick != 20);
+    prayer_ticks.push(PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Crossing,
+        missiles_on: Some(true),
+        prayers_active: Some(true),
+    });
+    prayer_ticks.push(PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Cleanup,
+        missiles_on: Some(false),
+        prayers_active: Some(false),
+    });
+    let guard_clicks = lifecycle_guard_clicks();
+    let mut input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
+    input.arrival_tick = Some(20);
+    assert_eq!(
+        evaluate_w1_gate(W1Mode::Crossing, &input),
+        W1GateDecision::Pass
+    );
+}
+
+#[test]
+fn w1_gate_rejects_any_off_observation_in_a_crossing_phase() {
+    let launches = lifecycle_launches();
+    let mut prayer_ticks = lifecycle_prayer_observations(None);
+    prayer_ticks.push(PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Crossing,
+        missiles_on: Some(true),
+        prayers_active: Some(true),
+    });
+    prayer_ticks.push(PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Crossing,
+        missiles_on: Some(false),
+        prayers_active: Some(false),
+    });
+    let guard_clicks = lifecycle_guard_clicks();
+    let mut input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
+    input.arrival_tick = Some(20);
+    assert!(
+        matches!(
+            evaluate_w1_gate(W1Mode::Crossing, &input),
+            W1GateDecision::Fail(reason) if reason.contains("Missiles was off during crossing at tick 20")
+        ),
+        "every crossing-phase row, not just one selected row, must show Missiles on"
+    );
+}
+
+
+#[test]
 fn w1_gate_rejects_a_non_missiles_guard_click_during_the_crossing() {
     let launches = lifecycle_launches();
     let prayer_ticks = lifecycle_prayer_observations(None);
+    let pair = lifecycle_guard_clicks();
     let guard_clicks = [
-        GuardClick {
-            tick: 10,
-            component_id: Some(MISSILES_BUTTON),
-        },
+        pair[0],
         GuardClick {
             tick: 18,
             component_id: Some(5623),
+            missiles_on_before: Some(true),
         },
+        pair[1],
     ];
     let input = lifecycle_gate_input(&launches, &prayer_ticks, &guard_clicks);
     let decision = evaluate_w1_gate(W1Mode::Crossing, &input);
@@ -1943,6 +2410,105 @@ fn w1_gate_rejects_a_non_missiles_guard_click_during_the_crossing() {
         matches!(&decision, W1GateDecision::Fail(reason) if reason.contains("non-Missiles")),
         "a non-Missiles guard click between first launch and arrival must fail: {decision:?}"
     );
+}
+
+#[test]
+fn off_click_snapshot_adds_crossing_evidence_at_its_observed_tick() {
+    let dest = WorldTile {
+        x: 2880,
+        z: 3596,
+        level: 0,
+    };
+    let mut prayer_ticks = vec![PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Unspecified,
+        missiles_on: Some(false),
+        prayers_active: Some(false),
+    }];
+    let actions = [json!({
+        "kind": "guard",
+        "tick": 20,
+        "component_id": MISSILES_BUTTON,
+        "snapshot": {
+            "prayer_varps": [{"index": MISSILES_VARP, "value": 1}],
+            "local_player": {"tile": {"x": dest.x, "z": dest.z, "level": dest.level}}
+        }
+    })];
+    append_guard_crossing_observations(&mut prayer_ticks, &actions, dest, Some(20));
+    assert_eq!(prayer_ticks.len(), 2, "no tick is synthesized");
+    assert_eq!(crossing_observations_all_on(&prayer_ticks, 20), Some(true));
+    assert_eq!(
+        cleanup_prayer_observation(&prayer_ticks, 20).and_then(|row| row.missiles_on),
+        Some(false)
+    );
+    assert_eq!(prayer_ticks[0].phase, PrayerPhase::Cleanup);
+}
+
+#[test]
+fn off_click_snapshot_away_from_destination_is_not_crossing_evidence() {
+    let dest = WorldTile {
+        x: 2880,
+        z: 3596,
+        level: 0,
+    };
+    let mut prayer_ticks = vec![PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Cleanup,
+        missiles_on: Some(false),
+        prayers_active: Some(false),
+    }];
+    let actions = [json!({
+        "kind": "guard",
+        "tick": 20,
+        "component_id": MISSILES_BUTTON,
+        "snapshot": {
+            "prayer_varps": [{"index": MISSILES_VARP, "value": 1}],
+            "local_player": {"tile": {"x": 2842, "z": 3605, "level": 0}}
+        }
+    })];
+    append_guard_crossing_observations(&mut prayer_ticks, &actions, dest, Some(20));
+    assert_eq!(prayer_ticks.len(), 1);
+    assert_eq!(crossing_observations_all_on(&prayer_ticks, 20), None);
+}
+
+#[test]
+fn retained_same_tick_off_row_is_cleanup_only_with_pre_click_on_evidence() {
+    let click_crossing = [PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Crossing,
+        missiles_on: Some(true),
+        prayers_active: Some(true),
+    }];
+    let mut per_tick = [PrayerObservation {
+        tick: 20,
+        phase: PrayerPhase::Unspecified,
+        missiles_on: Some(false),
+        prayers_active: Some(false),
+    }];
+    normalize_same_tick_cleanup(&mut per_tick, Some(20), &click_crossing);
+    let observations = [per_tick[0], click_crossing[0]];
+    assert_eq!(observations.len(), 2, "the receipt tick count is unchanged");
+    assert_eq!(observations[0].phase, PrayerPhase::Cleanup);
+    assert_eq!(crossing_observations_all_on(&observations, 20), Some(true));
+}
+
+#[test]
+fn receipt_arrival_uses_local_actor_tile_not_route_head_tile() {
+    let dest = WorldTile {
+        x: 2880,
+        z: 3596,
+        level: 0,
+    };
+    let route_head_only = json!({
+        "tile": [dest.x, dest.z, dest.level],
+        "local_player": {"tile": {"x": 2842, "z": 3605, "level": 0}}
+    });
+    assert!(!receipt_snapshot_at_dest(&route_head_only, dest));
+    let actor_at_dest = json!({
+        "tile": [2842, 3605, 0],
+        "local_player": {"tile": {"x": dest.x, "z": dest.z, "level": dest.level}}
+    });
+    assert!(receipt_snapshot_at_dest(&actor_at_dest, dest));
 }
 
 #[test]
@@ -1994,6 +2560,7 @@ fn replay_walk_guard_w1_retained_receipts() {
             "reason": reason,
             "evidence_mode": if parsed.legacy_sparse { "legacy-sparse" } else { "per-tick" },
             "observed_prayer_rows": parsed.prayer_ticks.iter().map(|row| json!({
+                "phase": row.phase.as_str(),
                 "tick": row.tick,
                 "missiles_on": row.missiles_on,
                 "prayers_active": row.prayers_active,
