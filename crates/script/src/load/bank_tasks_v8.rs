@@ -8,10 +8,11 @@
 //!   `countLoot()`, `itemsThreshold()`, `minutesThreshold()` into
 //!   `shouldBankNow`). An absent option keeps the shim's default (`'off'`,
 //!   0, 15, 10).
-//! - `__rs2b0t_death_recovery_validate(opts)`: observe the posted chat,
-//!   call `opts.onDeath()` on a new death; after a finished run, clear the
-//!   latch and call `opts.onRecovered()` when frozen `near` holds; answer
-//!   due.
+//! - `__rs2b0t_death_recovery_validate(instance, opts)`: observe posted chat
+//!   for this task instance; call `opts.onDeath()` on a new death; after a
+//!   finished run, clear its latch and call `opts.onRecovered()` when the
+//!   posted tile is on the anchor's level and within its normalized radius;
+//!   answer due.
 //! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
 //!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
@@ -174,23 +175,25 @@ fn periodic_bank_validate<'s>(
 
 fn death_due<'s>(
     scope: &mut v8::HandleScope<'s>,
+    instance: v8::Local<'s, v8::Object>,
     opts: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
     use crate::death_recovery as death;
-    let observed = death::observe();
+    let observed = death::observe(scope, instance);
     if observed.died {
         call_option(scope, opts, "onDeath")?;
     }
     if let Some(home) = observed.check_from {
         // Frozen `near(home, this.opts.anchor, this.opts.radius ?? 6)`:
-        // `a.level === b.level && Math.abs(a.x - b.x) <= r && …`.
+        // level must match, and both coordinates use the execute radius rule.
         let anchor = cb::get(scope, opts, "anchor")?;
         let radius = cb::get(scope, opts, "radius")?;
-        let radius = if radius.is_null_or_undefined() {
-            f64::from(death::DEFAULT_RADIUS)
+        let radius = if radius.is_null_or_undefined() || !radius.is_number() {
+            None
         } else {
-            cb::number(scope, radius)?
+            radius.number_value(scope)
         };
+        let radius = f64::from(death::normalized_radius(radius));
         let level = cb::get(scope, anchor, "level")?;
         let level = level
             .is_number()
@@ -209,11 +212,11 @@ fn death_due<'s>(
             false
         };
         if near {
-            death::recover();
+            death::recover(scope, instance);
             call_option(scope, opts, "onRecovered")?;
         }
     }
-    Ok(death::due())
+    Ok(death::due(scope, instance))
 }
 
 fn death_recovery_validate<'s>(
@@ -221,6 +224,11 @@ fn death_recovery_validate<'s>(
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let result = death_due(scope, args.get(0)).map(|due| v8::Boolean::new(scope, due).into());
+    let result = match args.get(0).try_cast::<v8::Object>() {
+        Ok(instance) => {
+            death_due(scope, instance, args.get(1)).map(|due| v8::Boolean::new(scope, due).into())
+        }
+        Err(_) => Ok(v8::Boolean::new(scope, false).into()),
+    };
     cb::finish(scope, rv, result);
 }
