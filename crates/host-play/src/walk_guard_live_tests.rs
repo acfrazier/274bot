@@ -341,6 +341,14 @@ fn in_crossing(launch: &LaunchRecord, off_tick: Option<u32>) -> bool {
     off_tick.is_none_or(|off| launch.tick < off)
 }
 
+fn earliest_launch_tick(launches: &[LaunchRecord]) -> Option<u32> {
+    launches.iter().map(|launch| launch.tick).min()
+}
+
+fn protect_within_two_ticks(launch_tick: u32, protect_tick: u32) -> bool {
+    protect_tick.abs_diff(launch_tick) <= 2
+}
+
 /// Count-only gate that accepted the contradictory W1 receipt (two identities
 /// and two distances with any delay). Kept for the regression that proves the
 /// delay rule rejects that receipt.
@@ -389,20 +397,25 @@ fn queue_gate(launches: &[LaunchRecord], off_tick: Option<u32>) -> bool {
 }
 
 fn attribute_due_impact(launches: &mut [LaunchRecord], tick: u32) {
-    let due: Vec<usize> = launches
+    let pending: Vec<usize> = launches
         .iter()
         .enumerate()
-        .filter(|(_, launch)| {
-            launch.impact_tick.is_none()
-                && launch.tick <= tick
-                && tick.saturating_sub(launch.tick) == launch.expected_delay()
-        })
+        .filter(|(_, launch)| launch.impact_tick.is_none() && launch.tick <= tick)
         .map(|(index, _)| index)
         .collect();
-    if due.len() != 1 {
-        return;
-    }
-    let launch = &mut launches[due[0]];
+    let due: Vec<usize> = pending
+        .iter()
+        .copied()
+        .filter(|&index| {
+            tick.saturating_sub(launches[index].tick) == launches[index].expected_delay()
+        })
+        .collect();
+    let index = match (due.len(), pending.len()) {
+        (1, _) => due[0],
+        (0, 1) => pending[0],
+        _ => return,
+    };
+    let launch = &mut launches[index];
     launch.impact_tick = Some(tick);
     launch.observed_delay = Some(tick.saturating_sub(launch.tick));
 }
@@ -432,7 +445,6 @@ struct LiveState {
     quests: Arc<QuestCatalog>,
     path: Arc<CompiledPath>,
     capture: Arc<Mutex<CombatCapture>>,
-    start: WorldTile,
     dest: WorldTile,
     started: bool,
     launch_tick: Option<u32>,
@@ -538,13 +550,7 @@ impl LiveState {
             self.second_attacker_staged = true;
         }
         let already_off = self.off_tick.is_some();
-        if self.launch_tick.is_none() {
-            self.launch_tick = self
-                .launches
-                .iter()
-                .find(|launch| chebyshev(launch.src, self.start) > 4)
-                .map(|launch| launch.tick);
-        }
+        self.launch_tick = earliest_launch_tick(&self.launches);
         if self.started && missiles_on(&self.snapshot) && self.protect_tick.is_none() {
             self.protect_tick = Some(self.snapshot.tick());
         }
@@ -709,7 +715,6 @@ fn live_walk_guard_w1_protected_crossing() {
         quests,
         path,
         capture: Arc::clone(&capture),
-        start,
         dest,
         started: false,
         launch_tick: None,
@@ -788,8 +793,7 @@ fn live_walk_guard_w1_protected_crossing() {
         if w1_ready(&capture_snapshot, launched, protected, at_dest, prayers_off) && queue_measured
         {
             if let (Some(launch), Some(protect)) = (launch_tick, protect_tick) {
-                let delta = protect.abs_diff(launch);
-                if delta > 2 {
+                if !protect_within_two_ticks(launch, protect) {
                     break (
                         "FAIL",
                         Some(format!(
@@ -1034,22 +1038,133 @@ fn npc_ranged_queue_gate_requires_two_in_crossing_distances_that_match_the_rule(
 
 #[test]
 fn due_tick_attribution_does_not_attach_an_unrelated_hitmark_to_the_oldest_launch() {
-    let mut launches = vec![launch_row(
-        20,
-        [2880, 3602, 0],
-        [2880, 3596, 0],
-        6,
-        1219,
-        1240,
-        None,
-        None,
-    )];
-    attribute_due_impact(&mut launches, 21);
+    let mut launches = vec![
+        launch_row(
+            20,
+            [2880, 3602, 0],
+            [2880, 3596, 0],
+            6,
+            1219,
+            1240,
+            None,
+            None,
+        ),
+        launch_row(
+            20,
+            [2860, 3609, 0],
+            [2864, 3609, 0],
+            4,
+            627,
+            644,
+            None,
+            None,
+        ),
+    ];
+    attribute_due_impact(&mut launches, 24);
     assert!(
-        launches[0].impact_tick.is_none(),
-        "a delay-1 hitmark is not the distance-6 rock"
+        launches[0].impact_tick.is_none() && launches[1].impact_tick.is_none(),
+        "two pending launches with no unique due tick stay unmatched"
     );
+    attribute_due_impact(&mut launches, 21);
+    assert_eq!(launches[1].impact_tick, Some(21));
+    assert_eq!(launches[1].observed_delay, Some(1));
+    assert!(launches[0].impact_tick.is_none());
     attribute_due_impact(&mut launches, 22);
     assert_eq!(launches[0].impact_tick, Some(22));
     assert_eq!(launches[0].observed_delay, Some(2));
+}
+
+#[test]
+fn wrong_delay_onset_fails_the_proof_even_after_two_matching_rows() {
+    let mut launches = vec![
+        launch_row(
+            19,
+            [2838, 3602, 0],
+            [2843, 3606, 0],
+            5,
+            366,
+            384,
+            Some(20),
+            Some(1),
+        ),
+        launch_row(
+            30,
+            [2860, 3609, 0],
+            [2864, 3609, 0],
+            4,
+            628,
+            645,
+            Some(31),
+            Some(1),
+        ),
+        launch_row(
+            33,
+            [2868, 3609, 0],
+            [2872, 3609, 0],
+            4,
+            700,
+            717,
+            None,
+            None,
+        ),
+    ];
+    assert!(
+        queue_gate(&launches, Some(43)),
+        "two matching in-crossing distances still pass before the wrong onset"
+    );
+    attribute_due_impact(&mut launches, 35);
+    assert_eq!(launches[2].impact_tick, Some(35));
+    assert_eq!(launches[2].observed_delay, Some(2));
+    assert_eq!(
+        queue_mismatch(&launches).as_deref(),
+        Some("NPC ranged queue delay 2 at distance 4 != 1")
+    );
+    assert!(
+        !queue_gate(&launches, Some(43)),
+        "a later wrong delay must not be hidden by earlier matching rows"
+    );
+}
+
+#[test]
+fn first_launch_tick_does_not_skip_a_source_near_the_route_start() {
+    let start = WorldTile {
+        x: 2838,
+        z: 3601,
+        level: 0,
+    };
+    let launches = vec![
+        launch_row(
+            19,
+            [2838, 3602, 0],
+            [2843, 3606, 0],
+            5,
+            366,
+            384,
+            Some(20),
+            Some(1),
+        ),
+        launch_row(
+            30,
+            [2860, 3609, 0],
+            [2864, 3609, 0],
+            4,
+            628,
+            645,
+            Some(31),
+            Some(1),
+        ),
+    ];
+    assert_eq!(earliest_launch_tick(&launches), Some(19));
+    assert!(
+        chebyshev(launches[0].src, start) <= 4,
+        "the first recorded launch is next to the route start"
+    );
+    assert!(
+        !protect_within_two_ticks(earliest_launch_tick(&launches).unwrap(), 32),
+        "Missiles at tick 32 is a 13-tick delay from the real first launch"
+    );
+    assert!(
+        protect_within_two_ticks(30, 32),
+        "selecting the later launch would hide the 13-tick delay"
+    );
 }
