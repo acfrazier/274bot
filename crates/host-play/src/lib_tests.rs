@@ -2217,7 +2217,7 @@ fn operator_logout_wins_over_a_correlated_client_idle_logout() {
     arm.reconnect.store(true, Ordering::Relaxed);
     arm.request_logout();
 
-    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
+    assert!(!tick_flags(&mut client, &[], &arm));
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
@@ -2233,7 +2233,7 @@ fn idle_correlated_server_logout_relogs_an_active_script_without_auto_login() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
 
-    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
+    assert!(!tick_flags(&mut client, &[], &arm));
     assert_eq!(arm.login_latch_reason(), None);
     assert!(
         should_handshake(&arm, false),
@@ -2247,7 +2247,7 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     let arm = SlotArm::new(7, false);
     arm.set_script_active(true);
 
-    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
+    assert!(!tick_flags(&mut client, &[], &arm));
     assert!(!arm.login_latched());
     assert!(!arm.wants_login());
     assert!(!arm.auto_login.load(Ordering::Relaxed));
@@ -2261,7 +2261,7 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     arm.set_script_active(true);
     for expected in 1..=UNEXPECTED_LOGOUT_THRESHOLD {
         let mut client = client_after_server_logout();
-        assert!(!tick_flags(&mut client, &[], &arm, &mut false));
+        assert!(!tick_flags(&mut client, &[], &arm));
         assert_eq!(arm.unexpected_logout_count_at(Instant::now()), expected);
     }
     assert_eq!(
@@ -2275,13 +2275,13 @@ fn tick_flags_drives_repeat_guard_and_ignores_operator_logout_and_stop() {
     let operator = SlotArm::new(8, true);
     operator.request_logout();
     let mut client = client_after_server_logout();
-    assert!(!tick_flags(&mut client, &[], &operator, &mut false));
+    assert!(!tick_flags(&mut client, &[], &operator));
     assert_eq!(operator.unexpected_logout_count_at(Instant::now()), 0);
 
     let stopped = SlotArm::new(9, true);
     stopped.stop.store(true, Ordering::Relaxed);
     let mut client = client_after_server_logout();
-    assert!(tick_flags(&mut client, &[], &stopped, &mut false));
+    assert!(tick_flags(&mut client, &[], &stopped));
     assert_eq!(stopped.unexpected_logout_count_at(Instant::now()), 0);
 }
 
@@ -2379,7 +2379,7 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     // the body keeps running until !ingame (no dirty disconnect).
     arm.stop.store(true, Ordering::Relaxed);
 
-    assert!(!tick_flags(&mut client, &ifaces, &arm, &mut false));
+    assert!(!tick_flags(&mut client, &ifaces, &arm));
     assert!(!arm.wants_logout());
     assert!(arm.login_latched());
     assert!(!arm.wants_login());
@@ -2389,12 +2389,12 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
 
     // After the logout press, a later probe honors stop.
-    assert!(tick_flags(&mut client, &ifaces, &arm, &mut false));
+    assert!(tick_flags(&mut client, &ifaces, &arm));
 
     // A title slot never presses; `stop` still reports.
     client.ingame = false;
     arm.request_logout();
-    assert!(tick_flags(&mut client, &ifaces, &arm, &mut false));
+    assert!(tick_flags(&mut client, &ifaces, &arm));
     assert!(
         arm.wants_logout(),
         "no CC_LOGOUT press on the title; the flag stays for the panel"
@@ -2414,7 +2414,7 @@ fn refused_logout_stays_pending_with_command_latch() {
     let arm = SlotArm::new(0, false);
     arm.request_logout();
 
-    assert!(!tick_flags(&mut client, &[], &arm, &mut false));
+    assert!(!tick_flags(&mut client, &[], &arm));
     assert!(
         arm.wants_logout(),
         "missing logout interface must leave the request pending"
