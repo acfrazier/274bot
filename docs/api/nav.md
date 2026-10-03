@@ -69,10 +69,11 @@ spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
 v14 uses bit `0x80` in the existing edge-kind byte for player-relative
-Ladder/Stairs landings, adding no bytes to an edge. The remaining kind value
-and all other fields retain their layout. A flagged edge stores the canonical
-loc-anchor-derived `to`; decoding recovers `player_delta = to - at`.
-The flag is invalid on other kinds. Absolute landings do not set it.
+Ladder/Stairs landings, including supported gangplank Cross edges encoded as
+Ladder. The remaining kind value and all other fields retain their layout. A
+flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
+`player_delta = to - at`. The flag is invalid on other kinds. Absolute
+landings do not set it.
 `decode` accepts version 14 only — v13 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
@@ -257,6 +258,12 @@ jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.
 
+The NPC Boat edge models `set_sail`; each eligible gangplank Cross remains a
+separate player-relative Ladder edge. Its displacement includes the one-tile
+`p_teleport` step and the two-tile `p_telejump` from the updated coordinate.
+Only the two Entrana board locs are modeled in this slice. Locs 2081, 2083,
+2085, and 2087 are omitted; their handler crosses before printing `board_message`.
+
 Direct ladder/stair ops are also scanned across area and quest scripts.
 Unconditional `p_telejump`, `p_teleport`, and the canonical `climb_ladder`
 helper can derive fixed `movecoord(coord, dx, dlevel, dz)` landings, including
@@ -390,15 +397,16 @@ than within a symmetric radius of the nominal origin. This accepts far-edge
 landings from multi-tile stairs without accepting the opposite side, a
 distant tile, or the old plane.
 
-Content-derived player-relative Ladder/Stairs edges carry
-`player_delta: Option<WorldTile>`. Forward routing translates the actual
-admissible takeoff tile by that delta; backward reachability proves the same
-takeoff-to-landing relation, not the loc anchor's nominal landing. A route
-leg's `edge.to` is its planned landing, while `player_delta` is retained for
-live settlement. The follower translates the exact tile from which it sent
-the op and uses the caller's unchanged `close_enough`; reaching an unrelated
-nominal/planned landing is not arrival. Absolute horizontal edges continue
-to settle at their absolute `to`. No arrival tolerance is enlarged.
+Content-derived player-relative Ladder/Stairs edges, including supported
+gangplank Cross edges encoded as Ladder, carry `player_delta: Option<WorldTile>`.
+Forward routing translates the actual admissible takeoff tile by that delta;
+backward reachability proves the same takeoff-to-landing relation, rather
+than using the loc anchor's nominal landing. A route leg's `edge.to` is its
+planned landing, while `player_delta` is retained for live settlement.
+The follower translates the exact tile from which it sent the op and uses the
+caller's unchanged `close_enough`; reaching an unrelated nominal/planned
+landing is not arrival. Absolute horizontal edges continue to settle at their
+absolute `to`. No arrival tolerance is enlarged.
 
 Radius walk goals use a Chebyshev margin. Plain tile goals keep the margin
 centered on the requested tile, even when a loc or decoration occupies it.
