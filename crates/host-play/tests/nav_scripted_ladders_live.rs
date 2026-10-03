@@ -660,6 +660,9 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
             .checked_add(delta.level)
             .expect("landing level fits"),
     });
+    // Headless traversal keeps rendering disabled; enable one frame so the retained
+    // arrival PNG shows the actual settled scene instead of a blank framebuffer.
+    client.draw = true;
     let framebuffer = save_arrival_frame(&mut client);
     let receipt = json!({
         "account": name,
