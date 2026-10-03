@@ -174,7 +174,7 @@ pub(crate) struct NavBot {
     pub(crate) carried_walk: Option<Box<CarriedWalk>>,
     /// Hold-mode protect driver for this followed route.
     pub(crate) walk_guard: Option<script::combat::WalkGuard>,
-    /// Survives route/owner teardown until a fresh observation owes one off.
+    /// Retired guard's bounded, observation-settled protect cleanup.
     pub(crate) walk_guard_off: Option<super::script_walk::WalkGuardOff>,
     /// Non-terminal protection warnings, drained to the correlated owner.
     pub(crate) walk_guard_events: Vec<(script::native::HostAuthority, script::native::WalkEvent)>,

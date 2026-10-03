@@ -610,6 +610,18 @@ fn protected_rig() -> Rig {
     rig
 }
 
+fn raise_owned_missiles(rig: &mut Rig) {
+    rig.snapshot.seed_tick(2);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_projectiles(Vec::new());
+    rig.snapshot.seed_npcs(Vec::new());
+    rig.snapshot.seed_tick(3);
+    rig.step();
+}
+
 #[derive(Clone, Copy, Debug)]
 enum GuardEndSeam {
     Stop,
@@ -623,9 +635,7 @@ enum GuardEndSeam {
 fn check_guard_end(seam: GuardEndSeam) {
     for was_on in [true, false] {
         let mut rig = protected_rig();
-        seed_protect_state(&mut rig.snapshot, was_on.then_some(96));
-        rig.step();
-        assert!(rig.driver.if_button_components.is_empty());
+        raise_owned_missiles(&mut rig);
         match seam {
             GuardEndSeam::Stop => {
                 rig.slot().lock().unwrap().stop();
@@ -649,19 +659,21 @@ fn check_guard_end(seam: GuardEndSeam) {
                 rig.step();
             }
         }
-        assert!(
-            rig.driver.if_button_components.is_empty(),
+        assert_eq!(
+            rig.driver.if_button_components,
+            vec![5622],
             "{seam:?} cannot click without the pump driver"
         );
-        rig.snapshot.seed_tick(2);
+        seed_protect_state(&mut rig.snapshot, was_on.then_some(96));
+        rig.snapshot.seed_tick(4);
         rig.step();
-        let expected = if was_on { vec![5622] } else { vec![] };
+        let expected = if was_on { vec![5622, 5622] } else { vec![5622] };
         assert_eq!(
             rig.driver.if_button_components, expected,
-            "{seam:?} must discharge only an observed-on protect on the next pump"
+            "{seam:?} must discharge only an observed-on owned protect on the next pump"
         );
         rig.step();
-        rig.snapshot.seed_tick(3);
+        rig.snapshot.seed_tick(5);
         rig.step();
         assert_eq!(
             rig.driver.if_button_components, expected,
@@ -688,15 +700,15 @@ fn cancel_owes_exactly_one_protect_off_on_the_next_pump() {
 #[test]
 fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
     let mut rig = protected_rig();
-    seed_protect_state(&mut rig.snapshot, Some(96));
-    rig.step();
+    raise_owned_missiles(&mut rig);
     rig.slot().lock().unwrap().stop();
     reset_script_nav(&rig.navs, "alice");
     seed_protect_state(&mut rig.snapshot, None);
-    rig.snapshot.seed_tick(2);
+    rig.snapshot.seed_tick(4);
     rig.step();
-    assert!(
-        rig.driver.if_button_components.is_empty(),
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
         "a conditional off must not turn an already-off protect back on"
     );
 }
@@ -793,8 +805,7 @@ fn a_missing_prayer_widget_does_not_admit_or_log_a_guard_click() {
 #[test]
 fn relog_discards_temporary_prayer_debt_without_a_click() {
     let mut rig = protected_rig();
-    seed_protect_state(&mut rig.snapshot, Some(96));
-    rig.step();
+    raise_owned_missiles(&mut rig);
     crate::play_slots::reset_slot_session_work(
         "alice",
         &rig.scripts,
@@ -803,16 +814,15 @@ fn relog_discards_temporary_prayer_debt_without_a_click() {
         &rig.navs,
         false,
     );
-    rig.snapshot.seed_tick(2);
+    rig.snapshot.seed_tick(4);
     rig.step();
-    assert!(rig.driver.if_button_components.is_empty());
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
 }
 
 #[test]
 fn death_discards_protect_without_a_toggle() {
     let mut rig = protected_rig();
-    seed_protect_state(&mut rig.snapshot, Some(96));
-    rig.step();
+    raise_owned_missiles(&mut rig);
     abort_script_walk(&rig.navs, "alice");
     let mut stats = rig.snapshot.stats().to_vec();
     stats
@@ -821,9 +831,9 @@ fn death_discards_protect_without_a_toggle() {
         .unwrap()
         .effective = 0;
     rig.snapshot.seed_stats(stats);
-    rig.snapshot.seed_tick(2);
+    rig.snapshot.seed_tick(4);
     rig.step();
-    assert!(rig.driver.if_button_components.is_empty());
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
 }
 
 #[test]
@@ -912,7 +922,7 @@ fn exhausted_guard_reports_once_and_keeps_the_walk_following() {
 }
 
 #[test]
-fn unprotectable_keeps_another_held_style_managed_until_the_walk_ends() {
+fn unprotectable_leaves_a_preexisting_user_style_on_when_the_walk_ends() {
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     seed_protect_frame(&mut rig.snapshot, 37);
@@ -932,9 +942,146 @@ fn unprotectable_keeps_another_held_style_managed_until_the_walk_ends() {
     rig.step();
     assert_eq!(
         rig.driver.if_button_components,
-        vec![5621],
-        "the retained Magic still owes its off"
+        Vec::<i32>::new(),
+        "the guard never raised the user's Magic and must leave it on"
     );
+}
+
+#[test]
+fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user_prayer() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    rig.snapshot.seed_tick(2);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_projectiles(Vec::new());
+    rig.snapshot.seed_npcs(Vec::new());
+    for tick in 3..=4 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none(),
+        "the dropped enable debt expires three ticks after its admission"
+    );
+    assert!(
+        rig.driver.move_calls > moves,
+        "the second walk follows on the deadline pump"
+    );
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(8);
+    rig.step();
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(9);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "neither stale debt nor the second guard may turn off a later user prayer"
+    );
+}
+
+#[test]
+fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "sending the off-click does not establish that the server applied it"
+    );
+    for tick in 5..=6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+    rig.snapshot.seed_tick(7);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622, 5622]);
+    for tick in 8..=10 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    for tick in 11..=20 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622, 5622],
+        "a dropped retry must not leave a permanent debt or admit a third off-click"
+    );
+}
+
+#[test]
+fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.shared.lock().protect = false;
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    rig.observe(4);
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    rig.observe(5);
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(6);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    assert!(
+        rig.driver.move_calls > moves,
+        "navigation resumes after three ticks even while the off receipt is outstanding"
+    );
+}
+
+#[test]
+fn another_owners_observed_protect_switch_settles_the_off_without_a_toggle() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    seed_protect_state(&mut rig.snapshot, Some(95));
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "observing another style on means the owed style is already off"
+    );
+}
+
+#[test]
+fn observed_off_settles_cleanup_before_retry_and_leaves_a_later_user_enable_alone() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(9);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
 }
 
 #[test]

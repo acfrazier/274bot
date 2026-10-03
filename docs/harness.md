@@ -112,10 +112,13 @@ three following ticks, with all prayers remaining off during cleanup. Any
 extra click, non-Missiles click, missing crossing observation, Missiles lapse,
 or prayer return fails the same gate used by offline replay.
 
-Arrival and `last_tile` use the local player's actor tile, not the route head.
+Arrival uses the host's network tile (`Snapshot.tile`, derived from `route[0]`),
+not the rendered actor's interpolated pixel tile. `last_tile` and
+`final_snapshot.tile` use the rendered local-player tile consistently;
+`final_snapshot.network_tile` retains the separate host coordinate.
 If crossing completion and prayer cleanup are observed on the same game tick,
 the pre-cleanup off-click snapshot supplies the genuine Missiles-on crossing
-observation only when its local-player tile confirms arrival at the destination;
+observation only when its network tile confirms arrival at the destination;
 the post-click frame is a separate cleanup observation at that tick. Receipts
 label those phases explicitly; they do not invent a game tick or waive the
 inclusive arrival requirement.

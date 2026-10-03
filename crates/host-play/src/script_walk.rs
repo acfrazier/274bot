@@ -12,6 +12,8 @@ use nav::router::{
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::combat::guard::GUARD_PRAYER_WINDOW_TICKS;
+use script::combat::schedule::elapsed;
 use script::combat::{GuardFailure, GuardOp, GuardProtect};
 
 use super::play_status::lock_statuses;
@@ -149,21 +151,36 @@ pub(crate) fn apply_guard_op<D: Driver>(
     sent
 }
 
-/// A retired toggle belongs to the host until its fresh varp can discharge it.
+/// A retired guard owes only its own protect, settled by observation.
 /// In-flight switches owe the new protect, never an off-click on the old style.
 pub(crate) struct WalkGuardOff {
     component: i32,
+    admitted_tick: u16,
     awaiting_on: bool,
+    off_tick: Option<u16>,
+    retried: bool,
+}
+
+impl WalkGuardOff {
+    fn blocks_nav(&self, tick: u16) -> bool {
+        elapsed(tick, self.admitted_tick) < GUARD_PRAYER_WINDOW_TICKS
+    }
 }
 
 pub(super) fn owe_walk_guard_off(bot: &mut NavBot) {
     if let Some(guard) = bot.walk_guard.take() {
         let awaiting_on = guard.pending_protect().is_some();
+        let admitted_tick = guard
+            .pending_protect_tick()
+            .unwrap_or_else(|| guard.observed_tick());
         if let GuardOp::IfButton { component } = guard.end() {
             if component > 0 && bot.walk_guard_off.is_none() {
                 bot.walk_guard_off = Some(WalkGuardOff {
                     component,
+                    admitted_tick,
                     awaiting_on,
+                    off_tick: None,
+                    retried: false,
                 });
             }
         }
@@ -176,7 +193,8 @@ pub(crate) fn finish_walk_guard<D: Driver>(
     bot: &mut NavBot,
     account: Option<&str>,
 ) {
-    let Some(off) = bot.walk_guard_off.as_ref() else {
+    let tick = snapshot.tick() as u16;
+    let Some(off) = bot.walk_guard_off.as_mut() else {
         return;
     };
     // Death deactivates all prayers on the server, and a disconnected session
@@ -189,39 +207,78 @@ pub(crate) fn finish_walk_guard<D: Driver>(
         bot.walk_guard_off = None;
         return;
     }
-    if !snapshot.ingame() || snapshot.scene_state() != 2 {
+    let age = elapsed(tick, off.admitted_tick);
+    let value = (snapshot.ingame() && snapshot.scene_state() == 2)
+        .then(|| {
+            let data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+            let fact = data
+                .prayers()
+                .iter()
+                .find(|fact| fact.button_com == off.component)?;
+            snapshot
+                .varps()
+                .iter()
+                .find(|row| row.index == fact.varp)
+                .map(|row| row.value)
+        })
+        .flatten();
+    if value == Some(0) && !off.awaiting_on {
+        bot.walk_guard_off = None;
         return;
     }
-    let Ok(data) = api::game_data::for_revision(api::selected::ClientRevision::R289) else {
+    // An enable first seen after its admission window cannot safely be
+    // attributed to this walk: a user may have raised it in the meantime.
+    let expired_enable = off.awaiting_on
+        && (age > GUARD_PRAYER_WINDOW_TICKS
+            || (age == GUARD_PRAYER_WINDOW_TICKS && value != Some(1)));
+    let off_age = off.off_tick.map(|sent| elapsed(tick, sent));
+    let expired_off = off_age.is_some_and(|age| {
+        age >= GUARD_PRAYER_WINDOW_TICKS * 2
+            || (age >= GUARD_PRAYER_WINDOW_TICKS && value.is_none())
+    });
+    if expired_enable || expired_off {
+        api::host_log!(
+            api::hostlog::Category::NavEvent,
+            api::hostlog::Level::Warn,
+            slot = account.unwrap_or(""),
+            "walk guard drops protect debt component={} awaiting_on={} retry={} reason={}",
+            off.component,
+            off.awaiting_on,
+            off.retried,
+            if expired_enable {
+                "enable not observed within 3 ticks"
+            } else {
+                "off not observed within bounded retry window"
+            }
+        );
+        bot.walk_guard_off = None;
         return;
-    };
-    let Some(fact) = data
-        .prayers()
-        .iter()
-        .find(|fact| fact.button_com == off.component)
-    else {
-        return;
-    };
-    let Some(value) = snapshot
-        .varps()
-        .iter()
-        .find(|row| row.index == fact.varp)
-        .map(|row| row.value)
-    else {
-        return;
-    };
-    if value == 1 {
-        if apply_guard_op(
-            driver,
-            snapshot,
-            &GuardOp::IfButton {
-                component: off.component,
-            },
-            account,
-        ) {
+    }
+    if value != Some(1) {
+        if !off.awaiting_on && off.off_tick.is_none() && age >= GUARD_PRAYER_WINDOW_TICKS {
             bot.walk_guard_off = None;
         }
-    } else if !off.awaiting_on {
+        return;
+    }
+    off.awaiting_on = false;
+    if let Some(age) = off_age {
+        if age < GUARD_PRAYER_WINDOW_TICKS || off.retried {
+            return;
+        }
+        // One bounded retry, only while this exact protect is still observed
+        // on. A refusal also spends the retry, never an unbounded send loop.
+        off.retried = true;
+    }
+    if apply_guard_op(
+        driver,
+        snapshot,
+        &GuardOp::IfButton {
+            component: off.component,
+        },
+        account,
+    ) {
+        off.off_tick.get_or_insert(tick);
+    } else if off.off_tick.is_none() && age >= GUARD_PRAYER_WINDOW_TICKS {
         bot.walk_guard_off = None;
     }
 }
@@ -576,9 +633,15 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 bot.walk_guard_off = None;
             } else if bot.walk_guard_off.is_some() {
                 finish_walk_guard(driver, snapshot, bot, Some(name));
-                // Never let a new guard enable protection in the same pump
-                // that an older route's off-click is still being processed.
-                return;
+                // Only the first pacing window defers navigation. Cleanup
+                // may watch one off retry while later follow/bank work runs.
+                if bot
+                    .walk_guard_off
+                    .as_ref()
+                    .is_some_and(|off| off.blocks_nav(snapshot.tick() as u16))
+                {
+                    return;
+                }
             }
         }
     }
@@ -783,9 +846,14 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                         )
                     });
-                    if let Some(GuardOp::Unprotectable { protect, reason }) =
+                    // A later route may follow while the old off-click is
+                    // watched, but cannot raise a protect that debt could clear.
+                    let guard_op = if bot.walk_guard_off.is_none() {
                         tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
-                    {
+                    } else {
+                        None
+                    };
+                    if let Some(GuardOp::Unprotectable { protect, reason }) = guard_op {
                         if let Some(owner) = bot.native_walk.as_ref().filter(|owner| owner.live()) {
                             bot.walk_guard_events.push((
                                 owner.clone(),
