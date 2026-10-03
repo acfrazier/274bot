@@ -352,6 +352,19 @@ pub struct QuietReadLease {
     lease_id: NonZeroU64,
 }
 
+/// Owner allowances for a followed walk. Prayer must be allowed or
+/// [`crate::combat::WalkGuard::begin`] refuses with `PrayerDisallowed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkAllow {
+    pub prayer: bool,
+}
+
+impl Default for WalkAllow {
+    fn default() -> Self {
+        Self { prayer: true }
+    }
+}
+
 pub struct WalkRequest {
     pub target: WorldTile,
     /// Explicit identity for a walk whose destination is a loc origin.
@@ -369,6 +382,9 @@ pub struct WalkRequest {
     pub cross: Box<[Arc<str>]>,
     /// Create a [`crate::combat::WalkGuard`] for this followed route.
     pub protect: bool,
+    /// Represented on the request so a protect walk can still be refused
+    /// when the owner disallows prayer.
+    pub allow: WalkAllow,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
@@ -379,6 +395,7 @@ pub enum WalkEnd {
     Blocked,
     Failed,
     Cancelled,
+    Unprotectable,
     NeedsEvidence(Arc<[QuestGate]>),
 }
 #[derive(Debug, Clone)]

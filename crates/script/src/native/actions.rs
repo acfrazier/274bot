@@ -1123,6 +1123,7 @@ mod tests {
                 loc_id: None,
                 cross: Box::new([]),
                 protect: false,
+                allow: Default::default(),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
             assert_no_batch_change(cx, &owner, first + 1, 4, 1);
@@ -1630,6 +1631,7 @@ mod tests {
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
                 protect: false,
+                allow: Default::default(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
@@ -1723,6 +1725,7 @@ mod tests {
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
                             protect: false,
+                            allow: Default::default(),
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
                         let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();

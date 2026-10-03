@@ -268,8 +268,34 @@ fn arrived_at(snapshot: &GameSnapshot, dest: WorldTile) -> bool {
     })
 }
 
-fn w1_ready(capture: &CombatCapture, launched: bool, protected: bool, at_dest: bool) -> bool {
-    capture.started && launched && protected && at_dest && capture.invalid_reason.is_none()
+fn prayers_active(snapshot: &GameSnapshot) -> bool {
+    snapshot
+        .varps()
+        .iter()
+        .any(|row| (83..=97).contains(&row.index) && row.value == 1)
+}
+
+fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
+    (a.x - b.x).abs().max((a.z - b.z).abs())
+}
+
+fn npc_queue_ticks(distance: i32) -> i32 {
+    (32 + 5 * distance) / 30
+}
+
+fn w1_ready(
+    capture: &CombatCapture,
+    launched: bool,
+    protected: bool,
+    at_dest: bool,
+    prayers_off: bool,
+) -> bool {
+    capture.started
+        && launched
+        && protected
+        && at_dest
+        && prayers_off
+        && capture.invalid_reason.is_none()
 }
 
 struct LiveState {
@@ -290,6 +316,10 @@ struct LiveState {
     arrived: bool,
     last_tile: Option<(i32, i32, i32)>,
     attacker_staged: bool,
+    prayers_off_after_arrival: bool,
+    off_tick: Option<u32>,
+    launches: Vec<serde_json::Value>,
+    seen_launches: std::collections::HashSet<(u32, i32, i32, i32, i32)>,
 }
 
 impl LiveState {
@@ -359,6 +389,45 @@ impl LiveState {
         }
         if arrived_at(&self.snapshot, self.dest) {
             self.arrived = true;
+        }
+        if self.arrived && !prayers_active(&self.snapshot) {
+            if self.off_tick.is_none() {
+                self.off_tick = Some(self.snapshot.tick());
+            }
+            self.prayers_off_after_arrival = true;
+        }
+        let me = self.snapshot.self_slot() as usize;
+        if let Some((x, z, level)) = self.last_tile {
+            let here = WorldTile { x, z, level };
+            for projectile in self.snapshot.projectiles() {
+                if !projectile
+                    .target
+                    .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
+                {
+                    continue;
+                }
+                let key = (
+                    self.snapshot.tick(),
+                    projectile.src.x,
+                    projectile.src.z,
+                    projectile.t1,
+                    projectile.t2,
+                );
+                if !self.seen_launches.insert(key) {
+                    continue;
+                }
+                let distance = chebyshev(projectile.src, here);
+                self.launches.push(json!({
+                    "tick": self.snapshot.tick(),
+                    "src": [projectile.src.x, projectile.src.z, projectile.src.level],
+                    "here": [here.x, here.z, here.level],
+                    "distance": distance,
+                    "t1": projectile.t1,
+                    "t2": projectile.t2,
+                    "visual_cycles": projectile.t2.saturating_sub(projectile.t1),
+                    "queue_ticks": npc_queue_ticks(distance),
+                }));
+            }
         }
         if matches!(
             self.runner.status(),
@@ -477,6 +546,10 @@ fn live_walk_guard_w1_protected_crossing() {
         arrived: false,
         last_tile: None,
         attacker_staged: false,
+        prayers_off_after_arrival: false,
+        off_tick: None,
+        launches: Vec::new(),
+        seen_launches: std::collections::HashSet::new(),
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -519,8 +592,14 @@ fn live_walk_guard_w1_protected_crossing() {
         let launched = snapshot.launch_tick.is_some();
         let protected = snapshot.protect_tick.is_some();
         let at_dest = snapshot.arrived;
+        let prayers_off = snapshot.prayers_off_after_arrival;
         let launch_tick = snapshot.launch_tick;
         let protect_tick = snapshot.protect_tick;
+        let launch_distances: std::collections::BTreeSet<i64> = snapshot
+            .launches
+            .iter()
+            .filter_map(|launch| launch["distance"].as_i64())
+            .collect();
         drop(snapshot);
         let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reason) = capture_snapshot.invalid_reason.clone() {
@@ -532,7 +611,7 @@ fn live_walk_guard_w1_protected_crossing() {
         }) {
             break ("FAIL", Some("W1 emitted Attack".into()));
         }
-        if w1_ready(&capture_snapshot, launched, protected, at_dest) {
+        if w1_ready(&capture_snapshot, launched, protected, at_dest, prayers_off) {
             if let (Some(launch), Some(protect)) = (launch_tick, protect_tick) {
                 let delta = protect.abs_diff(launch);
                 if delta > 2 {
@@ -543,6 +622,24 @@ fn live_walk_guard_w1_protected_crossing() {
                         )),
                     );
                 }
+            }
+            if !capture_snapshot
+                .actions
+                .iter()
+                .any(|action| action["kind"] == json!("guard"))
+            {
+                break (
+                    "FAIL",
+                    Some("W1 receipt is missing walk-guard clicks".into()),
+                );
+            }
+            if launch_distances.len() < 2 {
+                break (
+                    "FAIL",
+                    Some(format!(
+                        "W1 needs launch-distance evidence at two distances, got {launch_distances:?}"
+                    )),
+                );
             }
             break ("PASS", None);
         }
@@ -581,12 +678,21 @@ fn live_walk_guard_w1_protected_crossing() {
         "launch_tick": snapshot.launch_tick,
         "protect_tick": snapshot.protect_tick,
         "arrived": snapshot.arrived,
+        "prayers_off_after_arrival": snapshot.prayers_off_after_arrival,
+        "off_tick": snapshot.off_tick,
         "last_tile": snapshot.last_tile,
         "start": [start.x, start.z, start.level],
         "dest": [dest.x, dest.z, dest.level],
         "attacker_staged": snapshot.attacker_staged,
         "prayer": prayer,
         "runner": format!("{:?}", snapshot.runner.status()),
+        "launches": snapshot.launches.clone(),
+        "guard_clicks": capture_snapshot
+            .actions
+            .iter()
+            .filter(|action| action["kind"] == json!("guard"))
+            .cloned()
+            .collect::<Vec<_>>(),
         "action_count": capture_snapshot.actions.len(),
         "action_kinds": capture_snapshot
             .actions

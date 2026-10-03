@@ -49,7 +49,7 @@ fn walk_step_evidence(
         WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
             "walk needs live quest evidence: {gates:?}"
         )))),
-        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => {
+        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused | WalkEnd::Unprotectable => {
             static REASON: std::sync::LazyLock<Arc<str>> =
                 std::sync::LazyLock::new(|| Arc::from("walk failed"));
             Err(ActionError::Blocked(
