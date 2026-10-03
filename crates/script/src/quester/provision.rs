@@ -552,12 +552,12 @@ impl Provisioner {
         pack: i32,
         bank: Option<i32>,
     ) {
-        self.bank_run = Some(BankRun::new(
-            plan.bank,
-            action,
-            Arc::clone(&plan.memo_ids),
-            cx,
-        ));
+        let memo_ids = Arc::clone(&plan.memo_ids);
+        self.bank_run = Some(if plan.bank_required {
+            BankRun::new_with_required(plan.bank, true, action, memo_ids, cx)
+        } else {
+            BankRun::new(plan.bank, action, memo_ids, cx)
+        });
         self.bank_purpose = Some(purpose);
         self.attempts = self.attempts.saturating_add(1);
         self.set_status(phase, item, need, pack, bank, cx.bank.known());
@@ -748,6 +748,7 @@ impl Needs {
 struct BankRun {
     bank: Option<NamedBank>,
     explicit: Option<Arc<str>>,
+    required_bank_missing: bool,
     selection: Option<ActionHandle<Select>>,
     picked: bool,
     access: Option<Arc<crate::native_bank::BankStandAccess>>,
@@ -768,31 +769,47 @@ impl BankRun {
         memo_ids: Arc<[i32]>,
         cx: &StepContext<'_, '_>,
     ) -> Self {
+        Self::new_with_required(path_bank, false, action, memo_ids, cx)
+    }
+
+    fn new_with_required(
+        path_bank: Option<NamedBank>,
+        bank_required: bool,
+        action: BankAction,
+        memo_ids: Arc<[i32]>,
+        cx: &StepContext<'_, '_>,
+    ) -> Self {
         let already_open = cx
             .tick
             .cx
             .snapshot()
             .bank_session()
             .is_some_and(|session| session.value.open);
-        let explicit: Option<Arc<str>> = path_bank.and_then(|wanted| {
-            cx.banks
-                .banks()
-                .iter()
-                .find(|candidate| candidate.tile == wanted.tile)
-                .map(|candidate| Arc::from(candidate.name))
-        });
-        let direct = path_bank.filter(|_| explicit.is_none());
+        let already_open_for_optional = already_open && !bank_required;
+        let explicit: Option<Arc<str>> = if bank_required {
+            path_bank.and_then(|wanted| {
+                cx.banks
+                    .banks()
+                    .iter()
+                    .find(|candidate| candidate.tile == wanted.tile)
+                    .map(|candidate| Arc::from(candidate.name))
+            })
+        } else {
+            None
+        };
+        let required_bank_missing = bank_required && explicit.is_none();
         Self {
-            bank: if already_open { path_bank } else { direct },
-            explicit,
-            selection: None,
-            picked: already_open || direct.is_some(),
-            access: None,
-            target: if already_open {
-                None
+            bank: if already_open_for_optional {
+                path_bank
             } else {
-                direct.map(|bank| bank.air_tile())
+                None
             },
+            explicit,
+            required_bank_missing,
+            selection: None,
+            picked: already_open_for_optional,
+            access: None,
+            target: None,
             walk: None,
             walk_started: false,
             opening: None,
@@ -802,8 +819,14 @@ impl BankRun {
             memo_ids,
         }
     }
-
+}
+impl BankRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<BankReceipt, ActionError>> {
+        if self.required_bank_missing {
+            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                "required bank is not in the bank catalog",
+            ))));
+        }
         if !self.picked {
             if let Some(handle) = self.selection.as_ref() {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
@@ -1010,10 +1033,12 @@ mod tests {
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::quester::compile::CompiledQuestItem;
+    use crate::native_bank::BankPickRequest;
     use crate::quester::families::tests::{def, local_player, with_tick};
     use api::quest_facts::QuestCatalog;
     use api::selected::{ClientRevision, FactKey};
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+    use api::named_banks::{NamedBank, NamedBankFacts};
     use std::collections::HashMap;
 
     fn quest_catalog() -> QuestCatalog {
@@ -1059,6 +1084,7 @@ mod tests {
             path: FactKey::new("provision-test"),
             owns_inventory: false,
             bank,
+            bank_required: false,
             items: Arc::from(items),
             tools: Arc::from(Vec::new()),
             tool_ids: Arc::from(Vec::new()),
@@ -1114,6 +1140,182 @@ mod tests {
             complete: true,
         });
         memo
+    }
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    fn bank_snapshot() -> GameSnapshot {
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_local_player(local_player(tile(3100, 3240)));
+        snapshot
+    }
+
+    fn poll_bank_pick(
+        run: &mut BankRun,
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        banks: &Arc<NamedBankFacts>,
+    ) -> Result<BankPickRequest, ActionError> {
+        let memo = BankMemo::default();
+        let quests = quest_catalog();
+        for tick in 2..=5 {
+            let result = with_tick(snapshot, ledger, tick, |native| {
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    bank: &memo,
+                    banks,
+                };
+                run.poll(&mut cx)
+            });
+            if let Some(request) = ledger.as_ref().and_then(|ledger| {
+                ledger.outbox.iter().find_map(|action| match &action.effect {
+                    HostEffect::BankPick(request) => Some(request.clone()),
+                    _ => None,
+                })
+            }) {
+                return Ok(request);
+            }
+            match result {
+                Poll::Pending => {}
+                Poll::Ready(Err(error)) => return Err(error),
+                Poll::Ready(Ok(_)) => {
+                    return Err(ActionError::Unavailable(Arc::from(
+                        "bank run completed without selection",
+                    )))
+                }
+            }
+        }
+        Err(ActionError::Unavailable(Arc::from(
+            "bank selection did not emit a request",
+        )))
+    }
+
+    #[test]
+    fn authored_draynor_varrock_and_unmatched_tiles_select_without_explicit_bank() {
+        let draynor = tile(3092, 3242);
+        let varrock_west = tile(3185, 3438);
+        let banks = Arc::new(NamedBankFacts::from_banks(vec![
+            NamedBank::new("Draynor Village", draynor),
+            NamedBank::new("Varrock West", varrock_west),
+        ]));
+        for authored in [draynor, varrock_west, tile(3200, 3200)] {
+            let snapshot = bank_snapshot();
+            let mut ledger = None;
+            let quests = quest_catalog();
+            let memo = BankMemo::default();
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+                let required_after = native.cx.evidence();
+                let cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    bank: &memo,
+                    banks: &banks,
+                };
+                BankRun::new(
+                    Some(NamedBank::new("Path bank", authored)),
+                    BankAction::Scan,
+                    Arc::from([]),
+                    &cx,
+                )
+            });
+            let request = poll_bank_pick(&mut run, &snapshot, &mut ledger, &banks).unwrap();
+            assert!(
+                request.explicit_bank.is_none(),
+                "authored tile {authored:?} must not constrain nearest selection"
+            );
+        }
+    }
+
+    #[test]
+    fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
+        let draynor = tile(3092, 3242);
+        let banks = Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+            "Draynor Village",
+            draynor,
+        )]));
+        let snapshot = bank_snapshot();
+        let mut ledger = None;
+        let quests = quest_catalog();
+        let memo = BankMemo::default();
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+            let required_after = native.cx.evidence();
+            let cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                bank: &memo,
+                banks: &banks,
+            };
+            BankRun::new_with_required(
+                Some(NamedBank::new("Path bank", draynor)),
+                true,
+                BankAction::Scan,
+                Arc::from([]),
+                &cx,
+            )
+        });
+        let request = poll_bank_pick(&mut run, &snapshot, &mut ledger, &banks).unwrap();
+        assert_eq!(request.explicit_bank, Some(0));
+        let mut open_snapshot = bank_snapshot();
+        open_snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        let mut run = with_tick(&open_snapshot, &mut ledger, 1, |native| {
+            let required_after = native.cx.evidence();
+            let cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                bank: &memo,
+                banks: &banks,
+            };
+            BankRun::new_with_required(
+                Some(NamedBank::new("Path bank", draynor)),
+                true,
+                BankAction::Scan,
+                Arc::from([]),
+                &cx,
+            )
+        });
+        let request =
+            poll_bank_pick(&mut run, &open_snapshot, &mut ledger, &banks).unwrap();
+        assert_eq!(request.explicit_bank, Some(0));
+
+        let unmatched = tile(3200, 3200);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |native| {
+            let required_after = native.cx.evidence();
+            let cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                bank: &memo,
+                banks: &banks,
+            };
+            BankRun::new_with_required(
+                Some(NamedBank::new("Path bank", unmatched)),
+                true,
+                BankAction::Scan,
+                Arc::from([]),
+                &cx,
+            )
+        });
+        assert!(matches!(
+            poll_bank_pick(&mut run, &snapshot, &mut ledger, &banks),
+            Err(ActionError::Unavailable(reason))
+                if reason.as_ref() == "required bank is not in the bank catalog"
+        ));
+        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 
     #[test]
