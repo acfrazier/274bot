@@ -435,3 +435,43 @@ fn missing_worn_gate_exposes_the_satisfied_carry_reservation() {
     )
     .is_ok());
 }
+
+#[test]
+fn generous_inventory_ignores_consumables_that_cannot_be_acquired() {
+    let (_, mut graph) = two_hops(&[(995, 30)], false);
+    graph.edges[1].consumed_req = vec![(1854, 1)];
+    let state = WorldState {
+        inv: HashMap::from([(995, 10_000)]),
+        ..WorldState::empty()
+    };
+    assert!(crate::router::ResourceBudget::new(
+        &graph,
+        &state,
+        false,
+        crate::router::Relax::Strict
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn generous_inventory_does_not_assume_unreachable_charge_returns() {
+    let (_, mut graph) = two_hops(&[(995, 30)], false);
+    graph.edges[1].item_req = vec![(1704, 1)];
+    let mut unavailable = graph.edges[0].clone();
+    unavailable.consumed_req = vec![(1706, 1)];
+    unavailable.item_returns = vec![(1704, 1)];
+    graph.edges.push(unavailable);
+    let state = WorldState {
+        inv: HashMap::from([(995, 10_000)]),
+        ..WorldState::empty()
+    };
+    assert!(crate::router::ResourceBudget::new(
+        &graph,
+        &state,
+        false,
+        crate::router::Relax::Strict
+    )
+    .unwrap()
+    .is_none());
+}

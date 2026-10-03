@@ -395,6 +395,9 @@ per-node inventory allocation. A search tracks at most 64 resource IDs and
 4096 balances; exceeding either bound fails with `BudgetExhausted`. A
 conservative supply proof keeps the original tile-only search when resources
 cannot constrain a simple path and no returned item must unlock a held gate.
+The proof excludes consumables that cannot be carried initially or acquired
+through usable hops' replacement items, so absent passes and unreachable charge
+families do not force resource tracking.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
