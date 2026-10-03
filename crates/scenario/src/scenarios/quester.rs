@@ -11,18 +11,56 @@ const COOK_KITCHEN: WorldTile = WorldTile {
     level: 0,
 };
 
+const COOK_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "quests",
+    value: ScriptInjectValue::StrList(&["cook"]),
+}];
 const SHEEP_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
-    id: "quest",
-    value: ScriptInjectValue::Str("sheep"),
+    id: "quests",
+    value: ScriptInjectValue::StrList(&["sheep"]),
 }];
 const RUNE_MYSTERIES_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
-    id: "quest",
-    value: ScriptInjectValue::Str("runemysteries"),
+    id: "quests",
+    value: ScriptInjectValue::StrList(&["runemysteries"]),
 }];
 const ROMEO_AND_JULIET_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
-    id: "quest",
-    value: ScriptInjectValue::Str("romeojuliet"),
+    id: "quests",
+    value: ScriptInjectValue::StrList(&["romeojuliet"]),
 }];
+const QUEUE_QUESTS: &[&str] = &["cook", "sheep", "romeojuliet", "imp"];
+const QUEUE_SETTINGS: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "quests",
+        value: ScriptInjectValue::StrList(QUEUE_QUESTS),
+    },
+    ScriptSettingInject {
+        id: "order_override",
+        value: ScriptInjectValue::StrList(QUEUE_QUESTS),
+    },
+    ScriptSettingInject {
+        id: "skip",
+        value: ScriptInjectValue::StrList(&[]),
+    },
+];
+const QUEUE_DEADLINE: Duration = Duration::from_secs(7200);
+const QUEUE_WATCH_TICKS: u32 = 24_000;
+
+fn queue_start_stage_step(name: &'static str, varp: &'static str, witness: &'static str) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("setvar {varp} 0"));
+                cheat(c, &format!("getvar {varp}"));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat { needle: witness },
+            budget_ticks: 200,
+        },
+    }
+}
 // Q2 route threshold: the Sheep and Rune legs cross bearded dark wizards
 // (vislevel 20, huntmode `ranged`) and young dark wizards (vislevel 7,
 // huntmode `ranged`). Engine `Npc.huntPlayers` skips a player whose combat
@@ -226,14 +264,16 @@ pub fn quester_stage(
 
 /// Fresh account Cook's Assistant, colour-only, no journal.
 pub(crate) fn quester_cook_scenario() -> Scenario {
-    quester_stage(
+    let mut scenario = quester_stage(
         "quester_cook",
         "Cook's Assistant",
         "cookquest",
         0,
         &[],
         COOK_KITCHEN,
-    )
+    );
+    scenario.settings.script_settings_inject = Some(COOK_SETTINGS);
+    scenario
 }
 
 pub(crate) fn quester_sheep_scenario() -> Scenario {
@@ -302,16 +342,139 @@ pub(crate) fn quester_romeo_and_juliet_scenario() -> Scenario {
     scenario
 }
 
+/// Fresh account through Cook, Sheep Shearer, Romeo & Juliet, then Imp Catcher.
+/// Only stats, coins, and a melee weapon are staged; every quest varp starts at 0.
+pub(crate) fn quester_queue_scenario() -> Scenario {
+    const RUNE_SCIMITAR_ID: i32 = 1333;
+    let mut steps = script_live_seed_steps();
+    steps.push(s2_reset_step());
+    steps.extend(s2_combat_profile_steps());
+    steps.push(Step {
+        name: "stage Imp Catcher hitpoints for the queued melee leg",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "setstat hitpoints 40");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: S2_HITPOINTS_STAT_ID,
+                min: 40,
+            },
+            budget_ticks: 80,
+        },
+    });
+    steps.extend([
+        queue_start_stage_step("reset Cook stage to 0", "cookquest", "get cookquest: 0"),
+        queue_start_stage_step("reset Sheep stage to 0", "sheep", "get sheep: 0"),
+        queue_start_stage_step(
+            "reset Romeo and Juliet stage to 0",
+            "rjquest",
+            "get rjquest: 0",
+        ),
+        queue_start_stage_step("reset Imp Catcher stage to 0", "imp", "get imp: 0"),
+    ]);
+    steps.push(Step {
+        name: "seed only coins and the Imp melee weapon",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give coins 100");
+                cheat(c, "give rune_scimitar 1");
+                cheat(c, "givebank coins 500");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: RUNE_SCIMITAR_ID,
+                count: 1,
+            },
+            budget_ticks: 80,
+        },
+    });
+    steps.push(Step {
+        name: "stand at Cook's Assistant start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(COOK_KITCHEN.level, COOK_KITCHEN.x, COOK_KITCHEN.z),
+                )
+                .is_sent()
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: COOK_KITCHEN.x,
+                z: COOK_KITCHEN.z,
+                level: COOK_KITCHEN.level,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "relog so all four quest colours reflect their zero stages",
+        kind: StepKind::Relog,
+        wait: Wait {
+            arm: Proof::SideTabAvailable { index: 3 },
+            budget_ticks: 600,
+        },
+    });
+    steps.push(super::combat::wear_combat_item_step(
+        "wield Rune scimitar before the queued Imp fight",
+        RUNE_SCIMITAR_ID,
+    ));
+    steps.push(start_compiled_step());
+    steps.push(Step {
+        name: "watch the queued Imp Catcher completion",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::QuestDone {
+                name: "Imp Catcher",
+            },
+            budget_ticks: QUEUE_WATCH_TICKS,
+        },
+    });
+    Scenario {
+        name: "quester_queue",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::QuestDone {
+            name: "Imp Catcher",
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: QUEUE_DEADLINE,
+            start_script: Some(COOK_CARD),
+            script_settings_inject: Some(QUEUE_SETTINGS),
+            terminal_shot: Some("quester_queue"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Resume Cook from in-progress with the three products already held.
 pub(crate) fn quester_cook_resume_scenario() -> Scenario {
-    quester_stage(
+    let mut scenario = quester_stage(
         "quester_cook_resume",
         "Cook's Assistant",
         "cookquest",
         1,
         &[("egg", 1), ("bucket_milk", 1), ("pot_flour", 1)],
         COOK_KITCHEN,
-    )
+    );
+    scenario.settings.script_settings_inject = Some(COOK_SETTINGS);
+    scenario
 }
 
 /// Start during relog, before the new session has posted its quest-tab colours.
@@ -339,6 +502,7 @@ pub(crate) fn quester_cook_restart_scenario() -> Scenario {
         &[],
         COOK_KITCHEN,
     );
+    scenario.settings.script_settings_inject = Some(COOK_SETTINGS);
     let start = scenario
         .steps
         .iter()

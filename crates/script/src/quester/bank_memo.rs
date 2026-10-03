@@ -28,7 +28,11 @@ impl Default for BankMemo {
 
 impl BankMemo {
     pub fn update(&mut self, receipt: &BankReceipt) {
-        self.len = receipt.counts.len().min(MAX_BANK_MEMO) as u8;
+        if !receipt.complete || receipt.counts.len() > MAX_BANK_MEMO {
+            self.clear();
+            return;
+        }
+        self.len = receipt.counts.len() as u8;
         for (slot, row) in self
             .rows
             .iter_mut()
@@ -77,5 +81,45 @@ mod tests {
         });
         assert_eq!(memo.count(42), Some(0));
         assert!(memo.known());
+    }
+
+    #[test]
+    fn incomplete_scan_does_not_publish_partial_counts() {
+        let mut memo = BankMemo::default();
+        memo.update(&BankReceipt {
+            counts: vec![BankCount { id: 42, count: 9 }],
+            complete: false,
+        });
+        assert!(!memo.known());
+        assert_eq!(memo.count(42), None);
+
+        memo.update(&BankReceipt {
+            counts: vec![BankCount { id: 42, count: 9 }],
+            complete: true,
+        });
+        memo.update(&BankReceipt {
+            counts: vec![BankCount { id: 42, count: 10 }],
+            complete: false,
+        });
+        assert!(!memo.known());
+        assert_eq!(memo.count(42), None);
+    }
+
+    #[test]
+    fn observed_rows_are_replaced_and_clear_invalidates_them() {
+        let mut memo = BankMemo::default();
+        memo.update(&BankReceipt {
+            counts: vec![BankCount { id: 42, count: 9 }],
+            complete: true,
+        });
+        assert_eq!(memo.count(42), Some(9));
+        memo.update(&BankReceipt {
+            counts: vec![BankCount { id: 7, count: 2 }],
+            complete: true,
+        });
+        assert_eq!(memo.count(42), Some(0));
+        assert_eq!(memo.count(7), Some(2));
+        memo.clear();
+        assert_eq!(memo.count(7), None);
     }
 }

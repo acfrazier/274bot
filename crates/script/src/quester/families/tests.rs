@@ -1380,7 +1380,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
 }
 
 #[test]
-fn use_on_approaches_a_distant_npc_before_using_the_item() {
+fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("sheepunsheered").unwrap();
         let npc = |distance| api::snapshot::NpcView {
@@ -1413,6 +1413,7 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
             yaw: 0,
         };
         let mut far = ready();
+        far.seed_local_player(local_player(tile(3200, 3273)));
         far.seed_npcs(vec![npc(4)]);
         let shears = resolve_obj(cx, "shears").unwrap();
         far.seed_inventory(
@@ -1431,7 +1432,8 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
             &serde_json::json!({
                 "item": "shears",
                 "target": {"npc": "sheepunsheered"},
-                "radius": 8
+                "anchor": {"tile": [3200, 3270, 0], "source": "test"},
+                "radius": 4
             }),
             cx,
         )
@@ -1453,6 +1455,23 @@ fn use_on_approaches_a_distant_npc_before_using_the_item() {
                 panic!("used the item before approaching the NPC")
             }
         }
+        // Approaching the NPC leaves the initial search radius. The next poll
+        // must use the adjacent NPC, not send the player back to the anchor.
+        far.seed_local_player(local_player(tile(3200, 3275)));
+        far.seed_npcs(vec![npc(1)]);
+        post_user_input_walk_receipt(&mut ledger, 3);
+        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Arrived;
+        assert!(with_tick(&far, &mut ledger, 3, |t| {
+            with_step(t, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                HostEffect::Interaction(_)
+            ),
+            "walked back to the anchor instead of using the adjacent NPC"
+        );
     });
 }
 

@@ -427,6 +427,7 @@ const REGISTRY: &[Entry] = &[
         "quester_romeo_and_juliet",
         scenarios::quester_romeo_and_juliet_scenario,
     ),
+    Entry::new("quester_queue", scenarios::quester_queue_scenario),
     Entry::new("sherlock_talk", scenarios::sherlock_talk_scenario),
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),
     Entry::new("sherlock_dig", scenarios::sherlock_dig_scenario),

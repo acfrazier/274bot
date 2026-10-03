@@ -229,6 +229,11 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
                     "stages": ["romeojuliet:0", "romeojuliet:10", "romeojuliet:20",
                                "romeojuliet:30", "romeojuliet:40", "romeojuliet:50",
                                "romeojuliet:60", "romeojuliet:100"]
+                }, {
+                    "id": "imp",
+                    "display": "Imp Catcher",
+                    "journal": false,
+                    "stages": ["imp:0", "imp:1", "imp:2"]
                 }]
             }
         })
