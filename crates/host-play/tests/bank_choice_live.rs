@@ -8,7 +8,6 @@
 
 #![cfg(feature = "live-harness")]
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -181,18 +180,20 @@ fn selected_profile(
 }
 
 fn tile_json(tile: Option<WorldTile>) -> Value {
-    tile.map_or(Value::Null, |tile| {
-        json!({"x": tile.x, "z": tile.z, "level": tile.level})
-    })
+    tile.map_or(
+        Value::Null,
+        |tile| json!({"x": tile.x, "z": tile.z, "level": tile.level}),
+    )
 }
 
 fn observed_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
-    snapshot.tile().map(|(x, z, level)| WorldTile { x, z, level })
+    snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level })
 }
 
 fn tile_distance(tile: WorldTile, target: WorldTile) -> Option<i32> {
-    (tile.level == target.level)
-        .then(|| (tile.x - target.x).abs().max((tile.z - target.z).abs()))
+    (tile.level == target.level).then(|| (tile.x - target.x).abs().max((tile.z - target.z).abs()))
 }
 
 fn text_field<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
@@ -291,7 +292,7 @@ struct BankChoiceState {
     pending_capture: Option<CaptureRequest>,
     capture_paths: Vec<(String, String)>,
     capture_error: Option<String>,
-    latest_status: Option<ScriptStatus>,
+    latest_status: Option<Arc<ScriptStatus>>,
     latest_status_key: Option<StatusKey>,
     native_status_history: Vec<Value>,
     position_trace: Vec<Value>,
@@ -321,7 +322,7 @@ impl BankChoiceState {
             "bank_session_generation": self.snapshot.bank_session_generation(),
             "start_count": self.start_count,
             "start_settings": self.start_settings,
-            "native_status": self.latest_status.as_ref().map(status_json),
+            "native_status": self.latest_status.as_deref().map(status_json),
             "elapsed_ms": self.started_at.elapsed().as_millis(),
         });
         if let Some(arrival) = self.arrival.as_ref() {
@@ -356,7 +357,10 @@ impl BankChoiceState {
 
     fn queue_capture(&mut self, label: &'static str, stage: &str) {
         if self.pending_capture.is_none()
-            && !self.capture_paths.iter().any(|(captured, _)| captured == label)
+            && !self
+                .capture_paths
+                .iter()
+                .any(|(captured, _)| captured == label)
         {
             self.pending_capture = Some(CaptureRequest {
                 label,
@@ -391,12 +395,15 @@ impl BankChoiceState {
         self.queue_capture("03-after-bank", "after-bank-outcome");
     }
 
-    fn observe_status(&mut self, status: Option<ScriptStatus>) {
+    fn observe_status(&mut self, status: Option<Arc<ScriptStatus>>) {
         let Some(status) = status else {
             return;
         };
         if status.card != script::CompiledId("Quester") {
-            self.error = Some(format!("native status belongs to {:?}, not Quester", status.card));
+            self.error = Some(format!(
+                "native status belongs to {:?}, not Quester",
+                status.card
+            ));
             return;
         }
         let key = status_key(&status);
@@ -422,17 +429,20 @@ impl BankChoiceState {
             self.arrival_status_key = Some(key.clone());
             self.arrival_status = Some(status_json(&status));
             if matches!(status.phase, NativePhase::Blocked | NativePhase::Complete) {
-                self.record_after_bank("native terminal phase observed after local bank arrival", Some(&status));
+                self.record_after_bank(
+                    "native terminal phase observed after local bank arrival",
+                    Some(&status),
+                );
             }
             return;
         }
-        let baseline = self.arrival_status_key.as_ref().expect("set above");
         if status.phase == NativePhase::Blocked {
-            self.record_after_bank("native blocked outcome after local bank arrival", Some(&status));
+            self.record_after_bank(
+                "native blocked outcome after local bank arrival",
+                Some(&status),
+            );
         } else if status.phase == NativePhase::Complete {
             self.record_after_bank("Cook completed after local bank arrival", Some(&status));
-        } else if &key != baseline {
-            self.record_after_bank("Cook native status advanced after local bank arrival", Some(&status));
         }
     }
 
@@ -459,7 +469,7 @@ impl BankChoiceState {
                     "elapsed_ms": self.started_at.elapsed().as_millis(),
                     "tile": tile_json(Some(tile)),
                     "bank_open": self.snapshot.bank_component_id() >= 0,
-                    "native_status": self.latest_status.as_ref().map(status_json),
+                    "native_status": self.latest_status.as_deref().map(status_json),
                 }));
                 self.last_trace_tile = Some(tile);
                 self.last_trace_at = now;
@@ -509,7 +519,8 @@ impl BankChoiceState {
             && cook_active
             && bank_open
             && tile.is_some_and(|tile| {
-                tile_distance(tile, self.origin.bank).is_some_and(|distance| distance <= BANK_RADIUS)
+                tile_distance(tile, self.origin.bank)
+                    .is_some_and(|distance| distance <= BANK_RADIUS)
             })
         {
             let tile = tile.expect("checked above");
@@ -522,28 +533,30 @@ impl BankChoiceState {
                 "distance": tile_distance(tile, self.origin.bank),
                 "bank_open": true,
                 "bank_session_generation": self.snapshot.bank_session_generation(),
-                "native_status": self.latest_status.as_ref().map(status_json),
+                "native_status": self.latest_status.as_deref().map(status_json),
                 "gate": "live Quester Cook status + observed player at expected local bank + open bank session",
             }));
             self.queue_capture("02-bank-arrival", "bank-arrival");
         }
 
         if self.arrival.is_some() && self.after_bank_outcome.is_none() {
+            let status = self.latest_status.clone();
             let left_bank = tile.is_some_and(|tile| {
                 tile_distance(tile, self.origin.bank).is_none_or(|distance| distance > BANK_RADIUS)
             });
             if left_bank {
-                self.record_after_bank("player physically left the selected local bank", self.latest_status.as_ref());
-            } else if let (Some(status), Some(baseline)) =
-                (self.latest_status.as_ref(), self.arrival_status_key.as_ref())
-            {
-                let key = status_key(status);
+                self.record_after_bank(
+                    "player physically left the selected local bank",
+                    status.as_deref(),
+                );
+            } else if let Some(status) = status.as_deref() {
                 if status.phase == NativePhase::Blocked {
-                    self.record_after_bank("native blocked outcome after local bank arrival", Some(status));
+                    self.record_after_bank(
+                        "native blocked outcome after local bank arrival",
+                        Some(status),
+                    );
                 } else if status.phase == NativePhase::Complete {
                     self.record_after_bank("Cook completed after local bank arrival", Some(status));
-                } else if &key != baseline {
-                    self.record_after_bank("Cook native status advanced after local bank arrival", Some(status));
                 }
             }
         }
@@ -551,12 +564,18 @@ impl BankChoiceState {
         if let Some(request) = self.pending_capture.take() {
             self.save_capture(client, request.label, request.receipt);
             if let Some(error) = self.capture_error.as_ref() {
-                self.error = Some(format!("{} evidence capture failed: {error}", request.label));
+                self.error = Some(format!(
+                    "{} evidence capture failed: {error}",
+                    request.label
+                ));
                 return;
             }
         }
 
-        if !matches!(self.runner.status(), RunnerStatus::Passed | RunnerStatus::Failed(_)) {
+        if !matches!(
+            self.runner.status(),
+            RunnerStatus::Passed | RunnerStatus::Failed(_)
+        ) {
             self.runner.tick_with_hold(client, hold);
         }
     }
@@ -586,26 +605,22 @@ impl BankChoiceState {
     }
 }
 
-fn make_cook_scenario(
-    origin: Origin,
-) -> Result<(Scenario, Map<String, Value>), String> {
-    let mut scenario = scenario::get("quester_cook").ok_or("scenario registry has no quester_cook")?;
+fn make_cook_scenario(origin: Origin) -> Result<(Scenario, Map<String, Value>), String> {
+    let mut scenario =
+        scenario::get("quester_cook").ok_or("scenario registry has no quester_cook")?;
     if scenario.name != "quester_cook" || scenario.settings.start_script != Some("Quester") {
         return Err(format!(
             "quester_cook must start Quester, got name={} start={:?}",
             scenario.name, scenario.settings.start_script
         ));
     }
-    let mut settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+    let settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
         .ok_or("quester_cook has no compiled Start settings")?;
     if settings.len() != 1 || settings.get("quests") != Some(&json!(["cook"])) {
         return Err(format!(
             "quester_cook must select only the authored Cook Path, got {settings:?}"
         ));
     }
-    settings.insert("allow_teleports".into(), json!(false));
-    settings.insert("allow_wilderness".into(), json!(false));
-    settings.insert("allow_danger_zones".into(), json!(false));
 
     let reset_index = scenario
         .steps
@@ -625,11 +640,12 @@ fn make_cook_scenario(
             },
         },
     );
-    let stand = scenario
+    let stand_index = scenario
         .steps
-        .iter_mut()
-        .find(|step| step.name == "stand at the quest start")
+        .iter()
+        .position(|step| step.name == "stand at the quest start")
         .ok_or("quester_cook scenario has no authored start stand")?;
+    let mut stand = scenario.steps.remove(stand_index);
     stand.kind = StepKind::Perform {
         send: Box::new(move |client, _| {
             interact::cheat(
@@ -644,6 +660,14 @@ fn make_cook_scenario(
         z: origin.start.z,
         level: origin.start.level,
     };
+    // Relog triggers the host's mainland hop. Establish the tested origin
+    // only after that relog, so Start cannot be followed by a Lumbridge reset.
+    let start_index = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .ok_or("quester_cook scenario has no compiled Start step")?;
+    scenario.steps.insert(start_index, stand);
     scenario.settings.nav.engine_speed_ms = None;
     Ok((scenario, settings))
 }
@@ -838,7 +862,10 @@ fn run_origin(
             (
                 slot.arrival_at,
                 slot.after_bank_outcome.is_some()
-                    && slot.capture_paths.iter().any(|(step, _)| step == "03-after-bank"),
+                    && slot
+                        .capture_paths
+                        .iter()
+                        .any(|(step, _)| step == "03-after-bank"),
                 slot.error.clone(),
                 slot.runner.status(),
             )
@@ -880,7 +907,10 @@ fn run_origin(
             let witness = state
                 .lock()
                 .map_err(|_| "bank-choice state poisoned")?
-                .receipt(run_state, lifecycle.as_ref().map(|receipt| format!("{receipt:?}")));
+                .receipt(
+                    run_state,
+                    lifecycle.as_ref().map(|receipt| format!("{receipt:?}")),
+                );
             break Err(format!(
                 "{} timed out waiting for observed bank arrival and Cook onward activity (receipt: {witness})",
                 origin.name
@@ -922,7 +952,9 @@ fn run_bank_choice_live() -> Result<(), String> {
         return Err(format!("{CELL} requires BOT_CPU=1 for scene2 PNG evidence"));
     }
     if std::env::var("BOT_NAV_BUILD").as_deref() != Ok("skip") {
-        return Err(format!("{CELL} requires BOT_NAV_BUILD=skip and an explicit WORLD_NAV_PACK"));
+        return Err(format!(
+            "{CELL} requires BOT_NAV_BUILD=skip and an explicit WORLD_NAV_PACK"
+        ));
     }
 
     let isolated = script::IsolatedEnv::enter(CELL);
@@ -943,20 +975,18 @@ fn run_bank_choice_live() -> Result<(), String> {
     api::hostlog::set_debug(true);
 
     let temp = TempRoot::new(CELL)?;
-    let (profile, template) = selected_profile(
-        nav_pack,
-        engine_dir,
-        catalog_root,
-        cache_dir,
-        temp.path(),
-    )?;
+    let (profile, template) =
+        selected_profile(nav_pack, engine_dir, catalog_root, cache_dir, temp.path())?;
     let names = host_play::mint_live_names(ORIGINS.len());
     if names.len() != ORIGINS.len() {
         return Err(format!("failed to mint {} bc live accounts", ORIGINS.len()));
     }
     let entries = host_play::mint_live_entries(&names);
     if entries.len() != ORIGINS.len() {
-        return Err(format!("failed to mint credentials for {} bc accounts", ORIGINS.len()));
+        return Err(format!(
+            "failed to mint credentials for {} bc accounts",
+            ORIGINS.len()
+        ));
     }
 
     let mut failures = Vec::new();
@@ -977,6 +1007,30 @@ fn run_bank_choice_live() -> Result<(), String> {
         Ok(())
     } else {
         Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn cook_fixture_establishes_origin_after_last_relog_before_start() {
+    for &origin in ORIGINS {
+        let (scenario, _) = make_cook_scenario(origin).unwrap();
+        let last_relog = scenario
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.kind, StepKind::Relog))
+            .unwrap();
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the quest start")
+            .unwrap();
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(last_relog < stand);
+        assert_eq!(stand + 1, start);
     }
 }
 
