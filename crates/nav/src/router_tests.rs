@@ -354,6 +354,8 @@ fn door(at: WorldTile, to: WorldTile, ticks: i32) -> TransportGraph {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -454,7 +456,9 @@ fn teleport(
         dir: None,
         open_loc_id: None,
         skill_req,
-        item_req,
+        item_req: vec![],
+        consumed_req: item_req,
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -552,6 +556,8 @@ fn router_prefers_worn_slash_web_action_when_knife_and_blade_are_both_available(
         open_loc_id: Some(734),
         skill_req: vec![],
         item_req,
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req,
@@ -760,6 +766,8 @@ fn find_transport_changes_level_and_walks_upstairs() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -780,7 +788,7 @@ fn find_transport_changes_level_and_walks_upstairs() {
         panic!("expected Walk, Transport, Walk legs");
     };
     assert_eq!(w0, &vec![tile(0, 0, 0)]);
-    assert_eq!(edge, &ladder);
+    assert_eq!(edge.as_ref(), &ladder);
     assert_eq!(w1.first(), Some(&tile(1, 1, 1)));
     assert_eq!(w1.last(), Some(&tile(3, 1, 1)));
 }
@@ -854,7 +862,7 @@ fn find_prefers_walking_around_over_a_cheap_door() {
 /// requirement `toll_edges` derives for the border gates).
 fn toll_graph() -> TransportGraph {
     let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-    g.edges[0].item_req = vec![(995, 10)]; // the 10-coin toll
+    g.edges[0].consumed_req = vec![(995, 10)]; // the 10-coin toll
     g
 }
 
@@ -891,7 +899,7 @@ fn find_gates_toll_edge_on_inventory_coins() {
     assert!(
         r.legs.iter().any(|l| matches!(
             l,
-            Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+            Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
         )),
         "the toll crossing is the transport leg"
     );
@@ -1269,6 +1277,8 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![2],
@@ -1727,6 +1737,8 @@ fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
         open_loc_id: None,
         skill_req: vec![],
         item_req,
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2550,7 +2562,10 @@ fn validate_real_route(
                             .as_ref()
                             .expect("return must use captured entry wizard");
                         assert!(crate::essence::ESSENCE_MINE_PORTALS.contains(&edge.at));
-                        assert_eq!(*edge, crate::essence::essence_return_edge(edge.at, session));
+                        assert_eq!(
+                            **edge,
+                            crate::essence::essence_return_edge(edge.at, session)
+                        );
                     }
                     _ => assert!(
                         graph.edges.contains(edge),
@@ -2571,7 +2586,7 @@ fn validate_real_route(
                         let index = graph
                             .edges
                             .iter()
-                            .position(|candidate| candidate == edge)
+                            .position(|candidate| candidate == edge.as_ref())
                             .unwrap();
                         assert!(
                             graph.admissible_from(collision, index, previous),
@@ -2706,7 +2721,7 @@ fn find_missing_item_reqs_reports_only_unproven_carry_and_wear() {
 fn find_missing_item_reqs_treats_worn_req_as_any_of() {
     let wc = walled_5x5();
     let mut g = toll_graph();
-    g.edges[0].item_req = vec![];
+    g.edges[0].consumed_req.clear();
     g.edges[0].worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
     let from = tile(0, 0, 0);
     let to = tile(4, 4, 0);
@@ -2948,7 +2963,7 @@ fn find_never_uses_a_spell_teleport_but_find_allow_teleports_does() {
     };
     assert_eq!(edge.kind, TransportKind::Teleport);
     assert_eq!(edge.skill_req, vec![(6, 25)]);
-    assert_eq!(edge.item_req, vec![(554, 1), (556, 3), (563, 1)]);
+    assert_eq!(edge.consumed_req, vec![(554, 1), (556, 3), (563, 1)]);
     assert_eq!(edge.to, dest);
     assert_eq!(edge.ticks, 3);
 }
@@ -3004,7 +3019,7 @@ fn find_never_uses_a_jewellery_teleport_by_default() {
     else {
         unreachable!()
     };
-    assert_eq!(edge.item_req, vec![(1712, 1)]); // the charged item
+    assert_eq!(edge.consumed_req, vec![(1712, 1)]); // the charged item
     assert!(edge.skill_req.is_empty());
 }
 
@@ -4900,3 +4915,6 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
     .expect("active zone witness");
     assert!(blocked.contains(&mage), "{blocked:?}");
 }
+
+#[path = "router/consumption_tests.rs"]
+mod consumption;

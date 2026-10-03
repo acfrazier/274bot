@@ -177,7 +177,7 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .legs
         .iter()
         .find_map(|leg| match leg {
-            Leg::Transport { edge } if edge.loc_id == 2871 => Some(edge.clone()),
+            Leg::Transport { edge } if edge.loc_id == 2871 => Some(edge.as_ref()),
             _ => None,
         })
         .unwrap();
@@ -357,7 +357,7 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
         .legs
         .iter()
         .find_map(|leg| match leg {
-            Leg::Transport { edge } if edge.loc_id == 4163 => Some(edge.clone()),
+            Leg::Transport { edge } if edge.loc_id == 4163 => Some(edge.as_ref()),
             _ => None,
         })
         .expect("route crosses Viking seer ladder");
@@ -563,7 +563,7 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
         .iter()
         .enumerate()
         .find_map(|(index, leg)| match leg {
-            Leg::Transport { edge } if edge.loc_id == 2084 => Some((index, edge.clone())),
+            Leg::Transport { edge } if edge.loc_id == 2084 => Some((index, edge.as_ref())),
             _ => None,
         })
         .expect("route crosses gangplank 2084");

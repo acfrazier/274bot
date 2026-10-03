@@ -42,13 +42,18 @@ use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
 use crate::zones::{ZoneClass, ZoneExempt, ZoneFilter, ZoneKey, ZoneTable};
 
+mod resources;
+use resources::{Budget, Predecessors, ResourceBudget, SearchKey, Unmetered};
+
 /// One leg of a route: a walk run or one transport crossing. Consecutive
 /// walk tiles collapse into a single `Walk` leg; each transport edge is
 /// its own `Transport` leg.
+/// Transport payloads are boxed only when reconstructing a route, keeping
+/// ordinary walk legs small as transport facts grow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Leg {
     Walk { tiles: Vec<WorldTile> },
-    Transport { edge: TransportEdge },
+    Transport { edge: Box<TransportEdge> },
 }
 
 /// A route from the `find` origin to `dest`. `ticks` is the total tick
@@ -236,9 +241,12 @@ pub fn find(
 /// [`find`] with explicit opt-ins ([`FindOptions::allow_teleports`],
 /// [`FindOptions::allow_wilderness`], and [`FindOptions::allow_bank_fetch`])
 /// and the gating [`WorldState`]: an edge is relaxed only when
-/// every `skill_req` / `item_req` / `quest_req` / `varp_req` / `worn_req`
-/// is satisfied by the state and every quest-stage gate is `True` under its
-/// evidence. Missing facts fail closed — the flag alone
+/// every skill / quest / varp / worn gate is satisfied and every quest-stage
+/// gate is `True`. Held item gates remain reusable; consumed requirements are
+/// debited along the path (including returned charge variants), so later gates
+/// see the remaining stacks. Resource labels are bounded and shared by balance;
+/// ordinary walk expansions allocate no per-node inventory. Missing facts fail
+/// closed — the flag alone
 /// never fetches ([`find_missing_item_reqs`] is the session's diagnosis
 /// arm, and the session itself lives in [`crate::bank_fetch`]); an
 /// `Unknown` stage gate is named by [`find_unresolved_quest_gates`].
@@ -849,6 +857,12 @@ fn first_search_core(
         use_teleports: opts.allow_teleports,
         allow_wilderness: opts.allow_wilderness,
         relax,
+        inventory_can_grow: graph.edges.iter().any(|edge| !edge.item_returns.is_empty())
+            || (opts.allow_teleports
+                && graph
+                    .teleports
+                    .iter()
+                    .any(|edge| !edge.item_returns.is_empty())),
     };
     let mut goals = Goals::First(Box::new(FirstGoals::new(
         gates,
@@ -917,13 +931,13 @@ fn first_search_core(
 pub struct RoutesToTargets<'a> {
     targets: &'a [WorldTile],
     results: Vec<Result<TargetCost, TargetError>>,
-    came_from: HashMap<WorldTile, Back>,
+    came_from: Predecessors,
     graph: &'a TransportGraph,
     essence: Option<EssenceSession>,
     settled: usize,
     complete: bool,
     capacities: SearchCapacities,
-    completions: Vec<(Vec<usize>, HashMap<WorldTile, Back>)>,
+    completions: Vec<(Vec<usize>, Predecessors)>,
 }
 
 impl RoutesToTargets<'_> {
@@ -1082,7 +1096,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     let shared_tree = if shared.results.iter().any(Result::is_ok) {
         shared.came_from
     } else {
-        HashMap::new()
+        Predecessors::empty()
     };
     let mut retained_capacity = shared_tree.capacity();
     let mut completions = Vec::with_capacity(partitions.len());
@@ -1114,7 +1128,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             retained_capacity += pass.came_from.capacity();
             pass.came_from
         } else {
-            HashMap::new()
+            Predecessors::empty()
         };
         completions.push((indices, tree));
     }
@@ -1396,29 +1410,54 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     (!missing.is_empty()).then_some(missing)
 }
 
-/// Every `item_req`/`worn_req` fact on `route` that `state` cannot prove,
-/// sorted and deduplicated: what a BankBudget session must supply before
-/// `state` allows the route ([`crate::bank_fetch::plan_bank_fetch`]).
+/// Initial carry supply needed by the whole route, and missing worn gates.
+/// Consumed counts accumulate; credits from charge downgrades reduce later
+/// demand. A held gate needs its stack intact at the point where it is used.
+/// If anything is missing, carry targets include already held gates so the
+/// bank planner can reserve a carried copy when choosing a worn alternative.
+/// Counts are total initial supply; BankBudget withdraws only the shortage.
 pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
+    let mut required = HashMap::<i32, i32>::new();
+    let mut spent = HashMap::<i32, i32>::new();
     let mut missing = Vec::new();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
             continue;
         };
         for &(id, count) in &edge.item_req {
-            if state.inv.get(&id).is_none_or(|&c| c < count) {
-                missing.push(MissingReq::Carry { id, count });
-            }
+            let demand = spent.get(&id).copied().unwrap_or(0).saturating_add(count);
+            let peak = required.entry(id).or_default();
+            *peak = (*peak).max(demand);
         }
-        // `worn_req` is any-of: nothing is missing while any listed id is
-        // worn; with none worn, the session must fetch one alternative.
-        // An empty list is no gate at all (matches `WorldState::allows`).
+        for &(id, count) in &edge.consumed_req {
+            let debit = spent.entry(id).or_default();
+            *debit = debit.saturating_add(count);
+            let peak = required.entry(id).or_default();
+            *peak = (*peak).max(*debit);
+        }
+        for &(id, count) in &edge.item_returns {
+            let debit = spent.entry(id).or_default();
+            *debit = debit.saturating_sub(count);
+        }
         if !edge.worn_req.is_empty() && !edge.worn_req.iter().any(|id| state.worn.contains(id)) {
             missing.push(MissingReq::WearAny {
                 ids: edge.worn_req.clone(),
             });
         }
     }
+    if missing.is_empty()
+        && required
+            .iter()
+            .all(|(id, &count)| state.inv.get(id).copied().unwrap_or(0) >= count)
+    {
+        return missing;
+    }
+    missing.extend(
+        required
+            .into_iter()
+            .filter(|&(_, count)| count > 0)
+            .map(|(id, count)| MissingReq::Carry { id, count }),
+    );
     missing.sort_by_key(|r| match r {
         MissingReq::Carry { id, .. } => (*id, 0),
         MissingReq::WearAny { ids } => (ids.first().copied().unwrap_or(0), 1),
@@ -1669,6 +1708,16 @@ enum Settle {
 }
 
 impl Goals<'_> {
+    fn is_target(&self, tile: WorldTile) -> bool {
+        match self {
+            Self::Single { to, .. } => *to == tile,
+            Self::First(first) => {
+                first.preferred.targets.contains(&tile) || first.fallback.targets.contains(&tile)
+            }
+            Self::Many { unique, .. } => unique.contains_key(&tile),
+        }
+    }
+
     fn settle(&mut self, tile: WorldTile, ticks: f64, settled_at: usize) -> Settle {
         let cost = TargetCost { ticks, settled_at };
         let done = match self {
@@ -1898,7 +1947,7 @@ enum SearchStop {
 }
 
 struct SearchOutcome {
-    came_from: HashMap<WorldTile, Back>,
+    came_from: Predecessors,
     settled: usize,
     stop: SearchStop,
     capacities: SearchCapacities,
@@ -1908,7 +1957,7 @@ struct SearchOutcome {
 impl SearchOutcome {
     fn empty() -> Self {
         Self {
-            came_from: HashMap::new(),
+            came_from: Predecessors::empty(),
             settled: 0,
             stop: SearchStop::Completed,
             capacities: SearchCapacities::default(),
@@ -1917,16 +1966,18 @@ impl SearchOutcome {
     }
 
     #[allow(clippy::too_many_arguments)] // the kernel's scratch tables plus its stop facts
-    fn finish(
-        came_from: HashMap<WorldTile, Back>,
-        dist: &HashMap<WorldTile, f64>,
-        done: &HashSet<WorldTile>,
-        heap: &BinaryHeap<HeapNode>,
+    fn finish<B: Budget>(
+        came_from: HashMap<B::Key, Back<B::Key>>,
+        dist: &HashMap<B::Key, f64>,
+        done: &HashSet<B::Key>,
+        heap: &BinaryHeap<HeapNode<B::Key>>,
         settled: usize,
         stop: SearchStop,
         record_capacities: bool,
         reverse: ReverseReport,
         zone_mask_words: usize,
+        resources: B,
+        reached: HashMap<WorldTile, B::Key>,
     ) -> Self {
         let capacities = if record_capacities {
             SearchCapacities {
@@ -1942,7 +1993,7 @@ impl SearchOutcome {
             SearchCapacities::default()
         };
         Self {
-            came_from,
+            came_from: resources.finish(came_from, reached),
             settled,
             stop,
             capacities,
@@ -1980,6 +2031,22 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::CarryWornUnknownQuest => {
             state.fixed_reqs_allow(edge) && state.quest_gates(edge) != Truth::False
         }
+    }
+}
+
+// Backward reachability is an over-approximation. A charge downgrade can
+// supply a variant absent at departure; only forward resource labels can
+// decide its carried gate. Worn, fixed and quest gates remain exact.
+fn proof_edge_allowed(
+    state: &WorldState,
+    edge: &TransportEdge,
+    relax: Relax,
+    inventory_can_grow: bool,
+) -> bool {
+    if inventory_can_grow && matches!(relax, Relax::Strict | Relax::UnknownQuest) {
+        resources::fixed_allowed(state, edge, relax)
+    } else {
+        edge_allowed(state, edge, relax)
     }
 }
 
@@ -2028,6 +2095,7 @@ struct ProofGates<'a> {
     use_teleports: bool,
     allow_wilderness: bool,
     relax: Relax,
+    inventory_can_grow: bool,
 }
 
 /// One goal set's backward proof: not yet started, then live closure
@@ -2108,6 +2176,7 @@ struct ReverseClosure<'a> {
     use_teleports: bool,
     allow_wilderness: bool,
     relax: Relax,
+    inventory_can_grow: bool,
     /// Landings of the gated teleports usable from `from` itself.
     landings: HashSet<WorldTile>,
     seen: HashSet<WorldTile>,
@@ -2125,6 +2194,7 @@ impl<'a> ReverseClosure<'a> {
             use_teleports,
             allow_wilderness,
             relax,
+            inventory_can_grow,
         } = gates;
         let landings = if use_teleports {
             let level = graph.wilderness.level(from);
@@ -2132,7 +2202,7 @@ impl<'a> ReverseClosure<'a> {
                 .teleports
                 .iter()
                 .filter(|edge| {
-                    edge_allowed(state, edge, relax)
+                    proof_edge_allowed(state, edge, relax, inventory_can_grow)
                         && TransportGraph::teleport_legal_at_level(level, edge)
                         && wildy_step_ok(graph, from, edge.to, allow_wilderness)
                 })
@@ -2150,6 +2220,7 @@ impl<'a> ReverseClosure<'a> {
             use_teleports,
             allow_wilderness,
             relax,
+            inventory_can_grow,
             landings,
             seen: HashSet::new(),
             queue: VecDeque::new(),
@@ -2210,17 +2281,17 @@ impl<'a> ReverseClosure<'a> {
         let graph = self.graph;
         let state = self.state;
         if self.use_teleports
-            && graph
-                .teleports
-                .iter()
-                .any(|edge| self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax))
+            && graph.teleports.iter().any(|edge| {
+                self.seen.contains(&edge.to)
+                    && proof_edge_allowed(state, edge, self.relax, self.inventory_can_grow)
+            })
         {
             return Some(ReverseProof::Abandoned);
         }
         let admitted = self.seen.len();
         for (index, edge) in graph.edges.iter().enumerate() {
             if (edge.player_delta.is_some() || self.seen.contains(&edge.to))
-                && edge_allowed(state, edge, self.relax)
+                && proof_edge_allowed(state, edge, self.relax, self.inventory_can_grow)
             {
                 if let Some(proof) = self.admit_edge_takeoffs(index) {
                     return Some(proof);
@@ -2385,37 +2456,99 @@ fn search_kernel(
     goals: &mut Goals<'_>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
-    let record_capacities = matches!(goals, Goals::First(_) | Goals::Many { .. });
-    let mut dist: HashMap<WorldTile, f64> = HashMap::new();
-    let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
-    let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
-    let mut done: HashSet<WorldTile> = HashSet::new();
+    match ResourceBudget::new(graph, state, use_teleports, relax) {
+        Ok(Some(resources)) => search_kernel_budget(
+            collision,
+            graph,
+            from,
+            model,
+            budget,
+            use_teleports,
+            allow_wilderness,
+            state,
+            essence,
+            relax,
+            avoid,
+            zones,
+            goals,
+            deadline,
+            resources,
+        ),
+        Ok(None) => search_kernel_budget(
+            collision,
+            graph,
+            from,
+            model,
+            budget,
+            use_teleports,
+            allow_wilderness,
+            state,
+            essence,
+            relax,
+            avoid,
+            zones,
+            goals,
+            deadline,
+            Unmetered,
+        ),
+        Err(()) => SearchOutcome {
+            stop: SearchStop::Budget,
+            ..SearchOutcome::empty()
+        },
+    }
+}
 
-    // A teleport leaves from every settled tile, but its state requirements
-    // are immutable for the life of this search. Resolve them once instead
-    // of re-reading the edge's requirement vectors and quest evidence on
-    // every relaxation. Keep the original indexes for route reconstruction.
+#[allow(clippy::too_many_arguments)]
+fn search_kernel_budget<B: Budget>(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    model: CostModel,
+    budget: usize,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    state: &WorldState,
+    essence: Option<&EssenceSession>,
+    relax: Relax,
+    avoid: &[AvoidRect],
+    zones: Option<&ZoneFilter<'_>>,
+    goals: &mut Goals<'_>,
+    deadline: Option<Instant>,
+    mut resources: B,
+) -> SearchOutcome {
+    let record_capacities = matches!(goals, Goals::First(_) | Goals::Many { .. });
+    let mut dist: HashMap<B::Key, f64> = HashMap::new();
+    let mut came_from: HashMap<B::Key, Back<B::Key>> = HashMap::new();
+    let mut heap: BinaryHeap<HeapNode<B::Key>> = BinaryHeap::new();
+    let mut done: HashSet<B::Key> = HashSet::new();
+    let mut reached = HashMap::new();
+
+    // Teleports leave from every settled tile. Resolve their immutable gates
+    // once, keeping original indexes for reconstruction; metered carried
+    // requirements are checked against each label before the hop is debited.
     let allowed_teleports: Vec<usize> = if use_teleports {
         graph
             .teleports
             .iter()
             .enumerate()
-            .filter_map(|(index, edge)| edge_allowed(state, edge, relax).then_some(index))
+            .filter_map(|(index, edge)| resources.allowed(state, edge, relax).then_some(index))
             .collect()
     } else {
         Vec::new()
     };
 
-    dist.insert(from, 0.0);
+    let origin = resources.start(from);
+    dist.insert(origin, 0.0);
     heap.push(HeapNode {
         cost: 0.0,
-        tile: from,
+        tile: origin,
     });
 
     let mut expanded = 0usize;
     let mut heap_pops = 0usize;
     let expired = || deadline.is_some_and(|end| Instant::now() >= end);
-    while !heap.is_empty() {
+    let mut balance_budget_spent = false;
+    'search: while !heap.is_empty() {
         if heap_pops & 255 == 0 && expired() {
             return SearchOutcome::finish(
                 came_from,
@@ -2427,20 +2560,25 @@ fn search_kernel(
                 record_capacities,
                 goals.finish_proofs(),
                 zones.map_or(0, ZoneFilter::mask_words),
+                resources,
+                reached,
             );
         }
         heap_pops += 1;
         let n = heap.pop().expect("nonempty heap");
-        let cur = n.tile;
+        let cur = n.tile.tile();
         // A stale heap entry (a cheaper path was found after the push) is
         // skipped; the first pop at the settled distance settles the tile.
-        if dist.get(&cur) != Some(&n.cost) {
+        if dist.get(&n.tile) != Some(&n.cost) {
             continue;
         }
-        if !done.insert(cur) {
+        if !done.insert(n.tile) {
             continue;
         }
         expanded += 1;
+        if B::METERED && goals.is_target(cur) {
+            reached.entry(cur).or_insert(n.tile);
+        }
         let stop = if expanded > budget {
             Some((budget, SearchStop::Budget))
         } else {
@@ -2465,6 +2603,8 @@ fn search_kernel(
                 record_capacities,
                 goals.finish_proofs(),
                 zones.map_or(0, ZoneFilter::mask_words),
+                resources,
+                reached,
             );
         }
 
@@ -2487,9 +2627,10 @@ fn search_kernel(
                     continue;
                 }
                 let nd = n.cost + model.run_per_step;
+                let nb = n.tile.at(nb);
                 if !done.contains(&nb) && dist.get(&nb).is_none_or(|&g| g > nd) {
                     dist.insert(nb, nd);
-                    came_from.insert(nb, Back::Walk(cur));
+                    came_from.insert(nb, Back::Walk(n.tile));
                     heap.push(HeapNode { cost: nd, tile: nb });
                 }
             }
@@ -2516,7 +2657,7 @@ fn search_kernel(
                         if !graph.admissible_from(collision, ei, cur) {
                             continue;
                         }
-                        if !edge_allowed(state, edge, relax) {
+                        if !resources.allowed(state, edge, relax) {
                             continue;
                         }
                         if prefer_worn_slash_for_web(graph, edge, state, relax) {
@@ -2534,11 +2675,22 @@ fn search_kernel(
                         if !wildy_step_ok(graph, cur, to, allow_wilderness) {
                             continue;
                         }
+                        let next = match resources.cross(n.tile, edge, state, relax) {
+                            Ok(Some(next)) => next.at(to),
+                            Ok(None) => continue,
+                            Err(()) => {
+                                balance_budget_spent = true;
+                                break 'search;
+                            }
+                        };
                         let nd = n.cost + edge.ticks as f64;
-                        if !done.contains(&to) && dist.get(&to).is_none_or(|&g| g > nd) {
-                            dist.insert(to, nd);
-                            came_from.insert(to, Back::Transport { from: cur, ei });
-                            heap.push(HeapNode { cost: nd, tile: to });
+                        if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                            dist.insert(next, nd);
+                            came_from.insert(next, Back::Transport { from: n.tile, ei });
+                            heap.push(HeapNode {
+                                cost: nd,
+                                tile: next,
+                            });
                         }
                     }
                 }
@@ -2572,17 +2724,19 @@ fn search_kernel(
                         continue;
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
-                    if !done.contains(&session.return_tile)
-                        && dist.get(&session.return_tile).is_none_or(|&g| g > nd)
-                    {
-                        dist.insert(session.return_tile, nd);
+                    let next = n.tile.at(session.return_tile);
+                    if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                        dist.insert(next, nd);
                         came_from.insert(
-                            session.return_tile,
-                            Back::EssenceReturn { from: cur, portal },
+                            next,
+                            Back::EssenceReturn {
+                                from: n.tile,
+                                portal,
+                            },
                         );
                         heap.push(HeapNode {
                             cost: nd,
-                            tile: session.return_tile,
+                            tile: next,
                         });
                     }
                 }
@@ -2608,19 +2762,27 @@ fn search_kernel(
                 if !TransportGraph::teleport_legal_at_level(wildy_level, edge) {
                     continue;
                 }
+                let next = match resources.cross(n.tile, edge, state, relax) {
+                    Ok(Some(next)) => next.at(edge.to),
+                    Ok(None) => continue,
+                    Err(()) => {
+                        balance_budget_spent = true;
+                        break 'search;
+                    }
+                };
                 let nd = n.cost + edge.ticks as f64;
-                if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
-                    dist.insert(edge.to, nd);
+                if !done.contains(&next) && dist.get(&next).is_none_or(|&g| g > nd) {
+                    dist.insert(next, nd);
                     came_from.insert(
-                        edge.to,
+                        next,
                         Back::Teleport {
-                            from: cur,
+                            from: n.tile,
                             index: ti,
                         },
                     );
                     heap.push(HeapNode {
                         cost: nd,
-                        tile: edge.to,
+                        tile: next,
                     });
                 }
             }
@@ -2628,6 +2790,8 @@ fn search_kernel(
     }
     let stop = if expired() {
         SearchStop::Deadline
+    } else if balance_budget_spent {
+        SearchStop::Budget
     } else {
         goals.exhausted(expanded);
         SearchStop::Exhausted
@@ -2642,6 +2806,8 @@ fn search_kernel(
         record_capacities,
         goals.finish_proofs(),
         zones.map_or(0, ZoneFilter::mask_words),
+        resources,
+        reached,
     )
 }
 
@@ -2774,11 +2940,11 @@ pub fn local_step_component(
 /// `EssenceReturn` (the mine exit portal placement `portal` was taken
 /// from `from`).
 #[derive(Clone, Copy)]
-enum Back {
-    Walk(WorldTile),
-    Transport { from: WorldTile, ei: usize },
-    Teleport { from: WorldTile, index: usize },
-    EssenceReturn { from: WorldTile, portal: usize },
+enum Back<K = WorldTile> {
+    Walk(K),
+    Transport { from: K, ei: usize },
+    Teleport { from: K, index: usize },
+    EssenceReturn { from: K, portal: usize },
 }
 
 /// Split the backtrack from `to` back to the entry-less origin into legs:
@@ -2788,20 +2954,29 @@ enum Back {
 /// plus each transport edge's ticks.
 fn reconstruct(
     to: WorldTile,
-    came_from: &HashMap<WorldTile, Back>,
+    came_from: &Predecessors,
     graph: &TransportGraph,
     model: CostModel,
     essence: Option<&EssenceSession>,
 ) -> (Vec<Leg>, f64) {
-    // Walk tiles in backtrack order (dest side first).
-    let mut walk_rev = vec![to];
+    came_from.reconstruct(to, graph, model, essence)
+}
+
+fn reconstruct_key<K: SearchKey>(
+    to: K,
+    came_from: &HashMap<K, Back<K>>,
+    graph: &TransportGraph,
+    model: CostModel,
+    essence: Option<&EssenceSession>,
+) -> (Vec<Leg>, f64) {
+    let mut walk_rev = vec![to.tile()];
     let mut t = to;
     let mut legs_rev: Vec<Leg> = Vec::new();
     let mut ticks = 0.0;
     while let Some(prev) = came_from.get(&t) {
         match *prev {
             Back::Walk(pt) => {
-                walk_rev.push(pt);
+                walk_rev.push(pt.tile());
                 t = pt;
             }
             Back::Transport { from, ei } => {
@@ -2810,17 +2985,19 @@ fn reconstruct(
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
                 let mut edge = graph.edges[ei].clone();
                 if edge.player_delta.is_some() {
-                    edge.to = t;
+                    edge.to = t.tile();
                 }
                 ticks += edge.ticks as f64;
-                legs_rev.push(Leg::Transport { edge });
+                legs_rev.push(Leg::Transport {
+                    edge: Box::new(edge),
+                });
                 // The walk leg before the transport resumes from the tile
                 // the edge was actually taken on — the standable take-off
                 // within the interact radius, never the edge's `at` (which
                 // may be a blocked interact target the player cannot stand
                 // on).
                 t = from;
-                walk_rev = vec![t];
+                walk_rev = vec![t.tile()];
             }
             Back::Teleport { from, index } => {
                 ticks += walk_ticks(&walk_rev, model);
@@ -2828,11 +3005,13 @@ fn reconstruct(
                 legs_rev.push(Leg::Walk { tiles: walk_rev });
                 let edge = graph.teleports[index].clone();
                 ticks += edge.ticks as f64;
-                legs_rev.push(Leg::Transport { edge });
+                legs_rev.push(Leg::Transport {
+                    edge: Box::new(edge),
+                });
                 // The walk leg before the teleport resumes from the tile the
                 // teleport was actually taken on (a teleport has no `at`).
                 t = from;
-                walk_rev = vec![t];
+                walk_rev = vec![t.tile()];
             }
             Back::EssenceReturn { from, portal } => {
                 ticks += walk_ticks(&walk_rev, model);
@@ -2842,11 +3021,13 @@ fn reconstruct(
                 let edge =
                     crate::essence::essence_return_edge(ESSENCE_MINE_PORTALS[portal], session);
                 ticks += edge.ticks as f64;
-                legs_rev.push(Leg::Transport { edge });
+                legs_rev.push(Leg::Transport {
+                    edge: Box::new(edge),
+                });
                 // The walk leg before the return resumes from the take-off
                 // tile the portal was relaxed from.
                 t = from;
-                walk_rev = vec![t];
+                walk_rev = vec![t.tile()];
             }
         }
     }
@@ -2866,32 +3047,33 @@ fn walk_ticks(tiles: &[WorldTile], model: CostModel) -> f64 {
 /// Heap entry for relaxations over total tick cost; `Ord` is reversed so
 /// the smallest cost pops first, with `total_cmp` giving f64 a total order
 /// and tile coordinates as tie-breakers to keep the ordering total.
-struct HeapNode {
+struct HeapNode<K = WorldTile> {
     cost: f64,
-    tile: WorldTile,
+    tile: K,
 }
 
-impl PartialEq for HeapNode {
+impl<K: SearchKey> PartialEq for HeapNode<K> {
     fn eq(&self, other: &Self) -> bool {
         self.cost == other.cost && self.tile == other.tile
     }
 }
-impl Eq for HeapNode {}
+impl<K: SearchKey> Eq for HeapNode<K> {}
 
-impl PartialOrd for HeapNode {
+impl<K: SearchKey> PartialOrd for HeapNode<K> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for HeapNode {
+impl<K: SearchKey> Ord for HeapNode<K> {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .cost
             .total_cmp(&self.cost)
-            .then_with(|| self.tile.x.cmp(&other.tile.x))
-            .then_with(|| self.tile.z.cmp(&other.tile.z))
-            .then_with(|| self.tile.level.cmp(&other.tile.level))
+            .then_with(|| self.tile.tile().x.cmp(&other.tile.tile().x))
+            .then_with(|| self.tile.tile().z.cmp(&other.tile.tile().z))
+            .then_with(|| self.tile.tile().level.cmp(&other.tile.tile().level))
+            .then_with(|| self.tile.tie().cmp(&other.tile.tie()))
     }
 }
 
