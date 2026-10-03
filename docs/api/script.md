@@ -147,8 +147,10 @@ is not provided.
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
 not change that ranking. A bank must have usable packed or declared access.
-For a packed booth, prefer the catalog-resolved public approach when it is a
-valid access tile, rather than an air-nearer tile on the staff side.
+For a packed booth, selection routes to every usable access tile of the chosen
+stand in one multi-goal search and returns its cheapest reachable approach.
+The catalog tile need not be one of those access tiles. An unreachable staff-side
+tile cannot displace a reachable public approach.
 Standing near a bank across a wall is not proof of reachability. A selection
 timeout may offer an air-nearest candidate, but the subsequent walk must still
 route successfully and fails closed otherwise. Compatibility `SelectBank` and

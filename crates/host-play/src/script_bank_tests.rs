@@ -981,7 +981,8 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         definition: Some(definition),
         routable: true,
     };
-    let (access_tile, access) = native_bank_access(&world, mage_bank, tile(1, 1)).unwrap();
+    let (access_tiles, access) = native_bank_access(&world, mage_bank).unwrap();
+    let access_tile = access_tiles[0];
     assert_ne!(access_tile, access.stand_tile);
     assert_eq!(access_tile.level, access.stand_tile.level);
     assert_eq!(access.kind, NativeAccessKind::Teller);
@@ -1002,8 +1003,8 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         definition: Some(shantay),
         routable: true,
     };
-    let (access_tile, access) = native_bank_access(&world, shantay_bank, tile(1, 1)).unwrap();
-    assert_eq!(access_tile, shantay.tile);
+    let (access_tiles, access) = native_bank_access(&world, shantay_bank).unwrap();
+    assert_eq!(access_tiles, vec![shantay.tile]);
     assert_eq!(access.stand_tile, shantay.tile);
     assert_eq!(access.kind, NativeAccessKind::Booth);
     assert_eq!(access.name.as_deref(), Some("Shantay chest"));
@@ -1055,8 +1056,8 @@ fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
             definition: Some(definition),
             routable: true,
         };
-        let (access_tile, access) = native_bank_access(&world, mage_bank, definition.tile).unwrap();
-        assert_eq!(access_tile, definition.tile);
+        let (access_tiles, access) = native_bank_access(&world, mage_bank).unwrap();
+        assert_eq!(access_tiles, vec![definition.tile]);
         assert_eq!(access.stand_tile, definition.tile);
         assert_eq!(access.kind, NativeAccessKind::Teller);
         assert_eq!(access.name.as_deref(), Some("Gundai"));
@@ -1065,7 +1066,7 @@ fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
             access.choose.as_deref(),
             Some("I'd like to access my bank account")
         );
-        assert!(native_bank_access(&world, bank("Unmapped", 8, 8), definition.tile).is_none());
+        assert!(native_bank_access(&world, bank("Unmapped", 8, 8)).is_none());
     }
 }
 
@@ -1271,6 +1272,177 @@ fn native_bank_pick_keeps_resolved_public_access_over_air_nearer_aisle() {
 }
 
 #[test]
+fn native_bank_pick_routes_non_catalog_booth_access_instead_of_enclosed_aisle() {
+    // The catalog stand is diagonal to this booth, like Edgeville and Seers.
+    // Neither InLine access tile equals it. Air-nearest picks the sealed east
+    // aisle; selection must instead route to the public west access.
+    let banks = vec![bank("local", 5, 7), bank("remote", 1, 14)];
+    let mut flags = vec![0; 4 * 16 * 16];
+    for (x, z) in [(7, 7), (8, 8), (7, 9)] {
+        flags[z * 16 + x] =
+            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+    }
+    flags[8 * 16 + 6] =
+        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
+    let (walk, blocked) = pack_walk(&flags);
+    let stand = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: tile(6, 8),
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![stand.clone()],
+    ));
+    let from = tile(10, 2);
+    let access_tiles: Vec<_> =
+        nav::bank_fetch::bank_access_tiles(&world.collision, &stand).collect();
+    assert!(!access_tiles.contains(&banks[0].tile));
+    assert!(access_tiles.contains(&tile(7, 8)));
+    assert!(find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        tile(7, 8),
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
+    .is_err());
+    // Required and default selection must both keep this reachable local bank.
+    for explicit in [None, Some("local")] {
+        let (slot, action) = native_pick_action(banks.clone(), from, explicit);
+        let navs = navs(banks.clone());
+        let gate = Controlled::new();
+        start_native_pick(
+            &navs,
+            Arc::clone(&world),
+            action,
+            FindOptions::default(),
+            WorldState::empty(),
+        );
+        await_native_search(&navs, &gate);
+        gate.0.release();
+        gate.0.wait(4);
+        let mut all = navs.lock().unwrap();
+        let selected = all
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .unwrap()
+            .1
+            .selected;
+        assert_eq!(selected.kind, NativePickKind::Reachable);
+        assert_eq!(selected.bank_index, 0);
+        assert_eq!(selected.access_tile, tile(5, 8));
+        assert!(selected.access.is_some());
+        assert!(all["test"].route.is_none(), "selection must not move");
+        drop(slot);
+    }
+}
+
+#[test]
+fn native_bank_pick_uses_cheapest_access_even_when_catalog_access_is_reachable() {
+    let banks = vec![bank("local", 5, 8)];
+    let mut flags = vec![0; 4 * 16 * 16];
+    flags[8 * 16 + 6] =
+        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
+    let (walk, blocked) = pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: tile(6, 8),
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
+    let from = tile(10, 8);
+    let public = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        banks[0].tile,
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
+    .unwrap();
+    let nearest = find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        tile(7, 8),
+        FindOptions::default(),
+        &WorldState::empty(),
+    )
+    .unwrap();
+    assert!(nearest.ticks < public.ticks);
+    let (slot, action) = native_pick_action(banks.clone(), from, Some("local"));
+    let navs = navs(banks);
+    let gate = Controlled::new();
+    start_native_pick(&navs, world, action, FindOptions::default(), WorldState::empty());
+    await_native_search(&navs, &gate);
+    gate.0.release();
+    gate.0.wait(4);
+    let selected = navs.lock().unwrap().get_mut("test").unwrap()
+        .bank_pick.take_native_receipt().unwrap().1.selected;
+    assert_eq!(selected.kind, NativePickKind::Reachable);
+    assert_eq!(selected.bank_index, 0);
+    assert_eq!(selected.access_tile, tile(7, 8));
+    drop(slot);
+}
+
+#[test]
+#[ignore = "requires explicit WORLD_NAV_PACK for the real 289 bank geometry"]
+fn native_bank_pick_edgeville_yews_real_pack() {
+    let pack = std::env::var_os("WORLD_NAV_PACK").expect("explicit real pack path");
+    let world = NavWorld::load_pack(std::path::Path::new(&pack)).unwrap();
+    world.bind_named_bank_facts(
+        &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+    ).unwrap();
+    let banks = world.named_bank_facts().unwrap().banks().to_vec();
+    let edgeville = banks.iter().position(|bank| bank.name == "Edgeville").unwrap();
+    let from = tile(3080, 3472);
+    let staff = tile(3095, 3490);
+    let state = WorldState::default().with_map_members(true);
+    assert!(find_with(&world.collision, &world.graph, from, staff,
+        FindOptions::default(), &state).is_err());
+    let (slot, action) = native_pick_action(banks.clone(), from, Some("Edgeville"));
+    let navs = navs(banks);
+    let gate = Controlled::new();
+    let world = Arc::new(world);
+    start_native_pick(&navs, Arc::clone(&world), action, FindOptions::default(), state.clone());
+    await_native_search(&navs, &gate);
+    gate.0.release();
+    gate.0.wait(4);
+    let selected = navs.lock().unwrap().get_mut("test").unwrap()
+        .bank_pick.take_native_receipt().unwrap().1.selected;
+    assert_eq!(selected.kind, NativePickKind::Reachable);
+    assert_eq!(usize::from(selected.bank_index), edgeville);
+    assert_eq!(selected.access_tile, tile(3094, 3491));
+    assert!(find_with(&world.collision, &world.graph, from, selected.access_tile,
+        FindOptions::default(), &state).is_ok());
+    assert_eq!(selected.access.unwrap().stand_tile, tile(3095, 3491));
+    assert!(navs.lock().unwrap()["test"].route.is_none());
+    drop(slot);
+}
+
+#[test]
 fn native_bank_pick_routes_air_near_across_wall_and_required_refuses() {
     let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
     for (explicit, expected) in [(None, Some(1)), (Some("across wall"), None)] {
@@ -1434,8 +1606,8 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
         allow_teleports: true,
         ..FindOptions::default()
     };
-    let local = native_bank_access(&world, banks[0], tile(4, 4)).unwrap().0;
-    let remote = native_bank_access(&world, banks[1], tile(4, 4)).unwrap().0;
+    let local = native_bank_access(&world, banks[0]).unwrap().0[0];
+    let remote = native_bank_access(&world, banks[1]).unwrap().0[0];
     let granted = nav::router::find_first_with(
         &world.collision,
         &world.graph,
