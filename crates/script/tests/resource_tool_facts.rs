@@ -1,4 +1,4 @@
-//! Posted gather-tool facts, exclusive callbacks, and void Traversal.preload.
+//! Native tool callbacks, exclusive ordering, and void Traversal.preload.
 
 use script::isolate_fb::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
@@ -90,18 +90,9 @@ fn base_snapshot<'a>(inv: &'a [ItemRowInput<'a>]) -> SnapshotInput<'a> {
 }
 
 const SRC: &str = r#"
-import { AXES, PICKAXES, bestAxe, bestPickaxe, canWieldTool, exactTool, toolRestockPlan } from '../../api/acquisition/Tools.js';
+import { bestAxe, bestPickaxe, canWieldTool, exactTool, toolRestockPlan } from '../../api/acquisition/Tools.js';
 import { Traversal } from '../../api/walking/Traversal.js';
 
-function namesOf(list) {
-    return list.map((t) => t.name);
-}
-
-const steelIdx = AXES.findIndex((a) => a.name === 'Steel axe');
-globalThis.__axes = AXES.map(({ name, level, attackLevel }) => ({ name, level, attackLevel }));
-globalThis.__picks = PICKAXES.map(({ name, level, attackLevel }) => ({ name, level, attackLevel }));
-globalThis.__steelOrBetter = steelIdx < 0 ? [] : namesOf(AXES).filter((_, i) => i <= steelIdx);
-globalThis.__belowSteel = steelIdx < 0 ? namesOf(AXES) : namesOf(AXES).filter((_, i) => i > steelIdx);
 
 const axeCalls = [];
 globalThis.__bestAxe = bestAxe(1, (name) => {
@@ -174,54 +165,6 @@ fn spawn() -> LoadIsolate {
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
     let _ = iso.probe("true");
-}
-
-#[test]
-fn posted_tool_tiers_are_best_first_and_use_native_gates() {
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(SRC.to_string(), LoadShape::CompatClass, vec![], data)
-            .unwrap();
-    let axes = iso.probe("__axes").unwrap();
-    assert_eq!(
-        axes,
-        serde_json::json!([
-            {"name": "Rune axe", "level": 0, "attackLevel": 40},
-            {"name": "Adamant axe", "level": 0, "attackLevel": 30},
-            {"name": "Mithril axe", "level": 0, "attackLevel": 20},
-            {"name": "Black axe", "level": 0, "attackLevel": 10},
-            {"name": "Steel axe", "level": 0, "attackLevel": 5},
-            {"name": "Iron axe", "level": 0, "attackLevel": 1},
-            {"name": "Bronze axe", "level": 0},
-        ])
-    );
-    let picks = iso.probe("__picks").unwrap();
-    assert_eq!(
-        picks,
-        serde_json::json!([
-            {"name": "Rune pickaxe", "level": 41, "attackLevel": 40},
-            {"name": "Adamant pickaxe", "level": 31, "attackLevel": 30},
-            {"name": "Mithril pickaxe", "level": 21, "attackLevel": 20},
-            {"name": "Steel pickaxe", "level": 6, "attackLevel": 5},
-            {"name": "Iron pickaxe", "level": 0, "attackLevel": 1},
-            {"name": "Bronze pickaxe", "level": 0},
-        ])
-    );
-    assert_eq!(
-        iso.probe("__steelOrBetter").unwrap(),
-        serde_json::json!([
-            "Rune axe",
-            "Adamant axe",
-            "Mithril axe",
-            "Black axe",
-            "Steel axe",
-        ])
-    );
-    assert_eq!(
-        iso.probe("__belowSteel").unwrap(),
-        serde_json::json!(["Iron axe", "Bronze axe"])
-    );
-    iso.join();
 }
 
 #[test]
