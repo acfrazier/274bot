@@ -172,8 +172,12 @@ pub(crate) struct NavBot {
     /// its route. Only a held walk is eligible for automatic carry dispatch.
     /// Boxed only while held or recovering; idle slots retain no wire payload.
     pub(crate) carried_walk: Option<Box<CarriedWalk>>,
-    /// Hold-mode protect driver for this followed route. Dropped with the route.
+    /// Hold-mode protect driver for this followed route.
     pub(crate) walk_guard: Option<script::combat::WalkGuard>,
+    /// Survives route/owner teardown until a fresh observation owes one off.
+    pub(crate) walk_guard_off: Option<super::script_walk::WalkGuardOff>,
+    /// Non-terminal protection warnings, drained to the correlated owner.
+    pub(crate) walk_guard_events: Vec<(script::native::HostAuthority, script::native::WalkEvent)>,
 }
 
 /// A held script walk or its identity across a watchdog-owned replacement.
@@ -1723,6 +1727,7 @@ impl NavBot {
     /// End the native walk this bot follows: its still-live owner gets `end`
     /// on the next observation; a revoked owner is owed nothing.
     pub(crate) fn end_native_walk(&mut self, end: script::native::WalkEnd) {
+        super::script_walk::owe_walk_guard_off(self);
         if let Some(owner) = self.native_walk.take() {
             self.native_walk_failure = None;
             self.native_walk_blocked = None;
@@ -2275,6 +2280,6 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.bank_fetch = None;
     nav.walk_request_id = 0;
     nav.route_quest_evidence = None;
-    nav.walk_guard = None;
+    super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
 }

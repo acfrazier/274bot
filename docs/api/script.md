@@ -494,11 +494,27 @@ WalkTo stays the panel **WalkTo** button + traveller. Script walk requests use
 the host's shared `nav::router::find` and the slot pump's
 `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
-the slot pump under the existing admission fence. Typed native walk operations
-are not installed by the registration cutover. Authored Path `walk` steps do
-not yet implement protected walking: a nonempty `cross` is rejected during
-Path compilation with code `invalid-args` and detail
-`walk: cross needs protected walk (combat slice)`.
+the slot pump under the existing admission fence. Typed native walks correlate
+host outcomes with their run, action and request owners. Authored Path `walk`
+steps may opt into hold-mode protection with `guard: "protect"` and name the
+protected-zone exemptions in `cross`; a nonempty `cross` without that guard is
+rejected during compilation.
+
+The guard holds the selected protection prayer without attacking, eating or
+flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces
+one non-terminal `WalkEventKind::Unprotectable` warning for that style and cause.
+The native owner consumes it with `NativeActions::take_walk_event`; the walk
+keeps following and any other held protection remains managed. Quester shows
+the cause under **Walk protection**, for example “Prayer 40 needed for Protect
+from Missiles”, without parking or retrying the step.
+
+Arrival, Stop, Pause, cancellation, owner revocation and manual takeover retire
+the guard but preserve its conditional off-click on the host. A fresh prayer
+observation emits one off-click if that protect is on, and none if it is already
+off. If an enable or style switch is still in flight, the host waits for that
+protect to be observed on before turning it off; it never toggles the old style
+back on. Relog and death discard this obligation because the server resets the
+temporary prayer state. The manual WalkTo arm does not install a guard.
 
 Manual game movement or a TUI Manual step takes ownership before either follow
 pump. A matching native walk returns a normal `WalkReceipt` with
