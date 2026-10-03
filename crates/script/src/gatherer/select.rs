@@ -14,6 +14,140 @@ const NO_NPC_INDEX: i32 = -1;
 // NPC_INFO streams nearby actors, not every NPC in the 104-tile map build.
 // The selected 289 engine uses a 15-tile Chebyshev view radius.
 const NPC_VIEW_RADIUS: u32 = 15;
+// Leave one tile of view margin for the existing radius-one walk settlement.
+const OBSERVATION_RADIUS: i32 = NPC_VIEW_RADIUS as i32 - 1;
+const OBSERVATION_WIDTH: i32 = OBSERVATION_RADIUS * 2 + 1;
+const OBSERVATION_WINDOW_TICKS: u64 = 100;
+const MAX_OBSERVATION_STANDS: u32 = 8;
+const MAX_FISHING_APPROACHES: u8 = 8;
+
+/// Session-owned evidence and approach budgets, never evicted while selecting
+/// other placements. Only actual gathering progress renews approach budgets.
+#[derive(Default)]
+pub struct FishingSurvey {
+    placements: Vec<FishingPlacementSurvey>,
+}
+
+struct FishingPlacementSurvey {
+    method: u16,
+    spot: u32,
+    covered: u8,
+    started: Option<u64>,
+    approaches: u8,
+}
+
+impl FishingSurvey {
+    fn placement(&mut self, method: u16, spot: u32) -> &mut FishingPlacementSurvey {
+        let placements = &mut self.placements;
+        let index = placements
+            .iter()
+            .position(|row| row.method == method && row.spot == spot);
+        let index = index.unwrap_or_else(|| {
+            placements.push(FishingPlacementSurvey {
+                method,
+                spot,
+                covered: 0,
+                started: None,
+                approaches: 0,
+            });
+            placements.len() - 1
+        });
+        &mut placements[index]
+    }
+
+    fn reset_live(&mut self, method: u16, spot: u32) {
+        if let Some(row) = self
+            .placements
+            .iter_mut()
+            .find(|row| row.method == method && row.spot == spot)
+        {
+            row.covered = 0;
+            row.started = None;
+        }
+    }
+
+    pub fn progress(&mut self) {
+        self.placements.clear();
+    }
+}
+
+/// Partition the content rectangle into view-sized cells. Each cell's stand
+/// is the nearest point in its radius-one-safe observation rectangle, rather
+/// than an NPC origin (which may be water or outside the required view).
+fn observation_cells(bounds: SceneRegionInput) -> impl Iterator<Item = SceneRegionInput> {
+    let columns = (bounds.max_x - bounds.min_x + OBSERVATION_WIDTH) / OBSERVATION_WIDTH;
+    let rows = (bounds.max_z - bounds.min_z + OBSERVATION_WIDTH) / OBSERVATION_WIDTH;
+    (0..rows).flat_map(move |row| {
+        (0..columns).map(move |column| {
+            let min_x = bounds.min_x + column * OBSERVATION_WIDTH;
+            let min_z = bounds.min_z + row * OBSERVATION_WIDTH;
+            SceneRegionInput {
+                min_x,
+                min_z,
+                max_x: (min_x + OBSERVATION_WIDTH - 1).min(bounds.max_x),
+                max_z: (min_z + OBSERVATION_WIDTH - 1).min(bounds.max_z),
+                level: bounds.level,
+            }
+        })
+    })
+}
+
+fn region_visible(bounds: SceneRegionInput, here: WorldTile) -> bool {
+    bounds.level == here.level
+        && [bounds.min_x, bounds.max_x]
+            .into_iter()
+            .all(|x| x.abs_diff(here.x) <= NPC_VIEW_RADIUS)
+        && [bounds.min_z, bounds.max_z]
+            .into_iter()
+            .all(|z| z.abs_diff(here.z) <= NPC_VIEW_RADIUS)
+}
+
+impl FishingPlacementSurvey {
+    fn observe(
+        &mut self,
+        bounds: SceneRegionInput,
+        world: &WorldStateView,
+        here: WorldTile,
+        now: u64,
+    ) {
+        if self
+            .started
+            .is_some_and(|started| now.saturating_sub(started) > OBSERVATION_WINDOW_TICKS)
+        {
+            self.covered = 0;
+            self.started = None;
+        }
+        for (index, cell) in observation_cells(bounds)
+            .take(MAX_OBSERVATION_STANDS as usize)
+            .enumerate()
+        {
+            if region_loaded(cell, world) && region_visible(cell, here) {
+                self.started.get_or_insert(now);
+                self.covered |= 1 << index;
+            }
+        }
+    }
+
+    fn next_stand(&self, bounds: SceneRegionInput, here: WorldTile) -> Option<WorldTile> {
+        observation_cells(bounds)
+            .enumerate()
+            .filter(|(index, _)| {
+                *index < MAX_OBSERVATION_STANDS as usize && self.covered & (1 << index) == 0
+            })
+            .map(|(_, cell)| WorldTile {
+                x: here.x.clamp(
+                    cell.max_x - OBSERVATION_RADIUS,
+                    cell.min_x + OBSERVATION_RADIUS,
+                ),
+                z: here.z.clamp(
+                    cell.max_z - OBSERVATION_RADIUS,
+                    cell.min_z + OBSERVATION_RADIUS,
+                ),
+                level: cell.level,
+            })
+            .min_by_key(|stand| distance(here, *stand))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlacementClass {
@@ -84,6 +218,7 @@ pub struct SelectionObservation<'a> {
     pub here: WorldTile,
     pub now: u64,
     pub skill_stat: i32,
+    pub fishing: &'a mut FishingSurvey,
 }
 
 pub struct PlacementScene<'a> {
@@ -209,17 +344,9 @@ fn classify_fishing_placement(
     }) {
         return PlacementClass::Live;
     }
-    // A loaded map is not evidence that a distant moving NPC is absent.
-    // Reuse the unloaded-placement approach until its whole movement envelope
-    // is inside the actor view; observed resources/hazards above still win.
-    if bounds.level != here.level
-        || [bounds.min_x, bounds.max_x]
-            .into_iter()
-            .any(|x| x.abs_diff(here.x) > NPC_VIEW_RADIUS)
-        || [bounds.min_z, bounds.max_z]
-            .into_iter()
-            .any(|z| z.abs_diff(here.z) > NPC_VIEW_RADIUS)
-    {
+    // This direct classifier handles a single fully visible envelope. The
+    // selector accumulates partial empty views for wider envelopes below.
+    if !region_visible(bounds, here) {
         return PlacementClass::Unloaded;
     }
     PlacementClass::Absent
@@ -242,6 +369,7 @@ pub fn select(
         here,
         now,
         skill_stat,
+        fishing,
     } = observation;
     let preference = settings.target_preference_kind();
     let region = area.region();
@@ -282,6 +410,7 @@ pub fn select(
                     let Ok(index) = i32::try_from(npc.index) else {
                         continue;
                     };
+                    fishing.reset_live(method_index, spot.id.0);
                     consider_candidate(
                         &mut best_live,
                         preference,
@@ -376,7 +505,7 @@ pub fn select(
                 if catalog.access(method, spot).unwrap_or(Truth::False) != Truth::True {
                     continue;
                 }
-                let class = classify_fishing_placement(
+                let mut class = classify_fishing_placement(
                     spot,
                     method,
                     PlacementScene {
@@ -389,6 +518,27 @@ pub fn select(
                     avoided,
                     now,
                 );
+                let bounds = movement_bounds(spot).expect("eligible fishing movement");
+                let mut stand = spot.origin;
+                if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
+                    let survey = fishing.placement(method_index, spot.id.0);
+                    survey.observe(bounds, world, here, now);
+                    let cell_count = observation_cells(bounds).count();
+                    if cell_count > MAX_OBSERVATION_STANDS as usize {
+                        class = PlacementClass::Avoided;
+                    } else if let Some(next) = survey.next_stand(bounds, here) {
+                        if survey.approaches >= MAX_FISHING_APPROACHES {
+                            // Budget exhaustion is not proof of absence. Let
+                            // existing exhaustion handling bound an unseen spot.
+                            class = PlacementClass::Avoided;
+                        } else {
+                            class = PlacementClass::Unloaded;
+                        }
+                        stand = next;
+                    } else {
+                        class = PlacementClass::Absent;
+                    }
+                }
                 match class {
                     PlacementClass::Unloaded => {
                         consider_candidate(
@@ -399,9 +549,9 @@ pub fn select(
                                 method,
                                 spot,
                                 class,
-                                spot.origin,
+                                stand,
                                 NO_NPC_INDEX,
-                                distance(here, spot.origin),
+                                distance(here, stand),
                             ),
                             skill_stat,
                         );
@@ -486,6 +636,10 @@ pub fn select(
     }
 
     if let Some((method_index, method, spot, class, tile, npc_index, _)) = best_unloaded {
+        if method.skill == GatherSkill::Fishing {
+            let survey = fishing.placement(method_index, spot.id.0);
+            survey.approaches = survey.approaches.saturating_add(1);
+        }
         return SelectionResult {
             target: Some(SelectedTarget {
                 plan: make_plan(
@@ -1292,6 +1446,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &observed_npcs,
@@ -1334,6 +1489,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &moved_npc,
@@ -1365,6 +1521,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &observed_hazard,
@@ -1410,6 +1567,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &[],
@@ -1429,14 +1587,14 @@ mod tests {
         let spot = complete_spots(method)
             .unwrap()
             .iter()
-            .find(|spot| spot.entity == target.plan.entity && spot.origin == target.plan.tile)
+            .find(|spot| spot.entity == target.plan.entity && fishing_spot_eligible(spot, area))
             .unwrap();
         assert!(
             region_loaded(movement_bounds(spot).unwrap(), &world),
             "the regression needs a loaded map but an unobserved NPC region"
         );
 
-        let visible = [npc(43, type_id as usize, target.plan.tile)];
+        let visible = [npc(43, type_id as usize, spot.origin)];
         let reacquired = select(
             &catalog,
             &[index],
@@ -1444,6 +1602,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &visible,
@@ -1457,6 +1616,334 @@ mod tests {
         assert_eq!(reacquired.class, PlacementClass::Live);
         assert_eq!(reacquired.plan.npc_index, 43);
         assert_eq!(reacquired.plan.entity, target.plan.entity);
+    }
+
+    #[test]
+    fn fishing_empty_arrival_decides_and_moved_east_edge_is_reacquired() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let anchor = WorldTile {
+            x: 2840,
+            z: 3436,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Start,
+            anchor,
+            radius: 12,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        for moved in [false, true] {
+            let mut survey = FishingSurvey::default();
+            let mut here = WorldTile {
+                x: 2844,
+                z: 3430,
+                level: 0,
+            };
+            let east = WorldTile {
+                x: 2860,
+                z: 3426,
+                level: 0,
+            };
+            let mut decided = false;
+            for now in 1..=9 {
+                let world = scene_around(here);
+                let actors = [npc(43, 321, east)];
+                let visible = if moved && distance(here, east) <= 15 {
+                    actors.as_slice()
+                } else {
+                    &[]
+                };
+                let result = select(
+                    &catalog,
+                    &[index],
+                    &settings,
+                    area,
+                    &[AvoidedTile::EMPTY; MAX_AVOID],
+                    SelectionObservation {
+                        fishing: &mut survey,
+                        world: &world,
+                        locs: &[],
+                        npcs: visible,
+                        here,
+                        now,
+                        skill_stat: 10,
+                    },
+                );
+                match result.target {
+                    Some(target) if target.class == PlacementClass::Live => {
+                        assert!(moved);
+                        assert_eq!(target.plan.tile, east);
+                        decided = true;
+                        eprintln!("moved Catherby east-edge spot reacquired at selection {now}, stand {here:?}");
+                        break;
+                    }
+                    Some(target) => {
+                        assert_eq!(target.class, PlacementClass::Unloaded);
+                        assert_ne!(
+                            target.plan.tile, here,
+                            "arrival at the old radius-one stand must not reselect the same stand"
+                        );
+                        here = WorldTile {
+                            z: target.plan.tile.z + 1,
+                            ..target.plan.tile
+                        };
+                    }
+                    None => {
+                        assert!(
+                            !moved,
+                            "the content east-edge actor must be observed, not lost"
+                        );
+                        assert!(matches!(
+                            result.outcome,
+                            Selection::Absent { .. } | Selection::Exhausted { .. }
+                        ));
+                        eprintln!(
+                            "removed Catherby spot decided {:?} at selection {now}, stand {here:?}",
+                            result.outcome
+                        );
+                        decided = true;
+                        break;
+                    }
+                }
+            }
+            assert!(
+                decided,
+                "removed/moved Catherby spot must reach a decision within the approach bound"
+            );
+        }
+    }
+
+    #[test]
+    fn fishing_wide_freshfish_envelope_is_fully_observed_then_absent() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.freshfish.op1").unwrap();
+        let index = method_index(&catalog, method);
+        let placement = complete_spots(method)
+            .unwrap()
+            .iter()
+            .find(|spot| {
+                spot.entity == EntityId::Npc(317)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+                    && movement_bounds(spot).is_some_and(|bounds| bounds.max_x - bounds.min_x > 31)
+            })
+            .expect("content NPC 317 has an envelope wider than one actor view");
+        let mut here = placement.origin;
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: here,
+            radius: 1,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            ..GathererSettings::default()
+        };
+        let mut stands = Vec::new();
+        let mut survey = FishingSurvey::default();
+        for now in 1..=9 {
+            let world = scene_around(here);
+            let result = select(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                SelectionObservation {
+                    fishing: &mut survey,
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    here,
+                    now,
+                    skill_stat: 10,
+                },
+            );
+            let Some(target) = result.target else {
+                assert!(matches!(result.outcome, Selection::Absent { .. }));
+                assert!(!stands.is_empty());
+                assert!(
+                    stands.len() <= 4,
+                    "the wide envelope needs only a small bounded survey"
+                );
+                eprintln!(
+                    "wide NPC 317 envelope absent at selection {now} after {} approach stands",
+                    stands.len()
+                );
+                return;
+            };
+            assert!(
+                !stands.contains(&target.plan.tile),
+                "empty survey must not repeat a covered stand"
+            );
+            stands.push(target.plan.tile);
+            here = target.plan.tile;
+        }
+        panic!("the wide fishing envelope never reached Absent");
+    }
+
+    #[test]
+    fn fishing_reapproach_is_capped_even_without_view_or_arrival_progress() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile {
+            x: 2844,
+            z: 3430,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: here,
+            radius: 1,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            ..GathererSettings::default()
+        };
+        let world = WorldStateView {
+            level: 1,
+            ..scene_around(here)
+        };
+        let placements = complete_spots(method)
+            .unwrap()
+            .iter()
+            .filter(|spot| {
+                fishing_spot_eligible(spot, area)
+                    && known_resource_target(method, spot.entity)
+                    && catalog.access(method, spot).ok() == Some(Truth::True)
+            })
+            .count();
+        let mut survey = FishingSurvey::default();
+        for now in 1..=(placements as u64 * 8 + 1) {
+            let result = select(
+                &catalog,
+                &[index],
+                &settings,
+                area,
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                SelectionObservation {
+                    fishing: &mut survey,
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    here,
+                    now,
+                    skill_stat: 10,
+                },
+            );
+            if result.target.is_none() {
+                assert!(matches!(
+                    result.outcome,
+                    Selection::Absent { .. } | Selection::Exhausted { .. }
+                ));
+                eprintln!("no-progress fishing approach cap decided {:?} at selection {now} for {placements} placements", result.outcome);
+                return;
+            }
+        }
+        panic!(
+            "same-placement reapproaches must be capped even when observation makes no progress"
+        );
+    }
+
+    #[test]
+    fn fishing_content_envelopes_have_radius_one_safe_bounded_stands() {
+        let catalog = real_catalog();
+        for id in [310, 317, 320, 325, 1191] {
+            let mut checked = 0;
+            for method in catalog
+                .methods()
+                .iter()
+                .filter(|method| method.skill == GatherSkill::Fishing)
+            {
+                for spot in complete_spots(method)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|spot| spot.entity == EntityId::Npc(id))
+                {
+                    let bounds = movement_bounds(spot).unwrap();
+                    let cells: Vec<_> = observation_cells(bounds).collect();
+                    assert!(
+                        !cells.is_empty() && cells.len() <= MAX_OBSERVATION_STANDS as usize,
+                        "NPC {id} requires {} cells: {bounds:?}",
+                        cells.len()
+                    );
+                    let survey = FishingPlacementSurvey {
+                        method: 0,
+                        spot: 0,
+                        covered: 0,
+                        started: None,
+                        approaches: 0,
+                    };
+                    for cell in cells {
+                        let stand = survey.next_stand(cell, spot.origin).unwrap();
+                        for dx in -1..=1 {
+                            for dz in -1..=1 {
+                                assert!(
+                                    region_visible(
+                                        cell,
+                                        WorldTile {
+                                            x: stand.x + dx,
+                                            z: stand.z + dz,
+                                            level: stand.level,
+                                        }
+                                    ),
+                                    "radius-one arrival must cover NPC {id}'s whole cell"
+                                );
+                            }
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+            assert!(checked > 0, "content coverage must include NPC {id}");
+            eprintln!("checked {checked} radius-one-safe content envelopes for NPC {id}");
+        }
+    }
+
+    #[test]
+    fn fishing_empty_views_expire_without_renewing_the_approach_budget() {
+        let bounds = SceneRegionInput {
+            min_x: 3000,
+            max_x: 3047,
+            min_z: 3000,
+            max_z: 3008,
+            level: 0,
+        };
+        let mut survey = FishingPlacementSurvey {
+            method: 0,
+            spot: 0,
+            covered: 0,
+            started: None,
+            approaches: 3,
+        };
+        let here = WorldTile {
+            x: 3014,
+            z: 3004,
+            level: 0,
+        };
+        survey.observe(bounds, &scene_around(here), here, 1);
+        assert_eq!(survey.covered, 1);
+        let later = WorldTile { x: 3035, ..here };
+        survey.observe(
+            bounds,
+            &scene_around(later),
+            later,
+            OBSERVATION_WINDOW_TICKS + 2,
+        );
+        assert_eq!(
+            survey.covered, 2,
+            "stale empty views cannot prove the whole moving envelope absent"
+        );
+        assert_eq!(
+            survey.approaches, 3,
+            "expiry must not reopen an unbounded approach loop"
+        );
     }
 
     #[test]
@@ -1533,6 +2020,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &lower_live,
                 npcs: &[],
@@ -1555,6 +2043,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &[],
                 npcs: &[],
@@ -1611,6 +2100,7 @@ mod tests {
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
             SelectionObservation {
+                fishing: &mut FishingSurvey::default(),
                 world: &world,
                 locs: &locs,
                 npcs: &[],

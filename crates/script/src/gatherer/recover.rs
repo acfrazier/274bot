@@ -16,7 +16,7 @@ impl Gatherer {
         self.cancel_active();
         self.trip = TripStep::Idle;
         self.selected_bank = None;
-        self.withdrawals = None;
+        self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.observed_progress = None;
         self.proof_evidence = 0;

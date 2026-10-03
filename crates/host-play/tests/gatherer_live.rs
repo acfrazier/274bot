@@ -62,6 +62,7 @@ const SALMON_ID: i32 = 331;
 const TUNA_ID: i32 = 359;
 const SWORDFISH_ID: i32 = 371;
 const FEATHERS_ID: i32 = 314;
+const CASKET_ID: i32 = 405;
 const OAK_ID: i32 = 1281;
 const OAK_STUMP_ID: i32 = 1355;
 const OAK_RESPAWN_MAX_TICKS: u32 = 30;
@@ -993,6 +994,248 @@ impl Observation {
     }
 }
 
+fn aggregate_item_counts(items: impl IntoIterator<Item = (i32, i32)>) -> BTreeMap<i32, i32> {
+    let mut counts = BTreeMap::new();
+    for (id, count) in items {
+        if id >= 0 && count > 0 {
+            *counts.entry(id).or_default() += count;
+        }
+    }
+    counts
+}
+
+fn bank_deposit_expectation(
+    inventory: &BTreeMap<i32, i32>,
+    protected_ids: &BTreeSet<i32>,
+) -> BTreeMap<i32, i32> {
+    inventory
+        .iter()
+        .filter(|(id, count)| **count > 0 && !protected_ids.contains(*id))
+        .map(|(&id, &count)| (id, count))
+        .collect()
+}
+
+#[derive(Debug, Clone, Default)]
+struct FishBankTripReceipt {
+    trip: i64,
+    inventory_before: BTreeMap<i32, i32>,
+    protected_ids: BTreeSet<i32>,
+    expected_items: BTreeMap<i32, i32>,
+    expected_products: BTreeMap<i32, i32>,
+    expected_incidentals: BTreeMap<i32, i32>,
+    bank_before: BTreeMap<i32, i32>,
+    bank_after: BTreeMap<i32, i32>,
+    deposited_before: i64,
+    deposited_after: i64,
+    deposited_count: i64,
+    seeded_casket_expected: i32,
+    deposit_confirmed: bool,
+    expected_items_after: BTreeMap<i32, i32>,
+    expected_items_empty: bool,
+    bank_loaded: bool,
+    bank_increased: bool,
+    deposit_count_matches_expected: bool,
+    deposit_verified: bool,
+    seeded_casket_banked: bool,
+    positive_return: bool,
+    returned: bool,
+    post_bank_yield: bool,
+}
+
+impl FishBankTripReceipt {
+    fn new(
+        trip: i64,
+        inventory_before: BTreeMap<i32, i32>,
+        protected_ids: BTreeSet<i32>,
+        bank_before: BTreeMap<i32, i32>,
+        deposited_before: i64,
+        product_ids: &[i32],
+        seeded_casket_expected: i32,
+    ) -> Self {
+        let expected_items = bank_deposit_expectation(&inventory_before, &protected_ids);
+        let expected_products: BTreeMap<_, _> = expected_items
+            .iter()
+            .filter(|(id, _)| product_ids.contains(*id))
+            .map(|(&id, &count)| (id, count))
+            .collect();
+        let expected_incidentals: BTreeMap<_, _> = expected_items
+            .iter()
+            .filter(|(id, _)| !product_ids.contains(*id))
+            .map(|(&id, &count)| (id, count))
+            .collect();
+        Self {
+            trip,
+            inventory_before,
+            protected_ids,
+            expected_items,
+            expected_products,
+            expected_incidentals,
+            bank_before,
+            deposited_before,
+            seeded_casket_expected,
+            ..Self::default()
+        }
+    }
+
+    fn expected_item_count(&self) -> i64 {
+        self.expected_items
+            .values()
+            .map(|count| i64::from(*count))
+            .sum()
+    }
+
+    fn expected_product_count(&self) -> i64 {
+        self.expected_products
+            .values()
+            .map(|count| i64::from(*count))
+            .sum()
+    }
+
+    fn observe_deposit(
+        &mut self,
+        inventory_after: &BTreeMap<i32, i32>,
+        bank_loaded: bool,
+        bank_after: &BTreeMap<i32, i32>,
+        deposited_after: i64,
+        deposit_confirmed: bool,
+    ) -> Result<(), String> {
+        self.deposit_confirmed |= deposit_confirmed;
+        if !self.deposit_confirmed {
+            return Ok(());
+        }
+
+        self.expected_items_after = self
+            .expected_items
+            .keys()
+            .filter_map(|id| {
+                let count = inventory_after.get(id).copied().unwrap_or(0);
+                (count > 0).then_some((*id, count))
+            })
+            .collect();
+        self.expected_items_empty = self.expected_items_after.is_empty();
+        self.deposited_after = deposited_after;
+        self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
+        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+
+        if bank_loaded {
+            self.bank_loaded = true;
+            self.bank_after = bank_after.clone();
+            self.bank_increased = self.expected_items.iter().all(|(id, expected)| {
+                let before = self.bank_before.get(id).copied().unwrap_or(0);
+                let after = bank_after.get(id).copied().unwrap_or(0);
+                after.saturating_sub(before) >= *expected
+            });
+        }
+        let casket_delta = self
+            .bank_after
+            .get(&CASKET_ID)
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(self.bank_before.get(&CASKET_ID).copied().unwrap_or(0));
+        self.seeded_casket_banked = self.seeded_casket_expected > 0
+            && self
+                .expected_items_after
+                .get(&CASKET_ID)
+                .copied()
+                .unwrap_or(0)
+                == 0
+            && casket_delta >= self.seeded_casket_expected;
+        self.deposit_verified = self.deposit_confirmed
+            && self.bank_loaded
+            && self.expected_items_empty
+            && self.bank_increased
+            && self.deposit_count_matches_expected;
+
+        if !self.expected_items_empty {
+            if self.seeded_casket_expected > 0 && self.expected_items_after.contains_key(&CASKET_ID)
+            {
+                return Err(format!(
+                    "seeded casket {CASKET_ID} remained in inventory after deposit: {:?}",
+                    self.expected_items_after
+                ));
+            }
+            return Err(format!(
+                "deposit left expected item IDs in inventory: {:?}",
+                self.expected_items_after
+            ));
+        }
+        Ok(())
+    }
+
+    fn record_return(&mut self, trip: i64, deposited_after: i64) -> Result<(), String> {
+        self.trip = trip;
+        self.deposited_after = deposited_after;
+        self.deposited_count = deposited_after.saturating_sub(self.deposited_before);
+        self.deposit_count_matches_expected = self.deposited_count == self.expected_item_count();
+        self.positive_return = self.deposited_count > 0 && self.expected_product_count() > 0;
+        self.returned = true;
+        if !self.deposit_verified
+            || !self.deposit_count_matches_expected
+            || !self.positive_return
+            || (self.seeded_casket_expected > 0 && !self.seeded_casket_banked)
+        {
+            return Err(format!(
+                "fish bank trip {trip} returned without a verified positive deposit: {self:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn as_json(&self) -> Value {
+        json!({
+            "trip": self.trip,
+            "inventory_before": &self.inventory_before,
+            "protected_ids": &self.protected_ids,
+            "expected_items": &self.expected_items,
+            "expected_products": &self.expected_products,
+            "expected_incidentals": &self.expected_incidentals,
+            "bank_before": &self.bank_before,
+            "bank_after": &self.bank_after,
+            "deposited_before": self.deposited_before,
+            "deposited_after": self.deposited_after,
+            "deposited_count": self.deposited_count,
+            "expected_item_count": self.expected_item_count(),
+            "deposit_confirmed": self.deposit_confirmed,
+            "expected_items_after": &self.expected_items_after,
+            "expected_items_empty": self.expected_items_empty,
+            "bank_loaded": self.bank_loaded,
+            "bank_increased": self.bank_increased,
+            "deposit_count_matches_expected": self.deposit_count_matches_expected,
+            "deposit_verified": self.deposit_verified,
+            "seeded_casket_expected": self.seeded_casket_expected,
+            "seeded_casket_banked": self.seeded_casket_banked,
+            "positive_return": self.positive_return,
+            "returned": self.returned,
+            "post_bank_yield": self.post_bank_yield,
+        })
+    }
+
+    fn complete(&self) -> bool {
+        self.deposit_verified
+            && self.positive_return
+            && self.returned
+            && self.post_bank_yield
+            && self.expected_product_count() > 0
+    }
+}
+
+impl Witness {
+    fn fish_bank_complete(&self) -> bool {
+        self.seeded_casket_baseline_verified
+            && self.seeded_casket_baseline_count == 1
+            && self.fish_bank_trips.len() >= 2
+            && self
+                .fish_bank_trips
+                .first()
+                .is_some_and(|trip| trip.seeded_casket_banked)
+            && self
+                .fish_bank_trips
+                .iter()
+                .take(2)
+                .all(FishBankTripReceipt::complete)
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct Witness {
     cycles: u32,
@@ -1110,6 +1353,11 @@ struct Witness {
     power_to_bank_edit_slots: u32,
     power_to_bank_applied: bool,
     last_return_deposited: i64,
+    seeded_casket_baseline_count: i32,
+    seeded_casket_baseline_verified: bool,
+    natural_casket_first_observed: Option<(u32, i32)>,
+    pending_fish_bank_trip: Option<FishBankTripReceipt>,
+    fish_bank_trips: Vec<FishBankTripReceipt>,
     failure: Option<String>,
     random_owned_command_sent: bool,
     random_owned_event_seen: bool,
@@ -1982,6 +2230,25 @@ impl GatherSlot {
             ));
         }
         self.record_g2_observation(previous.as_ref(), &observation);
+        if self.case == LiveCase::FishHarpoonBank
+            && self
+                .witness
+                .fish_bank_trips
+                .first()
+                .is_some_and(|trip| trip.seeded_casket_banked)
+        {
+            let casket_count = observation
+                .inventory
+                .values()
+                .filter(|item| item.id == CASKET_ID)
+                .map(|item| item.count)
+                .sum::<i32>();
+            if casket_count > 0 {
+                self.witness
+                    .natural_casket_first_observed
+                    .get_or_insert((observation.tick, casket_count));
+            }
+        }
         if let Some(previous) = previous {
             for (slot, old) in &previous.inventory {
                 if self.cell.products(self.case).contains(&old.id) {
@@ -2301,6 +2568,116 @@ impl GatherSlot {
         })
     }
 
+    fn snapshot_inventory_counts(&self) -> BTreeMap<i32, i32> {
+        aggregate_item_counts(
+            self.snapshot
+                .inventory()
+                .iter()
+                .map(|item| (item.def.id, item.count)),
+        )
+    }
+
+    fn snapshot_bank_counts(&self) -> BTreeMap<i32, i32> {
+        aggregate_item_counts(
+            self.snapshot
+                .bank()
+                .iter()
+                .map(|item| (item.def.id, item.count)),
+        )
+    }
+
+    fn observe_fish_bank_deposit(
+        &mut self,
+        status: &script::native::ScriptStatus,
+        current_deposited: i64,
+    ) -> Result<(), String> {
+        if self.case != LiveCase::FishHarpoonBank {
+            return Ok(());
+        }
+        let bank = text_field(status, "bank");
+        let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
+        let event = text_field(status, "last_event");
+        if bank_step == Some("Deposit")
+            && self.snapshot.bank_loaded()
+            && self.witness.pending_fish_bank_trip.is_none()
+        {
+            let inventory_before = self.snapshot_inventory_counts();
+            let seeded_casket_expected = if self.witness.fish_bank_trips.is_empty() {
+                self.witness.seeded_casket_baseline_count
+            } else {
+                0
+            };
+            if seeded_casket_expected > 0
+                && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
+            {
+                return Err(format!(
+                    "{} lost its seeded casket before the first bank deposit: {:?}",
+                    self.name(),
+                    inventory_before
+                ));
+            }
+            // Harpoon fishing has no bait/rune supply; only the harpoon is protected.
+            let protected_ids = BTreeSet::from([self.tool_id]);
+            let receipt = FishBankTripReceipt::new(
+                self.witness.status_trips.saturating_add(1),
+                inventory_before,
+                protected_ids,
+                self.snapshot_bank_counts(),
+                current_deposited,
+                self.cell.products(self.case),
+                seeded_casket_expected,
+            );
+            self.witness.pending_fish_bank_trip = Some(receipt);
+        }
+        if event == Some("deposit confirmed") && self.witness.pending_fish_bank_trip.is_none() {
+            return Err(format!(
+                "{} confirmed a deposit without pre-deposit inventory evidence",
+                self.name()
+            ));
+        }
+
+        let should_observe_deposit =
+            self.witness
+                .pending_fish_bank_trip
+                .as_ref()
+                .is_some_and(|receipt| {
+                    !receipt.deposit_verified
+                        && (event == Some("deposit confirmed") || receipt.deposit_confirmed)
+                });
+        if should_observe_deposit {
+            let inventory_after = self.snapshot_inventory_counts();
+            let bank_loaded = self.snapshot.bank_loaded();
+            let bank_after = if bank_loaded {
+                self.snapshot_bank_counts()
+            } else {
+                BTreeMap::new()
+            };
+            let result = self
+                .witness
+                .pending_fish_bank_trip
+                .as_mut()
+                .expect("pending receipt was just observed")
+                .observe_deposit(
+                    &inventory_after,
+                    bank_loaded,
+                    &bank_after,
+                    current_deposited,
+                    event == Some("deposit confirmed"),
+                );
+            result.map_err(|error| format!("{}: {error}", self.name()))?;
+        }
+        if event == Some("bank closed; validating equipment") {
+            let receipt = self.witness.pending_fish_bank_trip.as_ref();
+            if !receipt.is_some_and(|receipt| receipt.deposit_verified) {
+                return Err(format!(
+                    "{} closed the bank before its per-trip deposit was verified: {receipt:?}",
+                    self.name()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn chat_has(&self, needle: &str) -> bool {
         let needle = needle.to_ascii_lowercase();
         self.snapshot
@@ -2594,6 +2971,22 @@ impl GatherSlot {
                 baseline.product_count
             ));
         }
+        if self.case == LiveCase::FishHarpoonBank {
+            let casket_count = baseline
+                .inventory
+                .values()
+                .filter(|item| item.id == CASKET_ID)
+                .map(|item| item.count)
+                .sum::<i32>();
+            if casket_count != 1 {
+                return Err(format!(
+                    "{} Start baseline must contain exactly one seeded casket {CASKET_ID}, found {casket_count}",
+                    self.name()
+                ));
+            }
+            self.witness.seeded_casket_baseline_count = casket_count;
+            self.witness.seeded_casket_baseline_verified = true;
+        }
         if self.case == LiveCase::FishBaitGate
             && baseline
                 .inventory
@@ -2727,6 +3120,9 @@ impl GatherSlot {
         let current_trips = integer_field(status, "trips").unwrap_or(self.witness.status_trips);
         let current_deposited =
             integer_field(status, "deposited").unwrap_or(self.witness.status_deposited);
+        if self.case == LiveCase::FishHarpoonBank {
+            self.observe_fish_bank_deposit(status, current_deposited)?;
+        }
         let previous_deaths = self.witness.last_deaths;
         let previous_recoveries = self.witness.last_recoveries;
         let current_deaths = integer_field(status, "deaths")
@@ -2739,6 +3135,27 @@ impl GatherSlot {
             .and_then(|value| u8::try_from(value).ok())
             .unwrap_or(self.witness.last_recovery_step);
         if current_trips > self.witness.status_trips {
+            if self.case == LiveCase::FishHarpoonBank {
+                if current_trips != self.witness.status_trips.saturating_add(1) {
+                    return Err(format!(
+                        "{} skipped a fish bank trip receipt: {} -> {}",
+                        self.name(),
+                        self.witness.status_trips,
+                        current_trips
+                    ));
+                }
+                let Some(mut receipt) = self.witness.pending_fish_bank_trip.take() else {
+                    return Err(format!(
+                        "{} returned from fish banking without a pre-deposit receipt",
+                        self.name()
+                    ));
+                };
+                if let Err(error) = receipt.record_return(current_trips, current_deposited) {
+                    self.witness.pending_fish_bank_trip = Some(receipt);
+                    return Err(format!("{}: {error}", self.name()));
+                }
+                self.witness.fish_bank_trips.push(receipt);
+            }
             self.witness.bank_arrivals = self
                 .witness
                 .bank_arrivals
@@ -2753,6 +3170,21 @@ impl GatherSlot {
             if self.witness.waiting_for_bank_yield {
                 self.witness.bank_nonzero_roundtrips =
                     self.witness.bank_nonzero_roundtrips.saturating_add(1);
+            }
+            if self.case == LiveCase::FishHarpoonBank {
+                let Some(receipt) = self
+                    .witness
+                    .fish_bank_trips
+                    .iter_mut()
+                    .rev()
+                    .find(|receipt| !receipt.post_bank_yield)
+                else {
+                    return Err(format!(
+                        "{} observed a post-bank yield without a matching trip receipt",
+                        self.name()
+                    ));
+                };
+                receipt.post_bank_yield = true;
             }
             self.witness.waiting_for_return_yield = false;
             self.witness.waiting_for_bank_yield = false;
@@ -3553,10 +3985,7 @@ impl GatherSlot {
                 if !self.complete_bank_selection()
                     || !self.witness.bank_loaded_observed
                     || !self.witness.bank_closed_observed
-                    || self.witness.bank_nonzero_roundtrips < 2
-                    || self.witness.post_bank_yields < 2
-                    || self.witness.status_trips < 2
-                    || self.witness.status_deposited < i64::from(self.cycle_product_capacity() * 2)
+                    || !self.witness.fish_bank_complete()
                     || !self.item_in_inventory()
                     || self.item_equipped()
                     || self.latest.as_ref().is_none_or(|latest| {
@@ -3564,7 +3993,7 @@ impl GatherSlot {
                     })
                 {
                     return Err(format!(
-                        "{} did not complete two full fish-bank-fish trips with its harpoon in inventory: {:?}",
+                        "{} did not complete two verified positive fish-bank-fish returns and bank its seeded casket with the harpoon in inventory: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -3983,6 +4412,7 @@ fn fixture_plan(
             plan.bank_seed.push(("bronze_axe".into(), 2));
         }
         LiveCase::FishBait => plan.bank_seed.push(("feather".into(), 7)),
+        LiveCase::FishHarpoonBank => plan.inventory_seed.push(("casket".into(), 1)),
         LiveCase::CoinRunes => {
             plan.bank_seed.push(("coins".into(), 1_000));
             plan.inventory_seed.push(("coins".into(), 40));
@@ -5018,13 +5448,24 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 slot.error = Some(error);
             }
         }
-        let (witness, latest, product_capacity, baseline_xp) = {
+        let (
+            witness,
+            latest,
+            product_capacity,
+            baseline_xp,
+            bank_selection_complete,
+            harpoon_in_inventory,
+            harpoon_equipped,
+        ) = {
             let slot = state.lock().map_err(|_| "live state poisoned")?;
             (
                 slot.witness.clone(),
                 slot.latest.clone(),
-                slot.cycle_product_capacity(),
+                (case != LiveCase::FishHarpoonBank).then(|| slot.cycle_product_capacity()),
                 slot.baseline_xp(),
+                slot.complete_bank_selection(),
+                slot.item_in_inventory(),
+                slot.item_equipped(),
             )
         };
         #[cfg(feature = "live-probe")]
@@ -5179,10 +5620,15 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.last_status_yielded > 0
             }
             LiveCase::FishHarpoonBank => {
-                witness.status_trips >= 2
-                    && witness.bank_nonzero_roundtrips >= 2
-                    && witness.post_bank_yields >= 2
+                witness.fish_bank_complete()
+                    && bank_selection_complete
+                    && witness.bank_loaded_observed
                     && witness.bank_closed_observed
+                    && harpoon_in_inventory
+                    && !harpoon_equipped
+                    && latest
+                        .as_ref()
+                        .is_some_and(|latest| latest.product_count > 0 && latest.xp > baseline_xp)
             }
             LiveCase::CoinRunes => {
                 witness.status_trips >= 1
@@ -5269,7 +5715,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         let slot = state.lock().map_err(|_| "live state poisoned")?;
         (
             slot.witness.clone(),
-            slot.cycle_product_capacity(),
+            (case != LiveCase::FishHarpoonBank).then(|| slot.cycle_product_capacity()),
             slot.plan.clone(),
         )
     };
@@ -5340,6 +5786,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "bank_trips": witness.status_trips,
             "deposited": witness.status_deposited,
             "nonzero_deposit_returns": witness.bank_nonzero_roundtrips,
+            "fish_bank_complete": witness.fish_bank_complete(),
+            "fish_bank_trips": witness
+                .fish_bank_trips
+                .iter()
+                .map(FishBankTripReceipt::as_json)
+                .collect::<Vec<_>>(),
+            "pending_fish_bank_trip": witness
+                .pending_fish_bank_trip
+                .as_ref()
+                .map(FishBankTripReceipt::as_json),
             "post_bank_yields": witness.post_bank_yields,
             "bank_loaded": witness.bank_loaded_observed,
             "bank_closed": witness.bank_closed_observed,
@@ -5390,6 +5846,17 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "gate_disabled_candidates": fixture_plan.bank_cost_gated_candidates,
             })),
             "fixture_chop_observed": witness.fixture_chop_observed,
+            "seeded_casket": {
+                "alias": "casket",
+                "id": CASKET_ID,
+                "start_baseline_count": witness.seeded_casket_baseline_count,
+                "baseline_verified": witness.seeded_casket_baseline_verified,
+                "banked_on_first_trip": witness
+                    .fish_bank_trips
+                    .first()
+                    .is_some_and(|trip| trip.seeded_casket_banked),
+                "natural_first_observed_after_seeded_bank": witness.natural_casket_first_observed,
+            },
             "fixture_chop_tiles": witness.fixture_chop_tiles,
             "fixture_seeds_observed": witness.fixture_seeds_observed,
             "fish_targets": witness
@@ -5944,5 +6411,108 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
                 && witness.death_xp_after.contains(&1)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod fish_bank_receipt_tests {
+    use super::*;
+
+    const HARPOON_ID: i32 = 311;
+
+    fn counts(items: &[(i32, i32)]) -> BTreeMap<i32, i32> {
+        aggregate_item_counts(items.iter().copied())
+    }
+
+    #[test]
+    fn harpoon_bank_receipts_follow_seeded_fixture_and_incidental_slots() {
+        let seeded_baseline = counts(&[(HARPOON_ID, 1), (CASKET_ID, 1)]);
+        assert_eq!(seeded_baseline.get(&CASKET_ID), Some(&1));
+
+        let protected_ids = BTreeSet::from([HARPOON_ID]);
+        let first_inventory = counts(&[(HARPOON_ID, 1), (CASKET_ID, 1), (SWORDFISH_ID, 26)]);
+        let empty_bank = BTreeMap::new();
+        let first_bank = counts(&[(CASKET_ID, 1), (SWORDFISH_ID, 26)]);
+        let carried_tool = counts(&[(HARPOON_ID, 1)]);
+        let mut first = FishBankTripReceipt::new(
+            1,
+            first_inventory.clone(),
+            protected_ids.clone(),
+            empty_bank,
+            0,
+            &[SWORDFISH_ID],
+            1,
+        );
+        assert_eq!(first.expected_product_count(), 26);
+        assert_eq!(first.expected_incidentals.get(&CASKET_ID), Some(&1));
+        first
+            .observe_deposit(&carried_tool, true, &first_bank, 27, true)
+            .unwrap();
+        first.record_return(1, 27).unwrap();
+        first.post_bank_yield = true;
+        assert!(first.complete());
+
+        let second_inventory = counts(&[(HARPOON_ID, 1), (SWORDFISH_ID, 27)]);
+        let second_bank = counts(&[(CASKET_ID, 1), (SWORDFISH_ID, 53)]);
+        let mut second = FishBankTripReceipt::new(
+            2,
+            second_inventory,
+            protected_ids.clone(),
+            first_bank.clone(),
+            27,
+            &[SWORDFISH_ID],
+            0,
+        );
+        assert_eq!(second.expected_product_count(), 27);
+        second
+            .observe_deposit(&carried_tool, true, &second_bank, 54, true)
+            .unwrap();
+        second.record_return(2, 54).unwrap();
+        second.post_bank_yield = true;
+        assert!(second.complete());
+        assert_ne!(first.expected_products, second.expected_products);
+
+        // The old start-capacity gate expected 54 fish. A later casket slot
+        // yields only 53 fish, while the two actual deposits contain 54 items.
+        let legacy_start = counts(&[(HARPOON_ID, 1)]);
+        let legacy_capacity = 28 - legacy_start.len() as u32;
+        let old_first_pack = counts(&[(HARPOON_ID, 1), (SWORDFISH_ID, 27)]);
+        let old_second_pack = counts(&[(HARPOON_ID, 1), (SWORDFISH_ID, 26), (CASKET_ID, 1)]);
+        let old_first_expected = bank_deposit_expectation(&old_first_pack, &protected_ids);
+        let old_second_expected = bank_deposit_expectation(&old_second_pack, &protected_ids);
+        let old_fish_deposited = i64::from(
+            old_first_expected.get(&SWORDFISH_ID).copied().unwrap_or(0)
+                + old_second_expected.get(&SWORDFISH_ID).copied().unwrap_or(0),
+        );
+        let old_required = i64::from(legacy_capacity * 2);
+        let actual_item_deposits = old_first_expected
+            .values()
+            .map(|count| i64::from(*count))
+            .sum::<i64>()
+            + old_second_expected
+                .values()
+                .map(|count| i64::from(*count))
+                .sum::<i64>();
+        assert_eq!(old_required, 54);
+        assert_eq!(old_fish_deposited, 53);
+        assert!(old_fish_deposited < old_required);
+        assert_eq!(actual_item_deposits, 54);
+
+        let mut product_only_baseline = FishBankTripReceipt::new(
+            1,
+            first_inventory.clone(),
+            protected_ids,
+            BTreeMap::new(),
+            0,
+            &[SWORDFISH_ID],
+            1,
+        );
+        let left_in_pack = counts(&[(HARPOON_ID, 1), (CASKET_ID, 1)]);
+        let product_only_bank = counts(&[(SWORDFISH_ID, 26)]);
+        let error = product_only_baseline
+            .observe_deposit(&left_in_pack, true, &product_only_bank, 26, true)
+            .unwrap_err();
+        assert!(error.contains("seeded casket"));
+        assert!(!product_only_baseline.seeded_casket_banked);
     }
 }
