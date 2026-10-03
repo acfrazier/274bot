@@ -1079,15 +1079,18 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
 /// with Appearing/FirstUseEver is ignored while those windows are already
 /// visible, so they must be `DockBuilder::dock_window`'d onto the new leaf
 /// or they float over the panel with a leftover tab bar.
+const PANEL_TAB_WINDOWS: &[&str] = &[
+    "Profiles",
+    "General config",
+    "Nav config",
+    "Script prefs",
+    "Log",
+    "Debug",
+];
+
 fn dock_panel_tabs(ui: &Ui, panel: Id) {
     DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
-    for title in [
-        "Profiles",
-        "General config",
-        "Nav config",
-        "Script prefs",
-        "Debug",
-    ] {
+    for &title in PANEL_TAB_WINDOWS {
         DockBuilder::dock_window(ui, title, panel);
     }
 }
@@ -1541,9 +1544,9 @@ fn title_row(ui: &Ui, session: &mut Session) {
     ui.text_colored(ACCENT, session.app_title());
     ui.same_line();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = scaled_button_row_layout(ui, avail, 2);
+    let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     if !stack {
-        let total = w * 2.0 + scale_px(ui, BUTTON_GAP);
+        let total = w * 3.0 + scale_px(ui, BUTTON_GAP) * 2.0;
         ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - total).max(0.0));
     }
     if ui.button_with_size("MultiBox", [w, 0.0]) {
@@ -1554,19 +1557,28 @@ fn title_row(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     // Grid is a MultiBox submode: hide the rail, Game pane lays members.
-    let _grid_disabled = if !session.multibox {
-        Some(ui.begin_disabled())
-    } else {
-        None
-    };
-    if ui.button_with_size("Grid", [w, 0.0]) {
-        session.set_grid(!session.wall.grid);
+    {
+        let _grid_disabled = if !session.multibox {
+            Some(ui.begin_disabled())
+        } else {
+            None
+        };
+        if ui.button_with_size("Grid", [w, 0.0]) {
+            session.set_grid(!session.wall.grid);
+        }
+        ui.set_item_tooltip(if session.multibox {
+            "grid mode — hide rail"
+        } else {
+            "enable MultiBox first"
+        });
     }
-    ui.set_item_tooltip(if session.multibox {
-        "grid mode — hide rail"
-    } else {
-        "enable MultiBox first"
-    });
+    if !stack {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Log", [w, 0.0]) {
+        session.log_window_open = true;
+    }
+    ui.set_item_tooltip("open log in a panel tab");
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -3683,52 +3695,44 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    if session.ui.log_detached {
-        ui.text_disabled("log is floating in a separate window");
-        if ui.button("Attach log") {
-            session.ui.log_detached = false;
-            crate::ui_state::save(&session.ui);
-        }
-    } else {
-        crate::log_pane::log_body(ui, session, last);
-    }
+    crate::log_pane::log_body(ui, session, last);
 }
 
-/// Draw the shared log in a separate in-app window.
-fn floating_log_window(ui: &Ui, session: &mut Session) {
-    if !session.ui.log_detached {
+/// Draw the shared log as a dockable panel tab.
+fn log_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    log_window_with_body(ui, session, panel_dock, |ui, session| {
+        crate::log_pane::log_body(ui, session, true)
+    });
+}
+
+fn log_window_with_body(
+    ui: &Ui,
+    session: &mut Session,
+    panel_dock: Option<Id>,
+    body: impl FnOnce(&Ui, &mut Session),
+) {
+    if !session.log_window_open {
         return;
     }
-    let viewport = ui.main_viewport();
-    let work_pos = viewport.work_pos();
-    let work_size = viewport.work_size();
-    let scale = ui_scale(ui);
-    let size = scale_size(
-        ui,
-        [
-            PANEL_WIDTH,
-            (work_size[1] / scale - 80.0).clamp(240.0, 560.0),
-        ],
-    );
-    let pos = [
-        work_pos[0] + ((work_size[0] - size[0]) * 0.5).max(0.0),
-        work_pos[1] + ((work_size[1] - size[1]) * 0.5).max(0.0),
-    ];
     let mut open = true;
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
     ui.window("Log")
         .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_DOCKING)
-        .position(pos, Condition::FirstUseEver)
-        .size(size, Condition::FirstUseEver)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size(
+            scale_size(ui, [PANEL_WIDTH, 480.0]),
+            Condition::FirstUseEver,
+        )
         .size_constraints(
             scale_size(ui, [280.0, 180.0]),
             [f32::MAX, scale_px(ui, 720.0)],
         )
-        .build(|| crate::log_pane::log_body(ui, session, true));
-    if !open {
-        session.ui.log_detached = false;
-        crate::ui_state::save(&session.ui);
-    }
+        .build(|| body(ui, session));
+    session.log_window_open = open;
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -5613,7 +5617,7 @@ fn ui_frame(
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
-    floating_log_window(ui, &mut state.session);
+    log_window(ui, &mut state.session, state.panel_dock_node);
     crate::fleet::window(ui, &mut state.session);
     {
         let focus = state.session.focus.lock().unwrap();
