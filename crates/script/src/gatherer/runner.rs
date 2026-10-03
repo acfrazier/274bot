@@ -272,6 +272,7 @@ impl Gatherer {
             target,
             loc_id: None,
             radius,
+            arrival: nav::arrival::ArrivalKind::Reach,
             options: FindOptions {
                 allow_teleports: self.settings().allow_teleports,
                 allow_wilderness: self.settings().allow_wilderness,
@@ -836,6 +837,7 @@ impl Gatherer {
                 target: selected.plan.tile,
                 loc_id,
                 radius: 1,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 options: FindOptions {
                     allow_teleports: self.settings().allow_teleports,
                     allow_wilderness: self.settings().allow_wilderness,
@@ -1500,6 +1502,7 @@ impl Gatherer {
             },
             loc_id: None,
             radius: 0,
+            arrival: nav::arrival::ArrivalKind::Reach,
             options: FindOptions {
                 allow_teleports: false,
                 allow_wilderness: self.settings().allow_wilderness,
