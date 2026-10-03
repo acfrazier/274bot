@@ -147,6 +147,9 @@ pub struct SlotArm {
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
+    /// The observed session exit, shared with the memory notice. Operator
+    /// login intent alone must not turn a dirty reconnect into a clean login.
+    last_exit_clean: AtomicBool,
     /// A script is running or paused on the slot, as the slot thread last
     /// published it ([`SlotArm::set_script_active`]).
     script_active: AtomicBool,
@@ -210,6 +213,7 @@ impl SlotArm {
             world: Arc::new(parking_lot::Mutex::new(None)),
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
+            last_exit_clean: AtomicBool::new(true),
             script_active: AtomicBool::new(false),
             session_online: AtomicBool::new(false),
             logout_work_reset_pending: AtomicBool::new(false),
@@ -401,6 +405,12 @@ impl SlotArm {
             2 => Some(true),
             _ => None,
         }
+    }
+
+    /// Whether the next handshake may apply the queued memory mode.
+    /// A dirty reconnect preserves the server session's applied mode.
+    pub fn login_applies_memory(&self) -> bool {
+        !self.reconnect.load(Ordering::Relaxed) || self.last_exit_clean.load(Ordering::Relaxed)
     }
 
     pub(super) fn logout_work_reset_pending(&self) -> bool {
@@ -884,10 +894,12 @@ pub(super) fn tick_flags(
     client: &mut Client,
     ifaces: &[Option<Box<IfType>>],
     arm: &SlotArm,
-    last_exit_clean: &mut bool,
 ) -> bool {
     if let Some(reason) = client.take_session_exit_reason() {
-        *last_exit_clean = matches!(reason, SessionExitReason::ServerLogout { .. });
+        arm.last_exit_clean.store(
+            matches!(reason, SessionExitReason::ServerLogout { .. }),
+            Ordering::Relaxed,
+        );
         match (arm.stop.load(Ordering::Relaxed), arm.login_latch_reason()) {
             // `signal_slot_stop` logged the removal transition when it armed
             // Stop. A coincident transport observation is not a second exit.
