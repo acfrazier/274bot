@@ -100,6 +100,8 @@ pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> Transport
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

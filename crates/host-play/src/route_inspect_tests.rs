@@ -30,7 +30,7 @@ fn edge(
     at: WorldTile,
     to: WorldTile,
     loc_id: i32,
-    item_req: Vec<(i32, i32)>,
+    consumed_req: Vec<(i32, i32)>,
 ) -> TransportEdge {
     TransportEdge {
         kind,
@@ -43,7 +43,9 @@ fn edge(
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req,
+        item_req: vec![],
+        consumed_req,
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -324,7 +326,7 @@ fn glider_and_boats_use_npc_table() {
 }
 
 #[test]
-fn bank_false_item_gate_is_nopath() {
+fn bank_false_fare_is_nopath() {
     let mut graph = TransportGraph::default();
     let at = tile(0, 0, 0);
     let to = tile(4, 4, 1);

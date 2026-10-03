@@ -63,6 +63,8 @@ fn entry_edges_are_the_wizard_npc_hops_only() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

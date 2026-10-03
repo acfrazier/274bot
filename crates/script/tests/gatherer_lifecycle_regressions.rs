@@ -1726,6 +1726,32 @@ fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
     frame.seed_world(world);
 }
 
+fn assert_resource_return(
+    selected: &Arc<api::game_data::SelectedGameData>,
+    request: &script::native::WalkRequest,
+    anchor: WorldTile,
+) {
+    assert_eq!(request.arrival, nav::arrival::ArrivalKind::Area);
+    assert_eq!(request.radius, 1);
+    assert_eq!(request.target.level, anchor.level);
+    let region = api::gather_methods::SceneRegionInput {
+        min_x: anchor.x - 12,
+        min_z: anchor.z - 12,
+        max_x: anchor.x + 12,
+        max_z: anchor.z + 12,
+        level: anchor.level,
+    };
+    let catalog = fixture_catalog(selected);
+    assert!(
+        catalog.methods_for_resource("normal").any(|method| catalog
+            .spots(method, &region)
+            .unwrap()
+            .any(|spot| spot.origin == request.target)),
+        "Return must target a resource in the retained work area: {:?}",
+        request.target
+    );
+}
+
 #[derive(Clone, Copy)]
 enum RuneStock {
     Full,
@@ -2087,7 +2113,8 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     let HostEffect::Walk(request) = effect else {
         panic!("wear settlement must return")
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
+    let return_target = request.target;
     slot.pause();
     assert!(!old_authority.live());
     slot.resume();
@@ -2095,7 +2122,8 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     let HostEffect::Walk(request) = effect else {
         panic!("off-plane Resume must retain return step")
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(request.target, return_target);
     assert_eq!(request.target.level, 0);
     slot.complete_native_walk(
         &old_authority,
@@ -2118,10 +2146,11 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     let HostEffect::Walk(request) = effect else {
         panic!("reconnect must retain return step")
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(request.target, return_target);
     assert_ne!(fresh_authority.run().session, authority.run().session);
     let _ = request_id;
-    trip_position(&mut frame, anchor);
+    trip_position(&mut frame, request.target);
     let mut locs = work_locs;
     locs[0].id = 1276;
     locs[0].name = Some("Tree".into());
@@ -2535,9 +2564,10 @@ fn death_return_and_recreation_resume_retained_live_steps() {
 
     let (old_authority, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
     let HostEffect::Walk(request) = effect else {
-        panic!("recovery step 5 must return to the retained anchor")
+        panic!("recovery step 5 must return to resources in the retained area")
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
+    let return_target = request.target;
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
 
     // Recreate while the return walk is pending. The old death line remains
@@ -2548,7 +2578,8 @@ fn death_return_and_recreation_resume_retained_live_steps() {
     let HostEffect::Walk(request) = effect else {
         panic!("Pending step 5 recreation must re-enter the return step")
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(request.target, return_target);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
 
@@ -2601,6 +2632,56 @@ fn death_return_and_recreation_resume_retained_live_steps() {
 }
 
 #[test]
+fn death_return_refused_stops_terminally_with_reason() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4413, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to resources in the retained area")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Refused,
+    );
+
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "return-failed");
+    assert!(
+        failure.message.contains("Refused")
+            && failure.message.contains("arrival must be observed"),
+        "terminal status retains the return refusal reason: {}",
+        failure.message
+    );
+    assert_eq!(slot.state(), script::RunState::Idle);
+    assert!(slot.native_run().is_none());
+    assert!(!slot.has_native_actions());
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.reason),
+        Some(failure.message.to_string())
+    );
+    assert!(slot.restart_from_identity(Instant::now()).is_err());
+}
+
+#[test]
 fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_death() {
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
@@ -2615,8 +2696,11 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
     now += 1;
     tick(&mut slot, &first_death, now);
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &first_death, &mut now);
-    assert!(matches!(effect, HostEffect::Walk(_)));
-    trip_position(&mut first_death, anchor);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery must return to resources")
+    };
+    assert_resource_return(&selected, &request, anchor);
+    trip_position(&mut first_death, request.target);
     complete_lifecycle_walk(
         &mut slot,
         &authority,
@@ -2880,8 +2964,11 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
     let mut now = 2;
     tick(&mut slot, &death, now);
     let (authority, request, effect) = next_trip_effect(&mut slot, &death, &mut now);
-    assert!(matches!(effect, HostEffect::Walk(_)));
-    trip_position(&mut death, anchor);
+    let HostEffect::Walk(return_request) = effect else {
+        panic!("recovery must return to resources")
+    };
+    assert_resource_return(&selected, &return_request, anchor);
+    trip_position(&mut death, return_request.target);
     complete_lifecycle_walk(
         &mut slot,
         &authority,
@@ -2907,7 +2994,7 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
 }
 
 #[test]
-fn recovery_return_reconnect_on_another_plane_keeps_the_retained_destination() {
+fn recovery_return_reconnect_on_another_plane_keeps_the_retained_resource_area() {
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2919,7 +3006,10 @@ fn recovery_return_reconnect_on_another_plane_keeps_the_retained_destination() {
     let mut now = 2;
     tick(&mut slot, &death, now);
     let (old, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
-    assert!(matches!(effect, HostEffect::Walk(_)));
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery must return to resources")
+    };
+    assert_resource_return(&selected, &request, anchor);
     slot.pause();
     trip_position(
         &mut death,
@@ -2936,7 +3026,7 @@ fn recovery_return_reconnect_on_another_plane_keeps_the_retained_destination() {
     let HostEffect::Walk(request) = effect else {
         panic!("reconnect must re-enter the retained return, not gather or supply");
     };
-    assert_eq!(request.target, anchor);
+    assert_resource_return(&selected, &request, anchor);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
     assert!(slot.native_status().unwrap().failure.is_none());

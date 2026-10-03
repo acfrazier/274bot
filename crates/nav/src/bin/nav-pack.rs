@@ -7,10 +7,10 @@
 //! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
 //! path with its extension swapped to `.navflags` (default
 //! `~/.274bot/274bot.navflags`). Legacy 274 usage remains:
-//! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where the defaults
-//! are `$ENGINE_DIR/../content/maps` (default
-//! `$HOME/experiments/Server/engine` → `.../content/maps`), matching doors
-//! under that content tree, and `$ENGINE_DIR/data/pack/config`.
+//! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where omitted paths
+//! resolve from `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR`: the engine's sibling
+//! `content/maps`, matching doors configs under that content tree, and
+//! `<engine>/data/pack/config`. Pass all three paths to use a different tree.
 //! Revision-bound bakes use explicit inputs:
 //! `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
 //! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]
@@ -49,16 +49,22 @@ use nav::bake::{
 };
 use nav::manifest::{nav_manifest_path, CacheManifest};
 
-fn default_maps_dir() -> PathBuf {
-    content_inputs(&client::content_dir()).maps_dir
-}
-
-fn default_doors_dir() -> PathBuf {
-    content_inputs(&client::content_dir()).doors_dir
-}
-
-fn default_config_jag() -> PathBuf {
-    client::config_jag()
+fn legacy_default_paths(
+    engine_dir: Option<PathBuf>,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let engine_dir = engine_dir.ok_or_else(|| {
+        "legacy positional defaults require BOT_NAV_ENGINE_DIR or ENGINE_DIR; pass all three input paths to avoid defaults".to_owned()
+    })?;
+    let content_dir = engine_dir
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("content");
+    let inputs = content_inputs(&content_dir);
+    Ok((
+        inputs.maps_dir,
+        inputs.doors_dir,
+        engine_dir.join("data/pack/config"),
+    ))
 }
 
 fn default_out() -> PathBuf {
@@ -105,18 +111,33 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         if args.len() > 3 {
             return Err("usage: nav-pack [MAPS_DIR [DOORS_CONFIG_DIR [CONFIG_JAG]]]".into());
         }
+        let defaults = if args.len() < 3 {
+            let engine_dir = env::var_os("BOT_NAV_ENGINE_DIR")
+                .or_else(|| env::var_os("ENGINE_DIR"))
+                .map(PathBuf::from);
+            Some(legacy_default_paths(engine_dir)?)
+        } else {
+            None
+        };
         let maps_dir = args
             .first()
             .map(PathBuf::from)
-            .unwrap_or_else(default_maps_dir);
+            .or_else(|| defaults.as_ref().map(|(maps_dir, _, _)| maps_dir.clone()))
+            .ok_or_else(|| "missing maps path; pass it explicitly".to_owned())?;
         let doors_dir = args
             .get(1)
             .map(PathBuf::from)
-            .unwrap_or_else(default_doors_dir);
+            .or_else(|| defaults.as_ref().map(|(_, doors_dir, _)| doors_dir.clone()))
+            .ok_or_else(|| "missing doors path; pass it explicitly".to_owned())?;
         let config_jag = args
             .get(2)
             .map(PathBuf::from)
-            .unwrap_or_else(default_config_jag);
+            .or_else(|| {
+                defaults
+                    .as_ref()
+                    .map(|(_, _, config_jag)| config_jag.clone())
+            })
+            .ok_or_else(|| "missing config cache path; pass it explicitly".to_owned())?;
         let out = env::var("NAV_PACK")
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_out());

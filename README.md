@@ -59,10 +59,11 @@ Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per r
 Without an explicit profile, the saved panel revision chooses `local-274` or
 `local-289`; otherwise local 274 is the default.
 
-Default engine roots (override with `--engine` / `ENGINE_DIR`):
-
-- 274: `$HOME/experiments/Server/engine`
-- 289: `$HOME/experiments/lostcity-289/engine`
+Local engine roots are never inferred from `HOME`. A local profile resolves
+the root in this order: `--engine`, `ENGINE_DIR`, then `login_key.engine_dir`
+in `~/.274bot/servers.json`. New `servers.json` files leave that path unset;
+without an explicit value, a local profile fails fast with setup guidance.
+The public WSS profile does not need an engine root.
 
 All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
 
@@ -89,17 +90,24 @@ git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 ```
 
-Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP and retains the checked JAGs plus the decoded snapshots under the revision unpack root; later boots revalidate and reuse them instead of downloading everything again. See [FIRST-START.md](FIRST-START.md) for the retention layout.
+Set `ENGINE_DIR` to your local engine root, or pass `--engine` on the command
+line. The command-line value wins over `ENGINE_DIR` and a saved profile path.
+On first `maininit` the client GETs `/crc` and jag files from the engine HTTP
+and retains the checked JAGs plus decoded snapshots under the revision unpack
+root; later boots revalidate and reuse them. See [FIRST-START.md](FIRST-START.md)
+for the retention layout.
 
 Stock Lost City Server uses the **Java default login RSA key pair** for local — no key bake. If you rotated `private.pem`, login reads the public half from `$ENGINE_DIR/data/config/private.pem` (or `LOGIN_RSAN` / `LOGIN_RSAE`).
 
 ```bash
+export ENGINE_DIR=/absolute/path/to/engine
+
 # The vault passphrase is never read from the environment or the command line:
 # the panel asks in its unlock window, host-play and tui-play ask on the terminal.
 # Prefer an explicit profile. Example: local 289 engine.
 cargo run --release -p panel --bin panel-play -- --profile local-289
-# Local 274:
-# BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
+# Local 274: set ENGINE_DIR to the 274 engine root for this build/run.
+# BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 
 # CLI: run one or more vaulted profiles (upserts --user; default test/test).
 # Asks for the vault passphrase on the terminal; a new vault asks twice.
@@ -165,9 +173,9 @@ table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **14**). **Rebake existing v13 and older packs after updating:** v14 marks content-derived player-relative ladder/stair landings in the existing kind byte, with no added wire bytes. It retains the zone table, selected quest-family binding, typed quest-stage gates and per-edge approach geometry; `decode` rejects v13 and older as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **15**). **Rebake existing v14 and older packs after updating:** v15 adds count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`. Spell runes and script-deleted fares/passes are consumed; charged jewellery returns its content-declared `next_obj_stage` after a successful rub. Resource counts must be positive, and returned items require consumption. The v14 kind-byte flag still marks content-derived player-relative ladder/stair landings without added wire bytes. v15 retains the zone table, selected quest-family binding, typed quest-stage gates and per-edge approach geometry; `decode` rejects v14 and older as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
-**External v14 packs keep their baked routing data.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-derived from the current content tree. Rebake it with `nav-pack` after content changes to refresh its zone table and routing data.
+**External v15 packs keep their baked routing data.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-derived from the current content tree. Rebake it with `nav-pack` after content or format changes to refresh its zone table, resource accounting and routing data.
 
 ## Live tests and suite runner
 

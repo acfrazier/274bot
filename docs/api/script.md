@@ -179,6 +179,16 @@ on change; unchanged polls do not allocate or republish it. These intermediate
 status fields do not complete the step or replace the final outcome used by
 Path predicates.
 
+### Dialogue page acknowledgements
+
+Native and compatibility dialogue acknowledge Continue and answers only when
+the chat root, Continue visibility, or modal-page content changes. Modal content
+includes every body text line and each option's component id and text; a new
+chat-history ring line is not page progress. The host computes the shared native
+fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
+copying modal text into JavaScript. An unchanged page times out without repeating
+the action.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with

@@ -11,7 +11,10 @@ use serde::Serialize;
 mod views;
 pub use views::*;
 mod native;
-pub use native::{ChatLines, ChatModalView, CombatView, JournalModalView, Observed, SnapshotView};
+pub use native::{
+    chat_page_fingerprint, ChatLines, ChatModalView, CombatView, JournalModalView, Observed,
+    SnapshotView,
+};
 mod decode;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};

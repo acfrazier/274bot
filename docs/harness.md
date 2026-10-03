@@ -46,18 +46,16 @@ existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
 The `nav_door` integration test uses hard-coded Direct local-274 options and
-the fixed `$HOME/experiments/Server/engine/data/pack/client` cache path.
-`BOT_SERVER_PROFILE` does not select that test's endpoint:
+the `ENGINE_DIR/data/pack/client` cache path. `BOT_SERVER_PROFILE` does not
+select that test's endpoint:
 
 ```sh
-BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+BOT_NAV_REVISION=274 ENGINE_DIR=/absolute/path/to/274-engine LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-Some existing integration-test helpers use the default
-`HOME/experiments/Server/engine/data/pack/client` layout. Check the
-relevant test's cache options when running it on another machine; setting
-`ENGINE_DIR` is not a universal override for those older helpers. Frontend
-harnesses use the configured engine/cache path from the resolved profile.
+Direct integration-test helpers that use engine cache data require
+`ENGINE_DIR`; frontend harnesses use the configured engine/cache path from
+the resolved profile.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
 
@@ -113,25 +111,39 @@ accounted before the runner blocks.
 
 ## Gatherer fishing bank returns
 
-The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell starts the native
-Gatherer at Catherby with an inventory harpoon and one seeded `casket` (item ID
-405). It catches its own fish and uses Bank disposition; the fixture never
-injects fish or XP.
+The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell tests a fixed
+Start location at Catherby with an inventory harpoon and one seeded `casket`
+(item ID 405). The ignored
+`gatherer_live::gatherer_fish_harpoon_bank_auto` cell exercises the operator's
+Auto return settings: Fishing level 76, canonical method ID
+`fishing.rarefish.op3`, location `Auto`, radius 40, Bank disposition, and
+Catherby bank. Its fixed test target is tile `2840,3436,0`. Initial level/tool
+fixtures precede the progression baseline; no fish, casket, proof XP gains, or
+randomized fishing-location state are seeded.
 
-The live gate requires at least two positive fish deposits followed by fresh
-fishing yields after both returns. It verifies the seeded casket in the Start
-baseline, then verifies that its bank count increases and no casket remains in
-the pack after the first deposit. Each trip receipt derives expected item and
-product counts from the actual pre-deposit inventory, excluding protected
+Both cells require at least two positive fish deposits followed by a fresh
+fishing yield after each bank return. Only the fixed-location cell requires the
+seeded casket in the Start baseline and verifies its deposit; the Auto case has
+no seeded-casket gate. Each trip receipt derives expected item and product
+counts from the actual pre-deposit inventory, excluding protected
 tools/supplies; it verifies deposited IDs leave the pack and their bank counts
 increase while the bank is loaded. A naturally dropped casket is recorded only
 as an observation, never required. The existing preparation and wedge deadlines
-still bound the run.
+still bound both runs.
+
+After banking, Gatherer returns to the selected method's content-derived
+observation stand using area arrival with a one-tile radius. The work-area radius
+remains the gathering bound; a bank inside that bound does not complete Return.
+Area arrival settles only at a currently loaded, standable tile near the
+observation stand, then Gatherer observes resources again.
+
+The command below runs both ignored cells (the filter intentionally is not
+`--exact`):
 
 ```sh
 LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=gf \
 cargo test -p host-play --test gatherer_live gatherer_fish_harpoon_bank \
-  -- --ignored --exact --nocapture --test-threads=1
+  -- --ignored --nocapture --test-threads=1
 ```
 
 Set a disposable `HOME` with copied `BOT_CACHE_DIR`/`CLIENT_UNPACK_DIR` inputs,
@@ -142,15 +154,19 @@ select the local engine at `44594`/`1080`. `GATHERER_FISH_HARPOON_TILE` optional
 overrides the default `2840,3436,0`. `LIVE_EVIDENCE_DIR` saves a real client
 capture and a receipt containing the tick-stamped bank status/event sequence.
 
-Fishing tools are carried, not wielded. Returning inside the configured work
-radius does not prove that moving fishing spots are visible: NPC view is smaller
-than the loaded map. For NPC-backed fishing, the selector derives observation
-stands from the content movement envelope and accumulates empty coverage for at
-most 100 gameplay ticks. It caps reapproaches at eight per method/placement;
-exhaustion follows existing Avoided/Exhausted selection instead of falsely
-declaring the spot absent. A live actor clears empty evidence but does not renew
-the approach budget; positive gather progress does. Rock and tree placement
-observation still uses the loaded map rectangle.
+Fishing tools are carried, not wielded. In the Auto case, radius 40 bounds the
+gathering area only; it is not a bank-return shortcut. After banking, the return
+must reach a resource observation stand using navigation `Area` arrival radius
+1 before another catch can demonstrate return progress. NPC view is smaller
+than the loaded map, so returning inside the gathering area alone does not
+prove that moving fishing spots are visible. For NPC-backed fishing, the
+selector derives observation stands from the content movement envelope and
+accumulates empty coverage for at most 100 gameplay ticks. It caps reapproaches
+at eight per method/placement; exhaustion follows existing Avoided/Exhausted
+selection instead of falsely declaring the spot absent. A live actor clears
+empty evidence but does not renew the approach budget; positive gather progress
+does. Rock and tree placement observation still uses the loaded map rectangle.
+
 ## Walk Guard W1 live and receipt replay
 
 The ignored W1 fixtures exercise the `death-plateau-throwers` crossing against

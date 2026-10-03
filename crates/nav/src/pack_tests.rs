@@ -702,6 +702,8 @@ fn roundtrip_collision_and_transport_graph() {
         open_loc_id: Some(1531),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![772], // dramen_staff on the Zanaris shed door
@@ -729,6 +731,8 @@ fn roundtrip_collision_and_transport_graph() {
         open_loc_id: None,
         skill_req: vec![(16, 5)],
         item_req: vec![(995, 10)],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec!["Restless Ghost".into()],
         varp_req: vec![(4, 1)],
         worn_req: vec![],
@@ -760,6 +764,8 @@ fn roundtrip_collision_and_transport_graph() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![(150, 160)],
         worn_req: vec![],
@@ -791,6 +797,8 @@ fn roundtrip_collision_and_transport_graph() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![(150, 160)],
         worn_req: vec![],
@@ -820,6 +828,8 @@ fn roundtrip_collision_and_transport_graph() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -850,7 +860,9 @@ fn roundtrip_collision_and_transport_graph() {
         dir: None,
         open_loc_id: None,
         skill_req: vec![(6, 25)],
-        item_req: vec![(554, 1), (556, 3), (563, 1)],
+        item_req: vec![],
+        consumed_req: vec![(554, 1), (556, 3), (563, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -895,6 +907,11 @@ fn roundtrip_collision_and_transport_graph() {
     assert_eq!(g.edges[ni].kind, TransportKind::Npc);
     // Teleports round-trip without entering the ordinary edge index.
     assert_eq!(g.teleports, graph.teleports);
+    assert!(g.teleports[0].item_req.is_empty());
+    assert_eq!(
+        g.teleports[0].consumed_req,
+        vec![(554, 1), (556, 3), (563, 1)]
+    );
 
     let route = crate::router::find_with(
         &c,
@@ -934,6 +951,75 @@ fn roundtrip_collision_and_transport_graph() {
     assert!(matches!(
         decode(&encode_grid(&StepGrid::fixture_open_3x3())),
         Err(PackError::BadMagic)
+    ));
+}
+
+#[test]
+fn v15_roundtrips_consumed_and_returned_resources() {
+    let collision = tiny_collision();
+    let mut edge = gated_door(None);
+    edge.kind = TransportKind::Teleport;
+    edge.item_req = vec![(1351, 1)];
+    edge.consumed_req = vec![(995, 5)];
+    edge.item_returns = vec![(386, 1)];
+    let mut graph = TransportGraph::default();
+    graph.teleports.push(edge.clone());
+
+    let bytes = encode(&collision, &graph, &[]);
+    assert_eq!(bytes[4], 15);
+    assert_eq!(VERSION, 15);
+    assert_eq!(crate::pack::FORMAT_ID, "274V15");
+    let (_, decoded, _) = decode(&bytes).unwrap();
+    assert_eq!(decoded.teleports, vec![edge]);
+}
+
+#[test]
+fn v15_rejects_nonpositive_resource_counts_and_unconsumed_returns() {
+    let collision = tiny_collision();
+    let mut edge = gated_door(None);
+    edge.kind = TransportKind::Teleport;
+    edge.item_req = vec![(1351, 1)];
+    edge.consumed_req = vec![(995, 5)];
+    edge.item_returns = vec![(386, 1)];
+    let mut graph = TransportGraph::default();
+    graph.teleports.push(edge.clone());
+    let bytes = encode(&collision, &graph, &[]);
+
+    let edge_start = 4 + 1 + 1 + 12 + 8 + collision.walk.len() + collision.blocked.len() * 8 + 4;
+    let fixed = edge_start + 42;
+    let item_req = fixed + 4 + edge.skill_req.len() * 8;
+    let consumed_req = item_req + 4 + edge.item_req.len() * 8;
+    let item_returns = consumed_req + 4 + edge.consumed_req.len() * 8;
+
+    let mut bad_item_count = bytes.clone();
+    bad_item_count[item_req + 4 + 4..item_req + 4 + 8].copy_from_slice(&0i32.to_le_bytes());
+    assert!(matches!(
+        decode(&bad_item_count),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut bad_consumed_count = bytes.clone();
+    bad_consumed_count[consumed_req + 4 + 4..consumed_req + 4 + 8]
+        .copy_from_slice(&0i32.to_le_bytes());
+    assert!(matches!(
+        decode(&bad_consumed_count),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut bad_return_count = bytes.clone();
+    bad_return_count[item_returns + 4 + 4..item_returns + 4 + 8]
+        .copy_from_slice(&0i32.to_le_bytes());
+    assert!(matches!(
+        decode(&bad_return_count),
+        Err(PackError::BadLength(_))
+    ));
+
+    let mut missing_consumption = bytes;
+    missing_consumption[consumed_req..consumed_req + 4].copy_from_slice(&0u32.to_le_bytes());
+    missing_consumption.drain(consumed_req + 4..consumed_req + 4 + edge.consumed_req.len() * 8);
+    assert!(matches!(
+        decode(&missing_consumption),
+        Err(PackError::BadLength(_))
     ));
 }
 
@@ -1373,6 +1459,8 @@ fn v8_roundtrips_worn_req() {
         open_loc_id: Some(1532),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec!["Lost City".into()],
         varp_req: vec![],
         worn_req: vec![772],
@@ -1430,6 +1518,8 @@ fn v9_roundtrips_members_req_true_and_false() {
         open_loc_id: Some(1560),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1448,7 +1538,7 @@ fn v9_roundtrips_members_req_true_and_false() {
 }
 
 #[test]
-fn v13_decode_rejects_older_version_bytes() {
+fn v15_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -1464,6 +1554,9 @@ fn v13_decode_rejects_older_version_bytes() {
         flags: None,
     };
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+    // v14 predates the consumed-resource and replacement-item vectors.
+    bytes[4] = 14;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(14))));
     // v13 lacks the player-relative landing mode and must not be guessed.
     bytes[4] = 13;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(13))));
@@ -1518,6 +1611,8 @@ fn v9_decode_rejects_invalid_members_req_flag() {
         open_loc_id: Some(1560),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2223,6 +2318,8 @@ fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
         open_loc_id: None,
         skill_req: vec![(6, 25)],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2276,6 +2373,8 @@ fn gated_door(quest_gates: Option<QuestGates>) -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

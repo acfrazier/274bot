@@ -388,8 +388,8 @@ export function bestAxe(woodcuttingLevel: number, available: (name: string) => b
 export function toolKeepNames(reqs: readonly ToolReq[]): string[];
 export function hasToolReq(req: ToolReq, skillLevel: (skill: string) => number, count: (name: string) => number): boolean;
 export function hasAllTools(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number): boolean;
-export function missingToolLabels(reqs?: readonly ToolReq[], skillLevel?: (skill: string) => number, count?: (name: string) => number): never;
-export function toolKitLabel(reqs?: readonly ToolReq[], skillLevel?: (skill: string) => number, count?: (name: string) => number): never;
+export function missingToolLabels(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number): string[];
+export function toolKitLabel(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, count: (name: string) => number): string;
 export interface ToolRestockStep {
     name: string;
     qty: number;
@@ -400,7 +400,7 @@ export function toolRestockPlan(reqs: readonly ToolReq[], skillLevel: (skill: st
  * True when the bank holds a strictly better usable tiered tool than the pack/worn set.
  * Requires bank counts (open/loaded bank). Used to decide a one-shot startup bank trip.
  */
-export function bankHasBetterGatherTool(reqs?: readonly ToolReq[], skillLevel?: (skill: string) => number, invCount?: (name: string) => number, bankCount?: (name: string) => number): never;
+export function bankHasBetterGatherTool(reqs: readonly ToolReq[], skillLevel: (skill: string) => number, invCount: (name: string) => number, bankCount: (name: string) => number): boolean;
 
 }
 

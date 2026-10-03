@@ -55,8 +55,10 @@ fn gated_edge() -> TransportEdge {
         ticks: 1,
         dir: None,
         open_loc_id: None,
-        skill_req: vec![(6, 25)],  // Magic 25 (spell teleports)
-        item_req: vec![(995, 10)], // the 10-coin toll
+        skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
+        item_req: vec![],
+        consumed_req: vec![(995, 10)], // the 10-coin toll
+        item_returns: vec![],
         quest_req: vec!["Rune Mysteries".to_string()],
         varp_req: vec![(150, 160)], // Grand Tree complete
         worn_req: vec![1712],       // a charged glory
@@ -80,13 +82,13 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .graph
         .edges
         .iter()
-        .find(|e| e.loc_id == 2882 && e.at == at && e.to != at && e.item_req == vec![(995, 10)])
+        .find(|e| e.loc_id == 2882 && e.at == at && e.to != at && e.consumed_req == vec![(995, 10)])
         .expect("real pack contains the paid Al Kharid toll crossing");
     let free = world
         .graph
         .edges
         .iter()
-        .find(|e| e.loc_id == 2882 && e.at == at && e.to == toll.to && e.item_req.is_empty())
+        .find(|e| e.loc_id == 2882 && e.at == at && e.to == toll.to && e.consumed_req.is_empty())
         .expect("real pack contains the quest-waived crossing alongside the paid one");
     assert_eq!(free.quest_req, ["Prince Ali Rescue"]);
     assert!(
@@ -162,7 +164,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .edges
         .iter()
         .find(|edge| {
-            edge.loc_id == 2883 && edge.item_req.is_empty() && edge.quest_req == free.quest_req
+            edge.loc_id == 2883 && edge.consumed_req.is_empty() && edge.quest_req == free.quest_req
         })
         .expect("other Al Kharid toll gate also has a quest-waived crossing");
     assert!(!unpaid.allows(south_gate));
@@ -213,7 +215,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
     assert!(route
         .legs
         .iter()
-        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.item_req.is_empty() && edge.quest_req == free.quest_req)));
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.consumed_req.is_empty() && edge.quest_req == free.quest_req)));
     assert!(
         find_with(
             &collision,
@@ -365,6 +367,7 @@ fn worn_req_passes_when_any_listed_obj_is_worn() {
     let mut e = gated_edge();
     e.skill_req.clear();
     e.item_req.clear();
+    e.consumed_req.clear();
     e.quest_req.clear();
     e.varp_req.clear();
     e.worn_req = vec![1277, 1321]; // bronze sword, bronze scimitar
@@ -391,6 +394,7 @@ fn empty_state_allows_nothing_gated() {
     let free = TransportEdge {
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -544,6 +548,7 @@ fn members_req_refuses_until_map_members_is_true() {
     let mut e = gated_edge();
     e.skill_req.clear();
     e.item_req.clear();
+    e.consumed_req.clear();
     e.quest_req.clear();
     e.varp_req.clear();
     e.worn_req.clear();

@@ -1,13 +1,13 @@
 //! BankBudget (Task 8): the fetch-and-wear session that unblocks a
 //! [`crate::router::find_with`] `NoPath` whose only missing gates are
-//! `item_req`/`worn_req`. `find` itself stays fail-closed — the router
-//! never inserts a virtual bank leg and never relaxes an edge; this
+//! `item_req`, `consumed_req`, or `worn_req`. `find` stays fail-closed:
+//! the router never inserts a virtual bank leg or relaxes an edge; this
 //! session is the only thing that may fetch, and the host re-runs the
 //! strict search after the steps land.
 //!
 //! The session is a **plan**: ordered steps the host pump executes
 //! through the [`crate::traveller::Traveller`] and the `api::interact`
-//! bank path (open/deposit/withdraw/close/wear), plus the [`WorldState`]
+//! bank path (open/withdraw/close/wear), plus the [`WorldState`]
 //! those steps leave behind for the post-session re-find. A `worn_req`
 //! alternative already carried plans a bare [`BankStep::Wear`] — no
 //! bank walk. Anything the plan cannot supply (neither carried nor
@@ -113,11 +113,14 @@ pub enum BankStep {
     Walk { x: i32, z: i32, level: i32 },
     /// Open the bank (booth `Use-quickly` / teller op).
     Open,
-    /// Deposit the whole backpack.
-    DepositAll,
-    /// Withdraw `count` of the obj from the open bank: an `item_req`
-    /// count, or 1 for a `worn_req` the session then wears.
+    /// Withdraw exactly `count` units from the open bank using a fixed
+    /// amount or Withdraw All when it is the whole bank stack.
     Withdraw { id: i32, count: i32 },
+    /// Open the bank's Withdraw-X amount dialog for `id`; followed by
+    /// [`BankStep::WithdrawXAmount`].
+    WithdrawX { id: i32 },
+    /// Answer the open Withdraw-X dialog with the exact amount.
+    WithdrawXAmount { id: i32, count: i32 },
     /// Wear/wield the obj from the inventory (`worn_req`). A bank trip
     /// wears only after [`BankStep::Close`]: the client cannot wear from
     /// the backpack while the bank is open.
@@ -132,10 +135,9 @@ pub enum BankStep {
 pub struct BankFetch {
     /// The ordered steps the pump executes.
     pub steps: Vec<BankStep>,
-    /// The world-state the steps leave behind: the backpack deposited,
-    /// every `item_req` stack withdrawn to its needed count, every
-    /// `worn_req` obj worn. The post-session strict re-find must pass
-    /// against this state; anything less fails closed.
+    /// The world-state the steps leave behind: every carried item is
+    /// preserved, short Carry stacks are topped up, and each selected
+    /// `worn_req` alternative is worn after the bank closes.
     pub state: WorldState,
 }
 
@@ -143,6 +145,10 @@ pub struct BankFetch {
 /// diagnosis is `missing` ([`crate::router::find_missing_item_reqs`], or
 /// [`crate::router::missing_item_reqs`] of a route found under
 /// [`fetchable_state`]).
+/// `Carry` counts are the total initial supply the route needs, not the
+/// withdrawal amount; when another deficiency exists, they may include
+/// targets already held so a matching `WearAny` cannot spend the last
+/// carried unit needed by the route.
 /// `state` is the search's gating facts; `bank` is the **open** bank's
 /// rows (obj id, count) from the live snapshot — empty when the bank is
 /// closed (BankBudget has no closed-bank inventory, so a needed item
@@ -154,13 +160,11 @@ pub struct BankFetch {
 ///
 /// A `worn_req` alternative already carried plans only [`BankStep::Wear`]
 /// — no bank walk. Otherwise the plan walks to that access tile, opens
-/// the bank, deposits the backpack, withdraws every missing item, closes,
-/// and then wears each `worn_req` one. The deposit supplies the
-/// bank with the carried stack, so a `worn_req` alternative that is
-/// merely carried is fetchable after it; every needed amount must be
-/// covered by bank + carried stacks combined. `None` when the plan
-/// cannot be built — the caller reports
-/// [`crate::router::RouteError::NoPath`].
+/// the bank, withdraws only each Carry or worn-item deficit, closes, and
+/// then wears each selected `worn_req` item. Existing carried inventory
+/// is never deposited or cleared. Every required amount must be covered
+/// by bank + carried stacks combined. `None` when the plan cannot be
+/// built — the caller reports [`crate::router::RouteError::NoPath`].
 pub fn plan_bank_fetch(
     missing: &[MissingReq],
     state: &WorldState,
@@ -172,104 +176,145 @@ pub fn plan_bank_fetch(
     if missing.is_empty() {
         return None;
     }
-    // Wear-from-inventory only: every missing req is a worn_req with at
-    // least one alternative already carried. No bank trip at all.
-    let all_worn_carried = missing.iter().all(|r| match r {
-        MissingReq::WearAny { ids } => ids
-            .iter()
-            .any(|id| state.inv.get(id).is_some_and(|&c| c >= 1)),
-        MissingReq::Carry { .. } => false,
-    });
-    if all_worn_carried {
-        let mut post = state.clone();
-        let mut steps = Vec::new();
-        for r in missing {
-            match r {
-                MissingReq::WearAny { ids } => {
-                    let id = ids
-                        .iter()
-                        .find(|id| state.inv.get(id).is_some_and(|&c| c >= 1))
-                        .copied()
-                        .expect("all-worn-carry checked the alternatives");
-                    post.worn.insert(id);
-                    if let Some(c) = post.inv.get_mut(&id) {
-                        *c -= 1;
-                        if *c <= 0 {
-                            post.inv.remove(&id);
-                        }
-                    }
-                    steps.push(BankStep::Wear { id });
-                }
-                MissingReq::Carry { .. } => unreachable!("all-worn-carry arm"),
-            }
-        }
-        return Some(BankFetch { steps, state: post });
-    }
 
-    // Bank trip. The deposit moves the carried stacks into the bank, so
-    // every needed amount may come from the bank's rows plus the
-    // backpack: `supply` is the combined count, saturated at a full stack.
     let bank_count = |id: i32| {
         bank.iter()
             .find(|&&(i, _)| i == id)
-            .map(|&(_, c)| c)
-            .unwrap_or(0)
+            .map_or(0, |&(_, count)| count.max(0))
     };
-    let supply = |id: i32| bank_count(id).saturating_add(state.inv.get(&id).copied().unwrap_or(0));
-    for r in missing {
-        match r {
-            MissingReq::Carry { id, count } => {
-                if supply(*id) < *count {
-                    return None;
-                }
-            }
-            MissingReq::WearAny { ids } => {
-                if !ids.iter().any(|id| supply(*id) >= 1) {
-                    return None;
-                }
-            }
-        }
-    }
-    // Walk dest is a standable access tile, never the interact tile.
-    let access = nearest_bank_access(collision, stands, from)?;
+    let held_count = |id: i32| state.inv.get(&id).copied().unwrap_or(0).max(0);
 
-    let mut steps = vec![
-        BankStep::Walk {
-            x: access.x,
-            z: access.z,
-            level: access.level,
-        },
-        BankStep::Open,
-        BankStep::DepositAll,
-    ];
-    // The deposit clears the backpack; the withdrawals rebuild it to
-    // exactly what the strict gate needs. Wearing waits for the close.
-    let mut post = state.clone();
-    post.inv.clear();
-    let mut wear = Vec::new();
-    for r in missing {
-        match r {
-            MissingReq::Carry { id, count } => {
-                steps.push(BankStep::Withdraw {
-                    id: *id,
-                    count: *count,
-                });
-                post.inv.insert(*id, *count);
-            }
-            MissingReq::WearAny { ids } => {
-                let id = ids
-                    .iter()
-                    .find(|id| supply(**id) >= 1)
-                    .copied()
-                    .expect("the supply check passed an alternative");
-                steps.push(BankStep::Withdraw { id, count: 1 });
-                wear.push(BankStep::Wear { id });
-                post.worn.insert(id);
-            }
+    // Carry rows describe total initial inventory needed along the route.
+    // Use one target per obj id so duplicate diagnoses do not plan duplicate
+    // withdrawals.
+    let mut carry = Vec::<(i32, i32)>::new();
+    for req in missing {
+        let MissingReq::Carry { id, count } = req else {
+            continue;
+        };
+        if *count <= 0 {
+            continue;
+        }
+        if let Some((_, target)) = carry.iter_mut().find(|(held, _)| held == id) {
+            *target = (*target).max(*count);
+        } else {
+            carry.push((*id, *count));
         }
     }
-    steps.push(BankStep::Close);
-    steps.append(&mut wear);
+    let carry_count = |id: i32| {
+        carry
+            .iter()
+            .find(|&&(held, _)| held == id)
+            .map_or(0, |&(_, count)| count)
+    };
+
+    // Select one available alternative for each missing worn gate. Prefer a
+    // carried surplus, but reserve every Carry target first: a carried item
+    // that is also the selected wearer must have an extra unit beyond the
+    // count the route needs kept in inventory.
+    let mut wear = Vec::<i32>::new();
+    for req in missing {
+        let MissingReq::WearAny { ids } = req else {
+            continue;
+        };
+        if ids
+            .iter()
+            .any(|id| state.worn.contains(id) || wear.contains(id))
+        {
+            continue;
+        }
+
+        let mut carried_choice = None;
+        let mut available_choice = None;
+        for &id in ids {
+            let reserved = carry_count(id);
+            let held = held_count(id);
+            let total = held.saturating_add(bank_count(id));
+            if held > reserved && carried_choice.is_none() {
+                carried_choice = Some(id);
+            }
+            if total > reserved && available_choice.is_none() {
+                available_choice = Some(id);
+            }
+        }
+        let id = carried_choice.or(available_choice)?;
+        wear.push(id);
+    }
+
+    // The route needs its initial Carry budget plus a separate item for
+    // every chosen wearable that shares an obj id with that budget.
+    let mut target_ids: Vec<i32> = carry.iter().map(|&(id, _)| id).collect();
+    for &id in &wear {
+        if !target_ids.contains(&id) {
+            target_ids.push(id);
+        }
+    }
+    let mut withdrawals = Vec::<(i32, i32)>::new();
+    for id in target_ids {
+        let target = carry_count(id).checked_add(i32::from(wear.contains(&id)))?;
+        let held = held_count(id);
+        if held.saturating_add(bank_count(id)) < target {
+            return None;
+        }
+        let count = target.saturating_sub(held);
+        if count > 0 {
+            withdrawals.push((id, count));
+        }
+    }
+
+    // When everything is already carried, wear in place and avoid a bank
+    // trip. A bank trip is needed only when there is a real shortage.
+    let needs_bank = !withdrawals.is_empty();
+    let mut steps = if needs_bank {
+        let access = nearest_bank_access(collision, stands, from)?;
+        vec![
+            BankStep::Walk {
+                x: access.x,
+                z: access.z,
+                level: access.level,
+            },
+            BankStep::Open,
+        ]
+    } else if wear.is_empty() {
+        return None;
+    } else {
+        Vec::new()
+    };
+
+    if needs_bank {
+        for &(id, count) in &withdrawals {
+            if matches!(count, 1 | 5 | 10) || count == bank_count(id) {
+                steps.push(BankStep::Withdraw { id, count });
+            } else {
+                steps.push(BankStep::WithdrawX { id });
+                steps.push(BankStep::WithdrawXAmount { id, count });
+            }
+        }
+        steps.push(BankStep::Close);
+    }
+    for &id in &wear {
+        steps.push(BankStep::Wear { id });
+    }
+
+    // No step clears the backpack: retain its full snapshot and add only
+    // the calculated shortages before applying the selected wear moves.
+    let mut post = state.clone();
+    for &(id, count) in &withdrawals {
+        let held = post.inv.entry(id).or_insert(0);
+        *held = held.saturating_add(count);
+    }
+    for id in wear {
+        post.worn.insert(id);
+        let exhausted = if let Some(held) = post.inv.get_mut(&id) {
+            *held -= 1;
+            *held <= 0
+        } else {
+            false
+        };
+        if exhausted {
+            post.inv.remove(&id);
+        }
+    }
     Some(BankFetch { steps, state: post })
 }
 
@@ -280,11 +325,12 @@ pub fn plan_bank_fetch(
 /// it) plus the backpack can be carried at their combined count (saturated
 /// at a full stack, so a bank row never takes a carried fact away), and
 /// worn.
-/// A strict search under this state reaches only goals whose
-/// `item_req`/`worn_req` gates a session can meet, and [`plan_bank_fetch`]
-/// plans every such route's missing facts, so a goal behind an obj the
-/// session cannot get never hides one it can (frozen `virtualizeWithItems`
-/// likewise searches with the bank's objs assumed held).
+/// A strict search under this state reaches only goals whose `item_req`,
+/// `consumed_req`, or `worn_req` gates a session can meet, and
+/// [`plan_bank_fetch`] budgets the whole route's missing facts. A goal
+/// behind an obj the session cannot get never hides one it can (frozen
+/// `virtualizeWithItems` likewise searches with the bank's objs assumed
+/// held).
 pub fn fetchable_state(
     state: &WorldState,
     bank: &[(i32, i32)],

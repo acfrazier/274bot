@@ -609,6 +609,8 @@ scene_pages! {
         self_target_kind: i32,
         self_target_index: i32,
         user_move_intent_seq: u64,
+        /// Host-published fingerprint of the current chat-modal page.
+        chat_page_fingerprint: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -664,7 +666,9 @@ scene_pages! {
         ground: Vec<SceneRow>,
         players: Vec<SceneRow>,
         varps: Vec<VarpRow>,
+        chat_text: Text,
         chat_options: Vec<String>,
+        chat_option_ids: Vec<i32>,
         chat_lines: Vec<ChatLine>,
         make_products: Vec<MakeProduct>,
         bank_approaches: Vec<BankApproach>,
@@ -1025,6 +1029,9 @@ impl Scene {
         if snap.has_user_move_intent_seq() {
             p.user_move_intent_seq(snap.user_move_intent_seq());
         }
+        if snap.has_chat_page_fingerprint() {
+            p.chat_page_fingerprint(snap.chat_page_fingerprint());
+        }
 
         if snap.has_self_target_index() {
             p.self_target_index(snap.self_target_index());
@@ -1179,6 +1186,9 @@ impl Scene {
                     .map_or(-1, |row| row.id()),
             );
         }
+        if snap.has_chat_text() {
+            p.chat_text(strings.text(snap.chat_text().unwrap_or_default()));
+        }
         if snap.has_chat_options() {
             // Empty texts stay: the 1-based answer index is the posted slot.
             p.chat_options(
@@ -1186,6 +1196,13 @@ impl Scene {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .map(|row| row.text().unwrap_or_default().to_string())
+                    .collect(),
+            );
+            p.chat_option_ids(
+                snap.chat_options()
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
+                    .map(|row| row.com_id())
                     .collect(),
             );
         }
