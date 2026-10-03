@@ -1395,12 +1395,26 @@ fn native_bank_pick_uses_cheapest_access_even_when_catalog_access_is_reachable()
     let (slot, action) = native_pick_action(banks.clone(), from, Some("local"));
     let navs = navs(banks);
     let gate = Controlled::new();
-    start_native_pick(&navs, world, action, FindOptions::default(), WorldState::empty());
+    start_native_pick(
+        &navs,
+        world,
+        action,
+        FindOptions::default(),
+        WorldState::empty(),
+    );
     await_native_search(&navs, &gate);
     gate.0.release();
     gate.0.wait(4);
-    let selected = navs.lock().unwrap().get_mut("test").unwrap()
-        .bank_pick.take_native_receipt().unwrap().1.selected;
+    let selected = navs
+        .lock()
+        .unwrap()
+        .get_mut("test")
+        .unwrap()
+        .bank_pick
+        .take_native_receipt()
+        .unwrap()
+        .1
+        .selected;
     assert_eq!(selected.kind, NativePickKind::Reachable);
     assert_eq!(selected.bank_index, 0);
     assert_eq!(selected.access_tile, tile(7, 8));
@@ -1412,31 +1426,64 @@ fn native_bank_pick_uses_cheapest_access_even_when_catalog_access_is_reachable()
 fn native_bank_pick_edgeville_yews_real_pack() {
     let pack = std::env::var_os("WORLD_NAV_PACK").expect("explicit real pack path");
     let world = NavWorld::load_pack(std::path::Path::new(&pack)).unwrap();
-    world.bind_named_bank_facts(
-        &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
-    ).unwrap();
+    world
+        .bind_named_bank_facts(
+            &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        )
+        .unwrap();
     let banks = world.named_bank_facts().unwrap().banks().to_vec();
-    let edgeville = banks.iter().position(|bank| bank.name == "Edgeville").unwrap();
+    let edgeville = banks
+        .iter()
+        .position(|bank| bank.name == "Edgeville")
+        .unwrap();
     let from = tile(3080, 3472);
     let staff = tile(3095, 3490);
     let state = WorldState::default().with_map_members(true);
-    assert!(find_with(&world.collision, &world.graph, from, staff,
-        FindOptions::default(), &state).is_err());
+    assert!(find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        staff,
+        FindOptions::default(),
+        &state
+    )
+    .is_err());
     let (slot, action) = native_pick_action(banks.clone(), from, Some("Edgeville"));
     let navs = navs(banks);
     let gate = Controlled::new();
     let world = Arc::new(world);
-    start_native_pick(&navs, Arc::clone(&world), action, FindOptions::default(), state.clone());
+    start_native_pick(
+        &navs,
+        Arc::clone(&world),
+        action,
+        FindOptions::default(),
+        state.clone(),
+    );
     await_native_search(&navs, &gate);
     gate.0.release();
     gate.0.wait(4);
-    let selected = navs.lock().unwrap().get_mut("test").unwrap()
-        .bank_pick.take_native_receipt().unwrap().1.selected;
+    let selected = navs
+        .lock()
+        .unwrap()
+        .get_mut("test")
+        .unwrap()
+        .bank_pick
+        .take_native_receipt()
+        .unwrap()
+        .1
+        .selected;
     assert_eq!(selected.kind, NativePickKind::Reachable);
     assert_eq!(usize::from(selected.bank_index), edgeville);
     assert_eq!(selected.access_tile, tile(3094, 3491));
-    assert!(find_with(&world.collision, &world.graph, from, selected.access_tile,
-        FindOptions::default(), &state).is_ok());
+    assert!(find_with(
+        &world.collision,
+        &world.graph,
+        from,
+        selected.access_tile,
+        FindOptions::default(),
+        &state
+    )
+    .is_ok());
     assert_eq!(selected.access.unwrap().stand_tile, tile(3095, 3491));
     assert!(navs.lock().unwrap()["test"].route.is_none());
     drop(slot);

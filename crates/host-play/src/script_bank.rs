@@ -928,7 +928,7 @@ fn queue_bank(
                         super::RouteOutcome::NoPath,
                     );
                 } else if active.job.request.native.is_some() {
-                    pick.complete_native(&active.job.request, None, PickKind::NoCandidate);
+                    pick.complete_native(&active.job.request, None, PickKind::NoCandidate, None);
                 } else {
                     pick.posted = active
                         .job
