@@ -295,6 +295,7 @@ pub fn compile_bank(
     }
     Ok(Arc::new(BankPlan {
         bank: cx.bank,
+        bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
         actions: Arc::from(actions),
         partial_ok: args.partial_ok,
@@ -304,18 +305,33 @@ pub fn compile_bank(
 struct BankPlan {
     bank: Option<api::named_banks::NamedBank>,
     memo_ids: Arc<[i32]>,
+    bank_required: bool,
     actions: Arc<[BankAction]>,
     partial_ok: bool,
 }
 impl StepPlan for BankPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        Ok(Box::new(BankRun::new(
-            self.bank,
-            Arc::clone(&self.memo_ids),
-            Arc::clone(&self.actions),
-            self.partial_ok,
-            cx.banks,
-        )))
+        let memo_ids = Arc::clone(&self.memo_ids);
+        let actions = Arc::clone(&self.actions);
+        let run = if self.bank_required {
+            BankRun::new_with_required(
+                self.bank,
+                true,
+                memo_ids,
+                actions,
+                self.partial_ok,
+                cx.banks,
+            )
+        } else {
+            BankRun::new(
+                self.bank,
+                memo_ids,
+                actions,
+                self.partial_ok,
+                cx.banks,
+            )
+        };
+        Ok(Box::new(run))
     }
     fn settle_timeout(&self) -> Duration {
         Duration::from_secs(12)
@@ -325,6 +341,7 @@ impl StepPlan for BankPlan {
 struct BankRun {
     bank: Option<api::named_banks::NamedBank>,
     explicit: Option<Arc<str>>,
+    required_bank_missing: bool,
     selection: Option<ActionHandle<Select>>,
     picked: bool,
     access: Option<Arc<BankStandAccess>>,
@@ -348,21 +365,37 @@ impl BankRun {
         partial_ok: bool,
         facts: &api::named_banks::NamedBankFacts,
     ) -> Self {
-        let explicit = bank.and_then(|requested| {
-            facts
-                .banks()
-                .iter()
-                .find(|candidate| candidate.tile == requested.tile)
-                .map(|candidate| Arc::from(candidate.name))
-        });
-        let picked = bank.is_some() && explicit.is_none();
+        Self::new_with_required(bank, false, memo_ids, actions, partial_ok, facts)
+    }
+
+    fn new_with_required(
+        bank: Option<api::named_banks::NamedBank>,
+        bank_required: bool,
+        memo_ids: Arc<[i32]>,
+        actions: Arc<[BankAction]>,
+        partial_ok: bool,
+        facts: &api::named_banks::NamedBankFacts,
+    ) -> Self {
+        let explicit = if bank_required {
+            bank.and_then(|requested| {
+                facts
+                    .banks()
+                    .iter()
+                    .find(|candidate| candidate.tile == requested.tile)
+                    .map(|candidate| Arc::from(candidate.name))
+            })
+        } else {
+            None
+        };
+        let required_bank_missing = bank_required && explicit.is_none();
         Self {
             bank,
             explicit,
+            required_bank_missing,
             selection: None,
-            picked,
+            picked: false,
             access: None,
-            target: bank.filter(|_| picked).map(|bank| bank.tile),
+            target: None,
             memo_ids,
             actions,
             partial_ok,
@@ -378,6 +411,11 @@ impl BankRun {
 }
 impl StepRun for BankRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if self.required_bank_missing {
+            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                "required bank is not in the bank catalog",
+            ))));
+        }
         if !self.picked {
             if let Some(handle) = self.selection.as_ref() {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
@@ -983,6 +1021,7 @@ pub fn compile_loadout(
     }
     Ok(Arc::new(LoadoutPlan {
         bank: cx.bank,
+        bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
         row: row.clone(),
         resolved: Arc::from(resolved),
@@ -993,6 +1032,7 @@ pub fn compile_loadout(
 
 struct LoadoutPlan {
     bank: Option<api::named_banks::NamedBank>,
+    bank_required: bool,
     memo_ids: Arc<[i32]>,
     row: crate::loadouts_store::Loadout,
     resolved: Arc<[BankItem]>,
@@ -1082,13 +1122,13 @@ impl StepPlan for LoadoutPlan {
             bank: if bank_actions.is_empty() {
                 None
             } else {
-                Some(BankRun::new(
-                    self.bank,
-                    Arc::clone(&self.memo_ids),
-                    Arc::from(bank_actions),
-                    false,
-                    cx.banks,
-                ))
+                let memo_ids = Arc::clone(&self.memo_ids);
+                let actions = Arc::from(bank_actions);
+                Some(if self.bank_required {
+                    BankRun::new_with_required(self.bank, true, memo_ids, actions, false, cx.banks)
+                } else {
+                    BankRun::new(self.bank, memo_ids, actions, false, cx.banks)
+                })
             },
             worn: Arc::from(worn),
             worn_index: 0,

@@ -659,6 +659,62 @@ fn with_step_banks<R>(
     })
 }
 
+fn path_bank_context<'a>(
+    base: &CompileContext<'a>,
+    bank_tile: WorldTile,
+    required: bool,
+) -> CompileContext<'a> {
+    CompileContext {
+        path: base.path,
+        progress: base.progress,
+        selected: base.selected,
+        quests: base.quests,
+        gathering: base.gathering,
+        areas: base.areas,
+        recipes: base.recipes,
+        bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
+        bank_required: required,
+        bank_items: base.bank_items,
+        loadouts: base.loadouts,
+    }
+}
+
+fn bank_pick_for_plan(
+    plan: Arc<dyn StepPlan>,
+    snapshot: &GameSnapshot,
+    banks: &Arc<api::named_banks::NamedBankFacts>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+) -> Result<crate::native_bank::BankPickRequest, crate::native::ActionError> {
+    let mut run = with_tick(snapshot, ledger, 1, |tick| {
+        with_step_banks(tick, banks, |cx| plan.begin(cx).unwrap())
+    });
+    for now in 2..=5 {
+        let result = with_tick(snapshot, ledger, now, |tick| {
+            with_step_banks(tick, banks, |cx| run.poll(cx))
+        });
+        if let Some(request) = ledger.as_ref().and_then(|ledger| {
+            ledger.outbox.iter().find_map(|action| match &action.effect {
+                HostEffect::BankPick(request) => Some(request.clone()),
+                _ => None,
+            })
+        }) {
+            return Ok(request);
+        }
+        match result {
+            Poll::Pending => {}
+            Poll::Ready(Err(error)) => return Err(error),
+            Poll::Ready(Ok(_)) => {
+                return Err(crate::native::ActionError::Unavailable(Arc::from(
+                    "bank run completed without selection",
+                )))
+            }
+        }
+    }
+    Err(crate::native::ActionError::Unavailable(Arc::from(
+        "bank selection did not emit a request",
+    )))
+}
+
 #[test]
 fn bank_without_candidates_fails_before_walk_or_open() {
     compile_context_test(|compile| {
@@ -763,117 +819,114 @@ fn native_bank_without_explicit_selection_opens_the_context_bank() {
 }
 
 #[test]
-fn custom_path_bank_tile_opens_observed_booth() {
+fn authored_draynor_varrock_and_unmatched_tiles_select_nearest_without_explicit_bank() {
     compile_context_test(|base| {
-        let bank_tile = tile(3200, 3200);
-        let compile = crate::quester::compile::CompileContext {
-            path: base.path,
-            progress: base.progress,
-            selected: base.selected,
-            quests: base.quests,
-            gathering: base.gathering,
-            areas: base.areas,
-            recipes: base.recipes,
-            bank: Some(api::named_banks::NamedBank::new("Path bank", bank_tile)),
-            bank_items: base.bank_items,
-            loadouts: base.loadouts,
-        };
-        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
-        let mut snapshot = ready();
-        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
-            player: api::snapshot::PlayerView {
-                index: 0,
-                actor: api::snapshot::ActorView {
-                    name: None,
-                    actions: vec![],
-                    tile: bank_tile,
-                    distance: 0,
-                    animation: -1,
-                    animation_frame: 0,
-                    pose_animation: -1,
-                    orientation: 0,
-                    target_orientation: 0,
-                    overhead_text: None,
-                    spot_animation: -1,
-                    spot_animation_stamp: -1,
-                    health: 10,
-                    total_health: 10,
-                    face_entity: -1,
-                    target: None,
-                    moving: false,
-                    running: false,
-                    in_combat: false,
-                },
-                combat_level: 3,
-                skill_level: 0,
-                weapon: None,
-            },
-            energy: 100,
-            weight: 0,
-        });
-        let mut booth = loc(2213, "Bank booth", "Use-quickly");
-        booth.tile = bank_tile;
-        booth.distance = 0;
-        snapshot.seed_locs(vec![booth]);
+        let draynor = tile(3092, 3242);
+        let varrock_west = tile(3185, 3438);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new("Draynor Village", draynor),
+            api::named_banks::NamedBank::new("Varrock West", varrock_west),
+        ]));
+        for authored in [draynor, varrock_west, tile(3200, 3200)] {
+            let compile = path_bank_context(base, authored, false);
+            let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3100, 3240)));
+            let mut ledger = None;
+            let request = bank_pick_for_plan(plan, &snapshot, &banks, &mut ledger).unwrap();
+            assert!(
+                request.explicit_bank.is_none(),
+                "authored tile {authored:?} must not constrain bank ranking"
+            );
+        }
+    });
+}
 
+#[test]
+fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
+    compile_context_test(|base| {
+        let draynor = tile(3092, 3242);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new("Draynor Village", draynor),
+        ]));
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3100, 3240)));
+        let compile = path_bank_context(base, draynor, true);
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
         let mut ledger = None;
-        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            with_step(tick, |cx| plan.begin(cx).unwrap())
-        });
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
-        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            with_step(tick, |cx| run.poll(cx))
-        })
-        .is_pending());
+        let request = bank_pick_for_plan(plan, &snapshot, &banks, &mut ledger).unwrap();
+        assert_eq!(request.explicit_bank, Some(0));
+
+        let unmatched = tile(3200, 3200);
+        let compile = path_bank_context(base, unmatched, true);
+        let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
+        let mut ledger = None;
         assert!(matches!(
-            emitted(&ledger),
-            InteractReq::OpenBooth {
-                x: 3200,
-                z: 3200,
-                level: 0,
-                id: 2213,
-                name: None,
-                action: None,
-            }
+            bank_pick_for_plan(plan, &snapshot, &banks, &mut ledger),
+            Err(crate::native::ActionError::Unavailable(reason))
+                if reason.as_ref() == "required bank is not in the bank catalog"
         ));
+        assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
     });
 }
 
 #[test]
 fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
     compile_context_test(|base| {
-        let compile = crate::quester::compile::CompileContext {
-            path: base.path,
-            progress: base.progress,
-            selected: base.selected,
-            quests: base.quests,
-            gathering: base.gathering,
-            areas: base.areas,
-            recipes: base.recipes,
-            bank: Some(api::named_banks::NamedBank::new(
-                "Path bank",
-                tile(3200, 3200),
-            )),
-            bank_items: base.bank_items,
-            loadouts: base.loadouts,
-        };
+        let bank_tile = tile(3200, 3200);
+        let bank = api::named_banks::NamedBank::new("Path bank", bank_tile);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+        let compile = path_bank_context(base, bank_tile, false);
         let plan = s2::compile_bank(&serde_json::json!({"op": "scan"}), &compile).unwrap();
-        let snapshot = ready();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3100, 3200)));
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            with_step(tick, |cx| plan.begin(cx).unwrap())
+            with_step_banks(tick, &banks, |cx| plan.begin(cx).unwrap())
         });
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            with_step(tick, |cx| run.poll(cx))
+        for now in 2..=3 {
+            assert!(with_tick(&snapshot, &mut ledger, now, |tick| {
+                with_step_banks(tick, &banks, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+        let HostEffect::BankPick(request) = &action.effect else {
+            panic!("native bank selection must precede walking");
+        };
+        assert!(request.explicit_bank.is_none());
+        ledger.as_mut().unwrap().complete_bank_pick(
+            &action.authority(),
+            crate::bank::BankPickReceipt {
+                request_id: action.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: action.authority().run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                selected: crate::bank::SelectedBank {
+                    bank_index: 0,
+                    access_tile: bank_tile,
+                    kind: crate::bank::PickKind::Reachable,
+                    access: Some(Arc::new(crate::bank::BankStandAccess {
+                        bank,
+                        stand_tile: bank_tile,
+                        kind: crate::bank::AccessKind::Booth,
+                        stand_op: 1,
+                        name: None,
+                        choose: None,
+                    })),
+                },
+            },
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step_banks(tick, &banks, |cx| run.poll(cx))
         })
         .is_pending());
-        post_user_input_walk_receipt(&mut ledger, 3);
+        post_user_input_walk_receipt(&mut ledger, 5);
         ledger.as_mut().unwrap().outbox.clear();
-        assert_manual_movement(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            with_step(tick, |cx| run.poll(cx))
+        assert_manual_movement(with_tick(&snapshot, &mut ledger, 5, |tick| {
+            with_step_banks(tick, &banks, |cx| run.poll(cx))
         }));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     });
@@ -992,6 +1045,7 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         areas: &areas,
         recipes: &recipes,
         bank: None,
+        bank_required: false,
         bank_items: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
@@ -1235,6 +1289,7 @@ fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
         areas: &Default::default(),
         recipes: &Default::default(),
         bank: None,
+        bank_required: false,
         bank_items: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })

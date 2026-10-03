@@ -28,6 +28,7 @@ pub struct CompileContext<'a> {
     pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
     /// `None` uses the shared eligible-bank cost selector at step start.
     pub bank: Option<NamedBank>,
+    pub bank_required: bool,
     pub bank_items: &'a [i32],
     pub loadouts: &'a super::loadouts::LoadoutOverlay,
 }
@@ -114,6 +115,7 @@ pub struct CompiledProvisioning {
     pub path: FactKey,
     pub owns_inventory: bool,
     pub bank: Option<NamedBank>,
+    pub bank_required: bool,
     pub items: Arc<[CompiledQuestItem]>,
     pub tools: Arc<[BankItem]>,
     pub tool_ids: Arc<[i32]>,
@@ -335,16 +337,21 @@ fn compile_uncached(
         areas.insert(name.clone(), area.boxes.clone());
     }
     let empty_recipes = HashMap::new();
-    let bank = match &header.bank {
-        super::path::QuestBankDocument::Nearest(_) => None,
-        super::path::QuestBankDocument::Tile { tile, .. } => Some(NamedBank::new(
-            "Path bank",
-            api::WorldTile {
-                x: tile[0],
-                z: tile[1],
-                level: tile[2],
-            },
-        )),
+    let (bank, bank_required) = match &header.bank {
+        super::path::QuestBankDocument::Nearest(_) => (None, false),
+        super::path::QuestBankDocument::Tile {
+            tile, required, ..
+        } => (
+            Some(NamedBank::new(
+                "Path bank",
+                api::WorldTile {
+                    x: tile[0],
+                    z: tile[1],
+                    level: tile[2],
+                },
+            )),
+            *required,
+        ),
     };
     let compiled_loadouts: Vec<_> = header
         .loadouts
@@ -458,6 +465,7 @@ fn compile_uncached(
         areas: &areas,
         recipes: &empty_recipes,
         bank,
+        bank_required,
         bank_items: &bank_items,
         loadouts: &loadouts,
     };
@@ -548,6 +556,7 @@ fn compile_uncached(
         path: document.id.clone(),
         owns_inventory: header.owns_inventory,
         bank,
+        bank_required,
         items: compiled_items,
         tools: Arc::from(tools),
         tool_ids,
@@ -798,7 +807,7 @@ fn validate_header(
         super::path::QuestBankDocument::Nearest(_) => {
             return Err(CompileError::code("invalid-bank"))
         }
-        super::path::QuestBankDocument::Tile { tile, source } => {
+        super::path::QuestBankDocument::Tile { tile, source, .. } => {
             families::validate_tile(*tile, source)?;
         }
     }
@@ -935,6 +944,24 @@ mod tests {
         assert_eq!(first.id.0.as_ref(), "cook");
         assert_eq!(miss.id.0.as_ref(), "cook-cache-different");
         assert_ne!(first.digest, miss.digest);
+    }
+
+    #[test]
+    fn path_bank_required_is_preserved_in_compiled_provisioning() {
+        let mut document = decode_cook().unwrap();
+        let data = selected();
+        let quests = quests(&data);
+
+        let optional = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert!(!optional.provisioning.bank_required);
+        let super::super::path::QuestBankDocument::Tile { required, .. } =
+            &mut document.quest.as_mut().unwrap().bank
+        else {
+            panic!("Cook Path has an authored bank tile");
+        };
+        *required = true;
+        let required = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        assert!(required.provisioning.bank_required);
     }
 
     #[test]
