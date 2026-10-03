@@ -1294,11 +1294,7 @@ impl Session {
     pub fn with_instance(_instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
-        let mut ui = crate::ui_state::load();
-        let log_window_open = ui.take_legacy_log_detached();
-        if log_window_open {
-            crate::ui_state::save(&ui);
-        }
+        let ui = crate::ui_state::load();
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
@@ -1327,7 +1323,7 @@ impl Session {
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
             log_pane: crate::log_pane::LogPane::default(),
-            log_window_open,
+            log_window_open: false,
             log_window_body_drawn: false,
             pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
