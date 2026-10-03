@@ -184,6 +184,8 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
+// The frozen JS pick helpers are reached only through the `load` isolate.
+#[cfg_attr(not(feature = "load"), allow(dead_code))]
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
