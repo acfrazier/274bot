@@ -548,6 +548,7 @@ impl Script for Relog {
                     },
                     loc_id: None,
                     radius: 0,
+                    arrival: nav::arrival::ArrivalKind::Reach,
                     options: crate::FindOptions::default(),
                     required_after: first,
                     evidence: None,

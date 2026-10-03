@@ -92,6 +92,7 @@ impl WalkSpec {
         WalkRequest {
             target: self.target,
             radius: self.radius,
+            arrival: nav::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,
             options: script::FindOptions {
                 allow_teleports: false,

@@ -377,6 +377,8 @@ pub struct WalkRequest {
     /// Perimeter stands are admitted only when their footprint distance is
     /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
+    /// Destination settlement mode; `Reach` remains the default behavior.
+    pub arrival: nav::arrival::ArrivalKind,
     pub options: FindOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,

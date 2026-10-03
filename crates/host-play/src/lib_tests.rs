@@ -4385,6 +4385,7 @@ fn same_key_pending_route_refuses_distinct_id() {
             route_generation: 1,
             pending_route: Some(ScriptRouteRequest {
                 loc_id: None,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 generation: 1,
                 request_id: 7,
                 world: Arc::clone(&world),
@@ -4919,6 +4920,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(open_world(12, 8)),
@@ -5003,6 +5005,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world,
@@ -5050,6 +5053,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5106,6 +5110,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5158,6 +5163,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5213,6 +5219,7 @@ fn radius_calculate_drops_detour_outside_radius() {
     };
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5262,6 +5269,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
     );
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::clone(&world),
@@ -21537,6 +21545,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     level: 0,
                                 },
                                 radius: 1,
+                                arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
                                 options: script::FindOptions::default(),
                                 required_after: tick.cx.evidence(),
@@ -23060,6 +23069,7 @@ fn real_v13_return_radius_endpoint_is_native_arrival() {
         to: target,
         radius: 12,
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         opts: FindOptions {
             allow_teleports: false,
             allow_wilderness: false,
