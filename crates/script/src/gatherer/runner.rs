@@ -353,8 +353,16 @@ impl Gatherer {
                 }
             }
             TripStep::Deposit => {
+                let snapshot = tick.cx.snapshot();
+                let Some(inventory) = snapshot.inventory() else {
+                    return;
+                };
                 let args = bank::DepositArgs {
-                    products: Arc::clone(&self.prepared.products),
+                    products: supply::bank_deposit_ids(
+                        &self.prepared,
+                        self.tool.id,
+                        inventory.value,
+                    ),
                     keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
                 };
                 match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
