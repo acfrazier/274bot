@@ -1582,7 +1582,7 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
         row.settings.script_settings.insert(
             key.clone(),
             vault::CompiledSettingsRecord {
-                schema_version: 2,
+                schema_version: script::compiled_card(id).unwrap().schema_version,
                 values,
             }
             .into_entry(),
