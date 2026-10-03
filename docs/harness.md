@@ -111,6 +111,47 @@ remain fenced to a later tick. If no replacement target is available, terminal
 unavailability is confirmed on the next observation so a delayed yield packet is
 accounted before the runner blocks.
 
+## Gatherer fishing bank returns
+
+The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell starts the native
+Gatherer at Catherby with an inventory harpoon and one seeded `casket` (item ID
+405). It catches its own fish and uses Bank disposition; the fixture never
+injects fish or XP.
+
+The live gate requires at least two positive fish deposits followed by fresh
+fishing yields after both returns. It verifies the seeded casket in the Start
+baseline, then verifies that its bank count increases and no casket remains in
+the pack after the first deposit. Each trip receipt derives expected item and
+product counts from the actual pre-deposit inventory, excluding protected
+tools/supplies; it verifies deposited IDs leave the pack and their bank counts
+increase while the bank is loaded. A naturally dropped casket is recorded only
+as an observation, never required. The existing preparation and wedge deadlines
+still bound the run.
+
+```sh
+LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=gf \
+cargo test -p host-play --test gatherer_live gatherer_fish_harpoon_bank \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+Set a disposable `HOME` with copied `BOT_CACHE_DIR`/`CLIENT_UNPACK_DIR` inputs,
+absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`,
+and matching explicit `WORLD_ENGINE_DIR`/`WORLD_NAV_PACK`. The defaults use the
+builder engine at `45594`/`2080`; `GATHERER_GAME_PORT`/`GATHERER_HTTP_PORT` can
+select the local engine at `44594`/`1080`. `GATHERER_FISH_HARPOON_TILE` optionally
+overrides the default `2840,3436,0`. `LIVE_EVIDENCE_DIR` saves a real client
+capture and a receipt containing the tick-stamped bank status/event sequence.
+
+Fishing tools are carried, not wielded. Returning inside the configured work
+radius does not prove that moving fishing spots are visible: NPC view is smaller
+than the loaded map. For NPC-backed fishing, the selector derives observation
+stands from the content movement envelope and accumulates empty coverage for at
+most 100 gameplay ticks. It caps reapproaches at eight per method/placement;
+exhaustion follows existing Avoided/Exhausted selection instead of falsely
+declaring the spot absent. A live actor clears empty evidence but does not renew
+the approach budget; positive gather progress does. Rock and tree placement
+observation still uses the loaded map rectangle.
+
 ## JS API v2 GatherQuest sample checks
 
 The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
