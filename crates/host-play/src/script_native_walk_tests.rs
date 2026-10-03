@@ -17,6 +17,8 @@ struct Walker {
     begun: usize,
     walks: usize,
     cross_first: Vec<Arc<str>>,
+    protect: bool,
+    disallow_prayer: bool,
     later_target: Option<WorldTile>,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
@@ -73,6 +75,10 @@ impl Script for WalkerScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
+                protect: shared.protect,
+                allow: script::native::WalkAllow {
+                    prayer: !shared.disallow_prayer,
+                },
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => self.handle = Some(handle),
@@ -367,6 +373,208 @@ fn a_native_walk_refused_for_lack_of_a_world_gets_a_refused_receipt() {
     rig.observe(1);
     rig.observe(2);
     assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+}
+
+fn seed_prayer(snapshot: &mut GameSnapshot, base: i32) {
+    snapshot.seed_stats(vec![api::snapshot::StatView {
+        index: 5,
+        name: "prayer".into(),
+        effective: base,
+        base,
+        xp: 0,
+        used: true,
+    }]);
+}
+
+#[test]
+fn a_protected_walk_refuses_when_prayer_cannot_protect() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_prayer(&mut rig.snapshot, 36);
+    rig.observe(1);
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    assert!(
+        !rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_guard.is_some()),
+        "a refused protect walk must not arm a driver"
+    );
+}
+
+#[test]
+fn a_protected_walk_arms_the_hold_mode_driver() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_prayer(&mut rig.snapshot, 43);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(
+        rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_guard.is_some()),
+        "protect walk must arm WalkGuard before follow"
+    );
+}
+
+#[test]
+fn a_protected_walk_refuses_when_prayer_is_disallowed() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    rig.shared.lock().disallow_prayer = true;
+    seed_prayer(&mut rig.snapshot, 43);
+    rig.observe(1);
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    assert!(
+        !rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_guard.is_some()),
+        "a prayer-disallowed protect walk must not arm a driver"
+    );
+}
+
+fn seed_protect_frame(snapshot: &mut GameSnapshot, prayer_base: i32) {
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| api::snapshot::StatView {
+                index,
+                name: String::new(),
+                effective: if index == 5 { prayer_base } else { 40 },
+                base: if index == 5 { prayer_base } else { 40 },
+                xp: 0,
+                used: api::snapshot::stat_used(index as usize),
+            })
+            .collect(),
+    );
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    snapshot.seed_varps(
+        data.prayers()
+            .iter()
+            .map(|row| api::snapshot::VarpView {
+                index: row.varp,
+                value: 0,
+            })
+            .collect(),
+    );
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [api::snapshot::HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+}
+
+fn seed_missile_launch(snapshot: &mut GameSnapshot) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let row = data.npc_by_config("ardougne_archer").unwrap();
+    let here = snapshot
+        .tile()
+        .map(|(x, z, level)| api::snapshot::WorldTile { x, z, level })
+        .unwrap_or(api::snapshot::WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        });
+    let npc_tile = api::snapshot::WorldTile {
+        x: here.x + 1,
+        z: here.z,
+        level: here.level,
+    };
+    let me = snapshot
+        .local_player()
+        .map(|player| player.player.index)
+        .unwrap_or(1);
+    snapshot.seed_npcs(vec![api::snapshot::NpcView {
+        index: 7,
+        r#type: Some(row.id as usize),
+        name: row.display.clone(),
+        actions: vec![Some("Attack".into())],
+        tile: npc_tile,
+        distance: 1,
+        animation: -1,
+        animation_frame: -1,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 50,
+        total_health: 50,
+        face_entity: -1,
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: me,
+        }),
+        moving: false,
+        running: false,
+        in_combat: true,
+        level: 37,
+        size: 1,
+        network: npc_tile,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }]);
+    snapshot.seed_projectiles(vec![api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: here.level,
+        src: npc_tile,
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: me,
+        }),
+        t1: 0,
+        t2: 30,
+    }]);
+}
+
+#[test]
+fn unprotectable_is_delivered_to_the_walk_owner() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_prayer(&mut rig.snapshot, 37);
+    seed_protect_frame(&mut rig.snapshot, 37);
+    rig.observe(1);
+    rig.wait_routed();
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    rig.observe(2);
+    let receipt = rig
+        .shared
+        .lock()
+        .result
+        .clone()
+        .expect("Unprotectable must complete the walk")
+        .expect("Unprotectable is a successful host terminal");
+    assert_eq!(
+        receipt.end,
+        WalkEnd::Unprotectable,
+        "the host must deliver Unprotectable to the walk owner"
+    );
+    assert_eq!(
+        receipt.detail.as_deref(),
+        Some("missiles"),
+        "Unprotectable must keep the wanted protection style on the receipt"
+    );
+    assert!(
+        rig.driver.if_button_components.is_empty(),
+        "Unprotectable must not send a prayer packet, got {:?}",
+        rig.driver.if_button_components
+    );
 }
 
 #[test]

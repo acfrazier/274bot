@@ -981,6 +981,34 @@ mod tests {
     }
 
     #[test]
+    fn path_walk_cross_with_protect_guard_compiles() {
+        let mut document = decode_cook().unwrap();
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3224, 3200, 0],
+            "source": "regression test",
+            "radius": 1,
+            "cross": ["Test barrier"],
+            "guard": "protect",
+        });
+        step.skip_if = PredicateDocument::Fact {
+            kind: "near".into(),
+            version: 1,
+            args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+        };
+        step.settle = PredicateDocument::Fact {
+            kind: "near".into(),
+            version: 1,
+            args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+        };
+        let data = selected();
+        let quests = quests(&data);
+        compile_uncached_for_test(&document, &data, &quests)
+            .expect("guard protect admits a named zone crossing");
+    }
+
+    #[test]
     fn unknown_handler_is_rejected() {
         let err = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].kind = "no_such_family".into();

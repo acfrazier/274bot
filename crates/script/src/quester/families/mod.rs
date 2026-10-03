@@ -49,7 +49,7 @@ fn walk_step_evidence(
         WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
             "walk needs live quest evidence: {gates:?}"
         )))),
-        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => {
+        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused | WalkEnd::Unprotectable => {
             static REASON: std::sync::LazyLock<Arc<str>> =
                 std::sync::LazyLock::new(|| Arc::from("walk failed"));
             Err(ActionError::Blocked(
@@ -991,6 +991,8 @@ struct WalkArgs {
     radius: u16,
     #[serde(default)]
     cross: Vec<String>,
+    #[serde(default)]
+    guard: Option<String>,
 }
 
 fn compile_walk(
@@ -999,7 +1001,16 @@ fn compile_walk(
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    if !arg.cross.is_empty() {
+    let protect = match arg.guard.as_deref() {
+        None | Some("") => false,
+        Some("protect") => true,
+        Some(_) => {
+            return Err(
+                CompileError::code("invalid-args").with_detail("walk: guard must be protect")
+            );
+        }
+    };
+    if !arg.cross.is_empty() && !protect {
         return Err(CompileError::code("invalid-args")
             .with_detail("walk: cross needs protected walk (combat slice)"));
     }
@@ -1011,19 +1022,28 @@ fn compile_walk(
             level: arg.tile[2],
         },
         radius: arg.radius.max(1),
+        cross: arg
+            .cross
+            .into_iter()
+            .map(Arc::from)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        protect,
     }))
 }
 
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
+    cross: Box<[Arc<str>]>,
+    protect: bool,
 }
 impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(self.tile, self.radius, None, cx.required_after),
-            &mut cx.tick.cx,
-        )?;
+        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
+        request.cross = self.cross.clone();
+        request.protect = self.protect;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         Ok(Box::new(WalkRun { handle }))
     }
 }

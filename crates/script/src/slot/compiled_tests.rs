@@ -552,6 +552,8 @@ impl Script for Relog {
                     required_after: first,
                     evidence: None,
                     cross: Vec::new().into_boxed_slice(),
+                    protect: false,
+                    allow: Default::default(),
                 };
                 frame.stale_walk = Some(
                     cx.actions

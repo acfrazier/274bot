@@ -230,6 +230,31 @@ pub(crate) fn record_shim_interactions(
     }
 }
 
+pub(crate) fn record_guard(
+    account: &str,
+    snapshot: &GameSnapshot,
+    op: &str,
+    component_id: Option<i32>,
+) {
+    let Some(capture) = capture_for(account) else {
+        return;
+    };
+    let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());
+    let sequence = capture.actions.len() as u64 + 1;
+    capture.actions.push(json!({
+        "sequence": sequence,
+        "kind": "guard",
+        "op": op,
+        "component_id": component_id,
+        "tick": snapshot.tick(),
+        "host_tick": snapshot.tick(),
+        "snapshot_tick": snapshot.tick(),
+        "batch": 0,
+        "request_id": null,
+        "snapshot": snapshot_facts(snapshot, Some(u64::from(snapshot.tick()))),
+    }));
+}
+
 pub(crate) fn record_other_request(
     account: &str,
     host_tick: Option<u64>,
@@ -567,6 +592,16 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "inventory": inventory,
         "equipment": equipment,
         "nearby_npcs": nearby_npcs,
+        "projectiles": snapshot.projectiles().iter().map(|projectile| json!({
+            "spotanim": projectile.spotanim,
+            "level": projectile.level,
+            "src": projectile.src,
+            "t1": projectile.t1,
+            "t2": projectile.t2,
+            "target": projectile.target.map(|target| {
+                json!({"kind": format!("{:?}", target.kind), "index": target.index})
+            }),
+        })).collect::<Vec<_>>(),
         // New receipts distinguish an observed bead drop from inventory-only
         // absence; old receipts cannot establish that a colour never dropped.
         "ground_items": snapshot.ground_items().iter().map(|item| json!({

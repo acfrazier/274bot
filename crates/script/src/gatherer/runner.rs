@@ -271,6 +271,8 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Box::default(),
+            protect: false,
+            allow: Default::default(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => self.active = Active::Walk(handle),
@@ -821,6 +823,8 @@ impl Gatherer {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                protect: false,
+                allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
@@ -1463,6 +1467,8 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            protect: false,
+            allow: Default::default(),
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {

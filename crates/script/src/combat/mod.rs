@@ -2,6 +2,7 @@
 //! Style/flick/PvP slices extend this core rather than adding another planner.
 mod arbiter;
 pub mod frame;
+pub mod guard;
 mod machine;
 pub mod prayer;
 pub mod request;
@@ -12,6 +13,7 @@ pub mod threats;
 pub mod style {
     pub mod melee;
 }
+pub use guard::{GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::Combat;
 pub use prayer::{begin_clear_prayers, ClearPrayers, Hygiene, PrayerSweepReport};
 pub use request::*;
