@@ -23,12 +23,12 @@
 //! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
 //! Fixture helpers alter locations only; they never inject products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
-//! suffix. Each cell uses an isolated HOME plus absolute `GATHERER_ENGINE_DIR`,
-//! `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT` paths. G3 bank trips default
-//! to proven oak/fishing origins; cost-ranking and real-timeout cells need
-//! explicit origin tiles.
-//! `BOT_CACHE_DIR` selects the read-only copied JAG source; `CLIENT_UNPACK_DIR`
-//! selects its copied unpack root, which retains the complete versioned snapshot.
+//! suffix. Each cell uses an isolated HOME plus absolute paths for
+//! `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`.
+//! G3 bank trips default to proven oak/fishing origins; the first-goal bank
+//! cell uses Draynor's live oak grove east of its bank. It does not seed scene
+//! locations; only the account's bronze axe is bank-seeded for its real
+//! gathering and deposit trip.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -96,6 +96,12 @@ const FISH_BAIT_START: WorldTile = WorldTile {
 const OAK_RESPAWN_START: WorldTile = WorldTile {
     x: 3017,
     z: 3170,
+    level: 0,
+};
+
+const DRAYNOR_OAK_BANK_START: WorldTile = WorldTile {
+    x: 3095,
+    z: 3243,
     level: 0,
 };
 const OAK_RESPAWN_OTHER: WorldTile = WorldTile {
@@ -219,7 +225,7 @@ impl Cell {
                 "gatherer_wc_bank_unwieldable"
             }
             (Self::Mining, LiveCase::BankCost) => "gatherer_mining_bank_cost_walk_ranked",
-            (Self::Woodcutting, LiveCase::BankCostAirFallback) => "gatherer_bank_cost_t1",
+            (Self::Woodcutting, LiveCase::BankCostFirstGoal) => "gatherer_bank_cost_t1",
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => "gatherer_bank_cost_no_candidate",
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
             (Self::Woodcutting, LiveCase::CoinRunes) => "gatherer_coin_runes",
@@ -256,7 +262,6 @@ impl Cell {
             LiveCase::LocationAuto => "GATHERER_AUTO_START_TILE",
             LiveCase::WoodcuttingBank => "GATHERER_WC_BANK_TILE",
             LiveCase::WoodcuttingBankUnwieldable => "GATHERER_WC_BANK_TILE",
-            LiveCase::BankCostAirFallback => "GATHERER_BANK_T1_TILE",
             LiveCase::BankCostNoCandidate => "GATHERER_BANK_NO_CANDIDATE_TILE",
             LiveCase::FishBait => "GATHERER_FISH_BAIT_TILE",
             LiveCase::CoinRunes | LiveCase::CoinRunesEmpty => "GATHERER_COIN_RUNES_TILE",
@@ -335,7 +340,7 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
@@ -365,7 +370,7 @@ impl Cell {
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
                 | LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::PauseResumeOtherPlane
@@ -394,7 +399,7 @@ impl Cell {
                     | LiveCase::OakAbsentArea
                     | LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
-                    | LiveCase::BankCostAirFallback
+                    | LiveCase::BankCostFirstGoal
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
@@ -444,7 +449,7 @@ impl Cell {
                 LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable,
             ) => Some("GATHERER_WC_BANK_LEVEL"),
             (Self::Mining, LiveCase::BankCost) => Some("GATHERER_BANK_COST_LEVEL"),
-            (Self::Woodcutting, LiveCase::BankCostAirFallback) => Some("GATHERER_BANK_T1_LEVEL"),
+            (Self::Woodcutting, LiveCase::BankCostFirstGoal) => Some("GATHERER_BANK_T1_LEVEL"),
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => {
                 Some("GATHERER_BANK_NO_CANDIDATE_LEVEL")
             }
@@ -483,7 +488,7 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
@@ -519,7 +524,7 @@ impl Cell {
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn,
@@ -595,7 +600,7 @@ impl Cell {
                 LiveCase::WoodcuttingBank
                     | LiveCase::WoodcuttingBankUnwieldable
                     | LiveCase::BankCost
-                    | LiveCase::BankCostAirFallback
+                    | LiveCase::BankCostFirstGoal
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::FishBait
                     | LiveCase::CoinRunes
@@ -613,7 +618,7 @@ impl Cell {
             LiveCase::WoodcuttingBank
                 | LiveCase::WoodcuttingBankUnwieldable
                 | LiveCase::BankCost
-                | LiveCase::BankCostAirFallback
+                | LiveCase::BankCostFirstGoal
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::FishBait
                 | LiveCase::CoinRunes
@@ -723,7 +728,7 @@ enum LiveCase {
     WoodcuttingBank,
     WoodcuttingBankUnwieldable,
     BankCost,
-    BankCostAirFallback,
+    BankCostFirstGoal,
     BankCostNoCandidate,
     FishBait,
     CoinRunes,
@@ -757,7 +762,7 @@ impl LiveCase {
             Self::WoodcuttingBank => "woodcutting-bank",
             Self::WoodcuttingBankUnwieldable => "woodcutting-bank-unwieldable",
             Self::BankCost => "mining-bank-cost-walk-ranked",
-            Self::BankCostAirFallback => "bank-cost-t1-air-fallback",
+            Self::BankCostFirstGoal => "bank-cost-first-goal-reachable",
             Self::BankCostNoCandidate => "bank-cost-no-candidate",
             Self::FishBait => "fish-bait-bank",
             Self::CoinRunes => "coin-runes-topup",
@@ -805,7 +810,7 @@ impl LiveCase {
             Self::WoodcuttingBank
                 | Self::WoodcuttingBankUnwieldable
                 | Self::BankCost
-                | Self::BankCostAirFallback
+                | Self::BankCostFirstGoal
                 | Self::BankCostNoCandidate
                 | Self::PauseResumeOtherPlane
                 | Self::ReconnectReturn
@@ -3473,24 +3478,29 @@ impl GatherSlot {
                 }
                 Ok(())
             }
-            LiveCase::BankCostAirFallback => {
+            LiveCase::BankCostFirstGoal => {
                 if !self.complete_bank_selection()
-                    || self.selected_bank_kind() != Some("AirFallback")
-                    || !self
-                        .witness
-                        .bank_selection_elapsed
-                        .is_some_and(|elapsed| elapsed >= Duration::from_millis(4_900))
+                    || self.selected_bank_name() != Some("Draynor")
+                    || self.selected_bank_kind() != Some("Reachable")
                     || !self.witness.bank_loaded_observed
                     || !self.witness.bank_closed_observed
                     || !self.witness.bank_withdrawal_confirmed
+                    || self.witness.status_trips < 1
+                    || self.witness.status_deposited <= 0
+                    || self.witness.bank_nonzero_roundtrips == 0
                     || self.witness.post_bank_yields == 0
+                    || !self.observed_live_oak_near_target()
+                    || !self.witness.products_seen.contains(&1521)
+                    || !self.plan.seed_locs.is_empty()
+                    || !self.plan.oak_tiles.is_empty()
+                    || self.witness.last_status_yielded <= 0
                     || self
                         .latest
                         .as_ref()
                         .is_none_or(|latest| latest.xp <= self.baseline_xp())
                 {
                     return Err(format!(
-                        "{} did not observe the real five-second bank-selection timeout, select its air fallback, and resume yielding: {:?}",
+                        "{} did not gather a live Draynor oak, select the reachable Draynor bank, deposit logs, return, and gather again without seeded locations: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -3695,6 +3705,13 @@ impl GatherSlot {
             .and_then(|bank| bank.split(';').nth(1))
             .map(str::trim)
             .filter(|kind| !kind.is_empty())
+    }
+
+    fn observed_live_oak_near_target(&self) -> bool {
+        self.witness
+            .oak_live_tiles
+            .iter()
+            .any(|&tile| tile_distance(tile, self.target).is_some_and(|distance| distance <= 12))
     }
     fn complete_bank_selection(&self) -> bool {
         self.witness.bank_selected
@@ -3940,7 +3957,7 @@ fn fixture_plan(
             plan.bank_seed.push(("rune_axe".into(), 1));
         }
         LiveCase::BankCost => plan.bank_seed.push(("bronze_pickaxe".into(), 1)),
-        LiveCase::BankCostAirFallback
+        LiveCase::BankCostFirstGoal
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => plan.bank_seed.push(("bronze_axe".into(), 1)),
         LiveCase::DeathReturn => plan.bank_seed.push(("bronze_axe".into(), 3)),
@@ -4072,9 +4089,7 @@ fn fixture_plan(
         | LiveCase::ReconnectReturn => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
         LiveCase::BankCost => world_tile(3016, 9840),
-        LiveCase::BankCostAirFallback => {
-            parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?
-        }
+        LiveCase::BankCostFirstGoal => DRAYNOR_OAK_BANK_START,
         _ => parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?,
     };
     let task = match case {
@@ -4107,6 +4122,11 @@ fn fixture_plan(
         }
         _ => None,
     };
+    if case == LiveCase::BankCostFirstGoal
+        && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
+    {
+        return Err("first-goal bank fixture must use live scene oak trees without location seeds".into());
+    }
     Ok((target, plan, task))
 }
 
@@ -4541,6 +4561,15 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "fixture_account": helper_account.as_deref(),
             "target": {"x": target.x, "z": target.z, "level": target.level},
             "settings": settings,
+            "real_content_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+                "resource": "oak",
+                "camp": "Draynor Village east of the bank",
+                "scene_locations_seeded": plan.seed_locs.len(),
+                "fixture_locations_seeded": plan.oak_tiles.len(),
+                "expected_bank": "Draynor",
+                "expected_selection_kind": "Reachable",
+                "five_second_timeout_expected": false,
+            })),
             "bank_cost_fixture_intent": (case == LiveCase::BankCost).then(|| json!({
                 "use_mage_bank": BANK_COST_FIXTURE_INTENT.use_mage_bank,
                 "allow_wilderness": BANK_COST_FIXTURE_INTENT.allow_wilderness,
@@ -5123,11 +5152,28 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.bank_closed_observed
             }
             LiveCase::BankCost => witness.bank_loaded_observed,
-            LiveCase::BankCostAirFallback => {
+            LiveCase::BankCostFirstGoal => {
                 witness.status_trips >= 1
+                    && witness.status_deposited > 0
+                    && witness.bank_nonzero_roundtrips >= 1
                     && witness.post_bank_yields >= 1
+                    && witness.bank_loaded_observed
                     && witness.bank_closed_observed
+                    && witness.bank_withdrawal_confirmed
                     && witness.last_status_yielded > 0
+                    && witness.products_seen.contains(&1521)
+                    && fixture_plan.seed_locs.is_empty()
+                    && fixture_plan.oak_tiles.is_empty()
+                    && witness.oak_live_tiles.iter().any(|&tile| {
+                        tile_distance(tile, target).is_some_and(|distance| distance <= 12)
+                    })
+                    && witness
+                        .last_status_bank
+                        .as_deref()
+                        .is_some_and(|bank| {
+                            bank.starts_with("Draynor; Reachable;") && bank.contains("; access:")
+                        })
+                    && witness.last_xp > baseline_xp
             }
             LiveCase::BankCostNoCandidate => {
                 witness.failure_code.as_deref() == Some("bank-unavailable")
@@ -5310,6 +5356,12 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "return_after_reconnect": witness.bank_return_after_reconnect,
             "failure_code": witness.failure_code,
             "failure_message": witness.failure_message,
+            "first_goal_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+                "expected_bank": "Draynor",
+                "expected_selection_kind": "Reachable",
+                "five_second_timeout_expected": false,
+                "selection_elapsed_ms": witness.bank_selection_elapsed.map(|elapsed| elapsed.as_millis()),
+            })),
     });
     receipt["bank_trip"] = bank_receipt;
     let mut fixture_receipt = json!({
@@ -5320,6 +5372,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 "origin": fixture_plan.bank_cost_origin,
                 "air_nearest": fixture_plan.bank_cost_air_nearest,
                 "gate_disabled_candidates": fixture_plan.bank_cost_gated_candidates,
+            })),
+            "real_content_trip": (case == LiveCase::BankCostFirstGoal).then(|| json!({
+                "origin": target,
+                "resource": "oak",
+                "nearby_live_oak_tiles": witness
+                    .oak_live_tiles
+                    .iter()
+                    .filter(|&&tile| tile_distance(tile, target).is_some_and(|distance| distance <= 12))
+                    .copied()
+                    .collect::<Vec<_>>(),
+                "scene_locations_seeded": fixture_plan.seed_locs.len(),
+                "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
             })),
             "fixture_chop_observed": witness.fixture_chop_observed,
             "fixture_chop_tiles": witness.fixture_chop_tiles,
@@ -5722,9 +5786,9 @@ fn gatherer_mining_bank_cost_walk_ranked() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_BANK_T1_TILE where the real picker reaches its five-second timeout, and local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT, and local 289 engine; uses Draynor's actual oak grove and nearby bank"]
 fn gatherer_bank_cost_air_fallback() {
-    run_cell(Cell::Woodcutting, LiveCase::BankCostAirFallback).unwrap();
+    run_cell(Cell::Woodcutting, LiveCase::BankCostFirstGoal).unwrap();
 }
 
 #[test]
