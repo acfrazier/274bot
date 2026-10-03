@@ -166,7 +166,7 @@ jobs:
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
-            command: "cargo test -p panel --features memory-profile"
+            command: "cargo test -p panel --features memory-profile && xvfb-run -a cargo test -p panel --features memory-profile --test ime_frame"
           - lane: panel-render-diagnostics
             free_disk: false
             cache_key: workspace
@@ -209,7 +209,8 @@ jobs:
             libx11-dev \
             libxcursor-dev \
             libxi-dev \
-            libxrandr-dev
+            libxrandr-dev \
+            xvfb
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: test-${{ matrix.os }}-${{ matrix.cache_key }}

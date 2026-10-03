@@ -96,7 +96,27 @@ fn main() {
         println!("ime_frame skipped: no desktop display; run under Xvfb to exercise winit");
         return;
     }
-    let event_loop = EventLoop::new().expect("IME test event loop");
+    // Every macOS run of a windowless AppKit process registers its binary in
+    // System Settings' background-app list, and cargo's hashed test names make
+    // each build a new entry. Run it on a dev Mac only on request (a Tart guest
+    // is the usual place); CI runs it under Xvfb.
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("PANEL_GUI_TESTS").is_none() {
+        println!("ime_frame skipped: set PANEL_GUI_TESTS=1 to open a winit window on macOS");
+        return;
+    }
+    let mut builder = EventLoop::builder();
+    // A bare test binary would otherwise launch as a Regular app: a Dock
+    // icon, a menu bar, and focus taken from whatever the user is doing.
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder
+            .with_activation_policy(ActivationPolicy::Accessory)
+            .with_default_menu(false)
+            .with_activate_ignoring_other_apps(false);
+    }
+    let event_loop = builder.build().expect("IME test event loop");
     let mut app = ImeFrame::default();
     event_loop
         .run_app(&mut app)
