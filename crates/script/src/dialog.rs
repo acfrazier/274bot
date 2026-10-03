@@ -8,7 +8,10 @@
 //! existing FlatBuffer `npc` / `continue` / `answer` verbs.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, Ops, Scene, Text};
+#[cfg(test)]
+use crate::observed::Ops;
+use crate::observed::{self, Scene, Text};
+use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
 use crate::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::json;
@@ -27,6 +30,7 @@ pub const CONTINUE_TICKS: u64 = 1;
 /// Frozen `delayTicks(2)` after a choice ack.
 pub const CHOICE_TICKS: u64 = 2;
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
     name: Text,
@@ -46,6 +50,7 @@ struct NativeObservation {
     chat_continue: bool,
     chat_options: Vec<String>,
     bank_open: bool,
+    #[cfg(test)]
     npcs: Vec<Npc>,
 }
 
@@ -64,21 +69,8 @@ impl NativeObservation {
             // Empty texts stay: the 1-based Answer index is the posted slot.
             chat_options: session.chat_options().cloned().unwrap_or_default(),
             bank_open: session.bank_open().unwrap_or(false),
-            npcs: session
-                .npcs()
-                .map(|rows| {
-                    rows.iter()
-                        // Shared with the scene: no per-call string copies.
-                        // `talk_op` never matches an empty or `hidden` slot.
-                        .map(|npc| Npc {
-                            name: npc.name.clone().unwrap_or_default(),
-                            actions: npc.actions.clone(),
-                            distance: npc.distance,
-                            index: npc.index,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            #[cfg(test)]
+            npcs: Vec::new(),
         }
     }
 
@@ -146,8 +138,6 @@ pub(crate) struct Dialog {
     phase: Phase,
     kind: Kind,
     npc_name: String,
-    npc_action: String,
-    npc_index: i32,
     prefer: Vec<String>,
     gap_ms: u64,
     steps: u32,
@@ -158,6 +148,9 @@ pub(crate) struct Dialog {
     /// A log line to write before `after`.
     log: Option<String>,
     after: Option<After>,
+    reach: Option<NpcReach>,
+    reach_result: Option<bool>,
+    open_error: Option<String>,
 }
 
 impl Family for Dialog {
@@ -181,8 +174,6 @@ impl Family for Dialog {
             phase: Phase::Drive,
             kind: args.kind,
             npc_name: args.npc.trim().to_string(),
-            npc_action: String::new(),
-            npc_index: -1,
             prefer: args.prefer,
             gap_ms: args
                 .gap_ms
@@ -200,6 +191,9 @@ impl Family for Dialog {
             pending_mark: crate::reach::pending_posts(),
             log: None,
             after: None,
+            reach: None,
+            reach_result: None,
+            open_error: None,
         };
         match dialog.start(&obs, cx) {
             // A queued log line is written by the first step (the start kick).
@@ -226,6 +220,9 @@ impl Family for Dialog {
         }
         let obs = observed::with(NativeObservation::from_scene);
         if !obs.ingame || crate::reach::pending_posts() != self.pending_mark || obs.pending() {
+            if let Some(op) = self.reach.as_ref().and_then(NpcReach::release) {
+                cx.emit(op);
+            }
             return Step::Done(false);
         }
         let step = match self.phase {
@@ -278,48 +275,97 @@ impl Dialog {
                     }
                     return self.drive_step(obs, cx);
                 }
-                if obs.bank_open {
-                    return Step::Done(self.kind == Kind::Talk);
-                }
-                let Some(npc) = talk_target(&obs.npcs, &self.npc_name) else {
+                if !crate::reach_entity::npc_talkable(&self.npc_name) {
                     let line = format!("no '{}' nearby to talk to", self.npc_name);
                     return self.then(Some(line), After::Done(false), cx);
-                };
-                self.npc_name = npc.name;
-                self.npc_action = npc.action;
-                self.npc_index = npc.index;
+                }
                 self.phase = Phase::WaitOpen;
-                cx.clock().arm(DIALOGUE_OPEN_MS);
-                cx.emit(InteractReq::Npc {
-                    name: self.npc_name.clone(),
-                    action: self.npc_action.clone(),
-                    index: Some(self.npc_index),
-                });
-                Step::Wait
+                self.reach = Some(NpcReach::new(
+                    &self.npc_name,
+                    NpcReachOpts {
+                        expect: TalkExpect::DialogReady,
+                        expect_ms: DIALOGUE_OPEN_MS,
+                        retry_after_timeout: false,
+                        probe_unreachable: true,
+                        skip_click_when_expected: true,
+                    },
+                ));
+                self.reach_result = None;
+                self.open_error = None;
+                self.wait_open(obs, cx)
             }
         }
     }
 
     fn wait_open(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        if let Some(line) = self.reach.as_mut().and_then(NpcReach::pop_log) {
+            self.log = Some(line);
+            self.after = Some(After::Wait);
+            return Step::Wait;
+        }
+        if let Some(line) = self.open_error.take() {
+            self.log = Some(line);
+            self.after = Some(After::Done(false));
+            return Step::Wait;
+        }
+        if let Some(opened) = self.reach_result.take() {
+            return self.finish_open(opened, obs, cx);
+        }
         if obs.dialog_ready() {
-            if self.kind == Kind::Open {
-                return Step::Done(true);
+            return self.finish_open(true, obs, cx);
+        }
+
+        let Some(reach) = self.reach.as_mut() else {
+            return Step::Done(false);
+        };
+        let status = reach.step(cx);
+        match status {
+            Some("done") => self.reach_result = Some(true),
+            Some("retry") => {
+                self.reach_result = Some(false);
+                self.open_error = Some(format!("'{}' never opened a dialogue", self.npc_name));
             }
-            self.phase = Phase::Drive;
-            return self.drive_step(obs, cx);
+            Some("unreachable") => self.reach_result = Some(false),
+            Some(_) => self.reach_result = Some(false),
+            None => {}
         }
-        if obs.bank_open {
-            return Step::Done(self.kind == Kind::Talk);
+        if let Some(line) = self.reach.as_mut().and_then(NpcReach::pop_log) {
+            self.log = Some(line);
+            self.after = Some(After::Wait);
+            return Step::Wait;
         }
-        if cx.clock().bound_reached() {
-            let line = format!("'{}' never opened a dialogue", self.npc_name);
-            return self.then(Some(line), After::Done(false), cx);
+        if let Some(line) = self.open_error.take() {
+            self.log = Some(line);
+            self.after = Some(After::Done(false));
+            return Step::Wait;
+        }
+        if let Some(opened) = self.reach_result.take() {
+            return self.finish_open(opened, obs, cx);
         }
         Step::Wait
     }
 
+    fn finish_open(
+        &mut self,
+        opened: bool,
+        obs: &NativeObservation,
+        cx: &mut Cx<'_>,
+    ) -> Step<bool> {
+        if let Some(op) = self.reach.as_ref().and_then(NpcReach::release) {
+            cx.emit(op);
+        }
+        self.reach = None;
+        self.reach_result = None;
+        self.open_error = None;
+        if !opened || self.kind == Kind::Open {
+            return Step::Done(opened);
+        }
+        self.phase = Phase::Drive;
+        self.drive_step(obs, cx)
+    }
+
     fn continue_acked(&self, obs: &NativeObservation) -> bool {
-        obs.chat_modal_id != self.ack_modal_id || !obs.chat_continue
+        obs.chat_modal_id != self.ack_modal_id || obs.chat_continue
     }
 
     fn choice_acked(&self, obs: &NativeObservation) -> bool {
@@ -406,36 +452,6 @@ impl Dialog {
         cx.clock().deadline = None;
         Step::Wait
     }
-}
-
-struct TalkTarget {
-    name: String,
-    action: String,
-    index: i32,
-}
-
-fn talk_target(npcs: &[Npc], wanted: &str) -> Option<TalkTarget> {
-    let want = wanted.trim().to_ascii_lowercase();
-    if want.is_empty() {
-        return None;
-    }
-    npcs.iter()
-        .filter_map(|npc| {
-            if npc.name.trim().to_ascii_lowercase() != want {
-                return None;
-            }
-            let action = talk_op(&npc.actions)?;
-            Some((
-                npc.distance,
-                TalkTarget {
-                    name: npc.name.to_string(),
-                    action: action.to_string(),
-                    index: npc.index,
-                },
-            ))
-        })
-        .min_by_key(|(distance, _)| *distance)
-        .map(|(_, target)| target)
 }
 
 pub(crate) fn talk_op(actions: &[Text]) -> Option<&str> {
@@ -575,17 +591,16 @@ mod tests {
     }
 
     #[test]
-    fn nearest_talk_target_wins_and_missing_talk_is_absent() {
-        let npcs = vec![
+    fn shared_npc_reach_finds_talkable_rows() {
+        let observation = obs(vec![
             npc("Gundai", &["Talk-to"], 3, 4),
             npc("Gundai", &["Talk-to"], 1, 9),
             npc("Banker", &["Bank"], 0, 2),
-        ];
-        let hit = talk_target(&npcs, "gundai").unwrap();
-        assert_eq!(hit.index, 9);
-        assert_eq!(hit.action, "Talk-to");
-        assert!(talk_target(&npcs, "Banker").is_none());
-        assert!(talk_target(&npcs, "").is_none());
+        ]);
+        post(&observation);
+        assert!(crate::reach_entity::npc_talkable("gundai"));
+        assert!(!crate::reach_entity::npc_talkable("Banker"));
+        assert!(!crate::reach_entity::npc_talkable(""));
     }
 
     /// No script callbacks: no `log` hook is held here.
@@ -703,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn same_continue_page_does_not_re_emit_and_ack_timeout_fails() {
+    fn missing_continue_ack_times_out_without_re_emitting() {
         let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
         observation.chat_modal_id = 968;
         observation.chat_continue = true;
@@ -711,8 +726,9 @@ mod tests {
         let drive = running(start("drive"));
         assert_eq!(ops(), vec![InteractReq::ContinueDialog]);
         observation.tick = 5;
+        observation.chat_continue = false;
         post(&observation);
-        assert!(tick().is_empty(), "the same page is not continued twice");
+        assert!(tick().is_empty(), "a missing Continue ack does not re-emit");
         assert_eq!(machine::take(drive), Take::Pending);
         machine::tests::expire_deadlines();
         assert!(tick().is_empty());

@@ -57,10 +57,23 @@ impl DeathLatch {
         let Some(lines) = snapshot.chat_lines(0) else {
             return false;
         };
-        let max_seq = lines
-            .value
-            .iter()
-            .map(|line| line.sequence)
+        self.observe_lines(|| {
+            lines
+                .value
+                .iter()
+                .map(|line| (line.sequence, line.text.as_str()))
+        })
+    }
+
+    /// Observe a borrowed chat ring, shared by native and v1 compatibility
+    /// recovery. A lower head reconciles a replacement ring in this pass.
+    pub fn observe_lines<'a, I, F>(&mut self, mut lines: F) -> bool
+    where
+        F: FnMut() -> I,
+        I: Iterator<Item = (i32, &'a str)>,
+    {
+        let max_seq = lines()
+            .map(|(sequence, _)| sequence)
             .max()
             .unwrap_or(self.last_seq);
         if !self.baseline {
@@ -69,20 +82,14 @@ impl DeathLatch {
             return false;
         }
 
-        // A lower head means the client/ring was replaced. Reconcile the new
-        // ring in this same observation rather than waiting for another tick.
         if max_seq < self.last_seq {
             self.last_seq = 0;
         }
         let mut newest = self.last_seq;
         let mut death = false;
-        for line in lines
-            .value
-            .iter()
-            .filter(|line| line.sequence > self.last_seq)
-        {
-            newest = newest.max(line.sequence);
-            death |= is_death_line(&line.text);
+        for (sequence, text) in lines().filter(|(sequence, _)| *sequence > self.last_seq) {
+            newest = newest.max(sequence);
+            death |= is_death_line(text);
         }
         self.last_seq = newest;
         death

@@ -3,7 +3,8 @@
 // verbs are the existing FlatBuffer actions, not a completed dialogue.
 
 use script::isolate_fb::{
-    encode_snapshot, ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    encode_snapshot, encode_snapshot_with_native, ChatOptionInput, NativeFactsInput,
+    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -119,6 +120,80 @@ fn base<'a>() -> SnapshotInput<'a> {
         widgets: &[],
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: Default::default(),
+    }
+}
+
+const REACH_GRID_SIZE: i32 = 16;
+
+struct ReachGrid {
+    walkable: Vec<u32>,
+    reachable: Vec<u32>,
+    reachable_adj: Vec<u32>,
+    exact_rank: Vec<u16>,
+    adjacent_rank: Vec<u16>,
+    step: Vec<u8>,
+}
+
+fn reach_grid(here: (i32, i32), exact: &[(i32, i32)], adjacent: &[(i32, i32)]) -> ReachGrid {
+    let n = (REACH_GRID_SIZE * REACH_GRID_SIZE) as usize;
+    let index = |(x, z): (i32, i32)| (x * REACH_GRID_SIZE + z) as usize;
+    let mut grid = ReachGrid {
+        walkable: vec![0; n.div_ceil(32)],
+        reachable: vec![0; n.div_ceil(32)],
+        reachable_adj: vec![0; n.div_ceil(32)],
+        exact_rank: vec![u16::MAX; n],
+        adjacent_rank: vec![u16::MAX; n],
+        step: vec![0; n],
+    };
+    for &tile in exact.iter().chain([&here]) {
+        let i = index(tile);
+        grid.walkable[i / 32] |= 1 << (i % 32);
+        grid.reachable[i / 32] |= 1 << (i % 32);
+        grid.exact_rank[i] = if tile == here { 0 } else { 1 };
+    }
+    for &tile in adjacent.iter().chain(exact).chain([&here]) {
+        let i = index(tile);
+        grid.reachable_adj[i / 32] |= 1 << (i % 32);
+        grid.adjacent_rank[i] = if tile == here { 0 } else { 1 };
+    }
+    grid
+}
+
+fn reach_view(grid: &ReachGrid) -> ReachViewInput<'_> {
+    ReachViewInput {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: REACH_GRID_SIZE,
+        height: REACH_GRID_SIZE,
+        walkable: &grid.walkable,
+        reachable: &grid.reachable,
+        reachable_adj: &grid.reachable_adj,
+        exact_rank: &grid.exact_rank,
+        adjacent_rank: &grid.adjacent_rank,
+        step: &grid.step,
+        canlight: &[],
+        stamp: 1,
+    }
+}
+
+fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
+    iso.post_snapshot(encode_snapshot_with_native(snap, native));
+}
+
+fn failed_reach_walk(request_id: u64, x: i32, z: i32, radius: i32) -> NativeFactsInput<'static> {
+    NativeFactsInput {
+        walk_outcome_seq: 1,
+        walk_outcome_generation: 1,
+        walk_outcome_request_id: request_id,
+        walk_outcome_failed: true,
+        walk_outcome_x: x,
+        walk_outcome_z: z,
+        walk_outcome_level: 0,
+        walk_outcome_radius: radius,
+        walk_outcome_allow_teleports: false,
+        ..Default::default()
     }
 }
 
@@ -457,7 +532,7 @@ fn talk_choosing_by_stays_not_impl_and_talk_strict_stays_the_talk_through_alias(
 }
 
 #[test]
-fn same_continue_page_does_not_duplicate_then_transitions() {
+fn same_continue_page_is_acknowledged_when_continue_stays_visible() {
     let iso = spawn(TALK);
     let actions = ["Talk-to".to_string()];
     let npcs = [npc("Gundai", &actions, 7)];
@@ -479,10 +554,18 @@ fn same_continue_page_does_not_duplicate_then_transitions() {
         snap.tick = n;
         post(&iso, &snap);
         tick(&iso, n);
-        assert!(
-            iso.drain_interacts().is_empty(),
-            "same continue page at tick {n} must not re-press"
-        );
+        if n % 2 == 0 {
+            assert_eq!(
+                iso.drain_interacts(),
+                vec![InteractReq::ContinueDialog],
+                "visible Continue acknowledges the preceding press at tick {n}"
+            );
+        } else {
+            assert!(
+                iso.drain_interacts().is_empty(),
+                "the frozen one-tick delay prevents a same-tick re-press at tick {n}"
+            );
+        }
         assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     }
 
@@ -580,6 +663,7 @@ fn continue_ack_timeout_fails_without_repressing() {
     assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
 
     snap.tick = 3;
+    snap.chat_continue = false;
     post(&iso, &snap);
     tick(&iso, 3);
     assert!(iso.drain_interacts().is_empty());
@@ -920,5 +1004,187 @@ export default class T extends LoopingBot {
     tick(&iso, 7);
     tick(&iso, 8);
     assert_eq!(iso.probe("__ok").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+fn continue_ack_accepts_another_continue_on_the_same_chat_root() {
+    // Deterministic multi-page fixture: the server reuses the root and keeps
+    // Continue visible as page contents advance (also noted by the Quester
+    // observation in families/dialogue.rs:312-316).
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts().len(), 1);
+
+    snap.tick = 2;
+    snap.chat_open = true;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    snap.chat_text = Some("First page");
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+
+    snap.tick = 3;
+    snap.chat_text = Some("Second page on the same root");
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "waits the frozen extra tick"
+    );
+
+    snap.tick = 4;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog],
+        "the next same-root page must be acknowledged"
+    );
+    iso.join();
+}
+
+#[test]
+fn open_dialogue_uses_door_aware_npc_reach() {
+    let iso = spawn(OPEN);
+    let open = ["Open".to_string()];
+    let talk = ["Talk-to".to_string()];
+    let mut target = npc("Gundai", &talk, 4);
+    target.x = 8;
+    target.z = 5;
+    target.distance = 3;
+    target.reachable = false;
+    target.reachable_adj = false;
+    let npcs = [target];
+    let mut door = npc("Door", &open, 0);
+    door.id = 1530;
+    door.x = 7;
+    door.z = 5;
+    door.distance = 2;
+    let doors = [door];
+    let mut snap = base();
+    snap.here = Some(TileInput {
+        x: 5,
+        z: 5,
+        level: 0,
+    });
+    snap.npcs = &npcs;
+    snap.locs = &doors;
+    let grid = reach_grid((5, 5), &[(6, 5)], &[]);
+    snap.reach = reach_view(&grid);
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let request_id = match iso.drain_interacts().as_slice() {
+        [InteractReq::WalkNear {
+            x: 7,
+            z: 5,
+            radius: 1,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("reach must approach the blocking door first, got {other:?}"),
+    };
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+
+    snap.tick = 2;
+    post_native(&iso, &snap, failed_reach_walk(request_id, 7, 5, 1));
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkTo {
+            x: 7,
+            z: 5,
+            level: 0,
+        }]
+    );
+
+    snap.tick = 3;
+    snap.here = Some(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    let beside = reach_grid((6, 5), &[], &[(7, 5)]);
+    snap.reach = reach_view(&beside);
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 7,
+            z: 5,
+            level: 0,
+            action: "Open".into(),
+            id: Some(1530),
+        }]
+    );
+
+    snap.tick = 4;
+    snap.locs = &[];
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Gundai".into(),
+            action: "Talk-to".into(),
+            index: Some(4),
+        }]
+    );
+
+    snap.tick = 5;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    assert!(
+        serde_json::from_value::<Vec<String>>(iso.probe("__logs").unwrap())
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("opening blocking 'Door'")),
+        "the existing reach machine reports the door operation"
+    );
+    iso.join();
+}
+
+#[test]
+fn talk_does_not_succeed_when_the_bank_is_open_without_dialogue() {
+    let iso = spawn(TALK);
+    let mut snap = base();
+    snap.bank_open = true;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn talk_does_not_succeed_if_the_bank_opens_before_any_dialogue() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts().len(), 1);
+
+    snap.tick = 2;
+    snap.bank_open = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "a bank modal is not proof that Talk opened dialogue"
+    );
     iso.join();
 }
