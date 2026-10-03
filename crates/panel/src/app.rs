@@ -1079,15 +1079,18 @@ fn size_changed(prev: Option<[f32; 2]>, size: [f32; 2]) -> bool {
 /// with Appearing/FirstUseEver is ignored while those windows are already
 /// visible, so they must be `DockBuilder::dock_window`'d onto the new leaf
 /// or they float over the panel with a leftover tab bar.
+const PANEL_TAB_WINDOWS: &[&str] = &[
+    "Profiles",
+    "General config",
+    "Nav config",
+    "Script prefs",
+    "Log",
+    "Debug",
+];
+
 fn dock_panel_tabs(ui: &Ui, panel: Id) {
     DockBuilder::dock_window(ui, PANEL_WINDOW, panel);
-    for title in [
-        "Profiles",
-        "General config",
-        "Nav config",
-        "Script prefs",
-        "Debug",
-    ] {
+    for &title in PANEL_TAB_WINDOWS {
         DockBuilder::dock_window(ui, title, panel);
     }
 }
@@ -1541,9 +1544,9 @@ fn title_row(ui: &Ui, session: &mut Session) {
     ui.text_colored(ACCENT, session.app_title());
     ui.same_line();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = scaled_button_row_layout(ui, avail, 2);
+    let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     if !stack {
-        let total = w * 2.0 + scale_px(ui, BUTTON_GAP);
+        let total = w * 3.0 + scale_px(ui, BUTTON_GAP) * 2.0;
         ui.set_cursor_pos_x(ui.cursor_pos()[0] + (avail - total).max(0.0));
     }
     if ui.button_with_size("MultiBox", [w, 0.0]) {
@@ -1554,19 +1557,28 @@ fn title_row(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     // Grid is a MultiBox submode: hide the rail, Game pane lays members.
-    let _grid_disabled = if !session.multibox {
-        Some(ui.begin_disabled())
-    } else {
-        None
-    };
-    if ui.button_with_size("Grid", [w, 0.0]) {
-        session.set_grid(!session.wall.grid);
+    {
+        let _grid_disabled = if !session.multibox {
+            Some(ui.begin_disabled())
+        } else {
+            None
+        };
+        if ui.button_with_size("Grid", [w, 0.0]) {
+            session.set_grid(!session.wall.grid);
+        }
+        ui.set_item_tooltip(if session.multibox {
+            "grid mode — hide rail"
+        } else {
+            "enable MultiBox first"
+        });
     }
-    ui.set_item_tooltip(if session.multibox {
-        "grid mode — hide rail"
-    } else {
-        "enable MultiBox first"
-    });
+    if !stack {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Log", [w, 0.0]) {
+        session.log_window_open = true;
+    }
+    ui.set_item_tooltip("open log in a panel tab");
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -3143,20 +3155,91 @@ fn persist_profile_setting(
     }
 }
 
+fn script_parameter_text_input(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &script::ScriptSel,
+    profile: Option<&str>,
+    def: &script::SettingDef,
+    options: &[String],
+    current: Option<serde_json::Value>,
+) {
+    let label = def.label.as_deref().unwrap_or(&def.id);
+    let initial_text = current
+        .as_ref()
+        .map(script::format_setting_value)
+        .or_else(|| def.default.clone())
+        .unwrap_or_default();
+    let changed = {
+        let text = session.scripts.parameter_text_mut_for(
+            profile,
+            selection,
+            &def.id,
+            &initial_text,
+            current.clone(),
+        );
+        ui.input_text(format!("{label}##param-{id}", id = def.id), text)
+            .build()
+    };
+    let active = ui.is_item_active();
+    let deactivated = ui.is_item_deactivated_after_edit();
+    let enter = ui.is_key_pressed(Key::Enter) && (active || deactivated);
+    let escape = ui.is_key_pressed(Key::Escape) && (active || deactivated);
+    let commit = !escape && (deactivated || enter);
+    if escape {
+        session
+            .scripts
+            .discard_parameter_text_for(profile, selection, &def.id);
+    } else if changed || commit {
+        let value = session.scripts.validate_parameter_buffer_for(
+            profile,
+            selection,
+            &def.id,
+            (&initial_text, current.clone()),
+            def,
+            options,
+        );
+        if commit {
+            if let Ok(value) = value {
+                let edit_key =
+                    frontend_core::scripts::ParameterEditKey::new(profile, selection, &def.id);
+                let _ = session.scripts.commit_parameter_value(
+                    &mut session.core,
+                    &edit_key,
+                    selection,
+                    &def.id,
+                    value,
+                    current,
+                );
+                session.apply_script_notice();
+            }
+        }
+    }
+    if let Some(error) = session
+        .scripts
+        .parameter_text_error_for(profile, selection, &def.id)
+    {
+        ui.same_line();
+        ui.text_colored(ERROR, error);
+    }
+}
+
+/// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     let Some(selection) = session.script_sel.clone() else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
     };
+    let profile = session.focused_name();
     let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
         script::ScriptSel::Loaded(source, name) => {
             let Some(card) = session.scripts.js.get(*source, name).cloned() else {
                 ui.text_disabled("(parameters unavailable)");
                 return;
             };
-            let bag = if let Some(profile) = session.focused_name() {
+            let bag = if let Some(profile) = profile.as_deref() {
                 session.merged_profile_bag(
-                    &profile,
+                    profile,
                     *source,
                     &card.name,
                     &card.path,
@@ -3168,7 +3251,6 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             (std::borrow::Cow::Owned(card.settings_schema), bag)
         }
         script::ScriptSel::Compiled(id) => {
-            let profile = session.focused_name();
             let fields =
                 match session
                     .scripts
@@ -3227,15 +3309,15 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 }
             }
             "number" => {
-                let mut value = bag
-                    .get(&def.id)
-                    .and_then(|v| v.as_f64())
-                    .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
-                    .unwrap_or(0.0) as i32;
-                if ui.input_int(&label, &mut value) {
-                    persist_profile_setting(session, &selection, &def.id, serde_json::json!(value));
-                    bag.insert(def.id.clone(), serde_json::json!(value));
-                }
+                script_parameter_text_input(
+                    ui,
+                    session,
+                    &selection,
+                    profile.as_deref(),
+                    def,
+                    &resolved.values,
+                    bag.get(&def.id).cloned(),
+                );
             }
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
@@ -3256,8 +3338,10 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ) {
                     for opt in opts {
                         let selected = opt == &current;
-                        let shown = resolved.label_for(opt);
-                        if ui.selectable_config(shown).selected(selected).build() {
+                        // Two options can share a label (e.g. two fishing methods that
+                        // catch the same fish); the value keeps their ImGui IDs apart.
+                        let shown = format!("{}##{opt}", resolved.label_for(opt));
+                        if ui.selectable_config(&shown).selected(selected).build() {
                             persist_profile_setting(
                                 session,
                                 &selection,
@@ -3305,16 +3389,15 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 }
             }
             "string" | "tile" | "list" | "string[]" => {
-                let mut text = bag
-                    .get(&def.id)
-                    .map(script::format_setting_value)
-                    .or(def.default.as_deref().map(String::from))
-                    .unwrap_or_default();
-                if ui.input_text(&label, &mut text).build() {
-                    let coerced = script::coerce_setting_value(&def.ty, &serde_json::json!(text));
-                    persist_profile_setting(session, &selection, &def.id, coerced.clone());
-                    bag.insert(def.id.clone(), coerced);
-                }
+                script_parameter_text_input(
+                    ui,
+                    session,
+                    &selection,
+                    profile.as_deref(),
+                    def,
+                    &resolved.values,
+                    bag.get(&def.id).cloned(),
+                );
             }
             _ => {
                 ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
@@ -3612,52 +3695,52 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    if session.ui.log_detached {
-        ui.text_disabled("log is floating in a separate window");
-        if ui.button("Attach log") {
-            session.ui.log_detached = false;
-            crate::ui_state::save(&session.ui);
-        }
+    if session.log_window_body_drawn {
+        ui.text_disabled("Log is open in its tab");
     } else {
         crate::log_pane::log_body(ui, session, last);
     }
 }
 
-/// Draw the shared log in a separate in-app window.
-fn floating_log_window(ui: &Ui, session: &mut Session) {
-    if !session.ui.log_detached {
+/// Draw the shared log as a dockable panel tab.
+fn log_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
+    log_window_with_body(ui, session, panel_dock, |ui, session| {
+        crate::log_pane::log_body(ui, session, true)
+    });
+}
+
+fn log_window_with_body(
+    ui: &Ui,
+    session: &mut Session,
+    panel_dock: Option<Id>,
+    body: impl FnOnce(&Ui, &mut Session),
+) {
+    session.log_window_body_drawn = false;
+    if !session.log_window_open {
         return;
     }
-    let viewport = ui.main_viewport();
-    let work_pos = viewport.work_pos();
-    let work_size = viewport.work_size();
-    let scale = ui_scale(ui);
-    let size = scale_size(
-        ui,
-        [
-            PANEL_WIDTH,
-            (work_size[1] / scale - 80.0).clamp(240.0, 560.0),
-        ],
-    );
-    let pos = [
-        work_pos[0] + ((work_size[0] - size[0]) * 0.5).max(0.0),
-        work_pos[1] + ((work_size[1] - size[1]) * 0.5).max(0.0),
-    ];
     let mut open = true;
+    let panel_class = panel_window_class();
+    ui.set_next_window_class(&panel_class);
+    if let Some(id) = panel_dock {
+        ui.set_next_window_dock_id_with_cond(id, Condition::FirstUseEver);
+    }
     ui.window("Log")
         .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_DOCKING)
-        .position(pos, Condition::FirstUseEver)
-        .size(size, Condition::FirstUseEver)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size(
+            scale_size(ui, [PANEL_WIDTH, 480.0]),
+            Condition::FirstUseEver,
+        )
         .size_constraints(
             scale_size(ui, [280.0, 180.0]),
             [f32::MAX, scale_px(ui, 720.0)],
         )
-        .build(|| crate::log_pane::log_body(ui, session, true));
-    if !open {
-        session.ui.log_detached = false;
-        crate::ui_state::save(&session.ui);
-    }
+        .build(|| {
+            session.log_window_body_drawn = true;
+            body(ui, session);
+        });
+    session.log_window_open = open;
 }
 
 /// Selected picker button: amber fill, dark text (illuminated invert).
@@ -4993,7 +5076,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
         .server_root
         .clone()
         .or_else(|| std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/Users/acfrazier/experiments/Server/engine"));
+        .ok_or("offline fixture preparation requires --server-root or BOT_SERVER_ROOT")?;
     if !server_root.join("data/pack/server/obj.dat").is_file() {
         return Err(format!(
             "server root missing pack data: {} (pass --server-root or BOT_SERVER_ROOT)",
@@ -5540,9 +5623,9 @@ fn ui_frame(
     state.debug_resources();
     let game_class = game_window_class();
     let panel_class = panel_window_class();
+    log_window(ui, &mut state.session, state.panel_dock_node);
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
-    floating_log_window(ui, &mut state.session);
     crate::fleet::window(ui, &mut state.session);
     {
         let focus = state.session.focus.lock().unwrap();

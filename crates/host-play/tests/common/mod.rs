@@ -88,14 +88,19 @@ pub fn profiles(entries: &[(&str, &str)]) -> Vec<Profile> {
         .collect()
 }
 
-/// Engine + cache defaults (matches `client-play` / the operator syntax).
+/// Engine + cache options for the local 274 endpoint.
 pub fn options() -> PlayOptions {
-    let home = client::operator_home().expect("operator home (HOME or USERPROFILE) set");
+    let engine_dir = std::env::var_os("ENGINE_DIR")
+        .map(PathBuf::from)
+        .expect("set ENGINE_DIR to the local engine root for live tests");
     PlayOptions {
         host: "127.0.0.1".into(),
         transport: client::Transport::Tcp,
         port: 43594,
-        cache_dir: format!("{home}/experiments/Server/engine/data/pack/client"),
+        cache_dir: engine_dir
+            .join("data/pack/client")
+            .to_string_lossy()
+            .into_owned(),
         lowmem: true,
         mainland: false,
     }

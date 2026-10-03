@@ -1510,7 +1510,7 @@ impl Combat {
             }
             return Ok(plan);
         }
-        let floor = (base - (7 + base / 4)).max(3);
+        let floor = prayer_floor(base);
         if self.request.allow.prayer && (protection_wanted || prayers != 0) && points <= floor {
             self.drink_or_recover(
                 &mut plan,
@@ -1857,6 +1857,7 @@ impl Combat {
             target: tile,
             loc_id: None,
             radius: 1,
+            arrival: nav::arrival::ArrivalKind::Reach,
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
@@ -2006,6 +2007,10 @@ fn potion_kind(code: u8) -> PotionKind {
         _ => unreachable!("planned potion kind"),
     }
 }
+pub(super) fn prayer_floor(base: i32) -> i32 {
+    (base - (7 + base / 4)).max(3)
+}
+
 fn unavailable(reason: &'static str) -> ActionError {
     ActionError::Unavailable(reason.into())
 }

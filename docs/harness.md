@@ -46,18 +46,16 @@ existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
 The `nav_door` integration test uses hard-coded Direct local-274 options and
-the fixed `$HOME/experiments/Server/engine/data/pack/client` cache path.
-`BOT_SERVER_PROFILE` does not select that test's endpoint:
+the `ENGINE_DIR/data/pack/client` cache path. `BOT_SERVER_PROFILE` does not
+select that test's endpoint:
 
 ```sh
-BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+BOT_NAV_REVISION=274 ENGINE_DIR=/absolute/path/to/274-engine LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-Some existing integration-test helpers use the default
-`HOME/experiments/Server/engine/data/pack/client` layout. Check the
-relevant test's cache options when running it on another machine; setting
-`ENGINE_DIR` is not a universal override for those older helpers. Frontend
-harnesses use the configured engine/cache path from the resolved profile.
+Direct integration-test helpers that use engine cache data require
+`ENGINE_DIR`; frontend harnesses use the configured engine/cache path from
+the resolved profile.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
 
@@ -110,6 +108,164 @@ danger-zone rules. Bank, recovery, disposal, refusal and failed-walk settlement
 remain fenced to a later tick. If no replacement target is available, terminal
 unavailability is confirmed on the next observation so a delayed yield packet is
 accounted before the runner blocks.
+
+## Gatherer fishing bank returns
+
+The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell tests a fixed
+Start location at Catherby with an inventory harpoon and one seeded `casket`
+(item ID 405). The ignored
+`gatherer_live::gatherer_fish_harpoon_bank_auto` cell exercises the operator's
+Auto return settings: Fishing level 76, canonical method ID
+`fishing.rarefish.op3`, location `Auto`, radius 40, Bank disposition, and
+Catherby bank. Its fixed test target is tile `2840,3436,0`. Initial level/tool
+fixtures precede the progression baseline; no fish, casket, proof XP gains, or
+randomized fishing-location state are seeded.
+
+Both cells require at least two positive fish deposits followed by a fresh
+fishing yield after each bank return. Only the fixed-location cell requires the
+seeded casket in the Start baseline and verifies its deposit; the Auto case has
+no seeded-casket gate. Each trip receipt derives expected item and product
+counts from the actual pre-deposit inventory, excluding protected
+tools/supplies; it verifies deposited IDs leave the pack and their bank counts
+increase while the bank is loaded. A naturally dropped casket is recorded only
+as an observation, never required. The existing preparation and wedge deadlines
+still bound both runs.
+
+After banking, Gatherer returns to the selected method's content-derived
+observation stand using area arrival with a one-tile radius. The work-area radius
+remains the gathering bound; a bank inside that bound does not complete Return.
+Area arrival settles only at a currently loaded, standable tile near the
+observation stand, then Gatherer observes resources again.
+
+The command below runs both ignored cells (the filter intentionally is not
+`--exact`):
+
+```sh
+LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=gf \
+cargo test -p host-play --test gatherer_live gatherer_fish_harpoon_bank \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Set a disposable `HOME` with copied `BOT_CACHE_DIR`/`CLIENT_UNPACK_DIR` inputs,
+absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`,
+and matching explicit `WORLD_ENGINE_DIR`/`WORLD_NAV_PACK`. The defaults use the
+builder engine at `45594`/`2080`; `GATHERER_GAME_PORT`/`GATHERER_HTTP_PORT` can
+select the local engine at `44594`/`1080`. `GATHERER_FISH_HARPOON_TILE` optionally
+overrides the default `2840,3436,0`. `LIVE_EVIDENCE_DIR` saves a real client
+capture and a receipt containing the tick-stamped bank status/event sequence.
+
+Fishing tools are carried, not wielded. In the Auto case, radius 40 bounds the
+gathering area only; it is not a bank-return shortcut. After banking, the return
+must reach a resource observation stand using navigation `Area` arrival radius
+1 before another catch can demonstrate return progress. NPC view is smaller
+than the loaded map, so returning inside the gathering area alone does not
+prove that moving fishing spots are visible. For NPC-backed fishing, the
+selector derives observation stands from the content movement envelope and
+accumulates empty coverage for at most 100 gameplay ticks. It caps reapproaches
+at eight per method/placement; exhaustion follows existing Avoided/Exhausted
+selection instead of falsely declaring the spot absent. A live actor clears
+empty evidence but does not renew the approach budget; positive gather progress
+does. Rock and tree placement observation still uses the loaded map rectangle.
+
+## Walk Guard W1 live and receipt replay
+
+The ignored W1 fixtures exercise the `death-plateau-throwers` crossing against
+the local R289 engine. The gate retains the ranged-projectile queue rule
+`floor((32 + 5d) / 30)` without relaxing it; at distance 1 the expected delay
+is one tick. The first thrower is staged on a standable tile three to five
+tiles ahead of the route start: the fixture teleports there, spawns the NPC,
+then teleports back to the route start before scripted movement begins. This
+avoids attributing a distance-zero launch at the start to the moving crossing.
+
+The live and replay gate requires exactly two accepted guard clicks, both
+component 5622. The enable click must show Missiles off before the click and
+occur from the first launch through arrival; the off-click must show Missiles
+on before the click and occur from arrival through the observed off tick.
+Every per-tick crossing observation from `protect_tick` through
+`arrival_tick`, inclusive, must show Missiles on. The receipt must also have
+an observation for every tick from the first launch through the off tick and
+three following ticks, with all prayers remaining off during cleanup. Any
+extra click, non-Missiles click, missing crossing observation, Missiles lapse,
+or prayer return fails the same gate used by offline replay.
+
+Arrival uses the host's network tile (`Snapshot.tile`, derived from `route[0]`),
+not the rendered actor's interpolated pixel tile. `last_tile` and
+`final_snapshot.tile` use the rendered local-player tile consistently;
+`final_snapshot.network_tile` retains the separate host coordinate.
+If crossing completion and prayer cleanup are observed on the same game tick,
+the pre-cleanup off-click snapshot supplies the genuine Missiles-on crossing
+observation only when its network tile confirms arrival at the destination;
+the post-click frame is a separate cleanup observation at that tick. Receipts
+label those phases explicitly; they do not invent a game tick or waive the
+inclusive arrival requirement.
+
+Use the isolated worktree's nav pack and retained cache snapshot. The host
+connects through builder ports `45594/2080`, forwarded to the local engine's
+`44594/1080` endpoints. Both the test's generated HOME and launcher HOME are
+under the R2 evidence directory:
+
+```sh
+WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+ENGINE_DIR=/path/to/matching/local-289/engine
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$EVIDENCE/launcher-home"
+cd "$WT"
+export CARGO_HOME RUSTUP_HOME
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+BOT_LIVE_NAME_PREFIX=wg \
+BOT_ENGINE_DIR="$ENGINE_DIR" \
+WORLD_ENGINE_DIR="$ENGINE_DIR" \
+BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_protected_crossing -- --exact --ignored --nocapture --test-threads=1
+```
+
+The separate `live_walk_guard_w1_stop_mid_crossing` test uses the real
+`ScriptStartHandle::stop` API after Missiles is observed on during the crossing
+and before arrival. It requires every prayer to turn off within four ticks of
+Stop and remain off for three more observed ticks:
+
+```sh
+WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
+ENGINE_DIR=/path/to/matching/local-289/engine
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+mkdir -p "$EVIDENCE/launcher-home"
+cd "$WT"
+export CARGO_HOME RUSTUP_HOME
+HOME="$EVIDENCE/launcher-home" LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip \
+BOT_LIVE_NAME_PREFIX=wg \
+BOT_ENGINE_DIR="$ENGINE_DIR" \
+WORLD_ENGINE_DIR="$ENGINE_DIR" \
+BOT_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+WORLD_NAV_PACK="$WT/target/debug/nav/289/274bot.navpack" \
+BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-snapshots/37214163f1e6ceca \
+cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_stop_mid_crossing -- --exact --ignored --nocapture --test-threads=1
+```
+
+Both modes save a real final scene PNG with a matching JSON/Core record in an
+R2 per-run capture folder under `WALK-GUARD-LIFECYCLE-1/r2`; inspect that image
+alongside the receipt before accepting the live proof. The final receipt's
+`tile` is normalized to `local_player.tile`. The explicit navigation pack
+must have its matching `.navpack.json`, `.navreach`, `.navflags`,
+`.navcanlight`, and `.navpois` files beside it.
+
+The ignored offline replay applies the same gate to the retained bad receipt
+`wgkiu3hcw6` and passing receipts `wg9l6smxhw` and
+`REVIEW-WALK-GUARD-OPUS/W1-wgefe0xaj8_0`. Legacy receipts without per-tick
+rows use their guard-click pre-click prayer varps, recorded protect/off
+observations, and holds between clicks; the replay output marks that their
+crossing frames and three post-off ticks were not directly recorded. It does
+not fabricate per-tick rows. The replay table is written to
+`WALK-GUARD-LIFECYCLE-1/r2/W1-lifecycle-replay.json`:
+
+```sh
+cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts -- --exact --ignored --nocapture
+```
 
 ## JS API v2 GatherQuest sample checks
 

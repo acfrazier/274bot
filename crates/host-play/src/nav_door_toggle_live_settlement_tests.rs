@@ -66,6 +66,7 @@ impl Script for SettlementWalker {
             let request = WalkRequest {
                 target: TARGET,
                 radius: 1,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 loc_id: Some(0),
                 options: script::FindOptions::default(),
                 required_after: tick.cx.evidence(),

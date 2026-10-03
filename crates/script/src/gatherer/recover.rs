@@ -16,7 +16,7 @@ impl Gatherer {
         self.cancel_active();
         self.trip = TripStep::Idle;
         self.selected_bank = None;
-        self.withdrawals = None;
+        self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.observed_progress = None;
         self.proof_evidence = 0;
@@ -166,10 +166,8 @@ impl Gatherer {
                 }
             }
             5 => {
-                if let Some(area) = self.area {
-                    self.trip_walk(area.anchor, area.radius, tick);
-                    self.set_event("returning after death");
-                }
+                self.return_to_resources(tick);
+                self.set_event("returning after death");
             }
             _ => unreachable!("invalid retained Gatherer recovery step"),
         }
@@ -180,22 +178,14 @@ impl Gatherer {
         result: WalkReceipt,
         tick: &mut NativeTick<'_>,
     ) {
-        let arrived = result.end == WalkEnd::Arrived
-            && self.area.is_some_and(|area| {
-                tick.cx.snapshot().here().is_some_and(|here| {
-                    here.value.level == area.anchor.level
-                        && here
-                            .value
-                            .x
-                            .abs_diff(area.anchor.x)
-                            .max(here.value.z.abs_diff(area.anchor.z))
-                            <= u32::from(area.radius)
-                })
-            });
+        let arrived = result.end == WalkEnd::Arrived && self.resource_return_arrived(tick);
         if !arrived {
             self.fail(
                 "return-failed",
-                format!("return-failed:{:?}; arrival must be observed", result.end),
+                format!(
+                    "{}; arrival at the resource observation stand must be observed",
+                    walk_failure_message(&result),
+                ),
                 true,
             );
             return;
@@ -203,6 +193,7 @@ impl Gatherer {
         self.proving_runs = 0;
         self.proof_evidence = 0;
         self.advance_recovery(RecoveryState::Proving, tick);
+        self.target = None;
         self.needs_validate = true;
         self.set_event("returned; proving fresh product and XP");
     }

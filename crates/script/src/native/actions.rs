@@ -199,6 +199,7 @@ impl ActionContext<'_> {
         let request_id = ledger.next_id()?;
         owner.set_walk(request_id);
         ledger.walk = None;
+        ledger.walk_events.clear();
         ledger.outbox.push(HostAction {
             owner,
             request_id,
@@ -520,6 +521,31 @@ impl NativeActions {
                 resume_unwind(panic)
             }
         }
+    }
+
+    /// Consume one warning from this walk's live request without completing
+    /// its machine or spending an interaction/transition allowance.
+    pub fn take_walk_event(
+        &mut self,
+        handle: &ActionHandle<super::walk::Walk>,
+        cx: &mut ActionContext<'_>,
+    ) -> Option<super::WalkEvent> {
+        if handle.owner.run != cx.run() || !handle.owner.live() {
+            return None;
+        }
+        let request = handle.owner.active_walk()?;
+        let ledger = cx.ledger.as_mut()?;
+        if !ledger
+            .owner
+            .as_ref()
+            .is_some_and(|owner| Arc::ptr_eq(owner, &handle.owner))
+        {
+            return None;
+        }
+        let index = ledger.walk_events.iter().position(|event| {
+            event.request_id == request.get() && event.evidence.run == handle.owner.run
+        })?;
+        Some(ledger.walk_events.remove(index))
     }
 
     pub fn cancel<M: NativeMachine>(&mut self, handle: ActionHandle<M>) {
@@ -1117,6 +1143,7 @@ mod tests {
                     level: 0,
                 },
                 radius: 0,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -1626,6 +1653,7 @@ mod tests {
                 },
                 loc_id: None,
                 radius: 0,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 options: FindOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -1720,6 +1748,7 @@ mod tests {
                             target,
                             loc_id: None,
                             radius,
+                            arrival: nav::arrival::ArrivalKind::Reach,
                             options: FindOptions::default(),
                             required_after: cx.evidence(),
                             evidence: None,

@@ -50,8 +50,14 @@ impl LaunchWorld {
 #[serde(untagged)]
 pub enum LoginKey {
     Named(String),
-    Inline { modulus: String, exponent: String },
-    EngineDir { engine_dir: PathBuf },
+    Inline {
+        modulus: String,
+        exponent: String,
+    },
+    EngineDir {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        engine_dir: Option<PathBuf>,
+    },
 }
 
 impl LoginKey {
@@ -95,7 +101,7 @@ pub struct Servers {
 }
 
 impl Servers {
-    pub fn builtins(home: &Path) -> Self {
+    pub fn builtins() -> Self {
         let rs2b2t = PublicWorlds::default()
             .worlds
             .into_iter()
@@ -108,26 +114,23 @@ impl Servers {
                 node_id: world.node_id,
             })
             .collect();
-        let local =
-            |number, revision, game_port, asset_port, vault: &str, engine: &str| LaunchProfile {
-                name: format!("local-{revision}"),
-                revision,
-                transport: LaunchTransport::Tcp,
-                worlds: vec![LaunchWorld {
-                    number,
-                    host: "127.0.0.1".into(),
-                    port: game_port,
-                    node_id: number as i32,
-                    asset_host: "127.0.0.1".into(),
-                    asset_port,
-                }],
-                login_key: LoginKey::EngineDir {
-                    engine_dir: home.join(engine),
-                },
-                vault: vault.into(),
-                members: None,
-                allow_plaintext_offhost: false,
-            };
+        let local = |number, revision, game_port, asset_port, vault: &str| LaunchProfile {
+            name: format!("local-{revision}"),
+            revision,
+            transport: LaunchTransport::Tcp,
+            worlds: vec![LaunchWorld {
+                number,
+                host: "127.0.0.1".into(),
+                port: game_port,
+                node_id: number as i32,
+                asset_host: "127.0.0.1".into(),
+                asset_port,
+            }],
+            login_key: LoginKey::EngineDir { engine_dir: None },
+            vault: vault.into(),
+            members: None,
+            allow_plaintext_offhost: false,
+        };
         Self {
             schema_version: 1,
             servers: vec![
@@ -141,33 +144,25 @@ impl Servers {
                     members: None,
                     allow_plaintext_offhost: false,
                 },
-                local(
-                    289,
-                    289,
-                    44594,
-                    1080,
-                    "vault-289",
-                    "experiments/lostcity-289/engine",
-                ),
-                local(274, 274, 43594, 80, "vault", "experiments/Server/engine"),
+                local(289, 289, 44594, 1080, "vault-289"),
+                local(274, 274, 43594, 80, "vault"),
             ],
         }
     }
 
-    pub fn load(bot_dir: &Path, home: &Path) -> Result<Self, String> {
-        Self::load_with_before_publish(bot_dir, home, || {})
+    pub fn load(bot_dir: &Path) -> Result<Self, String> {
+        Self::load_with_before_publish(bot_dir, || {})
     }
 
     fn load_with_before_publish(
         bot_dir: &Path,
-        home: &Path,
         before_publish: impl FnOnce(),
     ) -> Result<Self, String> {
         let path = bot_dir.join("servers.json");
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let mut servers = Self::builtins(home);
+                let mut servers = Self::builtins();
                 let worlds_path = bot_dir.join("worlds.json");
                 if worlds_path.is_file() {
                     let worlds_bytes = std::fs::read(&worlds_path)
@@ -437,14 +432,12 @@ mod tests {
     fn concurrent_initializers_publish_complete_json_without_replacing_existing_file() {
         let root = TempRoot::new();
         let bot_dir = root.0.join(".274bot");
-        let home = root.0.join("home");
         let path = bot_dir.join("servers.json");
         let (paused_tx, paused_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
         let first_bot_dir = bot_dir.clone();
-        let first_home = home.clone();
         let first = thread::spawn(move || {
-            Servers::load_with_before_publish(&first_bot_dir, &first_home, || {
+            Servers::load_with_before_publish(&first_bot_dir, || {
                 paused_tx.send(()).unwrap();
                 resume_rx.recv().unwrap();
             })
@@ -454,7 +447,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("first initializer reached the publication boundary");
         let observed_before_publish = std::fs::read(&path);
-        let concurrent_reader = Servers::load(&bot_dir, &home);
+        let concurrent_reader = Servers::load(&bot_dir);
         resume_tx.send(()).unwrap();
 
         let first = first.join().unwrap().expect("first initializer succeeds");
@@ -473,14 +466,14 @@ mod tests {
             first
         );
 
-        let mut operator_servers = Servers::builtins(&home);
+        let mut operator_servers = Servers::builtins();
         operator_servers.servers[0].name = "operator-entry".into();
         operator_servers.validate().unwrap();
         let mut operator_file = vec![b'\n'];
         operator_file.extend(serde_json::to_vec_pretty(&operator_servers).unwrap());
         operator_file.push(b'\n');
         std::fs::write(&path, &operator_file).unwrap();
-        let loaded = Servers::load_with_before_publish(&bot_dir, &home, || {
+        let loaded = Servers::load_with_before_publish(&bot_dir, || {
             panic!("an existing operator file must not enter initialization")
         })
         .unwrap();

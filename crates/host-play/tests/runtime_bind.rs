@@ -224,6 +224,7 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
     };
     let environment = ProfileEnvironment {
         home: Some(root.0.clone()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()
@@ -410,6 +411,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     };
     let env = ProfileEnvironment {
         home: Some(root.0.clone()),
+        engine_dir: Some(root.0.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()

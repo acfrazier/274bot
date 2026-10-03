@@ -15,9 +15,13 @@ mod native;
 pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
 
 mod marked;
+mod parameter_edit;
 mod reload;
 mod start_admit;
 mod start_tally;
+use parameter_edit::ParameterEdit;
+pub use parameter_edit::{parse_parameter_text, ParameterCommit, ParameterEditKey};
+
 mod sync;
 
 use std::collections::HashMap;
@@ -252,6 +256,10 @@ pub struct Scripts {
     pub inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
     pending_browse: HashMap<String, script::ScriptSel>,
+    /// Reused editor keys for the currently displayed profile and card.
+    parameter_key_cache: Vec<ParameterEditKey>,
+    parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
+    parameter_edits: HashMap<ParameterEditKey, ParameterEdit>,
     starts: HashMap<String, PendingStart>,
     /// Paced Start-all / marked-Start places. Empty in the idle path.
     admit: StartAdmit,
@@ -282,6 +290,9 @@ impl Scripts {
             legacy,
             inject: None,
             pending_browse: HashMap::new(),
+            parameter_key_cache: Vec::new(),
+            parameter_key_scope: None,
+            parameter_edits: HashMap::new(),
             starts: HashMap::new(),
             admit: StartAdmit::default(),
             admit_catalog: None,
@@ -876,6 +887,11 @@ impl Scripts {
         kind: StartKind,
         tallied: bool,
     ) -> Result<(), script::StartLoadError> {
+        if self.parameter_edit_blocks_start(profile) {
+            return Err(script::StartLoadError::Waiting(
+                "settings edit is uncommitted or its save has not settled".into(),
+            ));
+        }
         if core.play().is_none() {
             return Err(script::StartLoadError::Refused("no play".into()));
         }
@@ -1120,6 +1136,7 @@ impl Scripts {
     /// card's load diagnostic; a failure records it) and parameter writes.
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        self.settle_parameter_edits(core);
         self.poll_reload_validation(core);
         self.release_stopped_restarts(core);
         if !self.admit.is_empty() {

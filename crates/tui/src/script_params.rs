@@ -51,7 +51,8 @@ pub enum ParamsKey {
 
 /// Where a parameter edit goes: the focused profile's bag through the
 /// shared script coordinator. `Err` keeps the old value and shows it.
-pub type ParamsCommit<'a> = dyn FnMut(&str, serde_json::Value) -> Result<(), String> + 'a;
+pub type ParamsCommit<'a> =
+    dyn FnMut(&str, serde_json::Value, Option<serde_json::Value>) -> Result<(), String> + 'a;
 
 /// The script params popup over a card's settings schema. `bag` is the
 /// view of the focused profile's merged bag; edits go through `commit`.
@@ -161,19 +162,31 @@ impl<'a> ParamsPane<'a> {
                 self.cancel_edit();
                 ParamsKey::Cancel
             }
-            crossterm::event::KeyCode::Enter => self.commit_text(rows),
+            crossterm::event::KeyCode::Enter
+            | crossterm::event::KeyCode::Tab
+            | crossterm::event::KeyCode::BackTab => self.commit_text(rows),
             crossterm::event::KeyCode::Backspace => {
                 self.state.scratch.pop();
-                self.state.error = None;
+                self.refresh_text_error(rows);
                 ParamsKey::None
             }
             crossterm::event::KeyCode::Char(c) => {
                 self.state.scratch.push(c);
-                self.state.error = None;
+                self.refresh_text_error(rows);
                 ParamsKey::None
             }
             _ => ParamsKey::None,
         }
+    }
+
+    fn refresh_text_error(&mut self, rows: &[&SettingDef]) {
+        let Some(def) = rows.get(self.state.cursor) else {
+            return;
+        };
+        let options = self.resolved_options(def);
+        self.state.error =
+            frontend_core::scripts::parse_parameter_text(def, &self.state.scratch, &options.values)
+                .err();
     }
 
     fn on_choice_key(
@@ -293,7 +306,12 @@ impl<'a> ParamsPane<'a> {
         let Some(def) = rows.get(self.state.cursor) else {
             return ParamsKey::None;
         };
-        match value_from_scratch(def, &self.state.scratch) {
+        let options = self.resolved_options(def);
+        match frontend_core::scripts::parse_parameter_text(
+            def,
+            &self.state.scratch,
+            &options.values,
+        ) {
             Ok(value) => {
                 if self.persist(&def.id, value) {
                     self.cancel_edit();
@@ -312,10 +330,6 @@ impl<'a> ParamsPane<'a> {
     fn commit_choices(&mut self, def: &SettingDef) -> ParamsKey {
         let raw = serde_json::json!(self.state.choice_selected.clone());
         let value = coerce_setting_value(&def.ty, &raw);
-        if !coerced_matches_type(&def.ty, &value) {
-            self.state.error = Some("invalid value".into());
-            return ParamsKey::None;
-        }
         if self.persist(&def.id, value) {
             self.cancel_edit();
             ParamsKey::Saved
@@ -334,7 +348,12 @@ impl<'a> ParamsPane<'a> {
     }
 
     fn persist(&mut self, id: &str, value: serde_json::Value) -> bool {
-        match (self.commit)(id, value.clone()) {
+        let current = self.bag.get(id).cloned();
+        if current.as_ref() == Some(&value) {
+            self.state.error = None;
+            return true;
+        }
+        match (self.commit)(id, value.clone(), current) {
             Ok(()) => {
                 self.bag.insert(id.to_string(), value);
                 self.state.error = None;
@@ -379,69 +398,6 @@ fn current_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn value_from_scratch(def: &SettingDef, scratch: &str) -> Result<serde_json::Value, String> {
-    match def.ty.as_str() {
-        "number" => parse_number(scratch).map(|value| coerce_setting_value(&def.ty, &value)),
-        "string" => Ok(serde_json::Value::String(scratch.to_string())),
-        "tile" => {
-            if !tile_scratch_ok(scratch) {
-                return Err("invalid tile".into());
-            }
-            let coerced = coerce_setting_value(&def.ty, &serde_json::json!(scratch));
-            if coerced_matches_type(&def.ty, &coerced) {
-                Ok(coerced)
-            } else {
-                Err("invalid tile".into())
-            }
-        }
-        "list" | "string[]" => {
-            let coerced = coerce_setting_value(&def.ty, &serde_json::json!(scratch));
-            if coerced_matches_type(&def.ty, &coerced) {
-                Ok(coerced)
-            } else {
-                Err(format!("invalid {}", def.ty))
-            }
-        }
-        other => Err(format!("unsupported type {other}")),
-    }
-}
-
-fn tile_scratch_ok(scratch: &str) -> bool {
-    let text = scratch.trim();
-    if text.starts_with('{') {
-        return serde_json::from_str::<serde_json::Value>(text)
-            .ok()
-            .is_some_and(|v| coerced_matches_type("tile", &v));
-    }
-    let parts: Vec<&str> = text.split(',').map(str::trim).collect();
-    (2..=3).contains(&parts.len()) && parts.iter().all(|part| part.parse::<i64>().is_ok())
-}
-
-fn parse_number(scratch: &str) -> Result<serde_json::Value, String> {
-    let text = scratch.trim();
-    let n: f64 = text.parse().map_err(|_| "invalid number".to_string())?;
-    if !n.is_finite() {
-        return Err("invalid number".into());
-    }
-    serde_json::Number::from_f64(n)
-        .map(serde_json::Value::Number)
-        .ok_or_else(|| "invalid number".into())
-}
-
-fn coerced_matches_type(ty: &str, value: &serde_json::Value) -> bool {
-    match ty {
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "string" => value.is_string(),
-        "tile" => value.as_object().is_some_and(|obj| {
-            obj.get("x").and_then(|v| v.as_i64()).is_some()
-                && obj.get("z").and_then(|v| v.as_i64()).is_some()
-        }),
-        "list" | "string[]" => value.is_array(),
-        _ => false,
-    }
 }
 
 fn display_value(bag: &serde_json::Map<String, serde_json::Value>, def: &SettingDef) -> String {
@@ -631,8 +587,9 @@ mod tests {
     fn store_commit<'s>(
         store: &'s mut ScriptSettingsStore,
         name: &'static str,
-    ) -> impl FnMut(&str, serde_json::Value) -> Result<(), String> + 's {
-        move |id, value| {
+    ) -> impl FnMut(&str, serde_json::Value, Option<serde_json::Value>) -> Result<(), String> + 's
+    {
+        move |id, value, _current| {
             store.set_value(ScriptSource::Catalog, name, id, value);
             store.save()
         }
@@ -748,6 +705,49 @@ mod tests {
             Some(40),
             "Start merge must load the saved integer"
         );
+    }
+
+    #[test]
+    fn text_edits_submit_once_on_commit_and_skip_unchanged_or_invalid_values() {
+        let loadouts = LoadoutsStore::at(temp_dir("commit").join("loadouts.json"));
+        let schema = vec![setting("count", "number", Some("1"), Some("Count"), &[])];
+        let mut bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+        let attempts = AtomicU64::new(0);
+        let mut commit = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| {
+            attempts.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        };
+        let mut state = ParamsState {
+            open: true,
+            ..Default::default()
+        };
+        let mut pane = ParamsPane {
+            schema: &schema,
+            bag: &mut bag,
+            commit: &mut commit,
+            loadouts: &loadouts,
+            game_data: None,
+            state: &mut state,
+        };
+
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        type_replace(&mut pane, "123");
+        assert_eq!(attempts.load(Ordering::Relaxed), 0);
+        assert_eq!(pane.bag.get("count"), Some(&serde_json::json!(1)));
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(pane.bag.get("count"), Some(&serde_json::json!(123)));
+
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+        type_replace(&mut pane, "-");
+        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(pane.bag.get("count"), Some(&serde_json::json!(123)));
+        assert!(pane.state.error.is_some());
     }
 
     #[test]
@@ -907,7 +907,9 @@ mod tests {
             cursor: 1,
             ..Default::default()
         };
-        let mut refuse = |_: &str, _: serde_json::Value| Err("vault locked".to_string());
+        let mut refuse = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| {
+            Err("vault locked".to_string())
+        };
         let mut pane = ParamsPane {
             schema: &schema,
             bag: &mut bag,
