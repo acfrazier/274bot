@@ -93,23 +93,42 @@ accounting: Stop/Pause recovery adopts the retained page without a new click.
 
 ## Walk Guard W1 live and receipt replay
 
-The ignored W1 fixtures stage the `death-plateau-throwers` crossing against the
-local R289 engine. The live gate retains the ranged-queue delay, protect timing,
-and no-Attack proofs. It also records one Missiles/all-prayer row per game tick
-from the first projectile launch through the first all-prayers-off tick and the
-three following ticks. A later in-crossing launch without Missiles, any
-non-Missiles guard click before arrival, or a prayer returning during the
-post-off watch fails the same gate used by offline replay.
+The ignored W1 fixtures exercise the `death-plateau-throwers` crossing against
+the local R289 engine. The gate retains the ranged-projectile queue rule
+`floor((32 + 5d) / 30)` without relaxing it; at distance 1 the expected delay
+is one tick. The first thrower is staged on a standable tile three to five
+tiles ahead of the route start: the fixture teleports there, spawns the NPC,
+then teleports back to the route start before scripted movement begins. This
+avoids attributing a distance-zero launch at the start to the moving crossing.
+
+The live and replay gate requires exactly two accepted guard clicks, both
+component 5622. The enable click must show Missiles off before the click and
+occur from the first launch through arrival; the off-click must show Missiles
+on before the click and occur from arrival through the observed off tick.
+Every per-tick crossing observation from `protect_tick` through
+`arrival_tick`, inclusive, must show Missiles on. The receipt must also have
+an observation for every tick from the first launch through the off tick and
+three following ticks, with all prayers remaining off during cleanup. Any
+extra click, non-Missiles click, missing crossing observation, Missiles lapse,
+or prayer return fails the same gate used by offline replay.
+
+Arrival and `last_tile` use the local player's actor tile, not the route head.
+If crossing completion and prayer cleanup are observed on the same game tick,
+the pre-cleanup off-click snapshot supplies the genuine Missiles-on crossing
+observation only when its local-player tile confirms arrival at the destination;
+the post-click frame is a separate cleanup observation at that tick. Receipts
+label those phases explicitly; they do not invent a game tick or waive the
+inclusive arrival requirement.
 
 Use the isolated worktree's nav pack and retained cache snapshot. The host
 connects through builder ports `45594/2080`, forwarded to the local engine's
-`44594/1080` endpoints. Both the test's generated HOME and the launcher HOME
-are under the evidence directory:
+`44594/1080` endpoints. Both the test's generated HOME and launcher HOME are
+under the R2 evidence directory:
 
 ```sh
 WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
 ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 mkdir -p "$EVIDENCE/launcher-home"
@@ -133,7 +152,7 @@ Stop and remain off for three more observed ticks:
 ```sh
 WT=/Volumes/dev-scratch/274bot-worktrees/walk-guard-lifecycle
 ENGINE_DIR=/path/to/matching/local-289/engine
-EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1
+EVIDENCE=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD-LIFECYCLE-1/r2
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 mkdir -p "$EVIDENCE/launcher-home"
@@ -149,20 +168,21 @@ BOT_COMBAT_CACHE_SNAPSHOT=/Volumes/dev-scratch/274bot-evidence/WALK-GUARD/cache-
 cargo test -p host-play --lib walk_guard_live_tests::live_walk_guard_w1_stop_mid_crossing -- --exact --ignored --nocapture --test-threads=1
 ```
 
-Both modes save a real final scene PNG with a matching JSON/Core record in a
-per-run capture folder under `WALK-GUARD-LIFECYCLE-1`; inspect that image alongside
-the receipt before accepting the live proof. The explicit navigation pack must
-have its matching `.navpack.json`, `.navreach`, `.navflags`, `.navcanlight`, and
-`.navpois` files beside it.
+Both modes save a real final scene PNG with a matching JSON/Core record in an
+R2 per-run capture folder under `WALK-GUARD-LIFECYCLE-1/r2`; inspect that image
+alongside the receipt before accepting the live proof. The final receipt's
+`tile` is normalized to `local_player.tile`. The explicit navigation pack
+must have its matching `.navpack.json`, `.navreach`, `.navflags`,
+`.navcanlight`, and `.navpois` files beside it.
 
-The ignored offline replay applies that same gate to the retained bad receipt
+The ignored offline replay applies the same gate to the retained bad receipt
 `wgkiu3hcw6` and passing receipts `wg9l6smxhw` and
 `REVIEW-WALK-GUARD-OPUS/W1-wgefe0xaj8_0`. Legacy receipts without per-tick
-rows use only their guard-click prayer varps, recorded protect/off observations,
-and holds between clicks; the replay output marks that their three post-off
-ticks were not directly recorded. It does not fabricate per-tick rows. The
-replay table is written to
-`WALK-GUARD-LIFECYCLE-1/W1-lifecycle-replay.json`:
+rows use their guard-click pre-click prayer varps, recorded protect/off
+observations, and holds between clicks; the replay output marks that their
+crossing frames and three post-off ticks were not directly recorded. It does
+not fabricate per-tick rows. The replay table is written to
+`WALK-GUARD-LIFECYCLE-1/r2/W1-lifecycle-replay.json`:
 
 ```sh
 cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts -- --exact --ignored --nocapture
