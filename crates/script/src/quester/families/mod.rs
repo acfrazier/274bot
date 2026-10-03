@@ -1734,6 +1734,9 @@ impl StepRun for UseOnRun {
                         )?);
                         return Poll::Pending;
                     }
+                    // The anchor locates the initial search area. Once there,
+                    // follow the observed target without re-entering that area.
+                    self.tile = None;
                 }
                 if self.until.is_some()
                     && cx.tick.cx.snapshot().chat_modal().is_some_and(|chat| {

@@ -6,7 +6,7 @@ use super::compile::{
 use super::death::DeathLatch;
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::Provisioner;
+use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
@@ -84,6 +84,7 @@ pub struct Quester {
     last_error_kind: QuesterFailureKind,
     waiting: Option<(&'static str, Arc<str>)>,
     deaths: u8,
+    prior_deaths: u16,
     attempts: u8,
     fail_streak: u8,
     parked: bool,
@@ -92,7 +93,71 @@ pub struct Quester {
     watchdog: Watchdog,
     death: DeathLatch,
     provisioner: Provisioner,
+    active_loadout: Option<Arc<str>>,
+    retreat_completed: bool,
+    queue_fields: Arc<[StatusField]>,
+    required_vs_live: Arc<[StatusField]>,
+    tested_stats_warning: Arc<str>,
 }
+fn skill_status_fields(gates: &[super::eligibility::SkillGate]) -> Arc<[StatusField]> {
+    // Fixed keys keep the producer compact and allow S5 to consume integers
+    // without parsing display text. A missing live field means unobserved.
+    const KEYS: [(&str, &str); 25] = [
+        ("required_attack", "live_attack"),
+        ("required_defence", "live_defence"),
+        ("required_strength", "live_strength"),
+        ("required_hitpoints", "live_hitpoints"),
+        ("required_ranged", "live_ranged"),
+        ("required_prayer", "live_prayer"),
+        ("required_magic", "live_magic"),
+        ("required_cooking", "live_cooking"),
+        ("required_woodcutting", "live_woodcutting"),
+        ("required_fletching", "live_fletching"),
+        ("required_fishing", "live_fishing"),
+        ("required_firemaking", "live_firemaking"),
+        ("required_crafting", "live_crafting"),
+        ("required_smithing", "live_smithing"),
+        ("required_mining", "live_mining"),
+        ("required_herblore", "live_herblore"),
+        ("required_agility", "live_agility"),
+        ("required_thieving", "live_thieving"),
+        ("required_slayer", "live_slayer"),
+        ("required_farming", "live_farming"),
+        ("required_runecraft", "live_runecraft"),
+        ("required_skill_21", "live_skill_21"),
+        ("required_skill_22", "live_skill_22"),
+        ("required_skill_23", "live_skill_23"),
+        ("required_skill_24", "live_skill_24"),
+    ];
+    let mut fields = vec![StatusField {
+        key: "required_vs_live",
+        label: "Skill gates",
+        value: StatusValue::Integer(gates.len() as i64),
+    }];
+    for (skill, (required_key, live_key)) in KEYS.iter().copied().enumerate() {
+        let Some(gate) = gates
+            .iter()
+            .filter(|gate| usize::from(gate.skill) == skill)
+            .max_by_key(|gate| gate.required)
+        else {
+            continue;
+        };
+        fields.push(StatusField {
+            key: required_key,
+            label: "Required base level",
+            value: StatusValue::Integer(i64::from(gate.required)),
+        });
+        if let Some(live) = gate.live {
+            fields.push(StatusField {
+                key: live_key,
+                label: "Live base level",
+                value: StatusValue::Integer(i64::from(live)),
+            });
+        }
+    }
+    fields.into()
+}
+
 fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutcome>) {
     let Some(receipt) = outcome
         .and_then(|outcome| outcome.receipt.as_ref())
@@ -320,6 +385,7 @@ impl Quester {
             last_error_kind: QuesterFailureKind::Other,
             waiting: None,
             deaths: 0,
+            prior_deaths: 0,
             attempts: 0,
             fail_streak: 0,
             parked: false,
@@ -327,8 +393,87 @@ impl Quester {
             dirty: true,
             watchdog: Watchdog::default(),
             death: DeathLatch::default(),
-            provisioner: Provisioner::None,
+            provisioner: Provisioner::new(),
+            active_loadout: None,
+            retreat_completed: false,
+            queue_fields: Arc::from([]),
+            required_vs_live: Arc::from([]),
+            tested_stats_warning: Arc::from(""),
         }
+    }
+
+    fn poll_provision(&mut self, tick: &mut NativeTick<'_>, mode: ProvisionMode) -> bool {
+        let required_after = tick.cx.evidence();
+        let not_started = self.stage.as_ref() == Some(&self.path.colour_not_started);
+        let revision = self.provisioner.status_revision();
+        let mut cx = StepContext {
+            tick,
+            quests: &self.quests,
+            progress: self
+                .progress
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or(&[]),
+            required_after,
+            bank: &self.bank,
+            banks: &self.banks,
+        };
+        let result = self.provisioner.poll(
+            &mut cx,
+            &self.path.provisioning,
+            mode,
+            self.active_loadout.as_deref(),
+            not_started,
+        );
+        self.dirty |= self.provisioner.status_revision() != revision;
+        match result {
+            Poll::Pending => {
+                if self.provisioner.needs_progress_read() {
+                    self.needs_read = true;
+                    self.dirty = true;
+                }
+                false
+            }
+            Poll::Ready(Ok(ProvisionEvent::Ready)) => true,
+            Poll::Ready(Ok(ProvisionEvent::BankReceipt(receipt))) => {
+                self.bank.update(&receipt);
+                self.dirty = true;
+                false
+            }
+            Poll::Ready(Ok(ProvisionEvent::BankMemoUnknown)) => {
+                self.bank.clear();
+                self.dirty = true;
+                false
+            }
+            Poll::Ready(Ok(ProvisionEvent::Blocked { item })) => {
+                self.parked = true;
+                self.record_failure(ActionError::Blocked(item));
+                false
+            }
+            Poll::Ready(Err(error @ (ActionError::Blocked(_) | ActionError::UserInput))) => {
+                self.parked = true;
+                self.record_failure(error);
+                false
+            }
+            Poll::Ready(Err(error)) => {
+                // Synthetic provisioning work uses the authored step failure
+                // policy too; it must not turn one transient family refusal into
+                // an immediate parked quest.
+                self.provisioner.cancel();
+                self.record_step_failure(error, tick);
+                false
+            }
+        }
+    }
+
+    fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
+        if !self.poll_provision(tick, ProvisionMode::Retreat) {
+            self.publish(tick.output);
+            return ScriptFlow::Continue;
+        }
+        self.retreat_completed = self.provisioner.retreat_performed();
+        self.emit_status(tick.output, NativePhase::Complete);
+        ScriptFlow::Complete
     }
 
     pub fn journal_opened(&self) -> bool {
@@ -443,6 +588,15 @@ impl Quester {
     }
 
     fn emit_status(&mut self, output: &mut dyn NativeOutput, phase: NativePhase) {
+        let phase = if !self.queue_fields.is_empty()
+            && (phase == NativePhase::Complete
+                || (phase == NativePhase::Blocked
+                    && self.last_error_kind != QuesterFailureKind::ManualMovement))
+        {
+            NativePhase::Working
+        } else {
+            phase
+        };
         self.dirty = false;
         let outcome = self
             .step
@@ -459,7 +613,7 @@ impl Quester {
             .unwrap_or(StatusValue::Text(Arc::from("unknown")));
         let mut fields = vec![
             StatusField {
-                key: "quest",
+                key: "display",
                 label: "Quest",
                 value: StatusValue::Text(Arc::clone(&self.path.display_name)),
             },
@@ -471,7 +625,7 @@ impl Quester {
             StatusField {
                 key: "deaths",
                 label: "Deaths",
-                value: StatusValue::Integer(i64::from(self.deaths)),
+                value: StatusValue::Integer(i64::from(self.prior_deaths) + i64::from(self.deaths)),
             },
             StatusField {
                 key: "needs_read",
@@ -483,10 +637,209 @@ impl Quester {
                 }),
             },
         ];
+        let current = self.current_step();
+        let sequence = self.path.sequences.get(self.seq_index);
+        let colour = if self.stage.as_ref() == Some(&self.path.colour_complete) {
+            "complete"
+        } else if self.stage.as_ref() == Some(&self.path.colour_not_started) {
+            "not_started"
+        } else if self.stage.is_some() {
+            "in_progress"
+        } else {
+            "unknown"
+        };
+        use super::provision::ProvisionPhase;
+        let provision = self.provisioner.status();
+        let action = if self.parked {
+            "blocked"
+        } else if matches!(
+            provision.phase,
+            ProvisionPhase::Scanning
+                | ProvisionPhase::Freshening
+                | ProvisionPhase::Spillover
+                | ProvisionPhase::Withdrawing
+                | ProvisionPhase::Retreating
+        ) {
+            "banking"
+        } else if self.waiting.is_some() || self.needs_read || self.settling {
+            "waiting"
+        } else {
+            match current.map(|step| step.kind.as_ref()) {
+                Some("walk") => "walking",
+                Some("talk") => "talking",
+                Some("combat") => "fighting",
+                Some("bank" | "loadout") => "banking",
+                _ => "working",
+            }
+        };
+        for (key, label, text) in [
+            ("quest_id", "Quest ID", self.path.id.0.as_ref()),
+            ("colour", "Quest colour", colour),
+            ("action_state", "Action", action),
+            (
+                "step_id",
+                "Step",
+                current.map_or("", |step| step.id.0.as_ref()),
+            ),
+        ] {
+            fields.push(StatusField {
+                key,
+                label,
+                value: StatusValue::Text(Arc::from(text)),
+            });
+        }
+        for (key, label, value) in [
+            ("sequence", "Sequence", self.seq_index as i64),
+            (
+                "sequence_count",
+                "Sequence count",
+                self.path.sequences.len() as i64,
+            ),
+            ("step_index", "Step index", self.step_index as i64),
+            (
+                "remaining_steps",
+                "Remaining steps",
+                sequence.map_or(0, |seq| seq.steps.len().saturating_sub(self.step_index)) as i64,
+            ),
+            ("attempts", "Attempts", i64::from(self.attempts)),
+            (
+                "no_progress",
+                "Unchanged steps",
+                i64::from(self.watchdog.unchanged()),
+            ),
+        ] {
+            fields.push(StatusField {
+                key,
+                label,
+                value: StatusValue::Integer(value),
+            });
+        }
+        fields.extend_from_slice(&self.queue_fields);
+        fields.extend_from_slice(&self.required_vs_live);
+        fields.push(StatusField {
+            key: "tested_stats_warning",
+            label: "Tested stats warning",
+            value: StatusValue::Text(Arc::clone(&self.tested_stats_warning)),
+        });
+        fields.push(StatusField {
+            key: "pin",
+            label: "Selected pin",
+            value: StatusValue::Text(self.selected.selected_pin().map_or_else(
+                |_| Arc::from("unavailable"),
+                |pin| {
+                    Arc::from(format!(
+                        "r{} engine:{} content:{} nav:{:02x?}",
+                        pin.revision.as_i32(),
+                        pin.engine_commit,
+                        pin.content_commit,
+                        pin.nav_sha256
+                    ))
+                },
+            )),
+        });
+        fields.push(StatusField {
+            key: "tactic",
+            label: "Combat tactic",
+            value: StatusValue::Text(
+                current
+                    .and_then(|step| step.tactic.clone())
+                    .unwrap_or_else(|| Arc::from("")),
+            ),
+        });
+        fields.push(StatusField {
+            key: "role",
+            label: "Role",
+            value: StatusValue::Text(
+                self.path
+                    .role
+                    .as_ref()
+                    .map_or_else(|| Arc::from(""), |role| Arc::clone(&role.0)),
+            ),
+        });
+        fields.push(StatusField {
+            key: "step_comment",
+            label: "Step comment",
+            value: StatusValue::Text(
+                current
+                    .and_then(|step| step.comment.clone())
+                    .unwrap_or_else(|| Arc::from("")),
+            ),
+        });
+        fields.extend([
+            StatusField {
+                key: "provision",
+                label: "Provisioning",
+                value: StatusValue::Text(format!("{:?}", provision.phase).into()),
+            },
+            StatusField {
+                key: "provision_item",
+                label: "Provision item",
+                value: StatusValue::Text(Arc::from(provision.item.unwrap_or(""))),
+            },
+            StatusField {
+                key: "provision_need",
+                label: "Needed",
+                value: StatusValue::Integer(i64::from(provision.need)),
+            },
+            StatusField {
+                key: "provision_pack",
+                label: "In pack",
+                value: StatusValue::Integer(i64::from(provision.pack)),
+            },
+            StatusField {
+                key: "bank_known",
+                label: "Bank observed",
+                value: StatusValue::Truth(if provision.bank_known {
+                    Truth::True
+                } else {
+                    Truth::Unknown
+                }),
+            },
+            StatusField {
+                key: "provision_attempts",
+                label: "Provision attempts",
+                value: StatusValue::Integer(i64::from(provision.attempts)),
+            },
+            StatusField {
+                key: "active_loadout",
+                label: "Active loadout",
+                value: StatusValue::Text(
+                    self.active_loadout.clone().unwrap_or_else(|| Arc::from("")),
+                ),
+            },
+        ]);
+        fields.extend([
+            StatusField {
+                key: "coin_float",
+                label: "Coin float",
+                value: StatusValue::Integer(i64::from(self.path.provisioning.coin_float)),
+            },
+            StatusField {
+                key: "coin_drawn",
+                label: "Coin float drawn",
+                value: StatusValue::Truth(if self.provisioner.coin_drawn() {
+                    Truth::True
+                } else {
+                    Truth::False
+                }),
+            },
+            StatusField {
+                key: "carry_drawn",
+                label: "Carry drawn row bits",
+                value: StatusValue::Text(format!("{:016x}", self.provisioner.carry_drawn()).into()),
+            },
+        ]);
+        if let Some(bank) = provision.bank {
+            fields.push(StatusField {
+                key: "provision_bank",
+                label: "In bank",
+                value: StatusValue::Integer(i64::from(bank)),
+            });
+        }
         append_combat_status(&mut fields, combat_status);
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
-                key: "progress",
+                key: "quest",
                 label: "Progress",
                 value: StatusValue::Quest(Arc::clone(progress)),
             });
@@ -499,11 +852,11 @@ impl Quester {
                 }),
             });
         }
-        if let Some(text) = &self.journal_text {
+        if let Some(text) = self.journal_text.take() {
             fields.push(StatusField {
                 key: "journal_lines",
                 label: "Journal",
-                value: StatusValue::Text(Arc::clone(text)),
+                value: StatusValue::Text(text),
             });
         }
         if let Some(hint) = self
@@ -533,6 +886,13 @@ impl Quester {
                 value: StatusValue::Text(Arc::clone(value)),
             });
         }
+        if self.parked {
+            fields.push(StatusField {
+                key: "block_reason",
+                label: "Blocked",
+                value: StatusValue::Text(self.blocked_failure().message),
+            });
+        }
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
@@ -548,6 +908,7 @@ impl Quester {
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
+        self.provisioner.cancel();
         self.clear_prayers = None;
         self.prayer_cleanup_pending = true;
         self.last_outcome = None;
@@ -790,6 +1151,15 @@ impl Quester {
         true
     }
 
+    fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
+        self.fail_streak = self.fail_streak.saturating_add(1);
+        self.record_failure(error);
+        if self.fail_streak >= 5 {
+            self.parked = true;
+        }
+        self.on_step_boundary(tick);
+    }
+
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
         self.prayer_cleanup_pending = true;
         let mut inv = [(0, 0); 28];
@@ -852,6 +1222,9 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
+            self.provisioner.reset(tick.actions);
+            self.active_loadout = None;
+            self.retreat_completed = false;
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
@@ -960,7 +1333,8 @@ impl Script for Quester {
             }
         }
         if self.needs_read {
-            let retarget = !self.settling && self.step.is_none();
+            let retarget =
+                !self.settling && self.step.is_none() && !self.provisioner.needs_progress_read();
             if !self.read_stage(tick, retarget) {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
@@ -968,6 +1342,8 @@ impl Script for Quester {
             if let Some(step) = self.step.as_mut() {
                 step.progress_read_completed(tick.cx.active_now());
             }
+            self.provisioner
+                .progress_read_completed(tick.cx.active_now());
         }
         if self
             .path
@@ -975,8 +1351,7 @@ impl Script for Quester {
             .get(self.seq_index)
             .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
         {
-            self.emit_status(tick.output, NativePhase::Complete);
-            return Ok(ScriptFlow::Complete);
+            return Ok(self.finish_quest(tick));
         }
         if self.settling {
             let truth = {
@@ -1023,7 +1398,10 @@ impl Script for Quester {
             return Ok(ScriptFlow::Continue);
         }
         if self.step.is_none() {
-            let _ = self.provisioner.check();
+            if !self.poll_provision(tick, ProvisionMode::Prepare) {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             let selected = {
                 let pred = PredicateContext {
                     cx: &tick.cx,
@@ -1061,6 +1439,14 @@ impl Script for Quester {
                 self.last_outcome = None;
             }
             let Some((index, advances, prelude)) = selected else {
+                if self
+                    .path
+                    .sequences
+                    .get(self.seq_index)
+                    .is_some_and(|seq| seq.terminal)
+                {
+                    return Ok(self.finish_quest(tick));
+                }
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
                     self.parked = true;
@@ -1143,6 +1529,9 @@ impl Script for Quester {
                 }
             }
             Poll::Ready(Ok(outcome)) => {
+                if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
+                    self.active_loadout = Some(loadout);
+                }
                 if let Some(receipt) = outcome.receipt.as_deref().and_then(|receipt| {
                     receipt
                         .as_any()
@@ -1203,12 +1592,7 @@ impl Script for Quester {
                 self.step = None;
                 self.last_outcome = None;
                 self.prayer_cleanup_pending = true;
-                self.fail_streak = self.fail_streak.saturating_add(1);
-                self.record_failure(error);
-                if self.fail_streak >= 5 {
-                    self.parked = true;
-                }
-                self.on_step_boundary(tick);
+                self.record_step_failure(error, tick);
             }
         }
         self.update_wait();
@@ -1221,6 +1605,7 @@ impl Script for Quester {
             Interrupt::Resume | Interrupt::SessionReady => {
                 self.needs_read = true;
                 self.step = None;
+                self.provisioner.cancel();
                 self.prayer_cleanup_pending = true;
                 self.last_outcome = None;
                 self.last_combat = None;
@@ -1237,6 +1622,7 @@ impl Script for Quester {
             }
             Interrupt::SessionEnded => {
                 self.step = None;
+                self.provisioner.cancel();
                 self.prayer_cleanup_pending = true;
                 self.last_outcome = None;
                 self.last_combat = None;
@@ -1255,6 +1641,7 @@ impl Script for Quester {
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         // Dropping these guards revokes their native owners before the host can dispatch them.
         self.step = None;
+        self.provisioner.cancel();
         self.clear_prayers = None;
         self.journal = None;
         self.needs_read = true;
@@ -1278,6 +1665,7 @@ impl Script for Quester {
 
     fn on_stop(&mut self, _reason: StopReason) {
         self.step = None;
+        self.provisioner.cancel();
         self.journal = None;
         self.settling = false;
         self.dirty = true;
@@ -1301,6 +1689,7 @@ impl Script for Quester {
         self.parked = false;
         self.needs_read = true;
         self.step = None;
+        self.provisioner.cancel();
         self.clear_prayers = None;
         self.prayer_cleanup_pending = true;
         self.last_outcome = None;
@@ -1326,14 +1715,457 @@ impl Script for Quester {
     }
 }
 
+/// Queue ownership stays outside the active executor: only one Path is compiled
+/// and retained at a time, and activation never decodes selected facts on-pump.
+pub struct QueuedQuester {
+    run: RunKey,
+    selected: Arc<SelectedGameData>,
+    quests: Arc<QuestCatalog>,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+    queue: super::queue::Queue<'static>,
+    active: Option<Box<Quester>>,
+    active_index: Option<usize>,
+    preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
+    completed: u16,
+    deaths: u16,
+    retreats: u16,
+    last_retreat: Option<Arc<str>>,
+    fields: Arc<[StatusField]>,
+    gate_fields: Arc<[StatusField]>,
+    dirty: bool,
+}
+
+impl QueuedQuester {
+    pub fn new(
+        run: RunKey,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        queue: super::queue::Queue<'static>,
+    ) -> Self {
+        let mut this = Self {
+            run,
+            selected,
+            quests,
+            banks,
+            queue,
+            active: None,
+            active_index: None,
+            preparing: None,
+            completed: 0,
+            deaths: 0,
+            retreats: 0,
+            last_retreat: None,
+            fields: Arc::from([]),
+            gate_fields: Arc::from([]),
+            dirty: true,
+        };
+        this.refresh_fields();
+        this
+    }
+
+    fn refresh_fields(&mut self) {
+        let mut fields = vec![
+            StatusField {
+                key: "queue",
+                label: "Queue",
+                value: StatusValue::Text(self.queue.status_text().into()),
+            },
+            StatusField {
+                key: "completed",
+                label: "Completed this session",
+                value: StatusValue::Integer(i64::from(self.completed)),
+            },
+            StatusField {
+                key: "retreat_count",
+                label: "Completed bank retreats",
+                value: StatusValue::Integer(i64::from(self.retreats)),
+            },
+            StatusField {
+                key: "session_deaths",
+                label: "Session deaths",
+                value: StatusValue::Integer(i64::from(self.deaths)),
+            },
+        ];
+        if let Some(quest) = &self.last_retreat {
+            fields.push(StatusField {
+                key: "last_retreat",
+                label: "Last bank retreat",
+                value: StatusValue::Text(Arc::clone(quest)),
+            });
+        }
+        if let Some(reason) = self
+            .active_index
+            .and_then(|index| self.queue.reason(index))
+            .or_else(|| {
+                self.queue
+                    .rows()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.picked && !row.skipped)
+                    .find_map(|(index, _)| self.queue.reason(index))
+            })
+        {
+            fields.push(StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text(Arc::from(reason)),
+            });
+        }
+        if self.active.is_none() {
+            fields.extend_from_slice(&self.gate_fields);
+        }
+        self.fields = fields.into();
+        if let Some(active) = self.active.as_mut() {
+            active.queue_fields = Arc::clone(&self.fields);
+            active.dirty = true;
+        }
+        self.dirty = true;
+    }
+
+    fn publish(&mut self, output: &mut dyn NativeOutput, phase: NativePhase) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let mut fields = self.fields.to_vec();
+        fields.push(StatusField {
+            key: "deaths",
+            label: "Deaths",
+            value: StatusValue::Integer(i64::from(self.deaths)),
+        });
+        if phase == NativePhase::Blocked && !fields.iter().any(|field| field.key == "block_reason")
+        {
+            fields.push(StatusField {
+                key: "block_reason",
+                label: "Queue block reason",
+                value: StatusValue::Text(self.blocked().message),
+            });
+        }
+        output.status(ScriptStatus {
+            run: self.run,
+            card: CompiledId("Quester"),
+            phase,
+            active_settings: 1,
+            pending_settings: None,
+            fields: fields.into(),
+            failure: (phase == NativePhase::Blocked).then(|| self.blocked()),
+        });
+    }
+
+    fn blocked(&self) -> ScriptFailure {
+        ScriptFailure {
+            code: Arc::from("queue-blocked"),
+            message: self
+                .queue
+                .rows()
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.picked && !row.skipped)
+                .find_map(|(index, _)| self.queue.reason(index).map(Arc::from))
+                .unwrap_or_else(|| Arc::from("no eligible selected quest")),
+            retryable: true,
+        }
+    }
+
+    fn activate(&mut self, tick: &mut NativeTick<'_>, path: Arc<CompiledPath>) {
+        let index = self.active_index.expect("preparing queue row");
+        let result = super::eligibility::evaluate(
+            &path,
+            &tick.cx.snapshot(),
+            &self.quests,
+            &BankMemo::default(),
+        );
+        self.gate_fields = skill_status_fields(&result.skill_gates);
+        match result.state {
+            super::eligibility::Eligibility::Done => self.queue.mark_done(index),
+            super::eligibility::Eligibility::Blocked(reasons) => {
+                self.queue.mark_blocked(
+                    index,
+                    reasons
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                        .into(),
+                );
+            }
+            super::eligibility::Eligibility::Ready => {
+                self.queue.mark_running(index);
+                let mut active = Quester::new(
+                    self.run,
+                    path,
+                    Arc::clone(&self.selected),
+                    Arc::clone(&self.quests),
+                    Arc::clone(&self.banks),
+                );
+                active.prior_deaths = self.deaths;
+                active.required_vs_live = skill_status_fields(&result.skill_gates);
+                active.tested_stats_warning = match active.path.tested_stats.as_deref() {
+                    None => Arc::from("No qualified stats recorded"),
+                    Some(tested) => {
+                        let stats = tick.cx.snapshot().stats();
+                        tested
+                            .iter()
+                            .filter_map(|minimum| {
+                                let live = stats.as_ref().and_then(|stats| {
+                                    stats.value.iter().find(|stat| {
+                                        stat.used && stat.index == i32::from(minimum.skill)
+                                    })
+                                });
+                                match live {
+                                    Some(stat) if stat.base >= i32::from(minimum.level) => None,
+                                    Some(stat) => Some(format!(
+                                        "{}: live {} below tested {}",
+                                        stat.name, stat.base, minimum.level
+                                    )),
+                                    None => Some(format!(
+                                        "skill {}: live unobserved, tested {}",
+                                        minimum.skill, minimum.level
+                                    )),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                            .into()
+                    }
+                };
+                self.active = Some(Box::new(active));
+            }
+        }
+        self.refresh_fields();
+    }
+}
+
+impl Script for QueuedQuester {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.run != tick.cx.run() {
+            self.run = tick.cx.run();
+            self.queue.refresh_blocked();
+            self.refresh_fields();
+        }
+        if !tick.cx.eligible {
+            return Ok(ScriptFlow::Continue);
+        }
+        if let Some(active) = self.active.as_mut() {
+            let flow = active.tick(tick)?;
+            match &flow {
+                ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
+                ScriptFlow::Blocked(failure) if failure.code.as_ref() == "manual-movement" => {
+                    return Ok(flow);
+                }
+                ScriptFlow::Complete | ScriptFlow::Blocked(_) => {
+                    let active = self.active.take().expect("active quest");
+                    let index = self.active_index.expect("active queue row");
+                    self.deaths = self.deaths.saturating_add(u16::from(active.deaths));
+                    match flow {
+                        ScriptFlow::Complete => {
+                            self.queue.mark_done(index);
+                            self.completed = self.completed.saturating_add(1);
+                            if active.retreat_completed {
+                                self.retreats = self.retreats.saturating_add(1);
+                                self.last_retreat = Some(Arc::clone(&active.path.id.0));
+                            }
+                            self.queue.refresh_blocked();
+                        }
+                        ScriptFlow::Blocked(failure) => {
+                            self.queue.mark_parked(index, failure.message)
+                        }
+                        ScriptFlow::Continue => unreachable!(),
+                    }
+                    self.refresh_fields();
+                }
+            }
+        }
+        if self
+            .preparing
+            .as_ref()
+            .is_some_and(|worker| worker.is_finished())
+        {
+            let result = self.preparing.take().expect("finished preparation").join();
+            match result {
+                Ok(Ok(path)) => self.activate(tick, path),
+                failure => {
+                    let reason = match failure {
+                        Ok(Err(reason)) => reason,
+                        Err(_) => Arc::from("Path compiler worker panicked"),
+                        Ok(Ok(_)) => unreachable!(),
+                    };
+                    self.queue
+                        .mark_blocked(self.active_index.expect("preparing row"), reason);
+                    self.refresh_fields();
+                }
+            }
+            self.publish(tick.output, NativePhase::Working);
+            return Ok(ScriptFlow::Continue);
+        }
+        if self.preparing.is_some() {
+            self.publish(tick.output, NativePhase::Preparing);
+            return Ok(ScriptFlow::Continue);
+        }
+        if let Some(index) = self.queue.next_candidate() {
+            let id: Arc<str> = Arc::from(self.queue.id(index).expect("selected queue row"));
+            let selected = Arc::clone(&self.selected);
+            let quests = Arc::clone(&self.quests);
+            self.active_index = Some(index);
+            let worker = api::selected::FamilyPreparation::run(move |_| {
+                let bytes = super::card::released_path(&id)
+                    .ok_or_else(|| Arc::<str>::from("Path is not released"))?;
+                super::compile::compile_path(bytes, &selected, &quests).map_err(|error| {
+                    Arc::from(format!(
+                        "{}: {}",
+                        error.code,
+                        error.detail.as_deref().unwrap_or("Path compilation failed")
+                    ))
+                })
+            });
+            match worker {
+                Ok(worker) => self.preparing = Some(worker),
+                Err(error) => {
+                    self.queue
+                        .mark_blocked(index, Arc::from(format!("Path preparation: {error}")));
+                    self.refresh_fields();
+                }
+            }
+            self.dirty = true;
+            self.publish(tick.output, NativePhase::Preparing);
+            return Ok(ScriptFlow::Continue);
+        }
+        self.dirty = true;
+        if self.queue.all_done() {
+            self.publish(tick.output, NativePhase::Complete);
+            Ok(ScriptFlow::Complete)
+        } else {
+            self.publish(tick.output, NativePhase::Blocked);
+            Ok(ScriptFlow::Blocked(self.blocked()))
+        }
+    }
+
+    fn interrupt(&mut self, event: Interrupt) {
+        if let Some(active) = self.active.as_mut() {
+            active.interrupt(event);
+        }
+    }
+
+    fn on_stop(&mut self, reason: StopReason) {
+        if let Some(active) = self.active.as_mut() {
+            active.on_stop(reason);
+        }
+    }
+
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        self.active
+            .as_mut()
+            .map_or(RandomClaim::Host, |active| active.on_random(event))
+    }
+
+    fn retry(&mut self) -> Result<(), ScriptFailure> {
+        self.queue.retry();
+        if let Some(active) = self.active.as_mut() {
+            active.retry()?;
+        }
+        self.refresh_fields();
+        Ok(())
+    }
+
+    fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+        if let Some(active) = self.active.as_mut() {
+            active.read_journal()
+        } else {
+            Err(ScriptFailure {
+                code: Arc::from("no-active-quest"),
+                message: Arc::from("No active quest to read"),
+                retryable: true,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn queue_status_is_nonterminal_and_journal_payload_is_published_once() {
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+        let (mut script, _) = fixture();
+        script.queue_fields = Arc::from([StatusField {
+            key: "queue",
+            label: "Queue",
+            value: StatusValue::Text(Arc::from("R?")),
+        }]);
+        script.required_vs_live = skill_status_fields(&[super::super::eligibility::SkillGate {
+            id: Arc::from("attack-gate"),
+            skill: 0,
+            name: Arc::from("Attack"),
+            required: 40,
+            live: Some(42),
+        }]);
+        script.journal_text = Some(Arc::from("fresh journal"));
+        let mut output = Capture::default();
+        script.emit_status(&mut output, NativePhase::Complete);
+        assert_eq!(output.0[0].phase, NativePhase::Working);
+        assert!(output.0[0]
+            .fields
+            .iter()
+            .any(|field| field.key == "journal_lines"
+                && field.value == StatusValue::Text(Arc::from("fresh journal"))));
+        assert!(
+            output.0[0]
+                .fields
+                .iter()
+                .any(|field| field.key == "required_attack"
+                    && field.value == StatusValue::Integer(40))
+        );
+        assert!(output.0[0]
+            .fields
+            .iter()
+            .any(|field| field.key == "live_attack" && field.value == StatusValue::Integer(42)));
+        script.emit_status(&mut output, NativePhase::Blocked);
+        assert_eq!(output.0[1].phase, NativePhase::Working);
+        assert!(!output.0[1]
+            .fields
+            .iter()
+            .any(|field| field.key == "journal_lines"));
+        script.last_error_kind = QuesterFailureKind::ManualMovement;
+        script.emit_status(&mut output, NativePhase::Blocked);
+        assert_eq!(output.0[2].phase, NativePhase::Blocked);
+    }
+
+    #[test]
+    fn authored_and_synthetic_family_failures_share_the_bounded_retry_policy() {
+        let (mut script, snapshot) = fixture();
+        let mut ledger = None;
+        for attempt in 1..=5 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, attempt, |tick| {
+                script.record_step_failure(
+                    ActionError::Failed(Arc::from("interact target not reached")),
+                    tick,
+                );
+            });
+            assert_eq!(script.fail_streak, attempt as u8);
+            assert_eq!(script.parked, attempt == 5);
+        }
+        assert_eq!(
+            script.blocked_failure().message.as_ref(),
+            "interact target not reached"
+        );
+    }
+
+    #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
         let bank_bytes = std::mem::size_of::<BankMemo>();
+        assert!(std::mem::size_of::<QueuedQuester>() < 4096);
         eprintln!("Quester size_of={bytes}; BankMemo size_of={bank_bytes}, heap=0");
         assert!(bytes < 4096, "Quester is {bytes} bytes");
         assert!(bank_bytes <= 520, "BankMemo is {bank_bytes} bytes");
@@ -1697,6 +2529,7 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
         let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "wait".into();
         step.args = serde_json::json!({"until":{"All":[]},"max_ticks": 10});
@@ -1757,12 +2590,12 @@ mod tests {
     fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let path = super::super::compile::compile_uncached_for_test(
-            &super::super::compile::decode_cook().unwrap(),
-            &data,
-            &quests,
-        )
-        .unwrap();
+        // These tests isolate runner/dialogue transitions. Provisioning has its own
+        // behavioral fixtures, and the live queue exercises the unchanged Cook Path.
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
         let mut s = api::snapshot::GameSnapshot::new();
         s.seed_ingame(2);
         (
@@ -1798,6 +2631,7 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
         let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "talk".into();
         step.args = serde_json::json!({"npc": "cook"});
@@ -1972,6 +2806,7 @@ mod tests {
             let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
             let mut document = super::super::compile::decode_cook().unwrap();
+            document.quest.as_mut().unwrap().owns_inventory = true;
             if let Some(recipe) = recipe {
                 let mut step = document.quest.as_ref().unwrap().acquire[recipe][0].clone();
                 step.id = FactKey("spawn-policy".into());
@@ -2064,6 +2899,7 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
         let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "walk".into();
         step.args = serde_json::json!({
@@ -2146,6 +2982,7 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
         let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "walk".into();
         step.args =
