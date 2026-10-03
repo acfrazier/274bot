@@ -1181,7 +1181,7 @@ fn profile_class_requires_tcp_and_an_all_loopback_roster() {
 
 #[test]
 fn builtin_servers_preserve_legacy_vault_associations() {
-    let servers = Servers::builtins(std::path::Path::new("/operator"));
+    let servers = Servers::builtins();
     assert_eq!(servers.resolve("local-274").unwrap().vault, "vault");
     assert_eq!(servers.resolve("local-289").unwrap().vault, "vault-289");
     assert_eq!(servers.resolve("rs2b2t").unwrap().vault, "vault-prod");
@@ -1189,6 +1189,15 @@ fn builtin_servers_preserve_legacy_vault_associations() {
         servers.resolve("public-289").unwrap(),
         servers.resolve("rs2b2t").unwrap()
     );
+    for profile in ["local-274", "local-289"] {
+        assert!(matches!(
+            servers.resolve(profile).unwrap().login_key,
+            LoginKey::EngineDir { engine_dir: None }
+        ));
+    }
+    let json = serde_json::to_value(&servers).unwrap();
+    assert!(json["servers"][1]["login_key"].get("engine_dir").is_none());
+    assert!(json["servers"][2]["login_key"].get("engine_dir").is_none());
 }
 
 #[test]
@@ -1196,7 +1205,7 @@ fn proposed_vault_never_implicitly_reuses_legacy_or_existing_storage() {
     let root = std::env::temp_dir().join(format!("274bot-vault-proposal-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let servers = Servers::builtins(&root);
+    let servers = Servers::builtins();
     assert_eq!(
         proposed_vault("alice", &root, &servers).unwrap(),
         "vault-alice"
@@ -1210,19 +1219,19 @@ fn proposed_vault_never_implicitly_reuses_legacy_or_existing_storage() {
 
 #[test]
 fn servers_reject_ambiguous_names_and_unsafe_vault_or_transport_settings() {
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].name = "PUBLIC-289".into();
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].vault = "../vault-prod".into();
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[0].allow_plaintext_offhost = true;
     assert!(servers.validate().is_err());
 
-    let mut servers = Servers::builtins(std::path::Path::new("/operator"));
+    let mut servers = Servers::builtins();
     servers.servers[1].name = "RS2B2T".into();
     assert!(servers.validate().is_err());
 }
@@ -1233,7 +1242,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     let _ = std::fs::remove_dir_all(&root);
     let bot_dir = root.join(".274bot");
     std::fs::create_dir_all(&bot_dir).unwrap();
-    let mut servers = Servers::builtins(&root);
+    let mut servers = Servers::builtins();
     servers.servers[1].vault = "VAULT-PROD".into();
     std::fs::write(
         bot_dir.join("servers.json"),
@@ -1241,7 +1250,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     )
     .unwrap();
 
-    let error = Servers::load(&bot_dir, &root).unwrap_err();
+    let error = Servers::load(&bot_dir).unwrap_err();
     assert!(error.contains("duplicate vault"), "{error}");
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -4376,6 +4385,7 @@ fn same_key_pending_route_refuses_distinct_id() {
             route_generation: 1,
             pending_route: Some(ScriptRouteRequest {
                 loc_id: None,
+                arrival: nav::arrival::ArrivalKind::Reach,
                 generation: 1,
                 request_id: 7,
                 world: Arc::clone(&world),
@@ -4910,6 +4920,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(open_world(12, 8)),
@@ -4994,6 +5005,7 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world,
@@ -5041,6 +5053,7 @@ fn radius_calculate_drops_wall_separated_candidate() {
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5097,6 +5110,7 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5149,6 +5163,7 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5204,6 +5219,7 @@ fn radius_calculate_drops_detour_outside_radius() {
     };
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -5253,6 +5269,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
     );
     let request = ScriptRouteRequest {
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::clone(&world),
@@ -21544,6 +21561,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     level: 0,
                                 },
                                 radius: 1,
+                                arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
                                 options: script::FindOptions::default(),
                                 required_after: tick.cx.evidence(),
@@ -23067,6 +23085,7 @@ fn real_v13_return_radius_endpoint_is_native_arrival() {
         to: target,
         radius: 12,
         loc_id: None,
+        arrival: nav::arrival::ArrivalKind::Reach,
         opts: FindOptions {
             allow_teleports: false,
             allow_wilderness: false,

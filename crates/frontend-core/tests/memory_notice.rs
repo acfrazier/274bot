@@ -49,6 +49,16 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
             release_rx.recv_timeout(Duration::from_secs(30)).unwrap();
         }
     });
+    // Hermetic: never read the operator's `~/.274bot/274bot.navpack` even with a
+    // real HOME. `Play::new` falls back to `$NAV_PACK` else that operator path;
+    // point it at a missing temp path so this test always runs with no world
+    // pack (`None`). Restored right after construction (single-test binary).
+    let dir = std::env::temp_dir().join(format!("274bot-memory-notice-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let prev_nav_pack = std::env::var("NAV_PACK").ok();
+    std::env::set_var("NAV_PACK", dir.join("empty.navpack"));
+    let cache_dir = dir.join("cache");
+    std::fs::create_dir_all(&cache_dir).unwrap();
     let clean_logout = Arc::new(AtomicBool::new(false));
     let requested_logout = Arc::clone(&clean_logout);
     let play = host_play::run_with_io(
@@ -56,7 +66,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
             host: endpoint.ip().to_string(),
             transport: host_play::Transport::Tcp,
             port: endpoint.port(),
-            cache_dir: "/tmp".into(),
+            cache_dir: cache_dir.to_string_lossy().into_owned(),
             lowmem: true,
             mainland: false,
         },
@@ -73,8 +83,10 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
             }
         },
     );
-    let dir = std::env::temp_dir().join(format!("274bot-memory-notice-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    match prev_nav_pack {
+        Some(value) => std::env::set_var("NAV_PACK", value),
+        None => std::env::remove_var("NAV_PACK"),
+    }
     let path = dir.join("vault");
     let _ = std::fs::remove_file(&path);
     let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
@@ -120,8 +132,14 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     session.logout("alice");
     clean_logout.store(true, Ordering::Release);
     session.play().unwrap().wake("alice");
+    // The slot projects `!connected` in the same frame it observes the exit,
+    // but the clean/dirty boundary (`login_applies_memory`) settles on the
+    // next probe. Waiting on `!connected` alone catches the first projection
+    // with stale metadata and reads the dirty notice. Wait for the settled
+    // clean notice itself, still bounded by `wait_for`'s deadline.
     wait_for(&mut session, |s| {
-        s.memory_status("alice").is_some_and(|n| !n.connected)
+        s.memory_status("alice")
+            .is_some_and(|n| n.notice_text() == "Applies at the next Log in.")
     });
     let clean = session.memory_status("alice").unwrap();
     release_tx.send(()).unwrap();

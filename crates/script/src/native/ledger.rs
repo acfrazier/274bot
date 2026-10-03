@@ -1,5 +1,5 @@
 use super::owner::Owner;
-use super::{ActionError, InteractionReceipt, WalkReceipt, WalkRequest};
+use super::{ActionError, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use crate::shim::InteractReq;
 use api::selected::RunKey;
@@ -111,6 +111,7 @@ pub(crate) struct Ledger {
     next_id: u64,
     pub outbox: Vec<HostAction>,
     pub walk: Option<WalkReceipt>,
+    pub walk_events: Vec<WalkEvent>,
     pub interaction: Option<InteractionReceipt>,
     pub interaction_request: Option<NonZeroU64>,
     pub bank_pick: Option<BankPickReceipt>,
@@ -127,6 +128,7 @@ impl Default for Ledger {
             next_id: 1,
             outbox: Vec::with_capacity(5),
             walk: None,
+            walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
             bank_pick: None,
@@ -188,6 +190,7 @@ impl Ledger {
         }
         self.outbox.clear();
         self.walk = None;
+        self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;
         self.bank_pick = None;

@@ -546,6 +546,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         let env = ProfileEnvironment {
             home: Some(root.to_path_buf()),
             working_dir: Some(root.to_path_buf()),
+            engine_dir: Some(root.join("engine")),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
@@ -642,6 +643,7 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let env = ProfileEnvironment {
         home: Some(root.to_path_buf()),
         working_dir: Some(root.to_path_buf()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -860,6 +862,29 @@ fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
     assert!(log_follow_bottom(99.0, 100.0), "within 1 px of the bottom");
     assert!(log_follow_bottom(100.0, 100.0));
     assert!(!log_follow_bottom(50.0, 100.0), "scrolled up stays put");
+}
+
+#[test]
+fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
+    let dir = TestDir::new("legacy-log-ui-state");
+    let path = dir.join("panel-ui.json");
+    std::fs::write(
+        &path,
+        r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
+    )
+    .unwrap();
+
+    let loaded = crate::ui_state::load_at(&path);
+    assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
+    assert!(!loaded.collapsed["alice"]["status"]);
+    assert!(!loaded.capture);
+
+    crate::ui_state::save(&loaded);
+    let session = crate::session::Session::new();
+    assert!(!session.log_window_open);
+    assert_eq!(session.ui.last_focus.as_deref(), Some("alice"));
+    assert!(!session.ui.collapsed["alice"]["status"]);
+    assert!(!session.ui.capture);
 }
 
 #[test]
@@ -1142,6 +1167,260 @@ fn chooser_docks_to_panel_never_rail_or_game() {
     let panel = Id::from(20u32);
     assert_eq!(super::chooser_dock_id(Some(panel)), Some(panel));
     assert_eq!(super::chooser_dock_id(None), None);
+}
+
+fn log_tab_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> ([f32; 2], Option<[f32; 2]>) {
+    const DISPLAY_SIZE: [f32; 2] = [1440.0, 900.0];
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(DISPLAY_SIZE, 1.0 / 60.0).renderer_has_textures(),
+    );
+    let mut close_button = None;
+    let log_button = {
+        let ui = ctx.frame();
+        let (min, max) = ui
+            .window("Log tab harness")
+            .position([20.0, 600.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::title_row(ui, session);
+                (ui.item_rect_min(), ui.item_rect_max())
+            })
+            .expect("Log button harness was drawn");
+        if session.log_window_open {
+            super::log_window_with_body(ui, session, None, |ui, session| {
+                let pos = ui.window_pos();
+                let size = ui.window_size();
+                let frame_padding = ui.clone_style().frame_padding();
+                let font_size = ui.current_font_size();
+                close_button = Some([
+                    pos[0] + size[0] - frame_padding[0] - font_size * 0.5,
+                    pos[1] + frame_padding[1] + font_size * 0.5,
+                ]);
+                crate::log_pane::log_body(ui, session, true);
+            });
+        }
+        [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5]
+    };
+    ctx.render();
+    (log_button, close_button)
+}
+
+#[test]
+fn log_button_opens_and_window_x_closes_without_hiding_inline_log() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    let mut ctx = dock_host_context();
+    ctx.io_mut()
+        .set_config_flags(dear_imgui_rs::ConfigFlags::empty());
+    ctx.set_ini_filename::<std::path::PathBuf>(None)
+        .expect("disable ImGui settings persistence");
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+
+    let (log_button, _) = log_tab_frame(&mut ctx, &mut session);
+    ctx.io_mut().add_mouse_pos_event(log_button);
+    log_tab_frame(&mut ctx, &mut session);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    log_tab_frame(&mut ctx, &mut session);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    let (_, close_button) = log_tab_frame(&mut ctx, &mut session);
+    assert!(session.log_window_open, "the panel button opens Log");
+
+    let close_button = close_button.expect("the opened Log window has a close button");
+    ctx.io_mut().add_mouse_pos_event(close_button);
+    log_tab_frame(&mut ctx, &mut session);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    log_tab_frame(&mut ctx, &mut session);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    log_tab_frame(&mut ctx, &mut session);
+    assert!(
+        !session.log_window_open,
+        "the window's X closes the Log view"
+    );
+
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1440.0, 900.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Inline log harness")
+            .build(|| super::log_section(ui, &mut session, true));
+        ui.log_finish();
+    }
+    ctx.render();
+    assert!(
+        drawn.0.take().contains("[ Copy ]"),
+        "closing Log leaves the inline log section drawn"
+    );
+}
+
+#[test]
+fn log_tab_is_registered_with_panel_dock_and_can_undock() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let os = fitted_frame((1920.0, 1080.0), (1120, 580), (400, 200));
+    let mut state = PanelState {
+        os_window: Some(os.clone()),
+        ..PanelState::default()
+    };
+    dock_host_frame(&mut ctx, &mut state, &os);
+    dock_host_frame(&mut ctx, &mut state, &os);
+    let panel = state.panel_dock_node.expect("panel dock node was built");
+    state.session.log_window_open = true;
+
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(os.frame.display_size(), 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let mut docked = false;
+    let mut dock = None;
+    {
+        let ui = ctx.frame();
+        super::dock_host(ui, &mut state, "274bot");
+        super::log_window_with_body(ui, &mut state.session, Some(panel), |ui, session| {
+            docked = ui.is_window_docked();
+            dock = Some(ui.get_window_dock_id());
+            crate::log_pane::log_body(ui, session, true);
+        });
+    }
+    ctx.render();
+    assert!(docked, "Log opens as a docked panel tab");
+    assert_eq!(dock, Some(panel));
+    assert!(super::PANEL_TAB_WINDOWS.contains(&"Log"));
+
+    let class = super::panel_window_class();
+    assert!(class.docking_always_tab_bar, "the tab has a close X");
+    assert!(
+        !class
+            .dock_node_flags_override_set
+            .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
+        "Log can be dragged out to float"
+    );
+}
+
+#[test]
+fn drawn_log_window_suppresses_the_inline_log_body() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    session.log_window_open = true;
+    let mut ctx = dock_host_context();
+    ctx.io_mut().set_config_flags(ConfigFlags::empty());
+    ctx.set_ini_filename::<std::path::PathBuf>(None)
+        .expect("disable ImGui settings persistence");
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1440.0, 900.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let mut window_body_drawn = false;
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        super::log_window_with_body(ui, &mut session, None, |ui, session| {
+            window_body_drawn = true;
+            crate::log_pane::log_body(ui, session, true);
+        });
+        ui.window("Inline log harness")
+            .build(|| super::log_section(ui, &mut session, true));
+        ui.log_finish();
+    }
+    ctx.render();
+
+    let text = drawn.0.take();
+    assert!(window_body_drawn, "the visible Log window drew its body");
+    assert!(session.log_window_body_drawn);
+    assert!(text.contains("Log is open in its tab"));
+    assert_eq!(
+        text.matches("[ Copy ]").count(),
+        1,
+        "only the Log window submitted its body"
+    );
+}
+
+#[test]
+fn unselected_docked_log_window_leaves_the_inline_body_visible() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    ctx.set_ini_filename::<std::path::PathBuf>(None)
+        .expect("disable ImGui settings persistence");
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let os = fitted_frame((1920.0, 1080.0), (1120, 580), (400, 200));
+    let mut state = PanelState {
+        os_window: Some(os.clone()),
+        ..PanelState::default()
+    };
+    dock_host_frame(&mut ctx, &mut state, &os);
+    dock_host_frame(&mut ctx, &mut state, &os);
+    let panel = state.panel_dock_node.expect("panel dock node was built");
+    let panel_title = format!(
+        "{}###{}",
+        state.session.app_title(),
+        crate::theme::PANEL_WINDOW
+    );
+    state.session.log_window_open = true;
+
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(os.frame.display_size(), 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        super::dock_host(ui, &mut state, "274bot");
+        ui.set_next_window_class(&super::panel_window_class());
+        ui.set_next_window_dock_id_with_cond(panel, dear_imgui_rs::Condition::Always);
+        ui.window(panel_title.as_str()).build(|| {});
+        ui.set_window_focus(Some(panel_title.as_str()));
+        super::log_window_with_body(ui, &mut state.session, Some(panel), |ui, session| {
+            crate::log_pane::log_body(ui, session, true);
+        });
+        ui.set_window_focus(Some(panel_title.as_str()));
+    }
+    ctx.render();
+
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(os.frame.display_size(), 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let mut window_body_drawn = false;
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        super::dock_host(ui, &mut state, "274bot");
+        ui.set_window_focus(Some(panel_title.as_str()));
+        super::log_window_with_body(ui, &mut state.session, Some(panel), |ui, session| {
+            window_body_drawn = true;
+            crate::log_pane::log_body(ui, session, true);
+        });
+        ui.set_next_window_class(&super::panel_window_class());
+        ui.set_next_window_dock_id_with_cond(panel, dear_imgui_rs::Condition::Always);
+        ui.window(panel_title.as_str())
+            .build(|| super::log_section(ui, &mut state.session, true));
+        ui.log_finish();
+    }
+    ctx.render();
+
+    let text = drawn.0.take();
+    assert!(state.session.log_window_open);
+    assert!(
+        !window_body_drawn,
+        "an open but unselected dock tab does not draw its body"
+    );
+    assert!(!state.session.log_window_body_drawn);
+    assert!(
+        text.contains("[ Copy ]"),
+        "the inline log body remains visible"
+    );
+    assert!(!text.contains("Log is open in its tab"));
 }
 
 #[test]

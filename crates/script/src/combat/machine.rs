@@ -1860,6 +1860,7 @@ impl Combat {
             target: tile,
             loc_id: None,
             radius: 1,
+            arrival: nav::arrival::ArrivalKind::Reach,
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,
@@ -2009,6 +2010,7 @@ fn potion_kind(code: u8) -> PotionKind {
         _ => unreachable!("planned potion kind"),
     }
 }
+
 fn unavailable(reason: &'static str) -> ActionError {
     ActionError::Unavailable(reason.into())
 }
