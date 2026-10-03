@@ -10,7 +10,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Widget};
 use ratatui::Frame;
 
-use frontend_core::views::run_state_label;
+use frontend_core::views::script_status_label;
 use frontend_core::Phase;
 
 use crate::app::TuiApp;
@@ -140,7 +140,11 @@ impl TuiApp {
             format!(
                 "BOT {name} │ {world} │ {} │ script {}",
                 row.map_or(Phase::Offline, |row| row.phase).label(),
-                run_state_label(self.script_state)
+                script_status_label(
+                    self.script_state,
+                    self.focused_detail()
+                        .and_then(|detail| detail.native_status.as_deref())
+                )
             )
         };
         if self.chat_data.is_modal_open() {

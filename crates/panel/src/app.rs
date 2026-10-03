@@ -56,7 +56,6 @@ use crate::theme::{
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::BrowseCard;
-use frontend_core::views::run_state_label;
 use frontend_core::{FleetRow, FormNotice, Phase, ResourceView};
 
 #[path = "live_harness.rs"]
@@ -2257,10 +2256,31 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
-    let status = run_state_label(state);
-    match session.focused_script_last_error() {
-        Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
-        None => kv_row(ui, "status", status),
+    let native = session
+        .core
+        .fleet_view()
+        .detail()
+        .and_then(|detail| detail.native_status.as_deref());
+    let status = frontend_core::views::script_status_label(state, native);
+    if let Some(native) = native {
+        kv_row(ui, "status", status);
+        if let Some(reason) = frontend_core::views::script_status_reason(native) {
+            ui.text_wrapped(reason);
+        }
+        for field in native
+            .fields
+            .iter()
+            .filter(|field| matches!(field.key, "display" | "queue"))
+        {
+            if let script::native::StatusValue::Text(value) = &field.value {
+                kv_row(ui, field.label, value);
+            }
+        }
+    } else {
+        match session.focused_script_last_error() {
+            Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
+            None => kv_row(ui, "status", status),
+        }
     }
 }
 
