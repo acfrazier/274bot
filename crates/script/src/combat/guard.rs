@@ -16,6 +16,8 @@ const LOWEST_PROTECT: i32 = 37;
 const PRAYER_STAT: i32 = 5;
 const HITPOINTS_STAT: i32 = 3;
 
+/// Prayer scheduling window, shared with host walk-end debt settlement.
+pub const GUARD_PRAYER_WINDOW_TICKS: u16 = 3;
 /// Protection prayer the driver wanted but could not raise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuardProtect {
@@ -69,6 +71,7 @@ pub struct WalkGuard {
     follow_until: u16,
     drop_component: i32,
     pending_com: i32,
+    prayer_admission_tick: u16,
     unprotectable: u8,
     flags: u8,
     drink_points: u8,
@@ -77,7 +80,7 @@ pub struct WalkGuard {
 
 const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
-const FLAG_ON: u8 = 4;
+const FLAG_OWNED_ON: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
 
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
@@ -178,22 +181,17 @@ impl WalkGuard {
         if base < LOWEST_PROTECT {
             return Err(GuardRefusal::PrayerTooLow);
         }
-        let (drop_component, flags) = Frame::borrow(*snapshot)
-            .and_then(|frame| {
-                select::active_protect(&frame, &tables)
-                    .and_then(|style| select::protect_fact(&tables, style))
-            })
-            .map_or((0, 0), |fact| (fact.button_com, FLAG_ON));
         Ok(Self {
             threats: ThreatSet::default(),
             tables,
             schedule: Schedule::default(),
             last_tick: 0,
             follow_until: 0,
-            drop_component,
+            drop_component: 0,
             pending_com: 0,
+            prayer_admission_tick: 0,
             unprotectable: 0,
-            flags,
+            flags: 0,
             drink_points: 0,
             drink_doses: 0,
         })
@@ -219,19 +217,32 @@ impl WalkGuard {
         if let Some(fact) = select::active_protect(frame, &self.tables)
             .and_then(|style| select::protect_fact(&self.tables, style))
         {
-            self.drop_component = fact.button_com;
-            self.flags |= FLAG_ON;
             if self.pending_protect() == Some(fact.button_com) {
                 self.schedule.settle(OpKind::Prayer);
+                self.drop_component = fact.button_com;
+                self.flags |= FLAG_OWNED_ON;
+            } else if self.flags & FLAG_OWNED_ON == 0 || self.drop_component != fact.button_com {
+                self.drop_component = 0;
+                self.flags &= !FLAG_OWNED_ON;
             }
         } else {
-            self.flags &= !FLAG_ON;
+            self.drop_component = 0;
+            self.flags &= !FLAG_OWNED_ON;
         }
     }
 
     /// Successfully sent protection click that has not yet been observed on.
     pub fn pending_protect(&self) -> Option<i32> {
         (self.schedule.pending(OpKind::Prayer) && self.pending_com > 0).then_some(self.pending_com)
+    }
+    /// Schedule tick of the admitted protect while it is awaiting observation.
+    pub fn pending_protect_tick(&self) -> Option<u16> {
+        self.pending_protect().map(|_| self.prayer_admission_tick)
+    }
+
+    /// Most recent tick on which this guard evaluated the route.
+    pub fn observed_tick(&self) -> u16 {
+        self.last_tick
     }
 
     /// Commit a proposal only after its host interaction was successfully sent.
@@ -252,6 +263,7 @@ impl WalkGuard {
                 self.schedule
                     .admitted(OpKind::Prayer, tick, 0, false, InputEffect::PrayerOn);
                 self.pending_com = *component;
+                self.prayer_admission_tick = tick;
                 self.follow_until = tick.wrapping_add(1);
                 self.flags |= FLAG_FOLLOW;
             }
@@ -342,13 +354,13 @@ impl WalkGuard {
         })
     }
 
-    /// End owes an off-click for an unacknowledged sent protect, otherwise
-    /// toggles off only the protection observed on most recently.
+    /// End owes off for an unacknowledged admitted protect, otherwise only for
+    /// an owned protection observed active during this walk.
     pub fn end(self) -> GuardOp {
         GuardOp::IfButton {
             component: self
                 .pending_protect()
-                .or_else(|| (self.flags & FLAG_ON != 0).then_some(self.drop_component))
+                .or_else(|| (self.flags & FLAG_OWNED_ON != 0).then_some(self.drop_component))
                 .unwrap_or(0),
         }
     }
@@ -697,13 +709,32 @@ mod tests {
     }
 
     #[test]
-    fn begin_tracks_an_existing_protect_for_immediate_end() {
+    fn begin_does_not_own_a_preexisting_protect_for_immediate_end() {
         let mut scene = Scene::new(43);
         let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap();
-        let component = melee.button_com;
         scene.set_protect_varp(melee.varp, true);
         let guard = scene.begin().unwrap();
-        assert_eq!(guard.end(), GuardOp::IfButton { component });
+        assert_eq!(guard.end(), GuardOp::IfButton { component: 0 });
+    }
+
+    #[test]
+    fn an_externally_observed_protect_is_not_owned_without_guard_admission() {
+        let mut scene = Scene::new(43);
+        let missiles_varp = scene.missiles().varp;
+        let mut guard = scene.begin().unwrap();
+        scene.set_protect_varp(missiles_varp, true);
+        guard.observe_prayer(&scene.view_at(0));
+        assert_eq!(guard.end(), GuardOp::IfButton { component: 0 });
+    }
+
+    #[test]
+    fn a_preexisting_desired_protect_stays_user_owned_after_guard_observation() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        scene.set_missiles(true);
+        let mut guard = scene.begin().unwrap();
+        assert_eq!(guard.tick(&scene.view_at(0)), None);
+        assert_eq!(guard.end(), GuardOp::IfButton { component: 0 });
     }
 
     #[test]
@@ -821,10 +852,13 @@ mod tests {
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
         let first = guard.tick(&scene.view_at(0)).unwrap();
+        assert_eq!(guard.observed_tick(), 0);
         assert!(matches!(first, GuardOp::IfButton { .. }), "{first:?}");
         assert_eq!(guard.pending_protect(), None);
+        assert_eq!(guard.pending_protect_tick(), None);
         guard.admitted(&first, &scene.view_at(0));
         assert_eq!(guard.pending_protect(), Some(scene.missiles().button_com));
+        assert_eq!(guard.pending_protect_tick(), Some(0));
         assert!(
             !matches!(
                 guard.tick(&scene.view_at(1)),
@@ -832,6 +866,8 @@ mod tests {
             ),
             "an admitted but unacknowledged protect must not toggle again"
         );
+        assert_eq!(guard.observed_tick(), 1);
+        assert_eq!(guard.pending_protect_tick(), Some(0));
         assert!(
             !matches!(
                 guard.tick(&scene.view_at(2)),
@@ -839,6 +875,7 @@ mod tests {
             ),
             "three-tick prayer pacing must hold after the first successful send"
         );
+        assert_eq!(guard.observed_tick(), 2);
     }
 
     #[test]
@@ -855,6 +892,7 @@ mod tests {
         assert_eq!(retry, first, "a refused host send must remain retryable");
         guard.admitted(&retry, &scene.view_at(1));
         assert_eq!(guard.pending_protect(), Some(scene.missiles().button_com));
+        assert_eq!(guard.pending_protect_tick(), Some(1));
         assert!(guard.blocks_follow(1));
         assert!(
             guard.tick(&scene.view_at(2)).is_none(),
@@ -879,33 +917,32 @@ mod tests {
     }
 
     #[test]
-    fn pending_switch_end_owes_the_new_protect_not_the_old_style() {
+    fn preexisting_protect_switch_ends_only_the_guard_admitted_new_style() {
         let mut scene = Scene::new(43);
-        let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap();
-        scene.set_protect_varp(melee.varp, true);
+        let melee_varp = scene.tables.prayer(PrayerRole::Protect, 2).unwrap().varp;
+        scene.set_protect_varp(melee_varp, true);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
         let missiles = scene.missiles().button_com;
         let click = guard.tick(&scene.view_at(0)).unwrap();
-        assert_eq!(
-            click,
-            GuardOp::IfButton {
-                component: missiles
-            }
-        );
+        assert_eq!(click, GuardOp::IfButton { component: missiles });
         guard.admitted(&click, &scene.view_at(0));
 
         guard.observe_prayer(&scene.view_at(1));
         assert_eq!(
             guard.pending_protect(),
             Some(missiles),
-            "an unrelated old active style cannot acknowledge the switch"
+            "the preexisting style cannot acknowledge the guard's switch"
         );
+        scene.set_protect_varp(melee_varp, false);
+        scene.set_missiles(true);
+        guard.observe_prayer(&scene.view_at(2));
+        assert_eq!(guard.pending_protect(), None);
+        assert_eq!(guard.pending_protect_tick(), None);
         assert_eq!(
             guard.end(),
-            GuardOp::IfButton {
-                component: missiles
-            }
+            GuardOp::IfButton { component: missiles },
+            "ending clears only the newly admitted style and never restores the old one"
         );
     }
 
@@ -1027,7 +1064,8 @@ mod tests {
     }
 
     #[test]
-    fn mixed_melee_and_thrower_can_switch_on_each_projectile_edge() {
+    fn known_report_only_mixed_melee_and_thrower_can_switch_on_each_projectile_edge() {
+        // A future pacing fix should invert this report-only characterization.
         let mut scene = Scene::new(43);
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let thrower = data.npc_by_config("death_troll_thrower1").unwrap();
