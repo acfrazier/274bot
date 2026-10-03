@@ -4,7 +4,7 @@
 //!   *new* death line (a seq past the first observation) latches; seeded,
 //!   old and duplicate chat does not.
 //! - `validate` is one typed helper (`load/bank_tasks_v8.rs`): it observes
-//!   ([`observe`]), fires the caller's `onDeath` on a new latch, and, as
+//!   ([`observe`]), fires the caller's `onDeath` for each new death line, and, as
 //!   frozen `validate` on every pass while the death is latched (and no
 //!   run is live), clears the latch and fires `onRecovered` when the posted
 //!   tile is within Chebyshev `radius` of the anchor ([`near`],
@@ -28,92 +28,98 @@ pub const RESPAWN_WAIT_MS: u64 = 20_000;
 pub const RESPAWN_TICKS: u64 = 3;
 pub const DEFAULT_RADIUS: i32 = 6;
 
-/// The chat latch, kept across runs and reset with the session.
+/// One DeathRecovery instance's death cursor and recovery flag.
 struct Latch {
+    cursor: crate::native::death::DeathLatch,
     latched: bool,
-    baseline: bool,
-    last_seq: i32,
 }
 
 impl Latch {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
+            cursor: crate::native::death::DeathLatch::default(),
             latched: false,
-            baseline: false,
-            last_seq: 0,
         }
     }
+
+    /// Observe a new death event, including while recovery is already latched.
+    fn observe(&mut self, lines: &[ChatLine]) -> bool {
+        let died = self
+            .cursor
+            .observe_lines(|| lines.iter().map(|line| (line.seq, line.text.as_ref())));
+        self.latched |= died;
+        died
+    }
+}
+
+struct InstanceLatch {
+    instance: v8::Global<v8::Object>,
+    latch: Latch,
 }
 
 thread_local! {
-    static LATCH: RefCell<Latch> = const { RefCell::new(Latch::new()) };
+    static LATCHES: RefCell<Vec<InstanceLatch>> = const { RefCell::new(Vec::new()) };
 }
 
-impl Latch {
-    /// Observe the posted chat; `true` when a new death line latched now.
-    fn observe(&mut self, lines: &[ChatLine]) -> bool {
-        let max_seq = lines
-            .iter()
-            .map(|line| line.seq)
-            .max()
-            .unwrap_or(self.last_seq);
-        if !self.baseline {
-            self.last_seq = max_seq;
-            self.baseline = true;
-            return false;
-        }
-        let mut newest = self.last_seq;
-        let mut death = false;
-        for line in lines.iter().filter(|line| line.seq > self.last_seq) {
-            newest = newest.max(line.seq);
-            death |= is_death_line(&line.text);
-        }
-        self.last_seq = newest;
-        if death && !self.latched {
-            self.latched = true;
-            return true;
-        }
-        false
-    }
+fn with_latch<'s, R>(
+    scope: &mut v8::HandleScope<'s>,
+    instance: v8::Local<'s, v8::Object>,
+    f: impl FnOnce(&mut Latch) -> R,
+) -> R {
+    LATCHES.with(|latches| {
+        let mut latches = latches.borrow_mut();
+        let index = latches.iter().position(|entry| {
+            v8::Local::new(scope, &entry.instance).strict_equals(instance.into())
+        });
+        let index = index.unwrap_or_else(|| {
+            latches.push(InstanceLatch {
+                instance: v8::Global::new(scope, instance),
+                latch: Latch::new(),
+            });
+            latches.len() - 1
+        });
+        f(&mut latches[index].latch)
+    })
 }
 
-/// Frozen `/oh dear.*you are dead/i`.
-fn is_death_line(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let Some(at) = lower.find("oh dear") else {
-        return false;
-    };
-    lower[at + "oh dear".len()..].contains("you are dead")
-}
-
-/// What `validate` read: whether a new death latched now, and the posted
-/// tile to check against the anchor (latched, no run live, a tile posted).
+/// What `validate` read: whether a new death arrived, and the posted tile to
+/// check against the anchor (latched, no run live, a tile posted).
 pub(crate) struct Observed {
     pub(crate) died: bool,
     pub(crate) check_from: Option<Tile>,
 }
 
-/// `DeathRecovery.validate`'s first half: observe the posted chat.
-pub(crate) fn observe() -> Observed {
-    let (died, here) = observed::with(|scene| {
+/// `DeathRecovery.validate`'s first half: observe the posted chat for one task.
+pub(crate) fn observe<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    instance: v8::Local<'s, v8::Object>,
+) -> Observed {
+    let (died, here, latched) = observed::with(|scene| {
         let session = scene.since_login();
         let lines = session.chat_lines().map(Vec::as_slice).unwrap_or_default();
-        let died = LATCH.with(|latch| latch.borrow_mut().observe(lines));
+        let (died, latched) = with_latch(scope, instance, |latch| {
+            let died = latch.observe(lines);
+            (died, latch.latched)
+        });
         let here = session.here().map(|t| Tile {
             x: t.x,
             z: t.z,
             level: t.level,
         });
-        (died, here)
+        (died, here, latched)
     });
-    let checkable = LATCH.with(|latch| {
-        let latch = latch.borrow();
-        latch.latched
-    }) && !machine::live(DeathRecovery::NAME);
     Observed {
         died,
-        check_from: here.filter(|_| checkable),
+        check_from: check_from(latched, here),
     }
+}
+
+fn check_from(latched: bool, here: Option<Tile>) -> Option<Tile> {
+    here.filter(|_| latched && !machine::live(DeathRecovery::NAME))
+}
+
+fn due_while_idle(latched: bool) -> bool {
+    latched && !machine::live(DeathRecovery::NAME)
 }
 
 /// Frozen `near(home, anchor, radius)`: the anchor's level strictly equal,
@@ -125,24 +131,34 @@ pub(crate) fn near(home: Tile, level: Option<f64>, x: f64, z: f64, radius: f64) 
         && (f64::from(home.z) - z).abs() <= radius
 }
 
+pub(crate) fn normalized_radius(radius: Option<f64>) -> i32 {
+    radius
+        .filter(|radius| {
+            radius.is_finite()
+                && radius.fract() == 0.0
+                && *radius >= f64::from(i32::MIN)
+                && *radius <= f64::from(i32::MAX)
+        })
+        .map(|radius| radius as i32)
+        .unwrap_or(DEFAULT_RADIUS)
+}
+
 /// Frozen `this.died = false` (the caller then fires `onRecovered`).
-pub(crate) fn recover() {
-    LATCH.with(|latch| latch.borrow_mut().latched = false);
+pub(crate) fn recover<'s>(scope: &mut v8::HandleScope<'s>, instance: v8::Local<'s, v8::Object>) {
+    with_latch(scope, instance, |latch| latch.latched = false);
 }
 
 /// `return this.died`, while no recovery run is live.
-pub(crate) fn due() -> bool {
-    latched() && !machine::live(DeathRecovery::NAME)
+pub(crate) fn due<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    instance: v8::Local<'s, v8::Object>,
+) -> bool {
+    due_while_idle(with_latch(scope, instance, |latch| latch.latched))
 }
 
 pub fn on_reset() {
-    LATCH.with(|latch| *latch.borrow_mut() = Latch::new());
+    LATCHES.with(|latches| latches.borrow_mut().clear());
 }
-
-fn latched() -> bool {
-    LATCH.with(|latch| latch.borrow().latched)
-}
-
 #[derive(Deserialize)]
 pub(crate) struct RecoveryArgs {
     #[serde(default)]
@@ -177,11 +193,7 @@ fn read_anchor(value: &Value) -> Option<Tile> {
     Some(Tile {
         x: i32::try_from(tile.get("x")?.as_i64()?).ok()?,
         z: i32::try_from(tile.get("z")?.as_i64()?).ok()?,
-        level: tile
-            .get("level")
-            .and_then(Value::as_i64)
-            .and_then(|l| i32::try_from(l).ok())
-            .unwrap_or(0),
+        level: i32::try_from(tile.get("level")?.as_i64()?).ok()?,
     })
 }
 
@@ -194,17 +206,13 @@ impl Family for DeathRecovery {
 
     fn begin(args: RecoveryArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         let anchor = read_anchor(&args.anchor);
-        if !latched() || (anchor.is_none() && !cx.has(WALK_BACK)) {
+        if anchor.is_none() && !cx.has(WALK_BACK) {
             return Begin::Done(Value::Null);
         }
         cx.clock().arm(RESPAWN_WAIT_MS);
         Begin::Run(Self {
             anchor,
-            radius: args
-                .radius
-                .as_i64()
-                .and_then(|r| i32::try_from(r).ok())
-                .unwrap_or(DEFAULT_RADIUS),
+            radius: normalized_radius(args.radius.as_f64()),
             phase: Phase::Respawn,
         })
     }
@@ -299,11 +307,13 @@ mod tests {
     }
 
     #[test]
-    fn death_line_is_the_frozen_pattern() {
-        assert!(is_death_line("Oh dear, you are dead!"));
-        assert!(is_death_line("OH DEAR YOU ARE DEAD"));
-        assert!(!is_death_line("Welcome to RuneScape"));
-        assert!(!is_death_line("you are dead"));
+    fn death_line_is_the_native_pattern() {
+        assert!(crate::native::death::is_death_line(
+            "Oh dear, you are dead!"
+        ));
+        assert!(crate::native::death::is_death_line("OH DEAR YOU ARE DEAD"));
+        assert!(!crate::native::death::is_death_line("Welcome to RuneScape"));
+        assert!(!crate::native::death::is_death_line("you are dead"));
     }
 
     #[test]
@@ -322,6 +332,27 @@ mod tests {
         assert!(!latch.observe(&fresh), "the same death seq fires once");
     }
 
+    #[test]
+    fn a_replaced_chat_ring_reconciles_its_new_lower_head() {
+        let mut latch = Latch::new();
+        assert!(!latch.observe(&[line(200, "Welcome")]));
+        assert!(
+            latch.observe(&[line(2, "Oh dear, you are dead!"), line(1, "Welcome")]),
+            "the replacement ring's fresh death line is observed"
+        );
+    }
+
+    #[test]
+    fn every_new_death_line_fires_even_while_latched() {
+        let mut latch = Latch::new();
+        assert!(!latch.observe(&[line(1, "Welcome")]));
+        assert!(latch.observe(&[line(2, "Oh dear, you are dead!")]));
+        assert!(latch.latched);
+        assert!(
+            latch.observe(&[line(3, "Oh dear, you are dead!"), line(2, "Welcome")]),
+            "a second death event still invokes onDeath before recovery"
+        );
+    }
     struct NoJs;
 
     impl machine::Js for NoJs {
@@ -353,7 +384,6 @@ mod tests {
         machine::on_reset();
         observed::on_reset();
         on_reset();
-        LATCH.with(|latch| latch.borrow_mut().latched = true);
         observed::post(1, |post| {
             post.session(false);
         });
@@ -474,7 +504,8 @@ mod tests {
         };
         let view = walled_view(here);
         post_at(1, here, &view);
-        LATCH.with(|latch| latch.borrow_mut().latched = true);
+        let mut latch = Latch::new();
+        latch.latched = true;
         let started = machine::start(
             DeathRecovery::NAME,
             serde_json::json!({ "anchor": { "x": anchor.x, "z": anchor.z, "level": 0 }, "radius": 2 }),
@@ -496,15 +527,21 @@ mod tests {
             walked,
             "Chebyshev 2 across the wall is not arrived: it walks"
         );
-        assert!(observe().check_from.is_none(), "no position check mid-run");
+        assert!(
+            check_from(latch.latched, Some(here)).is_none(),
+            "no position check mid-run"
+        );
         machine::tests::expire_deadlines();
         machine::step(&mut NoJs);
         assert!(
             !machine::live(DeathRecovery::NAME),
             "the walk bound ended the run"
         );
-        let check = observe().check_from.expect("a finished run is checked");
-        assert!(due(), "still latched until validate decides");
+        let check = check_from(latch.latched, Some(here)).expect("a finished run is checked");
+        assert!(
+            due_while_idle(latch.latched),
+            "still latched until validate decides"
+        );
         assert!(near(
             check,
             Some(0.0),
@@ -512,7 +549,10 @@ mod tests {
             f64::from(anchor.z),
             2.0
         ));
-        recover();
-        assert!(!due(), "recovered: execute does not run again");
+        latch.latched = false;
+        assert!(
+            !due_while_idle(latch.latched),
+            "recovered: execute does not run again"
+        );
     }
 }
