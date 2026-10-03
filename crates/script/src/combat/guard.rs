@@ -50,7 +50,6 @@ pub struct WalkGuard {
     tables: Arc<CombatTables>,
     last_tick: u16,
     input_lock: u16,
-    earliest_prayer: u16,
     earliest_drink: u16,
     drop_component: i32,
     unprotectable: u8,
@@ -124,7 +123,6 @@ impl WalkGuard {
             tables,
             last_tick: 0,
             input_lock: 0,
-            earliest_prayer: 0,
             earliest_drink: 0,
             drop_component: 0,
             unprotectable: 0,
@@ -180,14 +178,14 @@ impl WalkGuard {
         if points == 0 {
             return self.drink(&frame, tick, hp, hp_max, true);
         }
-        if self.prayer_ready(tick) {
-            self.earliest_prayer = tick.wrapping_add(3);
-            self.drop_component = wanted.button_com;
-            return Some(GuardOp::IfButton {
-                component: wanted.button_com,
-            });
-        }
-        None
+        // A walk hop on this tick would drop the prayer packet; lock follow
+        // and keep offering the click until the varp sticks.
+        self.input_lock = tick.wrapping_add(1);
+        self.flags |= FLAG_LOCK;
+        self.drop_component = wanted.button_com;
+        Some(GuardOp::IfButton {
+            component: wanted.button_com,
+        })
     }
 
     /// Always drops the protect this driver raised or last observed.
@@ -195,10 +193,6 @@ impl WalkGuard {
         GuardOp::IfButton {
             component: self.drop_component,
         }
-    }
-
-    fn prayer_ready(&self, tick: u16) -> bool {
-        self.earliest_prayer == 0 || reached(tick, self.earliest_prayer)
     }
 
     fn drink_ready(&self, tick: u16) -> bool {
@@ -550,7 +544,11 @@ mod tests {
                 component: missiles.button_com
             })
         );
-        assert!(!guard.blocks_follow(0));
+        assert!(
+            guard.blocks_follow(0),
+            "the protect click must not share its tick with a walk hop"
+        );
+        assert!(!guard.blocks_follow(1));
         let end = guard.end();
         assert_eq!(
             end,

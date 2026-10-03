@@ -274,12 +274,12 @@ pub fn step_walk_arm_follow<D: Driver>(
     };
     let destination = walk_destination(arm).unwrap_or(route.dest);
     let walking_stand = bank_stand_route_active(arm);
+    tick_walk_guard(driver, snapshot, &mut arm.walk_guard);
     let skip_follow = arm
         .walk_guard
         .as_ref()
         .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16));
     if skip_follow {
-        tick_walk_guard(driver, snapshot, &mut arm.walk_guard);
         return false;
     }
     let mut options = TravelOptions {
@@ -296,7 +296,6 @@ pub fn step_walk_arm_follow<D: Driver>(
         return false;
     }
     let Some(outcome) = outcome else {
-        tick_walk_guard(driver, snapshot, &mut arm.walk_guard);
         return false;
     };
     let leg = if walking_stand || matches!(&outcome, TravelOutcome::Arrived { .. }) {
