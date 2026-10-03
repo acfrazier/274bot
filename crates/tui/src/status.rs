@@ -12,6 +12,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use frontend_core::resources::{format_background, format_bots};
+use frontend_core::views::{script_status_label, script_status_reason};
 use frontend_core::{ResourceView, SlotDetail};
 
 /// The status pane widget: key/value rows for the selected slot, plus the
@@ -72,6 +73,15 @@ impl Widget for StatusPane<'_> {
             ],
             Some(d) => {
                 let mut lines = vec![Line::from(format!("state: {}", d.state))];
+                if let Some(status) = d.native_status.as_deref() {
+                    lines.push(Line::from(format!(
+                        "script: {}",
+                        script_status_label(d.row.script, Some(status))
+                    )));
+                    if let Some(reason) = script_status_reason(status) {
+                        lines.push(Line::from(reason));
+                    }
+                }
                 if let (false, Some(error)) = (d.row.phase.is_error(), d.row.error.as_deref()) {
                     lines.push(Line::from(format!("last error: {error}")));
                 }
@@ -277,5 +287,43 @@ mod tests {
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 38, 6);
         assert!(text.contains("state: logging in…"), "{text:?}");
         assert!(text.contains("last error: code 5"), "{text:?}");
+    }
+    #[test]
+    fn native_queue_refusal_precedes_routine_status_rows() {
+        let detail = SlotDetail {
+            row: FleetRow {
+                name: "qs-alice".into(),
+                phase: Phase::Ready,
+                script: script::RunState::Running,
+                ..FleetRow::default()
+            },
+            state: "ingame scene 2".into(),
+            native_status: Some(std::sync::Arc::new(script::native::ScriptStatus {
+                run: api::selected::RunKey {
+                    slot: 1,
+                    run: 2,
+                    session: 3,
+                },
+                card: script::CompiledId("Quester"),
+                phase: script::native::NativePhase::Blocked,
+                active_settings: 1,
+                pending_settings: None,
+                fields: std::sync::Arc::from([]),
+                failure: Some(script::native::ScriptFailure {
+                    code: "empty-queue".into(),
+                    message: "no quests selected; review Script prefs and Skip, then Stop/Start"
+                        .into(),
+                    retryable: true,
+                }),
+            })),
+            ..SlotDetail::default()
+        };
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
+        assert!(text.contains("script: blocked"), "{text:?}");
+        assert!(text.contains("no quests selected"), "{text:?}");
+        assert!(
+            text.contains("Script prefs and Skip, then Stop/Start"),
+            "{text:?}"
+        );
     }
 }

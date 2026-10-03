@@ -1952,7 +1952,11 @@ impl TuiApp {
             !self.params_schema.is_empty(),
             None,
         )
-        .with_reload_confirm(self.reload_confirm);
+        .with_reload_confirm(self.reload_confirm)
+        .with_native_status(
+            self.focused_detail()
+                .and_then(|detail| detail.native_status.as_deref()),
+        );
         frame.render_widget(pane, area);
     }
 }
