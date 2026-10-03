@@ -47,20 +47,26 @@
 //! Out of scope for this card, on purpose: keyboard, the death envelope, the
 //! duel `3554` family, honor-SETTINGS and loadout provisioning.
 
+#[cfg(test)]
 use api::game_data::SelectedGameData;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot};
 use serde_json::{json, Map, Value};
 
 use std::sync::Arc;
 
+use crate::clue::{Delegation, Outcome};
+use crate::combat::{
+    begin_clear_prayers, ClearPrayers, Combat, CombatRequest, CombatTables, Hygiene,
+};
 use crate::native::{
-    CompiledCard, ConfigError, HostFrame, NativeOutput, NativePhase, NativeTick, PrepareContext,
-    PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow, ScriptStatus, SettingsApply,
-    SettingsBag, StartError, StatusField, StatusValue,
+    ActionError, ActionHandle, CompiledCard, ConfigError, HostFrame, Interrupt, NativeOutput,
+    NativePhase, NativeTick, PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure,
+    ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue,
 };
 use crate::shim::{InteractReq, ScriptPaint};
 use crate::CompiledId;
 use api::selected::RunKey;
+use std::task::Poll;
 
 pub(crate) const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Sherlock"),
@@ -105,25 +111,31 @@ fn prepare(
             "Sherlock clue facts unavailable".into(),
         ));
     }
-    let settings = <SherlockSettings as serde::Deserialize>::deserialize(
+    let _settings = <SherlockSettings as serde::Deserialize>::deserialize(
         serde::de::value::MapDeserializer::new(
             bag.iter().map(|(key, value)| (key.as_str(), value)),
         ),
     )
     .map_err(|e| StartError::Config(ConfigError::new("", "invalid-settings", e.to_string())))?;
+    let tables = CombatTables::build(Arc::clone(&cx.selected))
+        .map_err(|_| StartError::Unavailable("Sherlock combat tables unavailable".into()))?;
     Ok(PreparedConfig::new(
         CARD.id,
         CARD.schema_version,
         revision,
         bag,
-        settings,
+        Prepared { tables },
     ))
+}
+
+struct Prepared {
+    tables: Arc<CombatTables>,
 }
 
 fn validate_config(config: &PreparedConfig) -> Result<(), ConfigError> {
     if config.card() != CARD.id
         || config.schema_version() != CARD.schema_version
-        || config.get::<SherlockSettings>().is_none()
+        || config.get::<Prepared>().is_none()
     {
         return Err(ConfigError::new(
             "",
@@ -140,10 +152,15 @@ fn create(
     _retained: &mut RetainedMemory,
 ) -> Result<Box<dyn Script>, StartError> {
     validate_config(&config).map_err(StartError::Config)?;
+    let tables = config
+        .get::<Prepared>()
+        .map(|prepared| Arc::clone(&prepared.tables));
     Ok(Box::new(Sherlock {
         run: Some(run),
         revision: config.revision(),
         dirty: true,
+        hygiene_pending: true,
+        tables,
         ..Default::default()
     }))
 }
@@ -168,6 +185,16 @@ const DONE: &str = "done";
 /// parking the pump thread on one observed frame.
 const CALLBACK_HANDOFFS: usize = 4;
 
+/// One live native machine. Never both Combat and ClearPrayers.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Keep the live combat machine inline; size_of::<Sherlock>() stays ≤ 1 KiB."
+)]
+enum Fight {
+    Combat(ActionHandle<Combat>),
+    ClearPrayers(ActionHandle<ClearPrayers>),
+}
+
 /// The compiled solve-clue card.
 #[derive(Default)]
 pub struct Sherlock {
@@ -180,6 +207,14 @@ pub struct Sherlock {
     revision: u64,
     status: Option<Arc<str>>,
     dirty: bool,
+    fight: Option<Fight>,
+    combat_id: Option<u32>,
+    pending: Option<(u32, Arc<CombatRequest>)>,
+    outcome: Option<Outcome>,
+    hygiene_pending: bool,
+    tables: Option<Arc<CombatTables>>,
+    blocked: Option<ScriptFailure>,
+    block_user_input: bool,
 }
 
 impl Script for Sherlock {
@@ -190,26 +225,180 @@ impl Script for Sherlock {
             self.run = Some(run);
             self.dirty = true;
         }
-        self.tick_frame(&mut tick.frame, tick.output);
+        match self.poll_fight(tick) {
+            Poll::Pending => {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
+            Poll::Ready(()) => {}
+        }
+        if self.fight.is_some() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
+        if let Some(failure) = self.blocked.clone() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(failure));
+        }
+        if self.hygiene_pending {
+            let Some(tables) = self.tables.as_ref() else {
+                self.hygiene_pending = false;
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            };
+            match begin_clear_prayers(tables.selected(), tick) {
+                Hygiene::Clean => self.hygiene_pending = false,
+                Hygiene::Started(handle) => {
+                    self.fight = Some(Fight::ClearPrayers(handle));
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Deferred => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Failed(_) => {
+                    self.hygiene_pending = false;
+                    let failure = ScriptFailure {
+                        code: Arc::from("combat-failed"),
+                        message: Arc::from("prayer hygiene failed"),
+                        retryable: true,
+                    };
+                    self.blocked = Some(failure.clone());
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(failure));
+                }
+            }
+        }
+        if let Some(failure) = self.blocked.clone() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(failure));
+        }
+        if let Some((id, request)) = self.pending.take() {
+            if let Some(tables) = self.tables.as_ref() {
+                match tick
+                    .actions
+                    .begin::<Combat>((Arc::clone(&request), Arc::clone(tables)), &mut tick.cx)
+                {
+                    Ok(handle) => {
+                        self.fight = Some(Fight::Combat(handle));
+                        self.combat_id = Some(id);
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
+                        self.pending = Some((id, request));
+                        self.publish(tick.output);
+                        return Ok(ScriptFlow::Continue);
+                    }
+                    Err(_) => self.outcome = Some(Outcome::failed(id)),
+                }
+            } else {
+                self.outcome = Some(Outcome::failed(id));
+            }
+        }
+        self.tick_frame(tick);
         self.publish(tick.output);
+        if let Some(failure) = self.blocked.clone() {
+            return Ok(ScriptFlow::Blocked(failure));
+        }
         Ok(ScriptFlow::Continue)
     }
 
     fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
         validate_config(&next)?;
         self.revision = next.revision();
+        if let Some(prepared) = next.get::<Prepared>() {
+            self.tables = Some(Arc::clone(&prepared.tables));
+        }
         self.dirty = true;
         Ok(SettingsApply::Applied)
+    }
+
+    fn retry(&mut self) -> Result<(), ScriptFailure> {
+        self.blocked = None;
+        Ok(())
+    }
+
+    fn interrupt(&mut self, event: Interrupt) {
+        if matches!(event, Interrupt::Pause) {
+            if let Some(id) = self.combat_id.take() {
+                self.outcome = Some(Outcome::cancelled(id));
+            } else if let Some((id, _)) = self.pending.take() {
+                self.outcome = Some(Outcome::cancelled(id));
+            }
+            self.fight = None;
+            self.hygiene_pending = true;
+        }
     }
 }
 
 impl Sherlock {
-    fn tick_frame(&mut self, ctx: &mut HostFrame<'_>, output: &mut dyn NativeOutput) {
+    fn poll_fight(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
+        match self.fight.as_ref() {
+            Some(Fight::Combat(handle)) => match tick.actions.poll(handle, &mut tick.cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(result) => {
+                    let id = self.combat_id.take().unwrap_or(0);
+                    self.fight = None;
+                    self.hygiene_pending |= result.is_err();
+                    if matches!(result, Err(ActionError::UserInput)) {
+                        self.block_user_input = true;
+                    }
+                    self.outcome = Some(Outcome::from_poll(id, result));
+                    Poll::Ready(())
+                }
+            },
+            Some(Fight::ClearPrayers(handle)) => match tick.actions.poll(handle, &mut tick.cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(report)) => {
+                    self.fight = None;
+                    if report.timed_out != 0 {
+                        self.blocked = Some(hygiene_failure(ActionError::Blocked(Arc::from(
+                            "prayer cleanup timed out",
+                        ))));
+                    } else {
+                        self.hygiene_pending = false;
+                    }
+                    Poll::Ready(())
+                }
+                Poll::Ready(Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                )) => {
+                    self.fight = None;
+                    Poll::Ready(())
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fight = None;
+                    self.blocked = Some(hygiene_failure(error));
+                    Poll::Ready(())
+                }
+            },
+            None => Poll::Ready(()),
+        }
+    }
+
+    fn tick_frame(&mut self, tick: &mut NativeTick<'_>) {
+        let Some(mut sink) = tick.frame.compiled.interacts.take() else {
+            return;
+        };
+        let previous = (self.token, self.solved);
+        self.pump(tick, &mut sink);
+        self.dirty |= previous != (self.token, self.solved);
+        tick.frame.compiled.interacts = Some(sink);
+    }
+
+    #[cfg(test)]
+    fn tick_host(&mut self, ctx: &mut HostFrame<'_>, output: &mut dyn NativeOutput) {
         let Some(mut sink) = ctx.compiled.interacts.take() else {
             return;
         };
         let previous = (self.token, self.solved);
-        self.pump(ctx, &mut sink, output);
+        self.pump_host(ctx, &mut sink, output);
         self.dirty |= previous != (self.token, self.solved);
         ctx.compiled.interacts = Some(sink);
     }
@@ -256,7 +445,37 @@ impl Sherlock {
     }
     /// One pump iteration: the `begin` call while there is no live session,
     /// then one `execute()` iteration over it.
-    fn pump(
+    fn pump(&mut self, tick: &mut NativeTick<'_>, sink: &mut Vec<InteractReq>) {
+        let selected = tick.frame.compiled.selected;
+        let token = match self.token {
+            Some(token) => token,
+            None => {
+                let begin = crate::clue::dispatch(selected, &begin_payload(&tick.frame));
+                let Some(started) = answered_token(&begin) else {
+                    return;
+                };
+                self.token = Some(started);
+                started
+            }
+        };
+        let combat = self.outcome.take().map(Outcome::page);
+        let page = next_payload(&tick.frame, token, combat);
+        #[cfg(test)]
+        record_combat_page(page.get("combat"));
+        self.iterate(tick, page, sink);
+        if self.block_user_input {
+            self.block_user_input = false;
+            self.blocked = Some(ScriptFailure {
+                code: Arc::from("manual-movement"),
+                message: Arc::from("manual movement"),
+                retryable: true,
+            });
+        }
+    }
+
+    /// Host-frame pump for unit tests that do not own a native ledger.
+    #[cfg(test)]
+    fn pump_host(
         &mut self,
         ctx: &HostFrame<'_>,
         sink: &mut Vec<InteractReq>,
@@ -268,26 +487,81 @@ impl Sherlock {
             None => {
                 let begin = crate::clue::dispatch(selected, &begin_payload(ctx));
                 let Some(started) = answered_token(&begin) else {
-                    // Refused: nothing held this tick (or no selected pin).
-                    // Idle, and the next tick asks the same question again.
                     return;
                 };
                 self.token = Some(started);
                 started
             }
         };
-        let page = next_payload(ctx, token);
-        self.iterate(selected, page, sink, output);
+        let combat = self.outcome.take().map(Outcome::page);
+        let page = next_payload(ctx, token, combat);
+        #[cfg(test)]
+        record_combat_page(page.get("combat"));
+        self.iterate_host(selected, page, sink, output);
     }
 
-    /// One `execute()` iteration over the live token: the machine is called
-    /// until it waits, yields, ends the session or enqueues one verb.
-    ///
-    /// The call-time page is marshalled once — the observed frame is fixed for
-    /// this tick, and the machine reads the payload without retaining it — and
-    /// only the `resume` answer is added and dropped around the one call it
-    /// belongs to.
-    fn iterate(
+    fn iterate(&mut self, tick: &mut NativeTick<'_>, mut page: Value, sink: &mut Vec<InteractReq>) {
+        let selected = tick.frame.compiled.selected;
+        let mut resume = false;
+        for _ in 0..CALLBACK_HANDOFFS {
+            let Some(fields) = page.as_object_mut() else {
+                return;
+            };
+            if resume {
+                fields.insert("resume".into(), Value::Bool(true));
+            } else {
+                fields.remove("resume");
+            }
+            let answer = crate::clue::dispatch(selected, &page);
+            resume = false;
+            let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
+            match kind {
+                "callback.enabled" => resume = true,
+                "callback.log" => {
+                    if let Some(message) = answer.get("message").and_then(Value::as_str) {
+                        tick.output.log(api::hostlog::Level::Info, message);
+                    }
+                }
+                "callback.setStatus" => {
+                    if let Some(message) = answer.get("message").and_then(Value::as_str) {
+                        if self.status.as_deref() != Some(message) {
+                            self.status = Some(Arc::from(message));
+                            self.dirty = true;
+                        }
+                    }
+                }
+                "wait" | "yield" | "supplies-needed" => return,
+                "grind-ready" => {}
+                "done" | "dead" | "abandon" | "guardian-lost" => {
+                    self.end(kind);
+                    return;
+                }
+                "aborted" => {
+                    let reason = answer.get("reason").and_then(Value::as_str).unwrap_or("");
+                    self.end(reason);
+                    if reason.starts_with("combat-") {
+                        self.blocked = Some(ScriptFailure {
+                            code: Arc::from(reason),
+                            message: Arc::from(reason),
+                            retryable: true,
+                        });
+                    }
+                    return;
+                }
+                "combat" => {
+                    self.begin_combat(tick, &answer);
+                    return;
+                }
+                kind => {
+                    enqueue(sink, kind, &answer);
+                    return;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn iterate_host(
         &mut self,
         selected: Option<&SelectedGameData>,
         mut page: Value,
@@ -308,8 +582,6 @@ impl Sherlock {
             resume = false;
             let kind = answer.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {
-                // The gate question: true while this card is started, and the
-                // answer rides the very next call only.
                 "callback.enabled" => resume = true,
                 "callback.log" => {
                     if let Some(message) = answer.get("message").and_then(Value::as_str) {
@@ -324,16 +596,8 @@ impl Sherlock {
                         }
                     }
                 }
-                // Frozen, the cooperative interrupt, or the named
-                // `supplies-needed` wait-class: the token lives, nothing is
-                // fetched, and the session resumes on a later tick.
                 "wait" | "yield" | "supplies-needed" => return,
-                // The finished collect's live-token handback: not a verb and
-                // not the wrapper's `delayTicks(1)`, so this iterate keeps
-                // going and the `done` behind it lands in the same tick.
                 "grind-ready" => {}
-                // The token's own terminal kinds: the session ends here, the
-                // token is cleared, and only `done` counts the clue locally.
                 "done" | "dead" | "abandon" | "guardian-lost" => {
                     self.end(kind);
                     return;
@@ -343,15 +607,52 @@ impl Sherlock {
                     self.end(reason);
                     return;
                 }
+                "combat" => {
+                    let Some(d) = Delegation::parse(&answer) else {
+                        self.end("clue-combat-verb");
+                        return;
+                    };
+                    self.outcome = Some(Outcome::failed(d.id));
+                    return;
+                }
                 kind => {
-                    // One enqueue per tick, exactly like the wrapper's own
-                    // `delayTicks(1)`; an unknown kind is not a verb and is
-                    // not enqueued as one either. The token lives: an answer
-                    // this card does not know is not a session end.
                     enqueue(sink, kind, &answer);
                     return;
                 }
             }
+        }
+    }
+
+    fn begin_combat(&mut self, tick: &mut NativeTick<'_>, answer: &Value) {
+        let Some(d) = Delegation::parse(answer) else {
+            self.end("clue-combat-verb");
+            return;
+        };
+        let Some(tables) = self.tables.as_ref() else {
+            self.outcome = Some(Outcome::failed(d.id));
+            return;
+        };
+        match tick
+            .actions
+            .begin::<Combat>((Arc::new(d.request()), Arc::clone(tables)), &mut tick.cx)
+        {
+            Ok(handle) => {
+                self.fight = Some(Fight::Combat(handle));
+                self.combat_id = Some(d.id);
+                let name = tables
+                    .npc(d.npc_type)
+                    .and_then(|row| row.display.as_deref())
+                    .unwrap_or("guardian");
+                let status = Arc::<str>::from(format!("Fighting {name}"));
+                if self.status.as_deref() != Some(status.as_ref()) {
+                    self.status = Some(status);
+                    self.dirty = true;
+                }
+            }
+            Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
+                self.pending = Some((d.id, Arc::new(d.request())));
+            }
+            Err(_) => self.outcome = Some(Outcome::failed(d.id)),
         }
     }
 
@@ -367,6 +668,21 @@ impl Sherlock {
         }
         self.token = None;
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static LAST_COMBAT_PAGE: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn record_combat_page(combat: Option<&Value>) {
+    LAST_COMBAT_PAGE.with(|slot| *slot.borrow_mut() = combat.cloned());
+}
+
+#[cfg(test)]
+fn take_combat_page() -> Option<Value> {
+    LAST_COMBAT_PAGE.with(|slot| slot.borrow_mut().take())
 }
 
 /// The `begin` call's payload: the required page, and nothing else.
@@ -386,13 +702,17 @@ fn begin_payload(ctx: &HostFrame<'_>) -> Value {
 /// board and its generation — are posted only when this frame carried the
 /// fact, so the machine reads an unposted slot as unobserved rather than as
 /// a default it was never handed.
-fn next_payload(ctx: &HostFrame<'_>, token: u64) -> Value {
+fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value {
     let mut page = Map::new();
     page.insert("op".into(), json!("next"));
     page.insert("token".into(), json!(token));
     page.insert("generation".into(), json!(GENERATION));
     page.insert("held".into(), held_page(ctx));
     page.insert("hold".into(), json!(ctx.compiled.hold));
+    page.insert("combat_driver".into(), json!(true));
+    if let Some(combat) = combat {
+        page.insert("combat".into(), combat);
+    }
     page.insert("locs".into(), loc_page(ctx));
     page.insert("ground".into(), ground_page(ctx));
     page.insert("inv".into(), inv_page(ctx));
@@ -668,9 +988,23 @@ fn action_strings(actions: &[Option<String>]) -> Vec<&str> {
         .collect()
 }
 
+fn hygiene_failure(error: ActionError) -> ScriptFailure {
+    let message = match error {
+        ActionError::Failed(message)
+        | ActionError::Blocked(message)
+        | ActionError::Unavailable(message) => message,
+        _ => Arc::from("prayer hygiene failed"),
+    };
+    ScriptFailure {
+        code: Arc::from("combat-failed"),
+        message,
+        retryable: true,
+    }
+}
+
 /// The posted target pair: `1` an npc, `2` a player, and the `(0, -1)` pair
-/// neither the machine's `targets_me` nor its `we_target` read matches — the
-/// same wire pair the posted scene rows carry.
+/// neither the machine's `targets_me` nor a posted local npc target matches —
+/// the same wire pair the posted scene rows carry.
 fn wire_target(target: Option<ActorTargetView>) -> (i32, i32) {
     match target {
         Some(target) => (
@@ -1071,7 +1405,7 @@ mod tests {
     ) -> Vec<InteractReq> {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let mut ctx = frame.ctx(&mut driver, selected);
-        script.tick_frame(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
+        script.tick_host(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
         ctx.compiled.interacts.take().unwrap_or_default()
     }
 
@@ -1129,7 +1463,7 @@ mod tests {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let page = {
             let ctx = frame.ctx(&mut driver, Some(&data));
-            next_payload(&ctx, 7)
+            next_payload(&ctx, 7, None)
         };
         assert_eq!(
             page_keys(&page),
@@ -1137,6 +1471,7 @@ mod tests {
                 "bank_open",
                 "chat_continue",
                 "chat_modal_id",
+                "combat_driver",
                 "count_dialog_open",
                 "equipment",
                 "generation",
@@ -1204,7 +1539,7 @@ mod tests {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let untiled_page = {
             let ctx = untiled.ctx(&mut driver, None);
-            next_payload(&ctx, 7)
+            next_payload(&ctx, 7, None)
         };
         assert!(untiled_page.get("here").is_none(), "{untiled_page}");
         assert_eq!(untiled_page["held"], json!([]));
@@ -1217,10 +1552,11 @@ mod tests {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let mut ctx = unobserved.ctx(&mut driver, None);
         ctx.snapshot = None;
-        let page = next_payload(&ctx, 1);
+        let page = next_payload(&ctx, 1, None);
         assert_eq!(
             page_keys(&page),
             [
+                "combat_driver",
                 "equipment",
                 "generation",
                 "ground",
@@ -1451,7 +1787,7 @@ mod tests {
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let ctx = frame.ctx(&mut driver, Some(&data));
-        let page = next_payload(&ctx, 3);
+        let page = next_payload(&ctx, 3, None);
         let inv = page["inv"].as_array().expect("inv page");
         assert_eq!(inv.len(), 1, "{page}");
         assert_eq!(inv[0]["id"], held_id);
@@ -1474,7 +1810,7 @@ mod tests {
         let mut driver = crate::ctx::test_support::NullDriver::default();
         let inert = {
             let ctx = frame.ctx(&mut driver, None);
-            next_payload(&ctx, 1)
+            next_payload(&ctx, 1, None)
         };
         assert_eq!(inert["hold"], false);
 
@@ -1484,7 +1820,7 @@ mod tests {
         frame.hold = true;
         let held = {
             let ctx = frame.ctx(&mut driver, None);
-            next_payload(&ctx, 1)
+            next_payload(&ctx, 1, None)
         };
         assert_eq!(held["hold"], true);
     }
@@ -1729,7 +2065,7 @@ mod tests {
         {
             let mut ctx = frame.ctx(&mut driver, Some(&data));
             ctx.compiled.interacts = None;
-            script.tick_frame(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
+            script.tick_host(&mut ctx, &mut crate::slot::compiled::TestOutput::default());
         }
         assert!(
             script.token.is_none(),
@@ -1776,7 +2112,7 @@ mod tests {
         let page = {
             let mut driver = crate::ctx::test_support::NullDriver::default();
             let ctx = chatting.ctx(&mut driver, Some(&data));
-            next_payload(&ctx, script.token.expect("live token"))
+            next_payload(&ctx, script.token.expect("live token"), None)
         };
         assert_eq!(page["chat_continue"], true, "{page}");
         assert_eq!(page["chat_modal_id"], 2000, "{page}");
@@ -1815,4 +2151,25 @@ mod tests {
             Some(InteractReq::Walk { .. })
         ));
     }
+
+    #[test]
+    fn sherlock_fits_in_one_kib_with_one_live_machine() {
+        eprintln!(
+            "Fight={} Combat={} ClearPrayers={} Sherlock={}",
+            std::mem::size_of::<super::Fight>(),
+            std::mem::size_of::<crate::combat::Combat>(),
+            std::mem::size_of::<crate::combat::ClearPrayers>(),
+            std::mem::size_of::<Sherlock>(),
+        );
+        assert!(
+            std::mem::size_of::<Sherlock>() <= 1024,
+            "Sherlock={} Fight={}",
+            std::mem::size_of::<Sherlock>(),
+            std::mem::size_of::<super::Fight>(),
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "sherlock_native_tests.rs"]
+mod native_tests;

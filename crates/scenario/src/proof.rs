@@ -28,6 +28,11 @@ pub enum Proof {
     /// counts; the seed id cannot satisfy this while it remains. Fail-closed
     /// without obj names and unless `ingame && scene_state == 2`.
     ClueReplaced { seeded: i32 },
+    /// Host-fed Sherlock guardian oracle: Protect from Magic acknowledgement,
+    /// at most one bounded in-flight hit, held protect until the kill, prayers
+    /// off within three ticks of the kill, and the seeded clue replaced by a
+    /// casket. Snapshot-only checks fail closed.
+    ClueProtectWindow { seeded: i32 },
 
     /// An exact object `id` is present in a worn-equipment slot.
     EquipmentId { id: i32 },
@@ -211,6 +216,7 @@ impl Proof {
                 ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
             ),
             Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
+            Proof::ClueProtectWindow { seeded } => format!("clue_protect_window({seeded})"),
 
             Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
@@ -511,7 +517,10 @@ impl Proof {
                 tl == *level && (*min..=*max).contains(&chebyshev(here, center))
             }),
             // Lifecycle and receipt proofs are host-fed, never snapshot state.
-            Proof::ScriptReceipt { .. } | Proof::ScriptRunning | Proof::ScriptIdle => false,
+            Proof::ScriptReceipt { .. }
+            | Proof::ScriptRunning
+            | Proof::ScriptIdle
+            | Proof::ClueProtectWindow { .. } => false,
             Proof::EssenceMine => snap.tile().is_some_and(|(tx, tz, tl)| {
                 nav::essence::in_essence_mine(WorldTile {
                     x: tx,

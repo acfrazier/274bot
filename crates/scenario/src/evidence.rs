@@ -37,8 +37,24 @@ pub struct Evidence {
     /// The File card's painted receipt row a `script_receipt` watch latched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receipt: Option<String>,
+    /// Sherlock guardian protected-window oracle, when the scenario recorded one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protect_window: Option<ProtectWindowEvidence>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
+}
+
+/// Frame-by-frame protect acknowledgement, in-flight hits, kill, and prayer-off.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtectWindowEvidence {
+    pub ack_tick: Option<u32>,
+    pub in_flight_hits: u32,
+    pub in_flight_max: i32,
+    pub kill_tick: Option<u32>,
+    /// `"posted_corpse"` or `"combat_killed"` when [`Self::kill_tick`] is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kill_evidence: Option<&'static str>,
+    pub prayer_off_tick: Option<u32>,
 }
 
 /// One inventory slot's row; `name` resolves through the runner's obj
@@ -119,6 +135,7 @@ impl Evidence {
                 })
                 .collect(),
             receipt: None,
+            protect_window: None,
             scene: snap.scene_state(),
         }
     }

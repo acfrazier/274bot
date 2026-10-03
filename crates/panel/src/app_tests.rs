@@ -2618,6 +2618,7 @@ fn native_failure_receipt_uses_inner_scenario_identity() {
         stat: None,
         chat: Vec::new(),
         receipt: None,
+        protect_window: None,
         scene: 2,
     };
     assert_eq!(
