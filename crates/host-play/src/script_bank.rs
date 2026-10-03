@@ -469,9 +469,12 @@ fn native_bank_access(
             },
         ));
     };
+    // Keep the catalog's resolved public approach when it serves this stand.
+    // The air-nearer opposite side can be an unreachable bankers' aisle.
     let access_tile =
         nav::bank_fetch::bank_access_tiles(&world.collision, stand).min_by_key(|tile| {
             (
+                *tile != bank.tile,
                 i32::from(tile.level != from.level),
                 bank_air_distance(from, *tile),
                 tile.x,

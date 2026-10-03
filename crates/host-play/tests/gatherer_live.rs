@@ -4125,7 +4125,9 @@ fn fixture_plan(
     if case == LiveCase::BankCostFirstGoal
         && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
     {
-        return Err("first-goal bank fixture must use live scene oak trees without location seeds".into());
+        return Err(
+            "first-goal bank fixture must use live scene oak trees without location seeds".into(),
+        );
     }
     Ok((target, plan, task))
 }
@@ -5162,17 +5164,14 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.bank_withdrawal_confirmed
                     && witness.last_status_yielded > 0
                     && witness.products_seen.contains(&1521)
-                    && fixture_plan.seed_locs.is_empty()
-                    && fixture_plan.oak_tiles.is_empty()
+                    && plan.seed_locs.is_empty()
+                    && plan.oak_tiles.is_empty()
                     && witness.oak_live_tiles.iter().any(|&tile| {
                         tile_distance(tile, target).is_some_and(|distance| distance <= 12)
                     })
-                    && witness
-                        .last_status_bank
-                        .as_deref()
-                        .is_some_and(|bank| {
-                            bank.starts_with("Draynor; Reachable;") && bank.contains("; access:")
-                        })
+                    && witness.last_status_bank.as_deref().is_some_and(|bank| {
+                        bank.starts_with("Draynor; Reachable;") && bank.contains("; access:")
+                    })
                     && witness.last_xp > baseline_xp
             }
             LiveCase::BankCostNoCandidate => {

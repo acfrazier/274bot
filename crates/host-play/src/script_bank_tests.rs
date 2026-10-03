@@ -1205,6 +1205,72 @@ fn await_native_search(
 }
 
 #[test]
+fn native_bank_pick_keeps_resolved_public_access_over_air_nearer_aisle() {
+    let banks = vec![bank("local", 5, 8), bank("remote", 1, 14)];
+    let mut flags = vec![0; 4 * 16 * 16];
+    // The east tile is standable and adjacent to the booth, but enclosed in
+    // the bankers' aisle. The catalog resolved the reachable public west side.
+    for (x, z) in [(7, 7), (8, 8), (7, 9)] {
+        flags[z * 16 + x] =
+            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+    }
+    flags[8 * 16 + 6] =
+        CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
+    let (walk, blocked) = pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        vec![
+            nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: tile(6, 8),
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            },
+            nav::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: tile(1, 15),
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            },
+        ],
+    ));
+    let (slot, action) = native_pick_action(banks.clone(), tile(10, 2), None);
+    let navs = navs(banks);
+    let gate = Controlled::new();
+    start_native_pick(
+        &navs,
+        world,
+        action,
+        FindOptions::default(),
+        WorldState::empty(),
+    );
+    await_native_search(&navs, &gate);
+    gate.0.release();
+    gate.0.wait(4);
+    let mut all = navs.lock().unwrap();
+    let selected = all
+        .get_mut("test")
+        .unwrap()
+        .bank_pick
+        .take_native_receipt()
+        .unwrap()
+        .1
+        .selected;
+    assert_eq!(selected.kind, NativePickKind::Reachable);
+    assert_eq!(selected.bank_index, 0);
+    assert_eq!(selected.access_tile, tile(5, 8));
+    assert!(selected.access.is_some());
+    assert!(all["test"].route.is_none(), "selection must not move");
+    drop(slot);
+}
+
+#[test]
 fn native_bank_pick_routes_air_near_across_wall_and_required_refuses() {
     let banks = vec![bank("across wall", 8, 1), bank("local", 1, 30)];
     for (explicit, expected) in [(None, Some(1)), (Some("across wall"), None)] {
