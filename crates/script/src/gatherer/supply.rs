@@ -455,17 +455,15 @@ pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView
     let mut ids = Vec::with_capacity(inventory.len());
     for item in inventory {
         let id = item.def.id;
+        if id < 0 || item.count <= 0 || protected.as_slice().contains(&id) || ids.contains(&id) {
+            continue;
+        }
         let gathering_tool = prepared.methods.iter().any(|&index| {
             known_rows(&prepared.catalog.methods()[index].tools)
                 .iter()
                 .any(|tool| tool.item == id)
         });
-        if id >= 0
-            && item.count > 0
-            && !protected.as_slice().contains(&id)
-            && !gathering_tool
-            && !ids.contains(&id)
-        {
+        if !gathering_tool {
             ids.push(id);
         }
     }
