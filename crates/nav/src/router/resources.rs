@@ -116,13 +116,42 @@ impl ResourceBudget {
         if !edges().any(|edge| !edge.consumed_req.is_empty() && edge_allowed(state, edge, relax)) {
             return Ok(None);
         }
+        // Unavailable consumables cannot become usable merely by spending
+        // other items. Follow possible returns from initially usable hops
+        // before budgeting gates; otherwise absent passes and charge families
+        // force a metered search even with ample supply for every usable hop.
+        let can_carry = |edge: &TransportEdge, returned: &[i32]| {
+            edge.item_req
+                .iter()
+                .chain(&edge.consumed_req)
+                .all(|&(id, count)| {
+                    state.inv.get(&id).copied().unwrap_or(0) >= count || returned.contains(&id)
+                })
+        };
+        let mut possible_returns = Vec::new();
+        loop {
+            let mut changed = false;
+            for edge in edges().filter(|edge| fixed_allowed(state, edge, relax)) {
+                if !can_carry(edge, &possible_returns) {
+                    continue;
+                }
+                for &(id, _) in &edge.item_returns {
+                    if !possible_returns.contains(&id) {
+                        possible_returns.push(id);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let mut totals = HashMap::<i32, i64>::new();
         let mut held = HashMap::<i32, i32>::new();
         let mut ids = Vec::new();
-        for (index, edge) in edges()
-            .enumerate()
-            .filter(|(_, edge)| fixed_allowed(state, edge, relax))
-        {
+        for (index, edge) in edges().enumerate().filter(|(_, edge)| {
+            fixed_allowed(state, edge, relax) && can_carry(edge, &possible_returns)
+        }) {
             let multiplicity = if edge.player_delta.is_some() && index < graph.edges.len() {
                 let (min, max) = graph.takeoff_bounds(index);
                 (i64::from(max.x) - i64::from(min.x) + 1)
