@@ -67,6 +67,8 @@ fn knife_graph() -> TransportGraph {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![KNIFE],
@@ -84,7 +86,7 @@ fn knife_graph() -> TransportGraph {
 fn toll_graph() -> TransportGraph {
     let mut g = knife_graph();
     g.edges[0].worn_req = vec![];
-    g.edges[0].item_req = vec![(995, 10)];
+    g.edges[0].consumed_req = vec![(995, 10)];
     g
 }
 
@@ -121,8 +123,8 @@ fn access_walk(stands: &[BankStand], from: WorldTile) -> BankStep {
 }
 
 /// `worn_req` with the knife already carried plans a bare Wear — no
-/// bank walk, no open/deposit/withdraw/close — and the post-session
-/// strict re-find crosses.
+/// bank walk, no open/withdraw/close — and the post-session strict re-find
+/// crosses.
 #[test]
 fn worn_req_with_knife_in_inventory_wears_in_place() {
     let wc = walled_5x5();
@@ -161,12 +163,12 @@ fn worn_req_with_knife_in_inventory_wears_in_place() {
     assert_eq!(r.dest, to);
 }
 
-/// Session unit: the inventory is full of junk and the knife is in
-/// the bank snapshot — the plan deposits the backpack, withdraws the
-/// knife, closes the bank, then wears it (the client cannot wear while
-/// the bank is open), and the post-session strict re-find crosses.
+/// The knife is in the bank snapshot while the backpack holds unrelated
+/// items. The plan withdraws only the knife, closes the bank, then wears it;
+/// carried inventory is preserved, and the post-session strict re-find
+/// crosses.
 #[test]
-fn bank_trip_deposits_withdraws_wears_then_finds() {
+fn bank_trip_withdraws_wears_then_finds() {
     let wc = walled_5x5();
     let g = knife_graph();
     let from = tile(0, 0, 0);
@@ -191,7 +193,6 @@ fn bank_trip_deposits_withdraws_wears_then_finds() {
         vec![
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
-            BankStep::DepositAll,
             BankStep::Withdraw {
                 id: KNIFE,
                 count: 1
@@ -199,9 +200,12 @@ fn bank_trip_deposits_withdraws_wears_then_finds() {
             BankStep::Close,
             BankStep::Wear { id: KNIFE },
         ],
-        "walk, open, deposit the junk, withdraw the knife, close, wear"
+        "walk, open, withdraw the knife, close, wear"
     );
-    assert!(fetch.state.inv.is_empty(), "the junk stays deposited");
+    assert_eq!(
+        fetch.state.inv, state.inv,
+        "unrelated backpack items stay carried"
+    );
     assert!(
         fetch.state.worn.contains(&KNIFE),
         "the knife is worn after the trip"
@@ -233,7 +237,6 @@ fn bank_trip_withdraws_an_item_req_stack_without_wearing() {
         vec![
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
-            BankStep::DepositAll,
             BankStep::Withdraw { id: 995, count: 10 },
             BankStep::Close,
         ],
@@ -244,8 +247,86 @@ fn bank_trip_withdraws_an_item_req_stack_without_wearing() {
     assert_eq!(r.dest, to);
 }
 
+/// A consumed gate needs the route's initial budget, so a bank trip tops up
+/// only the deficit even when some of the resource is already carried.
+#[test]
+fn bank_trip_withdraws_the_full_consumable_budget() {
+    let wc = walled_5x5();
+    let mut g = toll_graph();
+    g.edges[0].item_req.clear();
+    g.edges[0].consumed_req = vec![(995, 60)];
+    let from = tile(0, 0, 0);
+    let to = tile(4, 4, 0);
+    let mut inventory = HashMap::from([(995, 30)]);
+    for id in 30_000..30_027 {
+        inventory.insert(id, 1);
+    }
+    let state = WorldState {
+        inv: inventory,
+        ..WorldState::default()
+    };
+    let missing = find_missing_item_reqs(&wc, &g, from, to, FindOptions::default(), &state)
+        .expect("the carried 30 coins do not cover the full consumed budget");
+    assert_eq!(missing, vec![MissingReq::Carry { id: 995, count: 60 }]);
+    let bank = [(995, 30)];
+    let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
+        .expect("the bank covers the missing 30 coins");
+    assert_eq!(
+        fetch.steps,
+        vec![
+            access_walk(&[stand(4, 0)], from),
+            BankStep::Open,
+            BankStep::Withdraw { id: 995, count: 30 },
+            BankStep::Close,
+        ]
+    );
+    assert_eq!(fetch.state.inv.get(&995), Some(&60));
+    for id in 30_000..30_027 {
+        assert_eq!(fetch.state.inv.get(&id), Some(&1));
+    }
+    assert!(find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).is_ok());
+}
+
+#[test]
+fn one_selected_wearer_satisfies_overlapping_any_of_gates() {
+    let missing = [
+        MissingReq::Carry { id: 1277, count: 1 },
+        MissingReq::WearAny {
+            ids: vec![1277, 1321],
+        },
+        MissingReq::WearAny {
+            ids: vec![1277, 1205],
+        },
+    ];
+    let state = WorldState {
+        inv: HashMap::from([(1277, 1)]),
+        ..WorldState::empty()
+    };
+    let fetch = plan_bank_fetch(
+        &missing,
+        &state,
+        &[(1277, 1)],
+        &[stand(4, 0)],
+        tile(0, 0, 0),
+    )
+    .unwrap();
+    assert_eq!(fetch.state.inv.get(&1277), Some(&1));
+    assert!(fetch.state.worn.contains(&1277));
+    assert_eq!(
+        fetch
+            .steps
+            .iter()
+            .filter(|step| matches!(step, BankStep::Wear { .. }))
+            .count(),
+        1
+    );
+    assert!(fetch
+        .steps
+        .contains(&BankStep::Withdraw { id: 1277, count: 1 }));
+}
+
 /// A route needing both a carried stack and a worn item plans one
-/// trip that withdraws both after the deposit.
+/// trip that withdraws only both deficits.
 #[test]
 fn one_trip_withdraws_multiple_missing_reqs() {
     let wc = walled_5x5();
@@ -316,7 +397,6 @@ fn bank_trip_fetches_any_one_worn_alternative() {
         vec![
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
-            BankStep::DepositAll,
             BankStep::Withdraw { id: 1321, count: 1 },
             BankStep::Close,
             BankStep::Wear { id: 1321 },
@@ -327,11 +407,11 @@ fn bank_trip_fetches_any_one_worn_alternative() {
     assert_eq!(r.dest, to);
 }
 
-/// The deposit supplies the bank with the carried stack: a carried
-/// knife (no bank row) plus banked coins plans a trip that withdraws
-/// and wears the knife after the deposit — it must not fail closed.
+/// The carried knife remains in place while the bank trip fetches the
+/// missing coin stack; after the bank closes, the knife is worn.
+/// No carried item is cleared to make room for the fetch.
 #[test]
-fn bank_trip_supply_includes_the_deposited_backpack() {
+fn bank_trip_keeps_a_carried_wearable() {
     let wc = walled_5x5();
     let mut g = toll_graph();
     g.edges[0].worn_req = vec![KNIFE];
@@ -353,22 +433,22 @@ fn bank_trip_supply_includes_the_deposited_backpack() {
     // The bank holds coins only — the knife is carried, not banked.
     let bank = [(995, 50)];
     let fetch = plan_bank_fetch(&missing, &state, &bank, &[stand(4, 0)], from)
-        .expect("the deposit supplies the knife");
+        .expect("the carried knife is the WearAny alternative");
     assert_eq!(
         fetch.steps,
         vec![
             access_walk(&[stand(4, 0)], tile(0, 0, 0)),
             BankStep::Open,
-            BankStep::DepositAll,
-            BankStep::Withdraw {
-                id: KNIFE,
-                count: 1
-            },
             BankStep::Withdraw { id: 995, count: 10 },
             BankStep::Close,
             BankStep::Wear { id: KNIFE },
         ],
-        "the deposited knife and the toll stack are withdrawn, then the knife worn after the close"
+        "withdraw only the coin deficit and keep the knife until it is worn"
+    );
+    assert_eq!(fetch.state.inv.get(&995), Some(&10));
+    assert!(
+        !fetch.state.inv.contains_key(&KNIFE),
+        "the carried knife leaves the backpack only when it is worn"
     );
     let r = find_with(&wc, &g, from, to, FindOptions::default(), &fetch.state).unwrap();
     assert_eq!(r.dest, to);
@@ -467,8 +547,8 @@ fn plan_with_no_missing_reqs_is_none() {
     );
 }
 
-/// The post-session state keeps the player's other facts (a worn
-/// item and a skill level survive the deposit).
+/// The post-session state keeps the player's other facts (worn
+/// items, skills, and unrelated carried objects survive).
 #[test]
 fn bank_trip_keeps_worn_and_skill_facts() {
     let state = WorldState {
@@ -488,22 +568,25 @@ fn bank_trip_keeps_worn_and_skill_facts() {
     assert!(fetch.state.worn.contains(&1712), "worn facts survive");
     assert_eq!(fetch.state.stats.get(&6), Some(&25), "skills survive");
     assert_eq!(fetch.state.inv.get(&995), Some(&10));
-    assert!(!fetch.state.inv.contains_key(&1), "the junk is deposited");
+    assert_eq!(fetch.state.inv.get(&1), Some(&3), "the carried obj remains");
 }
 
 /// The fetchable facts open exactly the gates a session can meet, and the
-/// planner plans each one's missing fact: a carried obj is worn in place
-/// without a stand; banked rows count only with a stand to walk to, and
-/// then add to the carried stack; an obj held nowhere stays refused. Beside
-/// a full bank stack, a carried coin stays a fact (the combined count
-/// saturates rather than wrapping) for a wear-only session, and the
-/// combined stack still meets a full-stack requirement.
+/// planner budgets each missing fact: a carried obj is worn in place without
+/// a stand; banked held or consumed resources count only with a stand to walk
+/// to, then add to the carried stack; an obj held nowhere stays refused.
+/// Combined counts saturate rather than wrapping for both carried and banked
+/// stacks.
 #[test]
 fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
-    let door = |item_req: Vec<(i32, i32)>, worn_req: Vec<i32>| TransportEdge {
-        item_req,
-        worn_req,
-        ..knife_graph().edges[0].clone()
+    let door = |item_req: Vec<(i32, i32)>, consumed_req: Vec<(i32, i32)>, worn_req: Vec<i32>| {
+        TransportEdge {
+            item_req,
+            consumed_req,
+            item_returns: vec![],
+            worn_req,
+            ..knife_graph().edges[0].clone()
+        }
     };
     let state = WorldState {
         inv: HashMap::from([(KNIFE, 1), (995, 4)]),
@@ -512,31 +595,37 @@ fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
     let bank = [(995, 6), (1277, 1)];
     let cases = [
         (
-            door(vec![], vec![KNIFE]),
+            door(vec![], vec![], vec![KNIFE]),
             MissingReq::WearAny { ids: vec![KNIFE] },
             true,
             true,
         ),
         (
-            door(vec![], vec![1277]),
+            door(vec![], vec![], vec![1277]),
             MissingReq::WearAny { ids: vec![1277] },
             false,
             true,
         ),
         (
-            door(vec![(995, 10)], vec![]),
+            door(vec![(995, 10)], vec![], vec![]),
             MissingReq::Carry { id: 995, count: 10 },
             false,
             true,
         ),
         (
-            door(vec![(995, 11)], vec![]),
+            door(vec![], vec![(995, 10)], vec![]),
+            MissingReq::Carry { id: 995, count: 10 },
+            false,
+            true,
+        ),
+        (
+            door(vec![(995, 11)], vec![], vec![]),
             MissingReq::Carry { id: 995, count: 11 },
             false,
             false,
         ),
         (
-            door(vec![], vec![2]),
+            door(vec![], vec![], vec![2]),
             MissingReq::WearAny { ids: vec![2] },
             false,
             false,
@@ -549,13 +638,22 @@ fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
     let full_stack = [(995, i32::MAX)];
     let full_stack_cases = [
         (
-            door(vec![(995, 1)], vec![KNIFE]),
+            door(vec![(995, 1)], vec![], vec![KNIFE]),
             MissingReq::WearAny { ids: vec![KNIFE] },
             true,
             true,
         ),
         (
-            door(vec![(995, i32::MAX)], vec![]),
+            door(vec![(995, i32::MAX)], vec![], vec![]),
+            MissingReq::Carry {
+                id: 995,
+                count: i32::MAX,
+            },
+            false,
+            true,
+        ),
+        (
+            door(vec![], vec![(995, i32::MAX)], vec![]),
             MissingReq::Carry {
                 id: 995,
                 count: i32::MAX,

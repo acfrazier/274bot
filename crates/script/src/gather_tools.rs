@@ -31,6 +31,14 @@ impl ToolKind {
             ToolKind::Pickaxe => PICKAXES,
         }
     }
+    /// The gather-tool family selected by a requirement's skill name.
+    pub fn for_skill(skill: &str) -> Option<Self> {
+        match skill {
+            "woodcutting" => Some(ToolKind::Axe),
+            "mining" => Some(ToolKind::Pickaxe),
+            _ => None,
+        }
+    }
 }
 
 /// The skill level a candidate's own use gate requires: mining pickaxes only.

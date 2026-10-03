@@ -27,9 +27,9 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   - `local-274`: TCP `127.0.0.1:43594`, HTTP `/crc` on `:80`
   - `local-289`: TCP `127.0.0.1:44594`, HTTP `/crc` on `:1080`
   This repo does not ship Jagex assets.
-- **`$ENGINE_DIR`** / `--engine`: engine root (defaults
-  `$HOME/experiments/Server/engine` for 274,
-  `$HOME/experiments/lostcity-289/engine` for 289). Pack cache is
+- Local profiles resolve the engine root from `--engine`, `ENGINE_DIR`, then
+  `login_key.engine_dir` in `~/.274bot/servers.json`. New built-ins leave the
+  path unset; choose a root explicitly. The pack cache is
   `$ENGINE_DIR/data/pack/client` (`--cache` overrides).
 - RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
   `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
@@ -38,10 +38,11 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   revision’s pack and flags next to the binary
   (`target/<profile>/nav/<revision>/`, revision **289** by default,
   `BOT_NAV_REVISION=274` for 274), so the app boots with a bound nav world
-  and no manual step. Missing canonical inputs fail the build:
-  `BOT_NAV_BUILD=skip` opts out. `nav-pack` stays for custom bakes
-  (`$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`, version byte
-  **12**; v11 and older are `BadVersion`). Details:
+  and no manual step. A normal bundled-nav build needs `BOT_NAV_ENGINE_DIR`
+  or `ENGINE_DIR`; set `BOT_NAV_BUILD=skip` to build without bundling. The
+  `nav-pack` CLI stays for custom bakes (`$NAV_PACK` or
+  `~/.274bot/274bot.navpack`, magic `274V`, version byte **12**; v11 and older
+  are `BadVersion`). Details:
   [docs/api/nav.md](docs/api/nav.md).
 
 ## Clone and run
@@ -50,6 +51,8 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 git submodule update --init
+
+export ENGINE_DIR=/absolute/path/to/engine
 
 cargo run --release -p panel --bin panel-play -- --profile local-289
 ```
@@ -154,8 +157,9 @@ client config jag named explicitly (colon-separated, one jag per root or one
 for all); a missing input fails, never skips:
 
 ```bash
-NAV_CONTENT_ROOT=$HOME/experiments/lostcity-289/content \
-NAV_CACHE=$HOME/experiments/lostcity-289/engine/data/pack/client/config \
+: "${ENGINE_DIR:?set ENGINE_DIR to the 289 engine root}"
+NAV_CONTENT_ROOT="$ENGINE_DIR/../content" \
+NAV_CACHE="$ENGINE_DIR/data/pack/client/config" \
 cargo test -p nav --lib -- --ignored
 ```
 

@@ -984,6 +984,8 @@ fn door_edge() -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1023,7 +1025,9 @@ fn web_route(edge: TransportEdge) -> Route {
     Route {
         dest: edge.to,
         ticks: 2.0,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
     }
 }
 
@@ -1049,6 +1053,8 @@ fn ladder_edge() -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1075,6 +1081,8 @@ fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1155,6 +1163,8 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
         open_loc_id: Some(1531),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1192,6 +1202,8 @@ fn trapdoor_edge() -> TransportEdge {
         open_loc_id: Some(1570),
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1224,6 +1236,8 @@ fn cart_edge() -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1611,7 +1625,7 @@ fn follow_transport_leg_interacts_and_arrives() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: ladder_edge(),
+            edge: Box::new(ladder_edge()),
         }],
         dest: WorldTile {
             x: 3202,
@@ -1672,7 +1686,9 @@ fn gated_transport_rechecks_evidence_after_approach_before_send() {
         );
         let route = Route {
             dest: edge.to,
-            legs: vec![Leg::Transport { edge }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge),
+            }],
             ticks: 2.0,
         };
         let mut traveller = Traveller::new();
@@ -1755,7 +1771,9 @@ fn follow_trapdoor_open_then_climb_arrives_cellar_offset() {
         level: 0,
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 3.0,
     };
@@ -1817,7 +1835,9 @@ fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
         level: 0,
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 3.0,
     };
@@ -1882,7 +1902,9 @@ fn follow_vertical_ladder_lands_on_the_adjacent_player_tile() {
             level: to_level,
         };
         let route = Route {
-            legs: vec![Leg::Transport { edge }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge),
+            }],
             dest: landing,
             ticks: 3.0,
         };
@@ -1973,11 +1995,15 @@ fn follow_cellar_offset_completes_finished_walk_then_uses_keyed_door() {
     door.item_req = vec![(983, 1)];
     let route = Route {
         legs: vec![
-            Leg::Transport { edge: ladder },
+            Leg::Transport {
+                edge: Box::new(ladder),
+            },
             Leg::Walk {
                 tiles: vec![packed_landing, offset_landing],
             },
-            Leg::Transport { edge: door },
+            Leg::Transport {
+                edge: Box::new(door),
+            },
         ],
         dest: door_to,
         ticks: 4.5,
@@ -2098,7 +2124,9 @@ fn follow_agility_shortcut_waits_packed_ticks_after_landing() {
     edge.ticks = 4;
     let dest = edge.to;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 4.0,
     };
@@ -2143,7 +2171,9 @@ fn follow_web_knife_edge_uses_the_held_knife_on_the_loc() {
     edge.open_loc_id = Some(734);
     let dest = edge.to;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 2.0,
     };
@@ -2356,7 +2386,9 @@ fn follow_web_retries_each_observed_cut_failure_and_accepts_the_slashed_loc() {
     let edges = [edge.clone()];
     let dest = edge.to;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 2.0,
     };
@@ -2437,7 +2469,9 @@ fn follow_web_does_not_retry_from_elapsed_time_without_a_failure_message() {
     edge.dir = Some(DoorDir::E);
     let edges = [edge.clone()];
     let route = Route {
-        legs: vec![Leg::Transport { edge: edge.clone() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
         dest: edge.to,
         ticks: 2.0,
     };
@@ -2484,7 +2518,9 @@ fn follow_npc_edge_sends_op_npc_and_arrives() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -2529,7 +2565,9 @@ fn follow_boat_edge_ops_the_seaman_npc_not_a_loc() {
     edge.kind = TransportKind::Boat;
     edge.loc_id = 378;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -2588,6 +2626,8 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2596,7 +2636,9 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
         quest_gates: None,
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: dock,
         ticks: 2.0,
     };
@@ -2645,6 +2687,8 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2654,7 +2698,7 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
     };
     let packed = [tree(village), tree(varrock)];
     let leg = Leg::Transport {
-        edge: packed[1].clone(),
+        edge: Box::new(packed[1].clone()),
     };
     assert_eq!(
         super::dest_dialog_choice(&leg, None, Some(&packed)),
@@ -2709,7 +2753,9 @@ fn follow_glider_answers_talk_then_presses_the_map_dest() {
     edge.loc_id = 170;
     edge.to = gandius;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: gandius,
         ticks: 4.0,
     };
@@ -2777,7 +2823,9 @@ fn follow_glider_arrives_within_map_findsquare_radius_1() {
     edge.loc_id = 170;
     edge.to = pad;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: pad,
         ticks: 4.0,
     };
@@ -2865,6 +2913,8 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2875,7 +2925,7 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
     let packed = [tree(village), tree(varrock), tree(khazard)];
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: packed[1].clone(),
+            edge: Box::new(packed[1].clone()),
         }],
         dest: varrock,
         ticks: 1.0,
@@ -2947,7 +2997,9 @@ fn follow_approaches_an_npc_before_interacting() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -2993,7 +3045,9 @@ fn follow_sits_out_a_refused_npc_approach_right_after_a_scene_change() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3041,7 +3095,9 @@ fn follow_npc_approach_refused_past_the_settle_budget_ends_refused() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3084,7 +3140,9 @@ fn follow_npc_edge_approaches_the_live_tile_when_the_driver_wandered() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3133,7 +3191,9 @@ fn follow_reapproaches_when_the_tracked_npc_network_tile_moves_after_approach() 
     let mut snap = snap_at(&mut c, 0, 1);
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3224,7 +3284,9 @@ fn follow_moving_tracked_npc_stalls_within_one_approach_budget() {
     let mut snap = snap_at(&mut c, 0, 1);
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3291,7 +3353,9 @@ fn follow_reapproaches_tracked_npc_beyond_the_initial_search_radius() {
     let mut snap = snap_at(&mut c, 0, 1);
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3348,7 +3412,9 @@ fn follow_revalidates_after_a_wanderer_temporarily_has_no_standable_ring() {
     let mut snap = snap_at(&mut c, 0, 1);
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3424,7 +3490,9 @@ fn follow_npc_interaction_refreshes_the_reach_chat_watermark_when_sent() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3477,7 +3545,9 @@ fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3525,7 +3595,9 @@ fn follow_npc_edge_answers_the_fare_dialog_before_arriving() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -3647,6 +3719,8 @@ fn rangingguild_enter_edge() -> TransportEdge {
         open_loc_id: None,
         skill_req: vec![(4, 40)],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3677,7 +3751,9 @@ fn shantay_north_short_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(1854, 1)],
+        item_req: vec![],
+        consumed_req: vec![(1854, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3724,7 +3800,9 @@ fn shantay_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(1854, 1)],
+        item_req: vec![],
+        consumed_req: vec![(1854, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3760,7 +3838,7 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: shantay_edge(),
+            edge: Box::new(shantay_edge()),
         }],
         dest: WorldTile {
             x: 3200,
@@ -3851,7 +3929,9 @@ fn alkharid_toll_edge() -> TransportEdge {
         dir: Some(DoorDir::E),
         open_loc_id: Some(1562),
         skill_req: vec![],
-        item_req: vec![(COINS_OBJ, 10)],
+        item_req: vec![],
+        consumed_req: vec![(COINS_OBJ, 10)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3866,7 +3946,9 @@ fn alkharid_toll_route() -> Route {
     Route {
         dest: edge.to,
         ticks: 1.0,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
     }
 }
 
@@ -3974,11 +4056,13 @@ fn follow_alkharid_toll_answers_yes_ok_from_content_then_arrives() {
 #[test]
 fn follow_alkharid_toll_refuses_without_coins_instead_of_paying() {
     let mut edge = alkharid_toll_edge();
-    edge.item_req = vec![(TEST_TOLL_COIN_OBJ, 10)];
+    edge.consumed_req = vec![(TEST_TOLL_COIN_OBJ, 10)];
     let route = Route {
         dest: edge.to,
         ticks: 1.0,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
     };
     let mut c = scene_client();
     plant_loc(&mut c, ALKHARID_TOLL_LOC_ID, "Gate", "Open", 2, 1);
@@ -4107,7 +4191,9 @@ fn follow_rangingguild_dir_none_completes_only_on_the_teleport_landing() {
         };
         let mut t = Traveller::new();
         let route = Route {
-            legs: vec![Leg::Transport { edge: edge.clone() }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge.clone()),
+            }],
             dest,
             ticks: 1.0,
         };
@@ -4219,7 +4305,7 @@ fn follow_rangingguild_missing_loc_nearby_close_does_not_skip_open() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: rangingguild_enter_edge(),
+            edge: Box::new(rangingguild_enter_edge()),
         }],
         dest: RANGING_INSIDE,
         ticks: 1.0,
@@ -4290,7 +4376,7 @@ fn follow_shantay_north_dir_none_does_not_complete_from_origin() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: shantay_north_short_edge(),
+            edge: Box::new(shantay_north_short_edge()),
         }],
         dest: SHANTAY_NORTH_TO,
         ticks: 1.0,
@@ -4359,6 +4445,8 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -4368,7 +4456,9 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 1.0,
     };
@@ -4414,7 +4504,9 @@ fn follow_reverse_straight_door_waits_for_crossing_then_arrives_on_loc_tile() {
     edge.open_loc_id = Some(1531);
     let dest = edge.to;
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 1.0,
     };
@@ -4463,7 +4555,9 @@ fn follow_cardinal_door_still_arrives_adjacent_to_to_under_default_close_enough(
     let dest = edge.to;
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest,
         ticks: 1.0,
     };
@@ -4517,7 +4611,9 @@ fn follow_npc_edge_answers_choice_one_not_the_op_index() {
         ..cart_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -4606,7 +4702,9 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
         ..cart_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 2912,
             z: 4833,
@@ -4686,7 +4784,9 @@ fn follow_essence_entry_accepts_any_mine_landing() {
         ..cart_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 2912,
             z: 4833,
@@ -4750,7 +4850,9 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
         ..cart_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3200,
             z: 3205,
@@ -4809,7 +4911,9 @@ fn ring_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(2552, 1)],
+        item_req: vec![],
+        consumed_req: vec![(2552, 1)],
+        item_returns: vec![(2551, 1)],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -4844,7 +4948,9 @@ fn glory_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(1712, 1)],
+        item_req: vec![],
+        consumed_req: vec![(1712, 1)],
+        item_returns: vec![(1711, 1)],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -4877,7 +4983,9 @@ fn varrock_spell_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![(6, 25)],
-        item_req: vec![(554, 1), (556, 3), (563, 1)],
+        item_req: vec![],
+        consumed_req: vec![(554, 1), (556, 3), (563, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -4910,7 +5018,9 @@ fn lumbridge_spell_edge() -> TransportEdge {
         dir: None,
         open_loc_id: None,
         skill_req: vec![(6, 31)],
-        item_req: vec![(557, 1), (556, 3), (563, 1)],
+        item_req: vec![],
+        consumed_req: vec![(557, 1), (556, 3), (563, 1)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -5092,7 +5202,9 @@ fn follow_jewellery_teleport_rubs_the_packed_item_and_arrives() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: ring_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(ring_edge()),
+        }],
         dest: WorldTile {
             x: 3315,
             z: 3235,
@@ -5176,7 +5288,9 @@ fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: ring_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(ring_edge()),
+        }],
         dest: WorldTile {
             x: 3315,
             z: 3235,
@@ -5258,7 +5372,7 @@ fn follow_jewellery_teleport_answers_the_second_dest_choice() {
     ];
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: glory[1].clone(),
+            edge: Box::new(glory[1].clone()),
         }],
         dest: karamja,
         ticks: 2.0,
@@ -5335,7 +5449,7 @@ fn follow_spell_teleport_presses_the_spellbook_button_and_arrives() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: varrock_spell_edge(),
+            edge: Box::new(varrock_spell_edge()),
         }],
         dest: WorldTile {
             x: 3213,
@@ -5395,7 +5509,7 @@ fn follow_refused_spell_teleport_does_not_resend() {
     };
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: varrock_spell_edge(),
+            edge: Box::new(varrock_spell_edge()),
         }],
         dest,
         ticks: 3.0,
@@ -5454,7 +5568,7 @@ fn follow_spell_teleport_presses_the_live_spellbook_button_by_text() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: lumbridge_spell_edge(),
+            edge: Box::new(lumbridge_spell_edge()),
         }],
         dest: WorldTile {
             x: 3221,
@@ -5494,7 +5608,9 @@ fn follow_essence_entry_does_not_latch_for_a_cart_driver() {
     };
     let mut t = Traveller::new();
     let route = Route {
-        legs: vec![Leg::Transport { edge: cart_edge() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(cart_edge()),
+        }],
         dest: WorldTile {
             x: 3300,
             z: 3200,
@@ -5562,7 +5678,7 @@ fn stun_recovery_rearms_transport_approach_before_interacting() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: ladder_edge(),
+            edge: Box::new(ladder_edge()),
         }],
         dest: WorldTile {
             x: 3202,
@@ -5659,7 +5775,7 @@ fn follow_approaches_a_transport_loc_before_interacting() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: ladder_edge(),
+            edge: Box::new(ladder_edge()),
         }],
         dest: WorldTile {
             x: 3202,
@@ -5745,10 +5861,10 @@ fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: TransportEdge {
+            edge: Box::new(TransportEdge {
                 open_loc_id: Some(1531),
                 ..door_edge()
-            },
+            }),
         }],
         dest: WorldTile {
             x: 3203,
@@ -5821,10 +5937,10 @@ fn follow_troll_walks_an_open_door_without_closing_it() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: TransportEdge {
+            edge: Box::new(TransportEdge {
                 open_loc_id: Some(1531),
                 ..door_edge()
-            },
+            }),
         }],
         dest: WorldTile {
             x: 3203,
@@ -5881,7 +5997,9 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
         edge.open_loc_id = Some(1531);
         edge.to.x = 3205;
         let route = Route {
-            legs: vec![Leg::Transport { edge: edge.clone() }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge.clone()),
+            }],
             dest: edge.to,
             ticks: 1.0,
         };
@@ -5944,7 +6062,9 @@ fn troll_probes_crossing_after_open_before_snapshot_catches_up() {
     edge.dir = Some(DoorDir::E);
     edge.open_loc_id = Some(1531);
     let route = Route {
-        legs: vec![Leg::Transport { edge: edge.clone() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
         dest: edge.to,
         ticks: 1.0,
     };
@@ -6034,7 +6154,9 @@ fn tenzing_door_hop(
     };
     edge.dir = Some(dir);
     let route = Route {
-        legs: vec![Leg::Transport { edge: edge.clone() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
         dest: edge.to,
         ticks: 1.0,
     };
@@ -6134,7 +6256,9 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             level: 0,
         };
         let route = Route {
-            legs: vec![Leg::Transport { edge: edge.clone() }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge.clone()),
+            }],
             dest: edge.to,
             ticks: 1.0,
         };
@@ -6202,10 +6326,10 @@ fn follow_troll_finds_an_offset_door_loc_within_radius() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: TransportEdge {
+            edge: Box::new(TransportEdge {
                 open_loc_id: Some(1531),
                 ..door_edge()
-            },
+            }),
         }],
         dest: WorldTile {
             x: 3203,
@@ -6279,10 +6403,10 @@ fn follow_walks_through_an_open_leaf_without_op_loc() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: TransportEdge {
+            edge: Box::new(TransportEdge {
                 open_loc_id: Some(1531),
                 ..door_edge()
-            },
+            }),
         }],
         dest: WorldTile {
             x: 3203,
@@ -6329,7 +6453,7 @@ fn follow_walks_through_a_close_leaf_without_op_loc() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: door_edge(), // open_loc_id: None
+            edge: Box::new(door_edge()), // open_loc_id: None
         }],
         dest: WorldTile {
             x: 3203,
@@ -6381,7 +6505,9 @@ fn follow_cheap_hop_walks_when_the_open_leaf_is_offset() {
         ..door_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3203,
             z: 3200,
@@ -6427,7 +6553,7 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
     let mut t = Traveller::new();
     let route = Route {
         legs: vec![Leg::Transport {
-            edge: ladder_edge(),
+            edge: Box::new(ladder_edge()),
         }],
         dest: WorldTile {
             x: 3202,
@@ -6539,7 +6665,9 @@ fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
         Some(true)
     );
     let route = Route {
-        legs: vec![Leg::Transport { edge: edge.clone() }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
         dest: edge.to,
         ticks: edge.ticks as f64,
     };
@@ -7283,7 +7411,9 @@ fn follow_blocks_when_the_transport_loc_is_missing() {
         ..ladder_edge()
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3202,
             z: 3205,
@@ -7334,7 +7464,7 @@ fn follow_drives_walk_then_transport_legs_in_order() {
                 (3201, 3203),
             ]),
             Leg::Transport {
-                edge: ladder_edge(),
+                edge: Box::new(ladder_edge()),
             },
         ],
         dest: WorldTile {
@@ -7757,6 +7887,8 @@ fn level_change_transport_requires_proximity_to_to() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -7765,7 +7897,9 @@ fn level_change_transport_requires_proximity_to_to() {
         quest_gates: None,
     };
     let route = Route {
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         dest: WorldTile {
             x: 3202,
             z: 3205,
@@ -7854,6 +7988,8 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -7867,7 +8003,9 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
     };
     let mut run = FollowRun::start(
         Route {
-            legs: vec![Leg::Transport { edge }],
+            legs: vec![Leg::Transport {
+                edge: Box::new(edge),
+            }],
             dest: landing,
             ticks: 2.0,
         },

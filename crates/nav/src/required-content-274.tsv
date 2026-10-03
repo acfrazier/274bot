@@ -1,7 +1,7 @@
 # Required canonical content inputs of the revision 274 release bake.
 #
-# Generated from, and verified against, the configured canonical revision
-# 274 content tree ($HOME/experiments/Server/content); the listing is the input inventory that
+# Generated from, and verified against, the configured canonical revision's
+# 274 content tree; the listing is the input inventory that
 # `nav::bundle::missing_content_inputs` enforces before a default
 # (`BOT_NAV_BUILD=require`) build bakes or reuses staged navigation.
 # The scan classes below are file membership, not directory anchors: a

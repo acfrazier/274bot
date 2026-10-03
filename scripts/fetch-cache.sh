@@ -8,7 +8,10 @@ if [ "${1:-}" = "--rs2b2t" ]; then
     echo "then: cargo run --release -p host-play -- --rs2b2t --user YOUR_NAME"
     exit 0
 fi
-ENGINE_DIR="${ENGINE_DIR:-$HOME/experiments/Server/engine}"
+if [ -z "${ENGINE_DIR:-}" ]; then
+    echo "set ENGINE_DIR to your Lost City engine root and run this again" >&2
+    exit 1
+fi
 SRC="$ENGINE_DIR/data/pack/client"
 if [ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null || true)" ]; then
     echo "pack cache is at $SRC"
@@ -16,7 +19,7 @@ if [ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null || true)" ]; then
     exit 0
 fi
 echo "no pack files under $SRC"
-echo "set ENGINE_DIR to your Lost City engine root and run this again,"
+echo "check that ENGINE_DIR points to a booted local engine with a populated client cache,"
 echo "or boot panel-play / tui-play once against the local engine (HTTP /crc on :80)."
 echo "with no local engine: scripts/fetch-cache.sh --rs2b2t and boot with --rs2b2t (HTTPS :443)."
 exit 1

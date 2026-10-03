@@ -1,4 +1,4 @@
-//! Posted gather-tool facts, exclusive callbacks, and void Traversal.preload.
+//! Native tool callbacks, exclusive ordering, and void Traversal.preload.
 
 use script::isolate_fb::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
@@ -90,18 +90,9 @@ fn base_snapshot<'a>(inv: &'a [ItemRowInput<'a>]) -> SnapshotInput<'a> {
 }
 
 const SRC: &str = r#"
-import { AXES, PICKAXES, bestAxe, bestPickaxe, canWieldTool, exactTool, toolRestockPlan } from '../../api/acquisition/Tools.js';
+import { bestAxe, bestPickaxe, canWieldTool, exactTool, toolRestockPlan } from '../../api/acquisition/Tools.js';
 import { Traversal } from '../../api/walking/Traversal.js';
 
-function namesOf(list) {
-    return list.map((t) => t.name);
-}
-
-const steelIdx = AXES.findIndex((a) => a.name === 'Steel axe');
-globalThis.__axes = AXES.map((a) => ({ name: a.name, id: a.id }));
-globalThis.__picks = PICKAXES.map((a) => ({ name: a.name, id: a.id }));
-globalThis.__steelOrBetter = steelIdx < 0 ? [] : namesOf(AXES).filter((_, i) => i <= steelIdx);
-globalThis.__belowSteel = steelIdx < 0 ? namesOf(AXES) : namesOf(AXES).filter((_, i) => i > steelIdx);
 
 const axeCalls = [];
 globalThis.__bestAxe = bestAxe(1, (name) => {
@@ -174,54 +165,6 @@ fn spawn() -> LoadIsolate {
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
     let _ = iso.probe("true");
-}
-
-#[test]
-fn posted_axes_are_best_first_with_real_ids_including_black() {
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(SRC.to_string(), LoadShape::CompatClass, vec![], data)
-            .unwrap();
-    let axes = iso.probe("__axes").unwrap();
-    assert_eq!(
-        axes,
-        serde_json::json!([
-            {"name": "Rune axe", "id": 1359},
-            {"name": "Adamant axe", "id": 1357},
-            {"name": "Mithril axe", "id": 1355},
-            {"name": "Black axe", "id": 1361},
-            {"name": "Steel axe", "id": 1353},
-            {"name": "Iron axe", "id": 1349},
-            {"name": "Bronze axe", "id": 1351},
-        ])
-    );
-    let picks = iso.probe("__picks").unwrap();
-    assert_eq!(
-        picks,
-        serde_json::json!([
-            {"name": "Rune pickaxe", "id": 1275},
-            {"name": "Adamant pickaxe", "id": 1271},
-            {"name": "Mithril pickaxe", "id": 1273},
-            {"name": "Steel pickaxe", "id": 1269},
-            {"name": "Iron pickaxe", "id": 1267},
-            {"name": "Bronze pickaxe", "id": 1265},
-        ])
-    );
-    assert_eq!(
-        iso.probe("__steelOrBetter").unwrap(),
-        serde_json::json!([
-            "Rune axe",
-            "Adamant axe",
-            "Mithril axe",
-            "Black axe",
-            "Steel axe",
-        ])
-    );
-    assert_eq!(
-        iso.probe("__belowSteel").unwrap(),
-        serde_json::json!(["Iron axe", "Bronze axe"])
-    );
-    iso.join();
 }
 
 #[test]

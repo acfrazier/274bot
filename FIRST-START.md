@@ -47,12 +47,12 @@ from your chosen rs2b0t checkout. Public login requires your own account.
 - Git with submodules:
   `git clone --recurse-submodules https://github.com/acfrazier/274bot.git`
 - A local engine for the revision you will run:
-  - **274:** game TCP `:43594`, HTTP `/crc` on `:80` (default engine root
-    `$HOME/experiments/Server/engine`)
-  - **289:** game TCP `:44594`, HTTP `/crc` on `:1080` (default engine root
-    `$HOME/experiments/lostcity-289/engine`)
-- Point **`$ENGINE_DIR`** or `--engine` at that engine root when it is not
-  the default.
+  - **274:** game TCP `:43594`, HTTP `/crc` on `:80`
+  - **289:** game TCP `:44594`, HTTP `/crc` on `:1080`
+- Set `ENGINE_DIR`, pass `--engine`, or configure `login_key.engine_dir` in
+  `~/.274bot/servers.json`. Resolution order is `--engine`, `ENGINE_DIR`, then
+  the saved profile path. New `servers.json` files leave the local engine path
+  unset; selecting a local profile without one fails fast with setup guidance.
 
 ## Cache and nav pack
 
@@ -122,15 +122,15 @@ rs2b0t checkout so panel/TUI can Browse/Start catalog cards.
 ```bash
 # The vault passphrase is typed at the prompt (panel window / terminal); it is
 # never an environment variable or a flag. See docs/api/vault.md.
-# 289 example — adjust ENGINE_DIR if your tree is not the default
-export ENGINE_DIR="${ENGINE_DIR:-$HOME/experiments/lostcity-289/engine}"
+# Set ENGINE_DIR to the engine root for the selected local revision.
+export ENGINE_DIR=/absolute/path/to/engine
 # optional: export RS2B0T=/path/to/rs2b0t
 
 cargo run --release -p panel --bin panel-play -- --profile local-289
 # headless twin:
 cargo run --release -p tui --bin tui-play -- --profile local-289
-# 274:
-# BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
+# 274 (set ENGINE_DIR to the 274 engine root):
+# BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 ```
 
 Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):

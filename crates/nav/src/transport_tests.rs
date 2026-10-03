@@ -470,6 +470,8 @@ fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> Transpor
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -1642,8 +1644,8 @@ p_telejump($dest);\n";
 
 /// The derived graph carries the `TransportKind::Npc` edges
 /// for the Shilo↔Brimhaven cart (`cart_edges`, the `hajedy.rs2` /
-/// `vigroy.rs2` route pair): coins on the fare and the Shilo Village
-/// journal name on the Brim→Shilo hop.
+/// `vigroy.rs2` route pair): coins on the fare are consumed, and the Shilo
+/// Village journal name gates the Brim→Shilo hop.
 #[test]
 fn derive_transports_emits_shilo_brimhaven_cart() {
     let graph = derive_static_routes();
@@ -1659,8 +1661,8 @@ fn derive_transports_emits_shilo_brimhaven_cart() {
         carts.len()
     );
     assert!(
-        carts.iter().any(|e| !e.item_req.is_empty()),
-        "coins on the fare"
+        carts.iter().any(|e| !e.consumed_req.is_empty()),
+        "coins on the fare are consumed"
     );
     assert!(
         carts.iter().any(|e| !e.quest_req.is_empty()),
@@ -1754,22 +1756,22 @@ mes(\"...And teleport out of the wilderness.\");
     );
 }
 
-/// The real content must derive the Al Kharid border toll and the
-/// Shantay-pass edges as item-gated `TransportKind::Door` edges.
-/// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883 —
+/// The real content must derive the Al Kharid border toll and
+/// Shantay-pass edges as resource-consuming `TransportKind::Door` edges.
+/// The toll gates (`border_gate_toll_left`/`_right`, locs 2882/2883 —
 /// the m51_50 (4,27)/(4,28) placements = (3268,3227)/(3268,3228))
-/// carry the 10-coin toll (`inv_del(inv, coins, 10)` in
+/// consume the 10-coin toll (`inv_del(inv, coins, 10)` in
 /// border_gate.rs2's `pass_toll_gate`); the Shantay henge doorway
 /// (loc 4031, m51_48 (38,44) = (3302,3116)) derives **two** edges,
 /// one per `shantay_pass.rs2` `[oploc1,...]` branch — the gated hop
 /// into the desert (`at` the placement, `to` (3304,3115), the
 /// landing of the `[queue,shantay_pass_enter]` `p_teleport
 /// (0_51_48_40_46)` + `p_telejump(movecoord(coord,0,0,-3))`,
-/// `item_req` one Shantay pass (obj 1854)) and the free desert exit
+/// `consumed_req` one Shantay pass (obj 1854)) and the free desert exit
 /// (`at` (3302,3115) one tile south of the placement, `to`
 /// (3303,3118), the `coordz(coord) <= coordz(loc_coord)`
-/// `p_telejump(movecoord(coord,0,0,3))` landing, **no** `item_req`).
-/// Only the northbound hop carries the pass.
+/// `p_telejump(movecoord(coord,0,0,3))` landing, no item requirement).
+/// Only the northbound hop consumes the pass.
 #[test]
 #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
 fn derive_transports_emits_alkharid_toll_and_shantay_north() {
@@ -1815,8 +1817,12 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
                 }
             );
             assert!(
-                (e.item_req == vec![(995, 10)] && e.quest_req.is_empty())
-                    || (e.item_req.is_empty() && e.quest_req == ["Prince Ali Rescue"]),
+                (e.consumed_req == vec![(995, 10)]
+                    && e.item_req.is_empty()
+                    && e.quest_req.is_empty())
+                    || (e.consumed_req.is_empty()
+                        && e.item_req.is_empty()
+                        && e.quest_req == ["Prince Ali Rescue"]),
                 "each crossing is either paid or waived by the completed quest journal: {e:?}"
             );
             assert!(e.varp_req.is_empty(), "princequest is not transmitted");
@@ -1833,7 +1839,13 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
                     .filter(|e| e.loc_id == gate && (e.to.x > e.at.x) == eastbound)
                     .collect();
                 assert_eq!(crossing.len(), 2);
-                assert_eq!(crossing.iter().filter(|e| e.item_req.is_empty()).count(), 1);
+                assert_eq!(
+                    crossing
+                        .iter()
+                        .filter(|e| e.consumed_req.is_empty())
+                        .count(),
+                    1
+                );
                 assert_eq!(
                     crossing.iter().filter(|e| e.quest_req.is_empty()).count(),
                     1
@@ -1858,11 +1870,11 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
         );
         let gated = henge
             .iter()
-            .find(|e| !e.item_req.is_empty())
+            .find(|e| !e.consumed_req.is_empty())
             .expect("one Shantay henge edge carries the pass");
         let free = henge
             .iter()
-            .find(|e| e.item_req.is_empty())
+            .find(|e| e.consumed_req.is_empty())
             .expect("one Shantay henge edge is free");
         assert_eq!(
             gated.at,
@@ -1881,8 +1893,11 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             }
         );
         assert!(
-            gated.item_req.iter().any(|(id, n)| *id == 1854 && *n >= 1),
-            "Shantay pass on the gated desert hop"
+            gated
+                .consumed_req
+                .iter()
+                .any(|(id, n)| *id == 1854 && *n >= 1),
+            "Shantay pass is consumed on the gated desert hop"
         );
         assert_eq!(gated.option, 1, "Go-through op");
         assert_eq!(gated.dir, None);
@@ -1902,7 +1917,7 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
                 level: 0,
             }
         );
-        assert!(free.item_req.is_empty(), "the desert exit is free");
+        assert!(free.consumed_req.is_empty(), "the desert exit is free");
         assert_eq!(free.option, 1, "Go-through op");
         assert_eq!(free.dir, None);
     }
@@ -2980,7 +2995,8 @@ fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
     );
     assert_eq!(ps_musa.option, 1); // Talk-to
     assert_eq!(ps_musa.ticks, 7); // set_sail delay only
-    assert_eq!(ps_musa.item_req, vec![(995, 30)]); // 30-coin fare
+    assert!(ps_musa.item_req.is_empty());
+    assert_eq!(ps_musa.consumed_req, vec![(995, 30)]); // 30-coin fare
     assert!(ps_musa.varp_req.is_empty());
     let musa_plank = graph
         .edges
@@ -4930,7 +4946,8 @@ data=tele_coord,0_45_57_10_31
         .expect("Varrock teleport");
     assert_eq!(varrock.kind, TransportKind::Teleport);
     assert_eq!(varrock.skill_req, vec![(SKILL_MAGIC, 25)]);
-    assert_eq!(varrock.item_req, vec![(554, 1), (556, 3), (563, 1)]);
+    assert!(varrock.item_req.is_empty());
+    assert_eq!(varrock.consumed_req, vec![(554, 1), (556, 3), (563, 1)]);
     assert_eq!(varrock.ticks, SPELL_TELEPORT_TICKS);
 
     let trollheim = graph
@@ -4945,7 +4962,7 @@ data=tele_coord,0_45_57_10_31
         })
         .expect("Trollheim teleport");
     // The trailing `null,null` rune-slot padding is dropped.
-    assert_eq!(trollheim.item_req, vec![(554, 2), (563, 2)]);
+    assert_eq!(trollheim.consumed_req, vec![(554, 2), (563, 2)]);
     assert_eq!(trollheim.skill_req, vec![(SKILL_MAGIC, 61)]);
     assert_eq!(trollheim.ticks, SPELL_TELEPORT_TICKS);
     // `data=members,true` is refused on an F2P world (`check_spell_requirements`).
@@ -4960,21 +4977,31 @@ data=tele_coord,0_45_57_10_31
 }
 
 #[test]
-fn derive_transports_derives_jewellery_teleports_with_item_reqs() {
+fn derive_transports_derives_jewellery_teleports_with_content_returns() {
     let fx = Fixture::new();
     fx.write(
         "pack/obj.pack",
-        "1712=amulet_of_glory_4\n2552=ring_of_dueling_8\n",
+        "1712=amulet_of_glory_4\n1711=amulet_of_glory_3\n2552=ring_of_dueling_8\n2551=ring_of_dueling_7\n",
     );
     fx.write(
         "scripts/skill_magic/configs/enchanted_jewelry.obj",
         "\
+[amulet_of_glory_4]
+name=Amulet of glory(4)
+iop4=Rub
+param=next_obj_stage,amulet_of_glory_3
+
 [ring_of_dueling_8]
 name=Ring of dueling(8)
 iop4=Rub
 category=category_136
 param=charges,8
+param=next_obj_stage,ring_of_dueling_7
 ",
+    );
+    fx.write(
+        "scripts/player/configs/consumption/consume.param",
+        "[next_obj_stage]\ndefault=null\n",
     );
     fx.write(
         "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
@@ -4982,12 +5009,14 @@ param=charges,8
 [opheld4,amulet_of_glory_4] @amulet_of_glory_interface(\"Your amulet has three charges left.\");
 [label,amulet_of_glory_interface](string $message)
 def_obj $item = last_item;
+def_int $slot = last_slot;
 switch_int($choice) {
     case 1 : ~player_teleport_normal(0_48_54_15_40);
     case 2 : ~player_teleport_normal(0_45_49_38_40);
     case 3 : ~player_teleport_normal(0_48_50_33_51);
     case 4 : ~player_teleport_normal(0_51_49_29_27);
 }
+inv_setslot(inv,$slot,oc_param($item,next_obj_stage),1);
 ",
     );
     fx.write(
@@ -4996,7 +5025,15 @@ switch_int($choice) {
 [opheld4,_category_136]
 mes(\"You rub the ring...\");
 p_delay(1);
+def_namedobj $item = last_item;
+def_int $slot = last_slot;
 ~player_teleport_normal(map_findsquare(0_51_50_51_35, 0, 2, ^map_findsquare_lineofwalk));
+def_namedobj $new_ring = oc_param($item,next_obj_stage);
+if ($new_ring = null) {
+    inv_delslot(inv, $slot);
+} else {
+    inv_setslot(inv, $slot, $new_ring, 1);
+}
 ",
     );
     let defs = loc_defs(&[]);
@@ -5004,8 +5041,8 @@ p_delay(1);
     let graph = derive_transports(fx.path(), &defs, &wc);
 
     // Glory: the charged `_4` stage forwards to the interface label,
-    // whose four cases are the four destinations; each carries the
-    // charged item as its requirement.
+    // whose four cases are the four destinations; each replaces the worn
+    // charge with the config-declared `_3` stage after teleporting.
     let glory: Vec<_> = graph
         .teleports
         .iter()
@@ -5015,7 +5052,9 @@ p_delay(1);
     let dests: HashSet<WorldTile> = glory.iter().map(|e| e.to).collect();
     assert_eq!(dests.len(), 4);
     for e in &glory {
-        assert_eq!(e.item_req, vec![(1712, 1)]);
+        assert!(e.item_req.is_empty());
+        assert_eq!(e.consumed_req, vec![(1712, 1)]);
+        assert_eq!(e.item_returns, vec![(1711, 1)]);
         assert_eq!(e.ticks, JEWELLERY_TELEPORT_TICKS);
         assert_eq!(e.option, 4); // Rub (opheld4)
         assert!(e.skill_req.is_empty());
@@ -5056,11 +5095,48 @@ p_delay(1);
             level: 0
         }
     );
-    assert_eq!(duel.item_req, vec![(2552, 1)]);
+    assert!(duel.item_req.is_empty());
+    assert_eq!(duel.consumed_req, vec![(2552, 1)]);
+    assert_eq!(duel.item_returns, vec![(2551, 1)]);
     assert_eq!(duel.ticks, JEWELLERY_TELEPORT_TICKS);
 
     // The placeholder `at` never enters the `at` index.
     assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
+}
+
+#[test]
+fn derive_transports_skips_jewellery_without_proven_inventory_change() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/obj.pack",
+        "2552=ring_of_dueling_8\n2551=ring_of_dueling_7\n",
+    );
+    fx.write(
+        "scripts/skill_magic/configs/enchanted_jewelry.obj",
+        "\
+[ring_of_dueling_8]
+category=category_136
+param=next_obj_stage,ring_of_dueling_7
+",
+    );
+    fx.write(
+        "scripts/player/configs/consumption/consume.param",
+        "[next_obj_stage]\ndefault=null\n",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+        "\
+[opheld4,_category_136]
+~player_teleport_normal(0_51_50_51_35);
+",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    assert!(
+        graph.teleports.is_empty(),
+        "the teleport is not emitted without a proven inventory replacement"
+    );
 }
 
 /// Explicit real-content qualification inputs: `NAV_CONTENT_ROOT` names
@@ -7754,10 +7830,10 @@ fn n1_zanaris_missing_script_increments_skip_without_shed_edge() {
 /// The Shantay henge doorway (loc 4031, the `shantay_pass.rs2`
 /// `[oploc1,shantay_pass_henge_doorway]` branches) packs exactly two edges
 /// per placement next to the Al Kharid toll gates: the gated hop into the
-/// desert `at` the placement (one Shantay pass) and the free desert exit
-/// `at` one tile south of it.
+/// desert `at` the placement (one consumed Shantay pass) and the free desert
+/// exit `at` one tile south of it.
 #[test]
-fn shantay_henge_packs_the_paid_entry_and_the_free_exit() {
+fn shantay_henge_packs_the_consumed_entry_and_free_exit() {
     let fx = Fixture::new();
     fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
     fx.write(
@@ -7779,11 +7855,11 @@ fn shantay_henge_packs_the_paid_entry_and_the_free_exit() {
     assert_eq!(henge.len(), 2, "{henge:?}");
     let gated = henge
         .iter()
-        .find(|e| !e.item_req.is_empty())
+        .find(|e| !e.consumed_req.is_empty())
         .expect("one Shantay henge edge carries the pass");
     let free = henge
         .iter()
-        .find(|e| e.item_req.is_empty())
+        .find(|e| e.consumed_req.is_empty())
         .expect("one Shantay henge edge is free");
     assert_eq!(
         (gated.at, gated.to),
@@ -7796,7 +7872,8 @@ fn shantay_henge_packs_the_paid_entry_and_the_free_exit() {
             SHANTAY_NORTH_TO
         )
     );
-    assert_eq!(gated.item_req, [(1854, 1)]);
+    assert!(gated.item_req.is_empty());
+    assert_eq!(gated.consumed_req, [(1854, 1)]);
     assert_eq!(
         (free.at, free.to),
         (
@@ -7835,7 +7912,7 @@ fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
         graph
             .edges
             .iter()
-            .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, 10)]),
+            .all(|e| e.loc_id != 4031 && e.consumed_req != vec![(995, 10)]),
         "no toll or henge hops without border_gate.loc"
     );
     assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
@@ -7893,11 +7970,9 @@ param=next_loc_stage,loc_1563
         "right gate still missing"
     );
     assert!(
-        graph
-            .edges
-            .iter()
-            .filter(|e| e.loc_id == 2882)
-            .all(|e| { e.item_req == vec![(995, 10)] && e.varp_req.is_empty() }),
+        graph.edges.iter().filter(|e| e.loc_id == 2882).all(|e| {
+            e.consumed_req == vec![(995, 10)] && e.item_req.is_empty() && e.varp_req.is_empty()
+        }),
         "a missing waiver script must leave only paid crossings"
     );
     fx.write("pack/varp.pack", "419=princequest\n");
@@ -7925,7 +8000,7 @@ param=next_loc_stage,loc_1563
     let free: Vec<_> = graph
         .edges
         .iter()
-        .filter(|e| e.loc_id == 2882 && e.item_req.is_empty())
+        .filter(|e| e.loc_id == 2882 && e.consumed_req.is_empty())
         .collect();
     assert!(
         !free.is_empty(),
@@ -7944,7 +8019,7 @@ param=next_loc_stage,loc_1563
             .edges
             .iter()
             .filter(|e| e.loc_id == 2882)
-            .all(|e| !e.item_req.is_empty()),
+            .all(|e| !e.consumed_req.is_empty()),
         "journal green below the free-branch threshold cannot prove the waiver"
     );
     fx.write(
@@ -7961,7 +8036,7 @@ param=next_loc_stage,loc_1563
             .edges
             .iter()
             .filter(|e| e.loc_id == 2882)
-            .all(|e| !e.item_req.is_empty()),
+            .all(|e| !e.consumed_req.is_empty()),
         "a changed guard without the pass call must not waive coins"
     );
 }
@@ -8009,6 +8084,8 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![(id, min)],
         worn_req: vec![],
@@ -8120,7 +8197,8 @@ param=next_loc_stage,loc_1564
         assert_eq!(e.option, 1, "Open {e:?}");
         assert_eq!(e.ticks, 1, "{e:?}");
         assert_eq!(e.open_loc_id, Some(1564), "{e:?}");
-        assert_eq!(e.item_req, vec![(995, 10)], "{e:?}");
+        assert!(e.item_req.is_empty(), "{e:?}");
+        assert_eq!(e.consumed_req, vec![(995, 10)], "{e:?}");
         assert_eq!(e.at, extras[0].at);
         assert!(e.skill_req.is_empty() && e.quest_req.is_empty(), "{e:?}");
     }
@@ -8169,7 +8247,8 @@ param=next_loc_stage,loc_1562
         .cloned()
         .collect();
     assert_eq!(left.len(), 2, "left gate still emits: {left:?}");
-    assert_eq!(left[0].item_req, vec![(995, 10)]);
+    assert!(left[0].item_req.is_empty());
+    assert_eq!(left[0].consumed_req, vec![(995, 10)]);
     assert_eq!(left[0].dir, Some(DoorDir::W));
     assert_eq!(left[1].dir, Some(DoorDir::E));
     assert!(
@@ -8276,23 +8355,27 @@ data=coord_pair,0_46_155_0_0,0_52_199_63_63
     );
     fx.write(
         "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
-        "[opheld4,_category_136]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_51_50_51_35);\n",
+        "[opheld4,_category_136]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_51_50_51_35);\ninv_setslot(inv,last_slot,oc_param(last_item,next_obj_stage),1);\n",
     );
     fx.write(
         "scripts/general/scripts/enchanted_jewellry/necklace_of_minigames.rs2",
-        "[opheld4,_necklace_of_minigames]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_34_77_31_12);\n",
+        "[opheld4,_necklace_of_minigames]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_34_77_31_12);\ninv_setslot(inv,last_slot,oc_param(last_item,next_obj_stage),1);\n",
     );
     fx.write(
         "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
-        "[opheld4,amulet_of_glory_4] @amulet_of_glory_interface(\"x\");\n[label,amulet_of_glory_interface](string $message)\nif (~wilderness_level(coord) > 30) {\n    return;\n}\n~player_teleport_normal(0_48_54_15_40);\n",
+        "[opheld4,amulet_of_glory_4] @amulet_of_glory_interface(\"x\");\n[label,amulet_of_glory_interface](string $message)\nif (~wilderness_level(coord) > 30) {\n    return;\n}\n~player_teleport_normal(0_48_54_15_40);\ninv_setslot(inv,last_slot,oc_param(last_item,next_obj_stage),1);\n",
     );
     fx.write(
         "pack/obj.pack",
-        "554=firerune\n556=airrune\n563=lawrune\n1712=amulet_of_glory_4\n2552=ring_of_dueling_8\n3853=necklace_of_minigames_8\n",
+        "554=firerune\n556=airrune\n563=lawrune\n1712=amulet_of_glory_4\n1710=amulet_of_glory_3\n2552=ring_of_dueling_8\n2554=ring_of_dueling_7\n3853=necklace_of_minigames_8\n3855=necklace_of_minigames_7\n",
     );
     fx.write(
         "scripts/skill_magic/configs/enchanted_jewelry.obj",
-        "[ring_of_dueling_8]\ncategory=category_136\n[necklace_of_minigames_8]\ncategory=necklace_of_minigames\n[amulet_of_glory_4]\n",
+        "[ring_of_dueling_8]\ncategory=category_136\nparam=next_obj_stage,ring_of_dueling_7\n[necklace_of_minigames_8]\ncategory=necklace_of_minigames\nparam=next_obj_stage,necklace_of_minigames_7\n[amulet_of_glory_4]\nparam=next_obj_stage,amulet_of_glory_3\n",
+    );
+    fx.write(
+        "scripts/player/configs/consumption/consume.param",
+        "[next_obj_stage]\ndefault=null\n",
     );
     fx.write(
         "scripts/skill_magic/configs/magic_spells.dbrow",
@@ -8467,7 +8550,7 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
         assert_eq!(spell_cap, 20);
         let dest = spell.to;
         let mut inv = HashMap::new();
-        for &(id, n) in &spell.item_req {
+        for &(id, n) in &spell.consumed_req {
             inv.insert(id, n.max(5));
         }
         let magic = spell
@@ -8524,7 +8607,7 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
             .find(|e| e.wildy_cap == Some(glory_cap))
             .unwrap();
         let gstate = crate::world_state::WorldState {
-            inv: HashMap::from([(glory.item_req[0].0, 1)]),
+            inv: HashMap::from([(glory.consumed_req[0].0, 1)]),
             ..crate::world_state::WorldState::default()
         };
         let g_below =

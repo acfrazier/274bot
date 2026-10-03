@@ -47,6 +47,17 @@ mod upgrade_home;
 use upgrade_home::UpgradeHome;
 
 #[test]
+fn session_cache_is_unset_until_a_profile_is_bound() {
+    let session = Session::new();
+    let cache_dir = &session.play_options().cache_dir;
+
+    assert!(
+        cache_dir.is_empty(),
+        "cache path must come from the resolved profile, not the standalone-client default: {cache_dir:?}"
+    );
+}
+
+#[test]
 fn memory_override_changes_spawn_profile_without_persisting_it() {
     let path = tmp_vault("memory-override-spawn.vault");
     let mut s = Session::new();
@@ -308,6 +319,7 @@ fn isolated_profile_environment(home: &Path) -> ProfileEnvironment {
     ProfileEnvironment {
         home: Some(home.to_path_buf()),
         working_dir: Some(home.to_path_buf()),
+        engine_dir: Some(home.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -564,15 +576,19 @@ fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
     let mut session = Session::new();
     session.ui.server_revision = 274;
-    configure_isolated_profile(
-        &mut session,
-        ProfileOptions {
-            rs2b2t: true,
-            ..ProfileOptions::default()
-        },
-        &home,
-    )
-    .unwrap();
+    session
+        .configure_profile_with_env(
+            ProfileOptions {
+                rs2b2t: true,
+                ..ProfileOptions::default()
+            },
+            ProfileEnvironment {
+                home: Some(home.to_path_buf()),
+                working_dir: Some(home.to_path_buf()),
+                ..ProfileEnvironment::default()
+            },
+        )
+        .unwrap();
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
@@ -621,6 +637,7 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
             ProfileEnvironment {
                 home: Some(injected.to_path_buf()),
                 working_dir: Some(injected.to_path_buf()),
+                engine_dir: Some(injected.join("engine")),
                 ..ProfileEnvironment::default()
             },
         )
@@ -708,6 +725,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
             ProfileEnvironment {
                 home: Some(iso.dir.clone()),
                 working_dir: Some(iso.dir.clone()),
+                engine_dir: Some(iso.dir.join("engine")),
                 ..ProfileEnvironment::default()
             },
         )
@@ -753,6 +771,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let env = ProfileEnvironment {
         home: Some(root.to_path_buf()),
         working_dir: Some(root.to_path_buf()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -1636,6 +1655,8 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
                 open_loc_id: None,
                 skill_req: vec![],
                 item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
@@ -2082,7 +2103,7 @@ fn door_route() -> Route {
                 ],
             },
             Leg::Transport {
-                edge: TransportEdge {
+                edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: WorldTile {
@@ -2102,13 +2123,15 @@ fn door_route() -> Route {
                     open_loc_id: None,
                     skill_req: vec![],
                     item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
-                },
+                }),
             },
         ],
         dest: WorldTile {
@@ -2331,7 +2354,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                 tiles: tiles[..300].to_vec(),
             },
             Leg::Transport {
-                edge: TransportEdge {
+                edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: tiles[300],
@@ -2343,13 +2366,15 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                     open_loc_id: None,
                     skill_req: vec![],
                     item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
-                },
+                }),
             },
         ],
         dest: tiles[301],
@@ -3298,7 +3323,7 @@ fn picker_confirm_no_path_keeps_destination_without_arming() {
 }
 
 /// A 5×5 world walled between x=1 and x=2, crossed only by a 10-coin
-/// toll door (the `toll_edges` shape: loc 2882, `item_req` coins 10).
+/// toll door (the `toll_edges` shape: loc 2882, `consumed_req` coins 10).
 fn toll_world() -> NavWorld {
     let mut flags = vec![0u32; 25];
     for z in 0..5 {
@@ -3324,7 +3349,9 @@ fn toll_world() -> NavWorld {
         dir: None,
         open_loc_id: None,
         skill_req: vec![],
-        item_req: vec![(995, 10)],
+        item_req: vec![],
+        consumed_req: vec![(995, 10)],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3431,7 +3458,7 @@ fn picker_confirm_uses_focused_slot_state_across_a_toll() {
             .iter()
             .any(|l| matches!(
                 l,
-                Leg::Transport { edge } if edge.item_req == vec![(995, 10)]
+                Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
             )),
         "the route must cross the toll"
     );
@@ -3523,6 +3550,8 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -3629,6 +3658,8 @@ fn picker_confirm_uses_find_with_options() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

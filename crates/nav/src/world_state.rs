@@ -139,7 +139,8 @@ impl WorldState {
     }
 
     /// Whether the edge's requirements are all satisfied: every
-    /// `skill_req` level met, every `item_req` count carried, every
+    /// `skill_req` level met, every held `item_req` and per-hop
+    /// `consumed_req` count carried, every
     /// `quest_req` completed, every `varp_req` value reached, **any**
     /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
     /// one-id list; a slash-weapon web lists every slash blade), a
@@ -166,6 +167,7 @@ impl WorldState {
         self.fixed_reqs_allow(e)
             && e.item_req
                 .iter()
+                .chain(&e.consumed_req)
                 .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
             && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
     }

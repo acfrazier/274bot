@@ -278,10 +278,8 @@ npc_anim(^test_attack_seq);
 npc_anim(^test_range_seq);
 [ai_queue1,test_npc]
 ~npc_default_retaliate_ap();
-[ai_applayer2,zamorak_like]
-~npc_cast_spell(^test_spell, 4);
-[ai_opplayer2,zamorak_like]
-~npc_cast_spell(^test_spell, 4);
+[proc,npc_cast_spell]
+return;
 [ai_applayer2,saradomin_like]
 ~npc_cast_spell(^test_spell, 4);
 [ai_opplayer2,saradomin_like]
@@ -290,6 +288,17 @@ if (~check_protect_prayer(^melee_style) = true) {
     return;
 }
 ~npc_default_attack();
+`);
+// A global spell helper's protect check must not leak into another NPC's trigger fact.
+fs.writeFileSync(path.join(npcScriptDir, 'shared.rs2'), `[proc,npc_cast_spell]
+if (~check_protect_prayer(^magic_style) = true) {
+    return;
+}
+`);
+fs.writeFileSync(path.join(npcScriptDir, 'zamorak.rs2'), `[ai_applayer2,zamorak_like]
+~npc_cast_spell(^test_spell, 4);
+[ai_opplayer2,zamorak_like]
+~npc_cast_spell(^test_spell, 4);
 `);
 fs.writeFileSync(path.join(npcScriptDir, 'dragon.rs2'), `%dragonresist = 1;
 [ai_applayer2,dragon_npc]

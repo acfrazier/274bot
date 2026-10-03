@@ -6,33 +6,21 @@
 //!
 //! Prerequisites: a default application build in this target profile
 //! (`cargo build -p panel --bin panel-play`, i.e. `BOT_NAV_BUILD=require`)
-//! and the canonical local engine + cache for every published revision. The
-//! test is `#[ignore]`d because the cached cargo test binary for the same
-//! target profile is what it reads: a fresh clone without the canonical trees
-//! cannot run it.
+//! and `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` pointing at the local engine used
+//! for that build. The test is `#[ignore]`d because the cached cargo test
+//! binary for the same target profile is what it reads.
 
 use std::path::{Path, PathBuf};
 
 use host_play::profile::{CacheManifest, NavAvailability, ProfileEnvironment, ProfileOptions};
 use host_play::{bundled_nav_identities, NavOrigin, SharedClientTemplate};
 
-/// Same rule as the build script: `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR`,
-/// else the revision's canonical local engine.
-fn engine_dir(revision: u16) -> PathBuf {
-    for key in ["BOT_NAV_ENGINE_DIR", "ENGINE_DIR"] {
-        if let Some(dir) = std::env::var_os(key).map(PathBuf::from) {
-            return dir;
-        }
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(if revision == 289 {
-        "experiments/lostcity-289/engine"
-    } else {
-        "experiments/Server/engine"
-    })
+/// Same rule as the build script: `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR`.
+fn engine_dir() -> PathBuf {
+    ["BOT_NAV_ENGINE_DIR", "ENGINE_DIR"]
+        .into_iter()
+        .find_map(|key| std::env::var_os(key).map(PathBuf::from))
+        .unwrap_or_else(|| panic!("set BOT_NAV_ENGINE_DIR or ENGINE_DIR to the local engine root"))
 }
 
 fn known_identities() -> Vec<CacheManifest> {
@@ -60,7 +48,7 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
     let known = known_identities();
 
     for row in table {
-        let engine = engine_dir(row.revision);
+        let engine = engine_dir();
         let cache_dir = engine.join("data/pack/client");
         let declared = known
             .iter()
