@@ -460,6 +460,8 @@ impl Sherlock {
         };
         let combat = self.outcome.take().map(Outcome::page);
         let page = next_payload(&tick.frame, token, combat);
+        #[cfg(test)]
+        record_combat_page(page.get("combat"));
         self.iterate(tick, page, sink);
         if self.block_user_input {
             self.block_user_input = false;
@@ -493,6 +495,8 @@ impl Sherlock {
         };
         let combat = self.outcome.take().map(Outcome::page);
         let page = next_payload(ctx, token, combat);
+        #[cfg(test)]
+        record_combat_page(page.get("combat"));
         self.iterate_host(selected, page, sink, output);
     }
 
@@ -664,6 +668,21 @@ impl Sherlock {
         }
         self.token = None;
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static LAST_COMBAT_PAGE: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn record_combat_page(combat: Option<&Value>) {
+    LAST_COMBAT_PAGE.with(|slot| *slot.borrow_mut() = combat.cloned());
+}
+
+#[cfg(test)]
+fn take_combat_page() -> Option<Value> {
+    LAST_COMBAT_PAGE.with(|slot| slot.borrow_mut().take())
 }
 
 /// The `begin` call's payload: the required page, and nothing else.

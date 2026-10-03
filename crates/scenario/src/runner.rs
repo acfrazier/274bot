@@ -121,10 +121,10 @@ struct ProtectWindowObservation {
     seeded: i32,
     ack_tick: Option<u32>,
     kill_tick: Option<u32>,
+    kill_evidence: Option<&'static str>,
     prayer_off_tick: Option<u32>,
     in_flight_hits: u32,
     in_flight_max: i32,
-    wizard_seen: bool,
     live_hit: [bool; 4],
     violation: Option<&'static str>,
 }
@@ -135,10 +135,10 @@ impl ProtectWindowObservation {
             seeded,
             ack_tick: None,
             kill_tick: None,
+            kill_evidence: None,
             prayer_off_tick: None,
             in_flight_hits: 0,
             in_flight_max: 0,
-            wizard_seen: false,
             live_hit: [false; 4],
             violation: None,
         }
@@ -190,16 +190,7 @@ impl ProtectWindowObservation {
                 }
             }
         }
-        let wizard_live = snap
-            .npcs()
-            .iter()
-            .any(|npc| npc.r#type == Some(ZAMORAK_WIZARD) && npc.health > 0);
-        if wizard_live {
-            self.wizard_seen = true;
-        }
-        if self.wizard_seen && !wizard_live && self.kill_tick.is_none() {
-            self.kill_tick = Some(tick);
-        }
+        self.observe_kill(snap, tick);
         if self.kill_tick.is_some() && !magic_on && self.prayer_off_tick.is_none() {
             self.prayer_off_tick = Some(tick);
         }
@@ -211,6 +202,16 @@ impl ProtectWindowObservation {
             } else if tick > kill + 3 {
                 self.violation = Some("prayers still on three ticks after the kill");
             }
+        }
+    }
+
+    fn observe_kill(&mut self, snap: &GameSnapshot, tick: u32) {
+        if self.kill_tick.is_some() {
+            return;
+        }
+        if snap.npcs().iter().any(posted_wizard_corpse) {
+            self.kill_tick = Some(tick);
+            self.kill_evidence = Some("posted_corpse");
         }
     }
 
@@ -234,9 +235,14 @@ impl ProtectWindowObservation {
             in_flight_hits: self.in_flight_hits,
             in_flight_max: self.in_flight_max,
             kill_tick: self.kill_tick,
+            kill_evidence: self.kill_evidence,
             prayer_off_tick: self.prayer_off_tick,
         }
     }
+}
+
+fn posted_wizard_corpse(npc: &api::snapshot::NpcView) -> bool {
+    npc.r#type == Some(ZAMORAK_WIZARD) && npc.total_health > 0 && npc.health == 0
 }
 
 fn protect_window_seed(scenario: &Scenario) -> Option<i32> {
@@ -250,6 +256,87 @@ fn protect_window_seed(scenario: &Scenario) -> Option<i32> {
 }
 
 const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
+
+#[cfg(test)]
+mod protect_window_oracle {
+    use super::*;
+    use api::snapshot::{NpcView, VarpView, WorldTile};
+
+    fn wizard(health: i32, total_health: i32) -> NpcView {
+        NpcView {
+            index: 7,
+            r#type: Some(ZAMORAK_WIZARD),
+            name: Some("Zamorak Wizard".into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 2947,
+                z: 3819,
+                level: 0,
+            },
+            distance: 1,
+            animation: -1,
+            animation_frame: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health,
+            total_health,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 65,
+            size: 1,
+            network: WorldTile {
+                x: 2947,
+                z: 3819,
+                level: 0,
+            },
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }
+    }
+
+    fn frame(tick: u32, magic: i32, npcs: Vec<NpcView>) -> GameSnapshot {
+        let mut snap = GameSnapshot::new();
+        snap.seed_ingame(2);
+        snap.seed_tick(tick);
+        snap.seed_varps(vec![VarpView {
+            index: PROTECT_MAGIC_VARP,
+            value: magic,
+        }]);
+        snap.seed_npcs(npcs);
+        snap
+    }
+
+    #[test]
+    fn disappearance_without_a_corpse_is_not_a_kill() {
+        let mut window = ProtectWindowObservation::new(2735);
+        window.observe(&frame(48, 1, vec![wizard(80, 80)]));
+        window.observe(&frame(151, 1, Vec::new()));
+        window.observe(&frame(151, 0, Vec::new()));
+        assert_eq!(window.kill_tick, None);
+        assert_eq!(window.kill_evidence, None);
+        assert!(
+            !window.ready(&frame(151, 0, Vec::new()), None),
+            "a disappearance must not satisfy clue_protect_window"
+        );
+    }
+
+    #[test]
+    fn posted_corpse_latches_the_kill_tick() {
+        let mut window = ProtectWindowObservation::new(2735);
+        window.observe(&frame(48, 1, vec![wizard(80, 80)]));
+        window.observe(&frame(151, 1, vec![wizard(0, 80)]));
+        assert_eq!(window.kill_tick, Some(151));
+        assert_eq!(window.kill_evidence, Some("posted_corpse"));
+    }
+}
 
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
