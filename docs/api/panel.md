@@ -72,9 +72,11 @@ The structured **Log** section remains inline in the panel. The title-row
 **Log** button opens the same view as a dockable **Log** tab beside the panel
 and other panel windows; the tab's **X** closes it, and dragging it out
 undocks it into a floating window. Closing the tab does not move or hide the
-inline section, and both views share filters, follow state and retained
-history. An older saved `log_detached: true` preference opens the tab once on
-startup, then is discarded.
+inline section. When the Log window draws its body, the inline section shows a
+one-line hint instead; an open but unselected docked tab leaves the inline
+body visible. Both views share filters, follow state and retained history. An
+older saved `log_detached: true` preference opens the tab once on startup,
+then is discarded.
 
 General config's **session log file** checkbox shows the full rotated path as
 `writing <path>` on wrapped lines below while it is enabled. The file is under

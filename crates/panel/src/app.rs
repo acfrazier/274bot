@@ -3695,7 +3695,11 @@ fn log_section(ui: &Ui, session: &mut Session, last: bool) {
     if !section_open(ui, session, "log") {
         return;
     }
-    crate::log_pane::log_body(ui, session, last);
+    if session.log_window_body_drawn {
+        ui.text_disabled("Log is open in its tab");
+    } else {
+        crate::log_pane::log_body(ui, session, last);
+    }
 }
 
 /// Draw the shared log as a dockable panel tab.
@@ -3711,6 +3715,7 @@ fn log_window_with_body(
     panel_dock: Option<Id>,
     body: impl FnOnce(&Ui, &mut Session),
 ) {
+    session.log_window_body_drawn = false;
     if !session.log_window_open {
         return;
     }
@@ -3731,7 +3736,10 @@ fn log_window_with_body(
             scale_size(ui, [280.0, 180.0]),
             [f32::MAX, scale_px(ui, 720.0)],
         )
-        .build(|| body(ui, session));
+        .build(|| {
+            session.log_window_body_drawn = true;
+            body(ui, session);
+        });
     session.log_window_open = open;
 }
 
@@ -5615,9 +5623,9 @@ fn ui_frame(
     state.debug_resources();
     let game_class = game_window_class();
     let panel_class = panel_window_class();
+    log_window(ui, &mut state.session, state.panel_dock_node);
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
-    log_window(ui, &mut state.session, state.panel_dock_node);
     crate::fleet::window(ui, &mut state.session);
     {
         let focus = state.session.focus.lock().unwrap();
