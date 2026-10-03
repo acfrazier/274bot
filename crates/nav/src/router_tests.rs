@@ -2540,9 +2540,10 @@ fn validate_real_route(
             Leg::Transport { edge } => {
                 let previous = current.expect("transport follows walk");
                 assert!(state.allows(edge));
-                match edge.kind {
+                let bound_edge_index = match edge.kind {
                     TransportKind::Teleport => {
                         assert!(opts.allow_teleports && graph.teleports.contains(edge));
+                        None
                     }
                     TransportKind::EssenceExit => {
                         let session = opts
@@ -2551,12 +2552,27 @@ fn validate_real_route(
                             .expect("return must use captured entry wizard");
                         assert!(crate::essence::ESSENCE_MINE_PORTALS.contains(&edge.at));
                         assert_eq!(*edge, crate::essence::essence_return_edge(edge.at, session));
+                        None
                     }
-                    _ => assert!(
-                        graph.edges.contains(edge),
-                        "transport must belong to the bound graph"
-                    ),
-                }
+                    _ => {
+                        // A player-relative landing is materialized from the actual
+                        // takeoff in a route. Restore its packed anchor landing before
+                        // comparing it with the bound graph.
+                        let index = if edge.player_delta.is_some() {
+                            let mut anchored = edge.clone();
+                            anchored.to = anchored
+                                .landing_from(anchored.at)
+                                .expect("relative transport landing from its anchor");
+                            graph
+                                .edges
+                                .iter()
+                                .position(|candidate| candidate == &anchored)
+                        } else {
+                            graph.edges.iter().position(|candidate| candidate == edge)
+                        };
+                        Some(index.expect("transport must belong to the bound graph"))
+                    }
+                };
                 if edge.kind != TransportKind::Teleport {
                     assert!(collision.standable(previous));
                     assert_eq!(previous.level, edge.at.level);
@@ -2568,11 +2584,15 @@ fn validate_real_route(
                                 <= 1
                         );
                     } else {
-                        let index = graph
-                            .edges
-                            .iter()
-                            .position(|candidate| candidate == edge)
-                            .unwrap();
+                        let index =
+                            bound_edge_index.expect("ordinary transport belongs to the graph");
+                        if edge.player_delta.is_some() {
+                            assert_eq!(
+                                edge.landing_from(previous),
+                                Some(edge.to),
+                                "relative transport landing must match its takeoff"
+                            );
+                        }
                         assert!(
                             graph.admissible_from(collision, index, previous),
                             "transport cannot operate from {previous:?}: {edge:?}"
