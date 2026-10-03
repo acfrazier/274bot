@@ -18,6 +18,9 @@ use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIf
 mod context;
 pub use context::ReadContext;
 
+/// Maximum number of local-target projectiles retained in a snapshot.
+pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
+
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
@@ -269,7 +272,7 @@ impl Default for GameSnapshot {
             thieving_stun_stamp: None,
             players: Vec::new(),
             players_available: false,
-            projectiles: Vec::new(),
+            projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
             hitmarks: None,
             stats: Vec::new(),
             runenergy: 0,

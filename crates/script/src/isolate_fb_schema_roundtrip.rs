@@ -66,6 +66,7 @@ fn generated_bindings_round_trip_domain_payload_and_presence() {
     input.chat_options = &chat_options;
     input.self_target_kind = 1;
     input.self_target_index = 9;
+    input.self_slot = 4;
 
     let quest_rows = [
         QuestStatusInput {
