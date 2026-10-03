@@ -1300,4 +1300,91 @@ mod tests {
             vec![(1359, 1)]
         );
     }
+
+    #[test]
+    fn every_content_defined_fishing_tool_is_inventory_ready_without_wielding() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Fishing"));
+        let mut prepared = prepare(settings);
+        let catalog = Arc::clone(&prepared.catalog);
+        let prepared = Arc::get_mut(&mut prepared).expect("test owns the prepared config");
+        let mut tested_tools = std::collections::BTreeSet::new();
+        for (index, method) in catalog
+            .methods()
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.skill == api::gather_methods::GatherSkill::Fishing)
+        {
+            // Exercise tool/supply semantics even for content methods whose
+            // unrelated quest/form facts keep the whole method unselectable.
+            prepared.methods = Arc::from([index]);
+            prepared.settings.fishing_method = method.id.0.to_string();
+            prepared.supply = PreparedSupply::prepare(
+                &mut prepared.settings,
+                &prepared.selected,
+                &catalog,
+                &prepared.methods,
+            )
+            .unwrap();
+            let stats = stats(prepared);
+            for tool in known_rows(&method.tools) {
+                let name = prepared
+                    .selected
+                    .item_by_id(tool.item)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap();
+                let mut held = vec![item(tool.item, name, 1, ItemContainer::Inventory)];
+                if let Some(bait) = &prepared.supply.bait {
+                    held.push(item(bait.id, &bait.name, 1, ItemContainer::Inventory));
+                }
+                let choice = best_tool(prepared, &stats, &held, &[]).unwrap();
+                assert_eq!(choice.id, tool.item, "{}", method.id.0);
+                assert!(!choice.worn);
+                assert!(!can_wield(prepared, choice.id, &held, &stats));
+                assert!(!SupplyPlan::due(prepared, &stats, &held, &[]));
+                assert!(protected_ids(prepared, choice.id)
+                    .as_slice()
+                    .contains(&tool.item));
+                assert!(matches!(
+                    &SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&[])),
+                    SupplyPlanResult::Ready(plan) if plan.iter().next().is_none()
+                ));
+
+                // A lost tool must still use the same bank stock machinery.
+                held.remove(0);
+                assert!(SupplyPlan::due(prepared, &stats, &held, &[]));
+                let bank = [item(tool.item, name, 1, ItemContainer::Bank)];
+                let plan =
+                    match SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&bank)) {
+                        SupplyPlanResult::Ready(plan) => plan,
+                        other => panic!(
+                            "{} tool stock must admit withdrawal: {other:?}",
+                            method.id.0
+                        ),
+                    };
+                assert_eq!(plan.missing(), None);
+                assert_eq!(plan.to_withdrawals()[0].id, tool.item);
+                assert_eq!(plan.to_withdrawals()[0].target, 1);
+                tested_tools.insert(tool.item);
+            }
+        }
+        for alias in [
+            "net",
+            "big_net",
+            "lobster_pot",
+            "harpoon",
+            "fishing_rod",
+            "fly_fishing_rod",
+            "oily_fishing_rod",
+            "tbwt_karambwan_vessel_loaded_with_karambwanji",
+        ] {
+            let id = prepared.selected.item_by_alias(alias).unwrap().id;
+            assert!(
+                tested_tools.contains(&id),
+                "missing fishing tool coverage: {alias}"
+            );
+        }
+    }
 }

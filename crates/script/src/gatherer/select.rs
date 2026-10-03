@@ -11,6 +11,9 @@ const MAX_PRODUCTS: usize = 8;
 const MAX_AVOID: usize = 8;
 const HAZARD_WAIT_TICKS: u64 = 60;
 const NO_NPC_INDEX: i32 = -1;
+// NPC_INFO streams nearby actors, not every NPC in the 104-tile map build.
+// The selected 289 engine uses a 15-tile Chebyshev view radius.
+const NPC_VIEW_RADIUS: u32 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlacementClass {
@@ -148,12 +151,17 @@ pub fn classify_placement(
 fn classify_fishing_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
-    world: &WorldStateView,
-    npcs: &[NpcView],
-    hazard_npcs: &[i32],
+    scene: PlacementScene<'_>,
+    here: WorldTile,
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
+    let PlacementScene {
+        world,
+        npcs,
+        hazard_npcs,
+        ..
+    } = scene;
     let Some(bounds) = movement_bounds(spot) else {
         return PlacementClass::Absent;
     };
@@ -200,6 +208,19 @@ fn classify_fishing_placement(
             })
     }) {
         return PlacementClass::Live;
+    }
+    // A loaded map is not evidence that a distant moving NPC is absent.
+    // Reuse the unloaded-placement approach until its whole movement envelope
+    // is inside the actor view; observed resources/hazards above still win.
+    if bounds.level != here.level
+        || [bounds.min_x, bounds.max_x]
+            .into_iter()
+            .any(|x| x.abs_diff(here.x) > NPC_VIEW_RADIUS)
+        || [bounds.min_z, bounds.max_z]
+            .into_iter()
+            .any(|z| z.abs_diff(here.z) > NPC_VIEW_RADIUS)
+    {
+        return PlacementClass::Unloaded;
     }
     PlacementClass::Absent
 }
@@ -358,9 +379,13 @@ pub fn select(
                 let class = classify_fishing_placement(
                     spot,
                     method,
-                    world,
-                    npcs,
-                    catalog.hazard_npcs(),
+                    PlacementScene {
+                        world,
+                        locs,
+                        npcs,
+                        hazard_npcs: catalog.hazard_npcs(),
+                    },
+                    here,
                     avoided,
                     now,
                 );
@@ -1098,9 +1123,13 @@ mod tests {
             classify_fishing_placement(
                 &fish_spot,
                 &fish_method,
-                &world,
-                &[npc(42, 309, target_tile)],
-                &[],
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[npc(42, 309, target_tile)],
+                    hazard_npcs: &[],
+                },
+                area.anchor,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 1,
             ),
@@ -1110,9 +1139,13 @@ mod tests {
             classify_fishing_placement(
                 &fish_spot,
                 &fish_method,
-                &world,
-                &[],
-                &[],
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[],
+                },
+                area.anchor,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 1,
             ),
@@ -1122,9 +1155,13 @@ mod tests {
             classify_fishing_placement(
                 &fish_spot,
                 &fish_method,
-                &world,
-                &[npc(43, 900, target_tile)],
-                &[900],
+                PlacementScene {
+                    world: &world,
+                    locs: &[],
+                    npcs: &[npc(43, 900, target_tile)],
+                    hazard_npcs: &[900],
+                },
+                area.anchor,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 1,
             ),
@@ -1154,14 +1191,18 @@ mod tests {
             classify_fishing_placement(
                 &fish_spot,
                 &fish_method,
-                &WorldStateView {
-                    map_base_x: 3200,
-                    map_base_z: 3200,
-                    level: 0,
-                    ..WorldStateView::default()
+                PlacementScene {
+                    world: &WorldStateView {
+                        map_base_x: 3200,
+                        map_base_z: 3200,
+                        level: 0,
+                        ..WorldStateView::default()
+                    },
+                    locs: &[],
+                    npcs: &[],
+                    hazard_npcs: &[],
                 },
-                &[],
-                &[],
+                area.anchor,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 1,
             ),
@@ -1337,6 +1378,85 @@ mod tests {
             assert_eq!(candidate.class, PlacementClass::Unloaded);
             assert_eq!(candidate.plan.npc_index, NO_NPC_INDEX);
         }
+    }
+
+    #[test]
+    fn fishing_bank_return_approaches_unobserved_spots_before_reacquiring_the_actor() {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let anchor = WorldTile {
+            x: 2840,
+            z: 3436,
+            level: 0,
+        };
+        let here = WorldTile { x: 2828, ..anchor };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Start,
+            anchor,
+            radius: 12,
+        };
+        let settings = GathererSettings {
+            skill: "Fishing".into(),
+            fishing_method: method.id.0.to_string(),
+            radius: area.radius,
+            ..GathererSettings::default()
+        };
+        let world = scene_around(here);
+        let approach = select(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 10,
+            },
+        );
+        let target = approach.target.expect(
+            "returning inside the work area does not establish observation of distant fishing NPCs",
+        );
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        let EntityId::Npc(type_id) = target.plan.entity else {
+            panic!("harpoon spot must be NPC-backed");
+        };
+        let spot = complete_spots(method)
+            .unwrap()
+            .iter()
+            .find(|spot| spot.entity == target.plan.entity && spot.origin == target.plan.tile)
+            .unwrap();
+        assert!(
+            region_loaded(movement_bounds(spot).unwrap(), &world),
+            "the regression needs a loaded map but an unobserved NPC region"
+        );
+
+        let visible = [npc(43, type_id as usize, target.plan.tile)];
+        let reacquired = select(
+            &catalog,
+            &[index],
+            &settings,
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &world,
+                locs: &[],
+                npcs: &visible,
+                here: target.plan.tile,
+                now: 2,
+                skill_stat: 10,
+            },
+        )
+        .target
+        .expect("the fresh actor observation resumes fishing");
+        assert_eq!(reacquired.class, PlacementClass::Live);
+        assert_eq!(reacquired.plan.npc_index, 43);
+        assert_eq!(reacquired.plan.entity, target.plan.entity);
     }
 
     #[test]
