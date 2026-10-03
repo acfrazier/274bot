@@ -404,6 +404,12 @@ impl Play {
         token
     }
 
+    /// Current copy/confirmation hold for control-thread witnesses. This is
+    /// only an observation; actual Start admission still takes the hold lock.
+    pub fn script_start_wait_reason(&self) -> Option<Arc<String>> {
+        self.script_start_hold.lock().unwrap().upgrade()
+    }
+
     /// A settings preparer has only shared pinned resources, no slot or game
     /// action handle. Frontend persistence follows successful typed preparation.
     pub fn script_prepare_config(
