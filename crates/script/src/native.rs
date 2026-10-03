@@ -396,7 +396,6 @@ pub enum WalkEnd {
     Blocked,
     Failed,
     Cancelled,
-    Unprotectable,
     NeedsEvidence(Arc<[QuestGate]>),
 }
 #[derive(Debug, Clone)]
@@ -406,6 +405,23 @@ pub struct WalkReceipt {
     pub end: WalkEnd,
     pub blocked: Option<Arc<[nav::zones::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
+}
+
+/// Non-terminal evidence from a followed walk. The owner chooses whether to
+/// continue, cancel or replace the route; observing this never revokes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalkEventKind {
+    Unprotectable {
+        protect: crate::combat::GuardProtect,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct WalkEvent {
+    pub request_id: u64,
+    pub evidence: EvidenceStamp,
+    pub kind: WalkEventKind,
+    pub detail: Arc<str>,
 }
 
 /// Result of the host's dispatch attempt, not proof of a server-side change.

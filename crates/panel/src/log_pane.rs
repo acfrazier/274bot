@@ -1,7 +1,6 @@
 //! Panel log section over the shared `frontend_core::log` store: timestamp
 //! column, level colours, level/source/scope filters, text search, follow,
-//! Copy and Save log…. The section fills the side panel's leftover height
-//! when it is the last section, and is a resizable box otherwise.
+//! Copy and Save log…. The same body appears inline and in its dockable tab.
 
 use std::path::PathBuf;
 
@@ -130,12 +129,9 @@ pub fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
     scroll_y >= scroll_max_y - 1.0
 }
 
-/// The log section body. `last` is whether it is the last visible panel
-/// section (then it fills the leftover height). The same body is reused by
-/// the detached window so filters, follow state and retained lines survive
-/// moving the log.
+/// The log body is shared by the inline section and the dockable Log tab.
+/// `last` is whether the body fills the remaining panel height.
 pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
-    log_mode_row(ui, session);
     let focused = session.core.selected();
     let pane = &mut session.log_pane;
     pane.refresh(focused);
@@ -176,17 +172,6 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
                 ui.set_scroll_here_y(1.0);
             }
         });
-}
-
-/// Move the shared log between the panel and its floating window.
-fn log_mode_row(ui: &Ui, session: &mut Session) {
-    let detached = session.ui.log_detached;
-    if ui.button(if detached { "Attach log" } else { "Detach log" }) {
-        session.ui.log_detached = !detached;
-        crate::ui_state::save(&session.ui);
-    }
-    ui.same_line();
-    ui.text_disabled(if detached { "floating" } else { "in panel" });
 }
 
 fn log_row(ui: &Ui, entry: &LogEntry, all: bool) {

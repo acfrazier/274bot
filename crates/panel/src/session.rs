@@ -878,6 +878,10 @@ pub struct Session {
     /// The log section's filtered view and controls over the shared
     /// `frontend_core::log` store.
     pub log_pane: crate::log_pane::LogPane,
+    /// Whether the dockable Log window is open; this is session-local.
+    pub log_window_open: bool,
+    /// Whether the Log body ran this frame; transient and not serialized.
+    pub log_window_body_drawn: bool,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt
     /// (zeroed when cleared or dropped).
     pub pass_scratch: Secret,
@@ -1319,6 +1323,8 @@ impl Session {
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
             log_pane: crate::log_pane::LogPane::default(),
+            log_window_open: false,
+            log_window_body_drawn: false,
             pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
             cred_user: String::new(),

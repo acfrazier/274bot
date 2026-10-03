@@ -63,9 +63,6 @@ pub struct PanelUiState {
     /// with the TUI. Absent (0.1.8.1) or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
-    /// Keep the shared log in a separate in-app window.
-    #[serde(default)]
-    pub log_detached: bool,
     /// Write a per-session log file under `~/.274bot/logs/` (shared with the
     /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
     #[serde(default)]
@@ -139,7 +136,6 @@ impl Default for PanelUiState {
             background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
-            log_detached: false,
             session_log_file: false,
             fleet_columns: HashMap::new(),
             debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
@@ -629,24 +625,6 @@ mod tests {
         let bytes = serde_json::to_vec(&on).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value[frontend_core::log_file::SESSION_LOG_KEY], true);
-    }
-
-    #[test]
-    fn detached_log_defaults_in_panel_and_roundtrips() {
-        let old: PanelUiState =
-            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
-        assert!(
-            !old.log_detached,
-            "old preferences keep the log in the panel"
-        );
-
-        let state = PanelUiState {
-            log_detached: true,
-            ..Default::default()
-        };
-        let bytes = serde_json::to_vec(&state).unwrap();
-        let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
-        assert!(back.log_detached);
     }
 
     #[test]
