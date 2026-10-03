@@ -367,6 +367,8 @@ pub struct WalkRequest {
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
     pub cross: Box<[Arc<str>]>,
+    /// Create a [`crate::combat::WalkGuard`] for this followed route.
+    pub protect: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {

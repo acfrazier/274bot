@@ -1122,6 +1122,7 @@ mod tests {
                 evidence: None,
                 loc_id: None,
                 cross: Box::new([]),
+                protect: false,
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
             assert_no_batch_change(cx, &owner, first + 1, 4, 1);
@@ -1628,6 +1629,7 @@ mod tests {
                 required_after: cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                protect: false,
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
             let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
@@ -1720,6 +1722,7 @@ mod tests {
                             required_after: cx.evidence(),
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
+                            protect: false,
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
                         let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();

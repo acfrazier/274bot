@@ -101,6 +101,7 @@ impl WalkSpec {
             required_after,
             evidence: None,
             cross: Box::default(),
+            protect: false,
         }
     }
 }

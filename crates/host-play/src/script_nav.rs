@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::quest_progress::EvidenceStamp;
+use api::snapshot::{GameSnapshot, SnapshotView, WorldTile};
 use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::router::{
     find_first_with_avoid, find_first_with_fallback_avoid, find_missing_item_reqs_with_avoid,
@@ -171,6 +172,8 @@ pub(crate) struct NavBot {
     /// its route. Only a held walk is eligible for automatic carry dispatch.
     /// Boxed only while held or recovering; idle slots retain no wire payload.
     pub(crate) carried_walk: Option<Box<CarriedWalk>>,
+    /// Hold-mode protect driver for this followed route. Dropped with the route.
+    pub(crate) walk_guard: Option<script::combat::WalkGuard>,
 }
 
 /// A held script walk or its identity across a watchdog-owned replacement.
@@ -403,6 +406,26 @@ impl ScriptWalkArm {
             self.refuse_native(authority);
             return false;
         }
+        let protect = request.protect;
+        let guard = if protect {
+            let view = SnapshotView::new(
+                Some(snapshot),
+                EvidenceStamp {
+                    run: authority.run(),
+                    tick: u64::from(snapshot.tick()),
+                    sequence: 0,
+                },
+            );
+            match script::combat::WalkGuard::begin(&request, &view) {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    self.refuse_native(authority);
+                    return false;
+                }
+            }
+        } else {
+            None
+        };
         if let (Some(provider), Some(family)) = (
             request.evidence,
             self.world
@@ -421,7 +444,7 @@ impl ScriptWalkArm {
             cross: request.cross.to_vec(),
             ..Default::default()
         };
-        self.queue_route_impl(
+        let queued = self.queue_route_impl(
             request.target.x,
             request.target.z,
             request.target.level,
@@ -439,7 +462,13 @@ impl ScriptWalkArm {
             exclusions,
             Some(authority),
             request.loc_id,
-        )
+        );
+        if queued {
+            if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
+                bot.walk_guard = guard;
+            }
+        }
+        queued
     }
 
     /// Re-find an estimated endpoint against newly observed live geometry
@@ -2246,5 +2275,6 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.bank_fetch = None;
     nav.walk_request_id = 0;
     nav.route_quest_evidence = None;
+    nav.walk_guard = None;
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
 }
