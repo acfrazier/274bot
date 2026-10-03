@@ -16,11 +16,19 @@ pub(super) struct DisembarkPlank {
     to: WorldTile,
 }
 
+/// One of the two Entrana board crossings modeled in this slice.
+#[derive(Debug, Clone, Copy)]
+struct BoardPlank {
+    loc_id: i32,
+    at: WorldTile,
+    to: WorldTile,
+}
+
 /// One 2004 boat journey: talk to the dock NPC at `at`, sail onto the
 /// destination ship (`to` = the `set_sail` deck tile). `plank` is the
 /// boat-side gangplank off that ship; Shanks `set_sail_cairn` lands on
 /// the dock with `plank: None`. `at` is the NPC spawn, never the origin
-/// gangplank (board planks refuse until the sailor is spoken to).
+/// gangplank.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BoatRoute {
     /// npc.pack id of the dock NPC who starts the journey.
@@ -28,8 +36,8 @@ pub(super) struct BoatRoute {
     at: WorldTile,
     to: WorldTile,
     plank: Option<DisembarkPlank>,
-    /// `set_sail` / `set_sail_cairn` `p_delay` only (plank ticks are on
-    /// the disembark edge).
+    /// `set_sail` / `set_sail_cairn` `p_delay` only (gangplank ticks are on
+    /// their loc edges).
     ticks: i32,
     /// `(obj id, count)` fare the journey charges, if any.
     fare: Option<(i32, i32)>,
@@ -39,15 +47,77 @@ pub(super) struct BoatRoute {
 }
 
 /// The 2004 boat journeys: `~set_sail(` landings from area scripts, NPC
-/// tiles from jm2, disembark locs from `gangplank.loc` / loc.pack (jm2
-/// placements). Board planks (`*_on`) are not packed — they mes and
-/// refuse until the sailor is spoken to.
+/// tiles from jm2, and disembark locs from `gangplank.loc` / loc.pack.
+/// The two Entrana board planks are included below; the other four board
+/// planks are intentionally out of scope, not treated as movement refusals.
 pub(super) const GANGPLANK_TICKS: i32 = 2;
 
+/// Entrana `*_on` crossings are the only board planks without a loc-level
+/// `board_message` or quest gate. At the map's north-facing loc angle,
+/// `p_teleport` shifts one tile south before `p_telejump` shifts two more
+/// south and one level up.
+const UNGUARDED_BOARD_PLANKS: &[BoardPlank] = &[
+    BoardPlank {
+        loc_id: 2412, // ship_to_entrana_on
+        at: WorldTile {
+            x: 3048,
+            z: 3233,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3048,
+            z: 3230,
+            level: 1,
+        },
+    },
+    BoardPlank {
+        loc_id: 2414, // ship_from_entrana_on
+        at: WorldTile {
+            x: 2834,
+            z: 3334,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 2834,
+            z: 3331,
+            level: 1,
+        },
+    },
+];
+
+/// Store each gangplank's script displacement relative to the player's
+/// `coord`: `p_teleport` shifts one tile, then `p_telejump` shifts two more
+/// from the updated coordinate. `to` is the canonical landing from the loc
+/// anchor.
+fn gangplank_edge(loc_id: i32, at: WorldTile, to: WorldTile) -> TransportEdge {
+    TransportEdge {
+        kind: TransportKind::Ladder,
+        player_delta: Some(WorldTile {
+            x: (to.x - at.x).signum() * 3,
+            z: (to.z - at.z).signum() * 3,
+            level: to.level - at.level,
+        }),
+        at,
+        to,
+        loc_id,
+        option: 1,
+        ticks: GANGPLANK_TICKS,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
+}
+
 pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
-    // Seaman Thresnor (npc 378) on the Port Sarim pier (m47_50): lands on
-    // the Karamja ship (2956,3143,1); `sarimshipplank_off` (loc 2082 at
-    // 2956,3144,1, m46_49) Cross to the Karamja dock (2956,3146,0).
+    // Port Sarim → Musa: Talk-to lands on the Karamja ship (2956,3143,1);
+    // loc 2082 at (2956,3144,1) has canonical landing (2956,3147,0).
     BoatRoute {
         npc: 378,
         at: WorldTile {
@@ -69,7 +139,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
             },
             to: WorldTile {
                 x: 2956,
-                z: 3146,
+                z: 3147,
                 level: 0,
             },
         }),
@@ -77,9 +147,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Customs officer (npc 380) at Musa Point (m46_49): lands on the Port
-    // Sarim ship (3032,3217,1); `karamjashipplank_off` (loc 2084 at
-    // 3031,3217,1, m47_50) to the Port Sarim dock (3029,3217,0).
+    // Musa → Port Sarim: Talk-to lands on the Port Sarim ship; loc 2084 at
+    // (3031,3217,1) has canonical anchor landing (3028,3217,0).
     BoatRoute {
         npc: 380,
         at: WorldTile {
@@ -100,7 +169,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
                 level: 1,
             },
             to: WorldTile {
-                x: 3029,
+                x: 3028,
                 z: 3217,
                 level: 0,
             },
@@ -109,9 +178,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Customs officer (npc 380) at the Brimhaven dock: lands on the
-    // Ardougne ship (2683,3268,1); `brimhavenshipplank_off` (loc 2086 at
-    // 2683,3269,1, m41_51) to the Ardougne dock (2683,3271,0).
+    // Brimhaven → Ardougne: Talk-to lands on the Ardougne ship; loc 2086 at
+    // (2683,3269,1) has canonical anchor landing (2683,3272,0).
     BoatRoute {
         npc: 380,
         at: WorldTile {
@@ -133,7 +201,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
             },
             to: WorldTile {
                 x: 2683,
-                z: 3271,
+                z: 3272,
                 level: 0,
             },
         }),
@@ -141,9 +209,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Captain Barnaby (npc 381) at the Ardougne dock: lands on the
-    // Brimhaven ship (2775,3234,1); `ardougneshipplank_off` (loc 2088 at
-    // 2774,3234,1, m43_50) to the Brimhaven dock (2772,3234,0).
+    // Ardougne → Brimhaven: Talk-to lands on the Brimhaven ship; loc 2088 at
+    // (2774,3234,1) has canonical anchor landing (2771,3234,0).
     BoatRoute {
         npc: 381,
         at: WorldTile {
@@ -164,7 +231,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
                 level: 1,
             },
             to: WorldTile {
-                x: 2772,
+                x: 2771,
                 z: 3234,
                 level: 0,
             },
@@ -173,9 +240,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
         fare: Some((995, 30)),
         varp_req: None,
     },
-    // Monk of Entrana (shipmonk, npc 657): lands on the Entrana ship
-    // (2834,3331,1); `ship_from_entrana_off` (loc 2415 at 2834,3333,1,
-    // m44_52) to the Entrana dock (2834,3335,0). Delay 13.
+    // Port Sarim → Entrana: Talk-to lands on the Entrana ship; loc 2415 at
+    // (2834,3333,1) has canonical anchor landing (2834,3336,0). Delay 13.
     BoatRoute {
         npc: 657,
         at: WorldTile {
@@ -197,7 +263,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
             },
             to: WorldTile {
                 x: 2834,
-                z: 3335,
+                z: 3336,
                 level: 0,
             },
         }),
@@ -205,9 +271,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
         fare: None,
         varp_req: None,
     },
-    // Monk of Entrana (shipmonk2, npc 658): lands on the Port Sarim ship
-    // (3048,3231,1); `ship_to_entrana_off` (loc 2413 at 3048,3232,1,
-    // m47_50) to the Port Sarim dock (3048,3234,0). Delay 14.
+    // Entrana → Port Sarim: Talk-to lands on the Port Sarim ship; loc 2413 at
+    // (3048,3232,1) has canonical anchor landing (3048,3235,0). Delay 14.
     BoatRoute {
         npc: 658,
         at: WorldTile {
@@ -229,7 +294,7 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
             },
             to: WorldTile {
                 x: 3048,
-                z: 3234,
+                z: 3235,
                 level: 0,
             },
         }),
@@ -279,9 +344,8 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
 ];
 
 /// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
-/// journey (NPC tile → `set_sail` deck), plus a loc-backed disembark
-/// hop (`Cross` on the boat-side gangplank → dock). Kind is Ladder: a
-/// level-changing loc op, not an NPC.
+/// journey (NPC tile → `set_sail` deck), plus loc-backed gangplank crossings.
+/// Kind is Ladder: these are level-changing loc ops, not NPCs.
 pub(super) fn boat_edges(
     graph: &mut TransportGraph,
     gates: &ObservableGates,
@@ -312,26 +376,14 @@ pub(super) fn boat_edges(
             audit,
         );
         if let Some(p) = r.plank {
-            graph.edges.push(TransportEdge {
-                kind: TransportKind::Ladder,
-                player_delta: None,
-                at: p.at,
-                to: p.to,
-                loc_id: p.loc_id,
-                option: 1,
-                ticks: GANGPLANK_TICKS,
-                dir: None,
-                open_loc_id: None,
-                skill_req: vec![],
-                item_req: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-                quest_gates: None,
-            });
+            graph.edges.push(gangplank_edge(p.loc_id, p.at, p.to));
         }
+    }
+
+    // Locs 2081, 2083, 2085, and 2087 are intentionally omitted from this
+    // slice: their handler moves the player before printing `board_message`.
+    for p in UNGUARDED_BOARD_PLANKS {
+        graph.edges.push(gangplank_edge(p.loc_id, p.at, p.to));
     }
 }
 

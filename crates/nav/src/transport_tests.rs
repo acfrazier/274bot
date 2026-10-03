@@ -2858,14 +2858,6 @@ fn derive_transports_skips_script_names_missing_from_pack() {
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "");
     fx.write(
-        "scripts/ladders+stairs/scripts/ladders.rs2",
-        "\
-[oploc1,some_unknown_ladder]
-p_arrivedelay;
-~climb_ladder(movecoord(coord(), 0, 1, 0), true);
-",
-    );
-    fx.write(
         "maps/m44_53.jm2",
         "\
 ==== MAP ====
@@ -2876,9 +2868,22 @@ p_arrivedelay;
     );
     let defs = loc_defs(&[(1747, 1, 1)]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let baseline = derive_transports(fx.path(), &defs, &wc);
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[oploc1,some_unknown_ladder]
+p_arrivedelay;
+~climb_ladder(movecoord(coord(), 0, 1, 0), true);
+",
+    );
     let graph = derive_transports(fx.path(), &defs, &wc);
-    // The unknown ladder name resolves nothing; ungated explicit hops
-    // remain, while Shanks and gliders require absent source proofs.
+    assert_eq!(
+        graph.edges, baseline.edges,
+        "an unresolved ladder script must not add a route"
+    );
+    // Other ungated explicit hops remain, while Shanks and gliders require
+    // absent source proofs.
     let explicit = graph
         .edges
         .iter()
@@ -2890,14 +2895,6 @@ p_arrivedelay;
         })
         .count();
     assert_eq!(explicit, graph.edges.len());
-    assert_eq!(
-        graph
-            .edges
-            .iter()
-            .filter(|e| e.kind == TransportKind::Ladder)
-            .count(),
-        6
-    );
     // 2 carts + the 5 essence-mine wizard entries + the 2 Elkoy maze
     // escorts.
     assert_eq!(
@@ -3002,7 +2999,7 @@ fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
         musa_plank.to,
         WorldTile {
             x: 2956,
-            z: 3146,
+            z: 3147,
             level: 0
         }
     );
@@ -3086,6 +3083,327 @@ fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
         })
         .expect("Shilo → Port Sarim boat");
     assert_eq!(shanks_sarim.ticks, 15);
+}
+
+/// Karamja's disembark script teleports one tile, then jumps two more from
+/// the updated player coordinate. The adjacent route takeoff at x=3030 thus
+/// lands three tiles west at x=3027.
+#[test]
+fn disembark_gangplank_includes_the_teleport_and_jump_displacements() {
+    let graph = derive_static_routes();
+    let plank = graph
+        .edges
+        .iter()
+        .find(|edge| edge.kind == TransportKind::Ladder && edge.loc_id == 2084)
+        .expect("karamjashipplank_off");
+
+    assert_eq!(plank.landing_from(plank.at), Some(plank.to));
+    assert_eq!(
+        plank.player_delta,
+        Some(WorldTile {
+            x: -3,
+            z: 0,
+            level: -1,
+        })
+    );
+    assert_eq!(
+        plank.landing_from(WorldTile {
+            x: 3030,
+            z: 3217,
+            level: 1,
+        }),
+        Some(WorldTile {
+            x: 3027,
+            z: 3217,
+            level: 0,
+        })
+    );
+}
+
+/// Only the two Entrana board locs without a loc-level `board_message` or
+/// quest gate are modeled here. The other four handlers move before printing
+/// their `board_message`, so they are omitted from this slice.
+#[test]
+fn unguarded_entrana_board_gangplanks_include_both_script_displacements() {
+    let graph = derive_static_routes();
+    let cases = [
+        (
+            2412, // ship_to_entrana_on
+            WorldTile {
+                x: 3048,
+                z: 3233,
+                level: 0,
+            },
+            WorldTile {
+                x: 3047,
+                z: 3234,
+                level: 0,
+            },
+            WorldTile {
+                x: 3048,
+                z: 3230,
+                level: 1,
+            },
+            WorldTile {
+                x: 3047,
+                z: 3231,
+                level: 1,
+            },
+        ),
+        (
+            2414, // ship_from_entrana_on
+            WorldTile {
+                x: 2834,
+                z: 3334,
+                level: 0,
+            },
+            WorldTile {
+                x: 2835,
+                z: 3335,
+                level: 0,
+            },
+            WorldTile {
+                x: 2834,
+                z: 3331,
+                level: 1,
+            },
+            WorldTile {
+                x: 2835,
+                z: 3332,
+                level: 1,
+            },
+        ),
+    ];
+    for (loc_id, anchor, from, canonical, expected) in cases {
+        let plank = graph
+            .edges
+            .iter()
+            .find(|edge| edge.kind == TransportKind::Ladder && edge.loc_id == loc_id)
+            .unwrap_or_else(|| panic!("missing unguarded board gangplank {loc_id}"));
+        assert_eq!(plank.at, anchor, "game-plane anchor for loc {loc_id}");
+        assert_eq!(plank.to, canonical, "canonical landing for loc {loc_id}");
+        assert_eq!(plank.landing_from(plank.at), Some(canonical));
+        assert_eq!(
+            plank.player_delta,
+            Some(WorldTile {
+                x: 0,
+                z: -3,
+                level: 1,
+            }),
+            "player-relative movement for loc {loc_id}"
+        );
+        assert_eq!(plank.landing_from(from), Some(expected));
+    }
+
+    let board_ids: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == TransportKind::Ladder
+                && matches!(edge.loc_id, 2081 | 2083 | 2085 | 2087 | 2412 | 2414)
+        })
+        .map(|edge| edge.loc_id)
+        .collect();
+    assert_eq!(board_ids, [2412, 2414]);
+}
+
+fn assert_canonical_gangplank_landings(graph: &TransportGraph) {
+    let mut gangplanks: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == TransportKind::Ladder
+                && matches!(
+                    edge.loc_id,
+                    2082 | 2084 | 2086 | 2088 | 2412 | 2413 | 2414 | 2415
+                )
+        })
+        .collect();
+    gangplanks.sort_by_key(|edge| edge.loc_id);
+    assert_eq!(
+        gangplanks
+            .iter()
+            .map(|edge| edge.loc_id)
+            .collect::<Vec<_>>(),
+        [2082, 2084, 2086, 2088, 2412, 2413, 2414, 2415]
+    );
+    for edge in gangplanks {
+        assert!(
+            edge.player_delta.is_some(),
+            "loc {} must be player-relative",
+            edge.loc_id
+        );
+        assert_eq!(
+            edge.landing_from(edge.at),
+            Some(edge.to),
+            "loc {} must store its anchor-relative canonical landing",
+            edge.loc_id
+        );
+    }
+}
+
+#[test]
+fn gangplank_landings_remain_canonical_across_pack_roundtrip() {
+    let graph = derive_static_routes();
+    assert_canonical_gangplank_landings(&graph);
+
+    let fx = Fixture::new();
+    let defs = loc_defs(&[]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let (_, decoded, _) = crate::pack::decode(&bytes).expect("decode gangplank pack");
+    assert_canonical_gangplank_landings(&decoded);
+}
+
+#[test]
+fn non_anchor_gangplank_takeoff_routes_through_backward_proof() {
+    use crate::router::{find_first_with, FindOptions, Leg, ReverseProof};
+
+    let from = WorldTile {
+        x: 3030,
+        z: 3217,
+        level: 1,
+    };
+    let destination = WorldTile {
+        x: 3027,
+        z: 3217,
+        level: 0,
+    };
+    let width = 8;
+    let height = 5;
+    let plane = width * height;
+    let mut flags = vec![client::dash3d::CollisionFlag::WR_GRND as u32; 4 * plane];
+    let destination_index =
+        (destination.z - 3215) as usize * width + (destination.x - 3026) as usize;
+    flags[destination_index] = 0;
+    for z in 3215..=3219 {
+        for x in 3028..=3032 {
+            let index = plane + (z - 3215) as usize * width + (x - 3026) as usize;
+            flags[index] = 0;
+        }
+    }
+    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 3026,
+            z: 3215,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let fx = Fixture::new();
+    fx.write("maps/m47_50.jm2", "==== MAP ====\n0 0 22: u50\n");
+    let defs = loc_defs(&[]);
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let bytes = crate::pack::encode(&collision, &graph, &[]);
+    let (collision, graph, _) = crate::pack::decode(&bytes).expect("decode gangplank pack");
+
+    let search = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &[destination],
+        FindOptions::default(),
+        &crate::WorldState::empty(),
+    );
+    assert_eq!(
+        search.proof(),
+        ReverseProof::Reachable,
+        "settled={}, route={:?}",
+        search.settled(),
+        search.route()
+    );
+    let route = search.route().expect("relative gangplank route");
+    assert_eq!(route.dest, destination);
+    assert!(route.legs.iter().any(|leg| matches!(
+        leg,
+        Leg::Transport { edge }
+            if edge.loc_id == 2084
+                && edge.to == destination
+                && edge.player_delta == Some(WorldTile { x: -3, z: 0, level: -1 })
+    )));
+}
+
+#[test]
+#[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+fn entrana_board_gangplanks_match_real_link_below_placements() {
+    for (root, graph, collision) in qualification_worlds() {
+        let cases = [
+            (
+                2412,
+                WorldTile {
+                    x: 3048,
+                    z: 3233,
+                    level: 0,
+                },
+                WorldTile {
+                    x: 3048,
+                    z: 3230,
+                    level: 1,
+                },
+            ),
+            (
+                2414,
+                WorldTile {
+                    x: 2834,
+                    z: 3334,
+                    level: 0,
+                },
+                WorldTile {
+                    x: 2834,
+                    z: 3331,
+                    level: 1,
+                },
+            ),
+        ];
+        for (loc_id, anchor, landing) in cases {
+            let edges: Vec<_> = graph
+                .edges
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.kind == TransportKind::Ladder && edge.loc_id == loc_id)
+                .collect();
+            assert_eq!(
+                edges.len(),
+                1,
+                "expected one real placement-backed edge for loc {loc_id} in {}",
+                root.display()
+            );
+            let (index, edge) = edges[0];
+            assert_eq!(edge.at, anchor, "actual game-plane anchor for loc {loc_id}");
+            assert_eq!(edge.to, landing, "canonical landing for loc {loc_id}");
+            assert_eq!(
+                edge.player_delta,
+                Some(WorldTile {
+                    x: 0,
+                    z: -3,
+                    level: 1,
+                })
+            );
+            assert_eq!(edge.landing_from(edge.at), Some(landing));
+            assert!(
+                graph.approaches[index].is_some(),
+                "real placement must supply approach geometry for loc {loc_id}"
+            );
+            assert!(
+                !graph.admissible_from(collision, index, WorldTile { level: 1, ..anchor }),
+                "raw plane-1 takeoffs must not admit game-plane-0 loc {loc_id}"
+            );
+            assert!(
+                !graph.edges.iter().any(|candidate| {
+                    candidate.kind == TransportKind::Ladder
+                        && candidate.loc_id == loc_id
+                        && candidate.at.level == 1
+                        && candidate.to.level == 2
+                }),
+                "loc {loc_id} must not be modeled as plane 1 to plane 2"
+            );
+        }
+    }
 }
 
 /// Slashable webs (`bigweb_slashable`) pack two edges per crossing: knife

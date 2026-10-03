@@ -2,8 +2,9 @@
 //! synthetic content shaped like the 289 openers each test cites.
 
 use super::*;
-use crate::router::{find_with, FindOptions, Leg, RouteError};
+use crate::router::{find_first_with, find_with, FindOptions, Leg, RouteError};
 use crate::world_state::WorldState;
+use client::dash3d::CollisionFlag;
 
 /// The shared engine facts every stage-door fixture needs: the pinned
 /// engine door and ladder procs ([`ENGINE_DOOR_PROCS`], verbatim),
@@ -446,6 +447,10 @@ if(map_members = ^true & inv_total(inv, holy_table_napkin) > 0 & inv_total(inv, 
     assert_eq!(ladder[0].at, tile(2826, 3412));
     assert_eq!(ladder[0].to, tile(2826, 3412 + CELLAR_SHIFT));
     assert_eq!(ladder[0].skill_req, [(14, 60)]);
+    assert_eq!(
+        ladder[0].player_delta, None,
+        "the Mining 60 guard remains anchor-absolute"
+    );
     assert_eq!(ladder[0].ticks, 1 + extra_ticks("ladder_cellar").unwrap());
     let whistle: Vec<_> = graph.edges.iter().filter(|e| e.loc_id == 22).collect();
     assert_eq!(whistle.len(), 2);
@@ -745,4 +750,289 @@ p_teleport(movecoord(coord, 0, 0, 5));
         let (graph, _) = derive_stage(&fx, &[900]);
         assert_eq!(!door_crossings(&graph, 900).is_empty(), crosses, "{body}");
     }
+}
+/// `find_first_with` exercises both forward routing and the reverse landing
+/// proof. Only the non-anchor take-off and its relative destination are
+/// standable, so an anchor-absolute landing cannot reach the target.
+fn assert_relative_climb_from_non_anchor(
+    loc_id: i32,
+    loc_name: &str,
+    at: WorldTile,
+    delta: WorldTile,
+    source: &str,
+    handler: &str,
+) {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", &format!("{loc_id}={loc_name}\n"));
+    let map_path = format!("maps/m{}_{}.jm2", at.x.div_euclid(64), at.z.div_euclid(64));
+    fx.write(
+        &map_path,
+        &format!(
+            "==== MAP ====\n0 0 0: h1\n==== LOC ====\n{} {} {}: {loc_id} 10 0\n",
+            at.level,
+            at.x.rem_euclid(64),
+            at.z.rem_euclid(64)
+        ),
+    );
+    fx.write(source, handler);
+
+    let takeoff = WorldTile { x: at.x + 1, ..at };
+    let landing = WorldTile {
+        x: takeoff.x + delta.x,
+        z: takeoff.z + delta.z,
+        level: takeoff.level + delta.level,
+    };
+    let nominal = WorldTile {
+        x: at.x + delta.x,
+        z: at.z + delta.z,
+        level: at.level + delta.level,
+    };
+    let min_x = at.x.min(takeoff.x).min(landing.x).min(nominal.x) - 1;
+    let max_x = at.x.max(takeoff.x).max(landing.x).max(nominal.x) + 1;
+    let min_z = at.z.min(takeoff.z).min(landing.z).min(nominal.z) - 1;
+    let max_z = at.z.max(takeoff.z).max(landing.z).max(nominal.z) + 1;
+    let origin = WorldTile {
+        x: min_x,
+        z: min_z,
+        level: 0,
+    };
+    let width = (max_x - min_x + 1) as usize;
+    let height = (max_z - min_z + 1) as usize;
+    let cells = width * height * 4;
+    let mut blocked = vec![u64::MAX; cells.div_ceil(64)];
+    let mut walk = vec![0; cells];
+    for tile in [takeoff, landing] {
+        let index = tile.level as usize * width * height
+            + (tile.z - origin.z) as usize * width
+            + (tile.x - origin.x) as usize;
+        blocked[index / 64] &= !(1u64 << (index % 64));
+    }
+    // The anchor-relative landing is blocked, and even a transport to it
+    // cannot walk east onto the non-anchor target from the anchor.
+    let landing_index = landing.level as usize * width * height
+        + (landing.z - origin.z) as usize * width
+        + (landing.x - origin.x) as usize;
+    walk[landing_index] = CollisionFlag::W_W as u8;
+    let collision = WorldCollision {
+        origin,
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    };
+    assert!(!collision.standable(nominal));
+    let defs = loc_defs(&[(loc_id, 1, 1)]);
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == loc_id)
+        .unwrap_or_else(|| panic!("missing {loc_name} climb"));
+    assert_eq!(edge.at, at);
+    assert_eq!(edge.to, nominal, "wire `to` remains canonical at the loc");
+    assert_ne!(takeoff, edge.at, "the proof must use a non-anchor stand");
+
+    let search = find_first_with(
+        &collision,
+        &graph,
+        takeoff,
+        &[landing],
+        FindOptions::default(),
+        &WorldState::empty(),
+    );
+    let route = search.route().unwrap_or_else(|error| {
+        panic!("{loc_name}: non-anchor take-off should land at {landing:?}; {error:?}")
+    });
+    assert_eq!(route.dest, landing);
+    let planned = route
+        .legs
+        .iter()
+        .find_map(|leg| match leg {
+            Leg::Transport { edge } if edge.loc_id == loc_id => Some(edge),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{loc_name}: route did not use the climb edge"));
+    assert_eq!(planned.to, landing);
+    assert_eq!(planned.landing_from(takeoff), Some(landing));
+    assert_eq!(edge.player_delta, Some(delta));
+}
+
+#[test]
+fn viking_seer_ladder_routes_and_reverse_proof_use_the_actual_takeoff() {
+    assert_relative_climb_from_non_anchor(
+        4163,
+        "viking_seer_up_ladder",
+        WorldTile {
+            x: 2631,
+            z: 3663,
+            level: 0,
+        },
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 2,
+        },
+        "scripts/quests/quest_viking/scripts/viking_peer.rs2",
+        "[oploc1,viking_seer_up_ladder]\np_arrivedelay;\n~climb_ladder(movecoord(coord, 0, 2, 0), true);\n",
+    );
+}
+
+#[test]
+fn tutorial_cellar_ladder_routes_and_reverse_proof_use_the_actual_takeoff() {
+    assert_relative_climb_from_non_anchor(
+        3028,
+        "newbieladder1",
+        WorldTile {
+            x: 3088,
+            z: 9519,
+            level: 0,
+        },
+        WorldTile {
+            x: 0,
+            z: -6400,
+            level: 0,
+        },
+        "scripts/tutorial/scripts/tut_doors_and_gates.rs2",
+        "[oploc1,newbieladder1]\np_arrivedelay;\n~climb_ladder(movecoord(coord, 0, 0, -6400), true);\n",
+    );
+}
+
+#[test]
+fn tutorial_cellar_ladder_up_routes_from_non_anchor_stand() {
+    assert_relative_climb_from_non_anchor(
+        3031,
+        "newbieladdertop2",
+        WorldTile {
+            x: 3111,
+            z: 3126,
+            level: 0,
+        },
+        WorldTile {
+            x: 0,
+            z: 6400,
+            level: 0,
+        },
+        "scripts/tutorial/scripts/tut_doors_and_gates.rs2",
+        "[oploc1,newbieladdertop2]\np_arrivedelay;\n~climb_ladder(movecoord(coord, 0, 0, 6400), false);\n",
+    );
+}
+
+#[test]
+fn boardgames_rank_guard_stays_anchor_absolute_but_unconditional_down_climbs_are_relative() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write(
+        "pack/loc.pack",
+        "4643=boardgames_runelink_ladderup_experienced\n\
+         4644=boardgames_runelink_ladderdown_experienced\n\
+         4645=boardgames_draughts_ladderup_experienced\n\
+         4646=boardgames_draughts_ladderdown_experienced\n",
+    );
+    fx.write(
+        "pack/varp.pack",
+        "353=boardgames_runelink_rank\n354=boardgames_draughts_rank\n",
+    );
+    fx.write(
+        "scripts/minigames/game_gamesroom/general/configs/boardgames.varp",
+        "[boardgames_runelink_rank]\nprotect=no\ntransmit=yes\nscope=perm\n\
+         [boardgames_draughts_rank]\nprotect=no\ntransmit=yes\nscope=perm\n",
+    );
+    fx.write(
+        "scripts/minigames/game_gamesroom/boardgames_runelink/scripts/boardgames_runelink.rs2",
+        "[oploc1,boardgames_runelink_ladderup_experienced]\n\
+         if(%boardgames_runelink_rank < 1500) {\n\
+         mes(\"You need a Runelink rank of at least 1500 to climb this ladder.\");\n\
+         return;\n\
+         }\n\
+         ~climb_ladder(movecoord(coord, 0, 1, 0), true);\n\
+         [oploc1,boardgames_runelink_ladderdown_experienced]\n\
+         ~climb_ladder(movecoord(coord, 0, -1, 0), false);\n",
+    );
+    fx.write(
+        "scripts/minigames/game_gamesroom/boardgames_draughts/scripts/boardgames_draughts.rs2",
+        "[oploc1,boardgames_draughts_ladderup_experienced]\n\
+         if(%boardgames_draughts_rank < 1500) {\n\
+         mes(\"You need a Draughts rank of at least 1500 to climb this ladder.\");\n\
+         return;\n\
+         }\n\
+         ~climb_ladder(movecoord(coord, 0, 1, 0), true);\n\
+         [oploc1,boardgames_draughts_ladderdown_experienced]\n\
+         ~climb_ladder(movecoord(coord, 0, -1, 0), false);\n",
+    );
+    fx.write(
+        "maps/m34_77.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n\
+         0 40 8: 4643 10 0\n1 40 8: 4644 10 0\n\
+         0 23 8: 4645 10 0\n1 23 8: 4646 10 0\n",
+    );
+    let defs = loc_defs(&[(4643, 1, 1), (4644, 1, 1), (4645, 1, 1), (4646, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+
+    for (id, varp) in [(4643, 353), (4645, 354)] {
+        let edge = graph.edges.iter().find(|edge| edge.loc_id == id).unwrap();
+        assert_eq!(
+            edge.player_delta, None,
+            "rank/dialog handler {id} stays absolute"
+        );
+        assert_eq!(edge.varp_req, [(varp, 1500)]);
+    }
+    for id in [4644, 4646] {
+        let edge = graph.edges.iter().find(|edge| edge.loc_id == id).unwrap();
+        assert_eq!(
+            edge.player_delta,
+            Some(WorldTile {
+                x: 0,
+                z: 0,
+                level: -1,
+            })
+        );
+        assert!(edge.varp_req.is_empty());
+    }
+}
+
+#[test]
+fn sound_effectful_ladder_handler_keeps_anchor_landing() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "2605=funladdertop\n");
+    fx.write(
+        "scripts/quests/quest_dragon/scripts/melzars_maze.rs2",
+        "[oploc1,funladdertop]\nsound_synth(door_open, 1, 0);\n\
+         ~climb_ladder(movecoord(coord, 0, 0, 6400), true);\n",
+    );
+    write_open_square(&fx, "0 5 40: 2605 10 0\n");
+    let defs = loc_defs(&[(2605, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let edge = graph.edges.iter().find(|edge| edge.loc_id == 2605).unwrap();
+    assert_eq!(edge.player_delta, None);
+    assert_eq!(edge.to, tile(2821, 3432 + CELLAR_SHIFT));
+}
+
+#[test]
+fn melzars_maze_ladder_uses_the_content_coordinate_as_a_player_delta() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "2605=funladdertop\n");
+    fx.write(
+        "scripts/quests/quest_dragon/scripts/melzars_maze.rs2",
+        "[oploc1,funladdertop]\n~climb_ladder(movecoord(coord, 0, 0, 6400), true);\n",
+    );
+    write_open_square(&fx, "0 5 40: 2605 10 0\n");
+    let defs = loc_defs(&[(2605, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    let edge = graph.edges.iter().find(|edge| edge.loc_id == 2605).unwrap();
+    assert_eq!(
+        edge.player_delta,
+        Some(WorldTile {
+            x: 0,
+            z: 6400,
+            level: 0,
+        })
+    );
+    assert_eq!(edge.to, tile(2821, 3432 + CELLAR_SHIFT));
 }
