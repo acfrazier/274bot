@@ -1760,3 +1760,260 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
         "later observations and Pause-fence restoration must not refresh older walking decisions"
     );
 }
+
+#[derive(Debug, Clone)]
+struct CapturedStatusLine {
+    slot: String,
+    level: api::hostlog::Level,
+    source: api::hostlog::Source,
+    message: String,
+}
+
+#[derive(Default)]
+struct StatusLineSink(std::sync::Mutex<Vec<CapturedStatusLine>>);
+
+impl api::hostlog::Sink for StatusLineSink {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        let Some(slot) = record.slot.filter(|slot| slot.starts_with("status-")) else {
+            return;
+        };
+        self.0.lock().unwrap().push(CapturedStatusLine {
+            slot: slot.to_owned(),
+            level: record.level,
+            source: record.source,
+            message: record.message.to_owned(),
+        });
+    }
+}
+
+static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(std::sync::Mutex::new(Vec::new()));
+
+fn install_status_line_sink() {
+    let _ = api::hostlog::install_sink(&STATUS_LINE_SINK);
+}
+
+fn status_lines_for(slot: &str) -> Vec<CapturedStatusLine> {
+    STATUS_LINE_SINK
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|line| line.slot == slot)
+        .cloned()
+        .collect()
+}
+
+fn status_line_test_status(phase: NativePhase, failure: Option<ScriptFailure>) -> ScriptStatus {
+    ScriptStatus {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        card: crate::CompiledId("Gatherer"),
+        phase,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([]),
+        failure,
+    }
+}
+
+#[test]
+fn native_status_logs_each_phase_or_failure_change_once() {
+    const SLOT: &str = "status-change-test";
+    install_status_line_sink();
+    let mut output = Output {
+        account: SLOT.to_owned(),
+        ..Output::default()
+    };
+
+    output.status(status_line_test_status(NativePhase::Working, None));
+    output.status(status_line_test_status(NativePhase::Working, None));
+    output.status(status_line_test_status(NativePhase::Waiting, None));
+
+    let failure = ScriptFailure {
+        code: Arc::from("walk-ended"),
+        message: Arc::from("walk ended with Failed"),
+        retryable: false,
+    };
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(failure.clone()),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(failure.clone()),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            message: Arc::from("walk ended with a different reason"),
+            ..failure
+        }),
+    ));
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            code: Arc::from("walk-ended"),
+            message: Arc::from("walk ended with a different reason"),
+            retryable: false,
+        }),
+    ));
+
+    let lines = status_lines_for(SLOT);
+    assert_eq!(
+        lines.len(),
+        4,
+        "initial phase, two phase transitions, and one changed failure; identical statuses add none"
+    );
+    assert_eq!(lines[0].level, api::hostlog::Level::Info);
+    assert_eq!(
+        lines[0].message,
+        "native Gatherer phase=working failure=none"
+    );
+    assert_eq!(lines[1].level, api::hostlog::Level::Info);
+    assert_eq!(
+        lines[1].message,
+        "native Gatherer phase=waiting failure=none"
+    );
+    assert_eq!(lines[2].level, api::hostlog::Level::Info);
+    assert_eq!(
+        lines[2].message,
+        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with Failed"
+    );
+    assert_eq!(lines[3].level, api::hostlog::Level::Info);
+    assert_eq!(
+        lines[3].message,
+        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with a different reason"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.source == api::hostlog::Source::Script),
+        "native status updates use the script log source"
+    );
+}
+
+#[test]
+fn native_status_logs_present_fields_as_plain_text() {
+    const SLOT: &str = "status-format-test";
+    install_status_line_sink();
+    let mut output = Output {
+        account: SLOT.to_owned(),
+        ..Output::default()
+    };
+    let mut working = status_line_test_status(NativePhase::Working, None);
+    working.fields = vec![
+        crate::native::StatusField {
+            key: "waiting_for",
+            label: "Waiting for",
+            value: crate::native::StatusValue::Text(Arc::from("bank trip")),
+        },
+        crate::native::StatusField {
+            key: "action_state",
+            label: "Action",
+            value: crate::native::StatusValue::Text(Arc::from("banking")),
+        },
+        crate::native::StatusField {
+            key: "last_event",
+            label: "Last event",
+            value: crate::native::StatusValue::Text(Arc::from("bank trip due")),
+        },
+    ]
+    .into();
+    output.status(working);
+    output.status(status_line_test_status(
+        NativePhase::Blocked,
+        Some(ScriptFailure {
+            code: Arc::from("walk-ended"),
+            message: Arc::from("walk ended with Failed"),
+            retryable: false,
+        }),
+    ));
+
+    let lines = status_lines_for(SLOT);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[0].message,
+        "native Gatherer phase=working failure=none waiting_for=bank trip action_state=banking last_event=bank trip due"
+    );
+    assert_eq!(
+        lines[1].message,
+        "native Gatherer phase=blocked failure=walk-ended failure_message=walk ended with Failed"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.message.contains("Some(") && !line.message.contains("None")),
+        "present status text is plain and absent fields are omitted"
+    );
+}
+struct RetryableStatusScript;
+
+impl Script for RetryableStatusScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        tick.output.status(ScriptStatus {
+            run: tick.cx.run(),
+            card: crate::CompiledId("Gatherer"),
+            phase: NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            fields: Arc::from([]),
+            failure: Some(ScriptFailure {
+                code: Arc::from("retryable-failure"),
+                message: Arc::from("retry after supplies"),
+                retryable: true,
+            }),
+        });
+        Ok(ScriptFlow::Continue)
+    }
+
+    fn retry(&mut self) -> Result<(), ScriptFailure> {
+        Ok(())
+    }
+
+    fn read_journal(&mut self) -> Result<(), ScriptFailure> {
+        Ok(())
+    }
+}
+
+#[test]
+fn retry_and_journal_read_log_blocked_status_clears() {
+    const SLOT: &str = "status-clear-test";
+    install_status_line_sink();
+    let mut slot = SlotScript::default();
+    slot.start_test_script(Box::new(RetryableStatusScript), Some(selected()))
+        .unwrap();
+    slot.compiled.as_mut().unwrap().output.account = SLOT.to_owned();
+    let run = slot.native_run().unwrap();
+
+    tick(&mut slot);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    slot.retry_compiled(run).unwrap();
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+
+    tick(&mut slot);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    slot.read_journal_compiled(run).unwrap();
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+
+    let lines = status_lines_for(SLOT);
+    assert_eq!(lines.len(), 4);
+    assert_eq!(
+        lines[0].message,
+        "native Gatherer phase=blocked failure=retryable-failure failure_message=retry after supplies"
+    );
+    assert_eq!(
+        lines[1].message,
+        "native Gatherer phase=waiting failure=none"
+    );
+    assert_eq!(
+        lines[2].message,
+        "native Gatherer phase=blocked failure=retryable-failure failure_message=retry after supplies"
+    );
+    assert_eq!(
+        lines[3].message,
+        "native Gatherer phase=waiting failure=none"
+    );
+}
