@@ -263,49 +263,12 @@ pub(super) fn guardian_names(row: &TrailMembershipRow) -> &'static [&'static str
     }
 }
 
-/// The local player's own posted target pair: the posted `self_target_kind`
-/// and `self_target_index`. Both are needed for the read, and a page that
-/// posted neither is not a target at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SelfTarget {
-    pub(super) kind: i32,
-    pub(super) index: i32,
-}
-
-/// This call's posted local-player target, or `None` when the page did not
-/// post the pair.
-pub(super) fn self_target(input: &Value) -> Option<SelfTarget> {
-    Some(SelfTarget {
-        kind: posted_i32(input, "self_target_kind")?,
-        index: posted_i32(input, "self_target_index")?,
-    })
-}
-
 /// The frozen `targetsMe`: this posted row's own target is the local player.
 /// A page that posted no `self_slot` is never a match — the machine does not
 /// invent the zero slot.
 pub(super) fn targets_me(row: &Value, self_slot: Option<i32>) -> bool {
     posted_i32(row, "target_kind") == Some(PLAYER_KIND)
         && self_slot.is_some_and(|slot| posted_i32(row, "target_index") == Some(slot))
-}
-
-/// The mirror read: the local player's own posted target is this posted row.
-/// A page that posted no pair is never a match.
-pub(super) fn we_target(row: &Value, target: Option<SelfTarget>) -> bool {
-    target.is_some_and(|target| {
-        target.kind == NPC_KIND && posted_i32(row, "index") == Some(target.index)
-    })
-}
-
-/// The frozen `sawDeath` read: the owned row posted zero health beside a posted
-/// maximum, and this call's page still shows this token's fight on it — the
-/// row's own posted target is the player, or the player's own posted target is
-/// that row. A row that merely died beside another player is not this token's
-/// kill.
-pub(super) fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<SelfTarget>) -> bool {
-    posted_i32(row, "health") == Some(0)
-        && posted_i32(row, "max_health").is_some_and(|max| max > 0)
-        && (targets_me(row, self_slot) || we_target(row, target))
 }
 
 /// The frozen spawn filter over this call's posted npc page: a row whose
@@ -323,6 +286,7 @@ pub(super) fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<Sel
 /// name the verb carries is that same posted string — no frozen debugname is
 /// ever substituted for it.
 pub(super) fn pick_npc<'a>(
+    npc_type: Option<i32>,
     names: &[&str],
     page: &'a [Value],
     self_slot: Option<i32>,
@@ -340,7 +304,9 @@ pub(super) fn pick_npc<'a>(
         else {
             continue;
         };
-        if !names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted)) {
+        let typed = npc_type.is_some_and(|id| posted_i32(row, "id") == Some(id));
+        let named = names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted));
+        if !typed && !named {
             continue;
         }
         if !posted_action(row, ATTACK) {

@@ -5,7 +5,7 @@
 //! observations settle pending bits; candidates commit only after acceptance,
 //! and batch callers commit only the accepted receipt prefix.
 
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick};
 use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{OnArg, PrayerObservation, PRAYER_COUNT, TOGGLE_MS};
@@ -176,6 +176,43 @@ impl PrayerSweep {
 
     pub(crate) const fn report(&self) -> PrayerSweepReport {
         self.report
+    }
+}
+
+/// Driver-owned prayer hygiene. Callers that see prayers on with no live fight
+/// begin [`ClearPrayers`] through this helper; eat and protect stay in Combat.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Hygiene is a return value, not stored beside Combat."
+)]
+pub enum Hygiene {
+    Clean,
+    Started(ActionHandle<ClearPrayers>),
+    Deferred,
+    Failed(ActionError),
+}
+
+/// Observed-varp clear. `None` and host-busy errors defer; all-off is clean.
+pub fn begin_clear_prayers(selected: &Arc<SelectedGameData>, tick: &mut NativeTick<'_>) -> Hygiene {
+    let Some(active) = tick.cx.snapshot().prayers_active() else {
+        return Hygiene::Deferred;
+    };
+    if !active.value.iter().any(|on| *on) {
+        return Hygiene::Clean;
+    }
+    match tick
+        .actions
+        .begin::<ClearPrayers>(Arc::clone(selected), &mut tick.cx)
+    {
+        Ok(handle) => Hygiene::Started(handle),
+        Err(
+            ActionError::Busy
+            | ActionError::Held
+            | ActionError::Stale
+            | ActionError::Cancelled
+            | ActionError::BudgetExhausted,
+        ) => Hygiene::Deferred,
+        Err(error) => Hygiene::Failed(error),
     }
 }
 

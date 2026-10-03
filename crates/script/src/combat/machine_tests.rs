@@ -1,5 +1,6 @@
 use super::*;
 use crate::native::{ledger, ActionHandle, HostEffect, NativeActions, RetainedMemory};
+use api::game_data::NpcAttackKind;
 use api::game_data::SelectedGameData;
 use api::obj_names::ItemDefView;
 use api::quest_progress::EvidenceStamp;
@@ -1386,6 +1387,58 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
     });
     assert!(matches!(unavailable, Err(ActionError::Unavailable(_))));
     assert!(harness.take().is_none());
+}
+
+#[test]
+fn counter_protect_saradomin_raises_magic_and_zamorak_is_magic() {
+    let zamorak = Scene::new("trail_hard");
+    let zamorak_row = zamorak
+        .tables
+        .npc(zamorak.npcs[0].r#type.unwrap() as i32)
+        .unwrap();
+    assert_eq!(zamorak_row.attack_kind, Some(NpcAttackKind::Magic));
+    assert!(!zamorak_row.counter_protect);
+
+    let mut scene = Scene::new("trail_hard2");
+    let row = scene
+        .tables
+        .npc(scene.npcs[0].r#type.unwrap() as i32)
+        .unwrap();
+    assert_eq!(row.attack_kind, Some(NpcAttackKind::Mixed));
+    assert!(row.counter_protect);
+    scene.stat(5, 43, 43);
+    scene.face_us();
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    let magic = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|prayer| prayer.name == "Protect from Magic")
+        .unwrap();
+    let melee = scene
+        .data
+        .prayers()
+        .iter()
+        .find(|prayer| prayer.name == "Protect from Melee")
+        .unwrap();
+    let plan = harness.pending_batch(&scene, 1);
+    let buttons: Vec<i32> = (0..plan.len)
+        .filter_map(|index| match plan.get(index) {
+            Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+                Some(*component_id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        buttons.contains(&magic.button_com),
+        "counter_protect holds Magic, not oscillating Melee: {buttons:?}"
+    );
+    assert!(
+        !buttons.contains(&melee.button_com),
+        "a held Magic protect must not also raise Melee: {buttons:?}"
+    );
 }
 
 #[test]

@@ -380,6 +380,11 @@ impl GameSnapshot {
         self.scene_state = scene_state;
     }
 
+    /// Offline fixture seed for the host game-tick count.
+    pub fn seed_tick(&mut self, tick: u32) {
+        self.tick = tick;
+    }
+
     /// Offline fixture seed for a completed world build and its map origin.
     pub fn seed_world(&mut self, world: WorldStateView) {
         self.base = Some((world.map_base_x, world.map_base_z));

@@ -113,7 +113,230 @@ enum StallCombatObservation {
     SecondSession { guard_ready: bool },
 }
 
+const PROTECT_MAGIC_VARP: i32 = 95;
+const ZAMORAK_WIZARD: usize = 1007;
+
+#[derive(Debug, Clone)]
+struct ProtectWindowObservation {
+    seeded: i32,
+    ack_tick: Option<u32>,
+    kill_tick: Option<u32>,
+    kill_evidence: Option<&'static str>,
+    prayer_off_tick: Option<u32>,
+    in_flight_hits: u32,
+    in_flight_max: i32,
+    live_hit: [bool; 4],
+    violation: Option<&'static str>,
+}
+
+impl ProtectWindowObservation {
+    fn new(seeded: i32) -> Self {
+        Self {
+            seeded,
+            ack_tick: None,
+            kill_tick: None,
+            kill_evidence: None,
+            prayer_off_tick: None,
+            in_flight_hits: 0,
+            in_flight_max: 0,
+            live_hit: [false; 4],
+            violation: None,
+        }
+    }
+
+    fn magic_on(snap: &GameSnapshot) -> bool {
+        snap.varps()
+            .iter()
+            .find(|varp| varp.index == PROTECT_MAGIC_VARP)
+            .is_some_and(|varp| varp.value == 1)
+    }
+
+    fn observe(&mut self, snap: &GameSnapshot) {
+        if self.violation.is_some() || !snap.ingame() || snap.scene_state() != 2 {
+            return;
+        }
+        let tick = snap.tick();
+        if tick == 0 {
+            return;
+        }
+        let magic_on = Self::magic_on(snap);
+        if magic_on && self.ack_tick.is_none() {
+            self.ack_tick = Some(tick);
+        }
+        if let Some(ack) = self.ack_tick {
+            if !magic_on && self.kill_tick.is_none() {
+                self.violation = Some("protect from magic dropped before the kill");
+                return;
+            }
+            if let Some(marks) = snap.hitmarks() {
+                for (index, mark) in marks.marks.iter().enumerate() {
+                    let is_live = mark.kind == 1 && mark.value > 0 && mark.cycle > marks.loop_cycle;
+                    let onset = is_live && !self.live_hit[index];
+                    self.live_hit[index] = is_live;
+                    if !onset {
+                        continue;
+                    }
+                    if tick > ack && tick <= ack + 2 {
+                        self.in_flight_hits = self.in_flight_hits.saturating_add(1);
+                        self.in_flight_max = self.in_flight_max.max(mark.value);
+                        if self.in_flight_hits > 1 || mark.value > 20 {
+                            self.violation = Some("in-flight hit exceeded the 2-tick bound");
+                            return;
+                        }
+                    } else if tick > ack + 2 && magic_on {
+                        self.violation = Some("hitsplat after the protected window");
+                        return;
+                    }
+                }
+            }
+        }
+        self.observe_kill(snap, tick);
+        if self.kill_tick.is_some() && !magic_on && self.prayer_off_tick.is_none() {
+            self.prayer_off_tick = Some(tick);
+        }
+        if let Some(kill) = self.kill_tick {
+            if let Some(off) = self.prayer_off_tick {
+                if off > kill + 3 {
+                    self.violation = Some("prayers off more than three ticks after the kill");
+                }
+            } else if tick > kill + 3 {
+                self.violation = Some("prayers still on three ticks after the kill");
+            }
+        }
+    }
+
+    fn observe_kill(&mut self, snap: &GameSnapshot, tick: u32) {
+        if self.kill_tick.is_some() {
+            return;
+        }
+        if snap.npcs().iter().any(posted_wizard_corpse) {
+            self.kill_tick = Some(tick);
+            self.kill_evidence = Some("posted_corpse");
+        }
+    }
+
+    fn ready(&self, snap: &GameSnapshot, names: Option<&ObjNames>) -> bool {
+        self.violation.is_none()
+            && self.ack_tick.is_some()
+            && self.kill_tick.is_some()
+            && self
+                .prayer_off_tick
+                .is_some_and(|off| self.kill_tick.is_some_and(|kill| off <= kill + 3))
+            && self.in_flight_hits <= 1
+            && Proof::ClueReplaced {
+                seeded: self.seeded,
+            }
+            .check(snap, names)
+    }
+
+    fn evidence(&self) -> crate::evidence::ProtectWindowEvidence {
+        crate::evidence::ProtectWindowEvidence {
+            ack_tick: self.ack_tick,
+            in_flight_hits: self.in_flight_hits,
+            in_flight_max: self.in_flight_max,
+            kill_tick: self.kill_tick,
+            kill_evidence: self.kill_evidence,
+            prayer_off_tick: self.prayer_off_tick,
+        }
+    }
+}
+
+fn posted_wizard_corpse(npc: &api::snapshot::NpcView) -> bool {
+    npc.r#type == Some(ZAMORAK_WIZARD) && npc.total_health > 0 && npc.health == 0
+}
+
+fn protect_window_seed(scenario: &Scenario) -> Option<i32> {
+    match scenario.proof {
+        Proof::ClueProtectWindow { seeded } => Some(seeded),
+        _ => scenario.steps.iter().find_map(|step| match step.wait.arm {
+            Proof::ClueProtectWindow { seeded } => Some(seeded),
+            _ => None,
+        }),
+    }
+}
+
 const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
+
+#[cfg(test)]
+mod protect_window_oracle {
+    use super::*;
+    use api::snapshot::{NpcView, VarpView, WorldTile};
+
+    fn wizard(health: i32, total_health: i32) -> NpcView {
+        NpcView {
+            index: 7,
+            r#type: Some(ZAMORAK_WIZARD),
+            name: Some("Zamorak Wizard".into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 2947,
+                z: 3819,
+                level: 0,
+            },
+            distance: 1,
+            animation: -1,
+            animation_frame: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health,
+            total_health,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 65,
+            size: 1,
+            network: WorldTile {
+                x: 2947,
+                z: 3819,
+                level: 0,
+            },
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }
+    }
+
+    fn frame(tick: u32, magic: i32, npcs: Vec<NpcView>) -> GameSnapshot {
+        let mut snap = GameSnapshot::new();
+        snap.seed_ingame(2);
+        snap.seed_tick(tick);
+        snap.seed_varps(vec![VarpView {
+            index: PROTECT_MAGIC_VARP,
+            value: magic,
+        }]);
+        snap.seed_npcs(npcs);
+        snap
+    }
+
+    #[test]
+    fn disappearance_without_a_corpse_is_not_a_kill() {
+        let mut window = ProtectWindowObservation::new(2735);
+        window.observe(&frame(48, 1, vec![wizard(80, 80)]));
+        window.observe(&frame(151, 1, Vec::new()));
+        window.observe(&frame(151, 0, Vec::new()));
+        assert_eq!(window.kill_tick, None);
+        assert_eq!(window.kill_evidence, None);
+        assert!(
+            !window.ready(&frame(151, 0, Vec::new()), None),
+            "a disappearance must not satisfy clue_protect_window"
+        );
+    }
+
+    #[test]
+    fn posted_corpse_latches_the_kill_tick() {
+        let mut window = ProtectWindowObservation::new(2735);
+        window.observe(&frame(48, 1, vec![wizard(80, 80)]));
+        window.observe(&frame(151, 1, vec![wizard(0, 80)]));
+        assert_eq!(window.kill_tick, Some(151));
+        assert_eq!(window.kill_evidence, Some("posted_corpse"));
+    }
+}
 
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
@@ -185,6 +408,8 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
+    protect_window: Option<ProtectWindowObservation>,
     /// StartScript has begun: paint published before it cannot belong to
     /// this run's card.
     script_started: bool,
@@ -281,6 +506,7 @@ impl ScenarioRunner {
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            protect_window: None,
             script_started: false,
             receipt_prefixes,
             script_receipts: Vec::new(),
@@ -657,6 +883,21 @@ impl ScenarioRunner {
             if dirty {
                 self.ticks_waited += 1;
                 self.total_ticks += 1;
+                if let Some(window) = self.protect_window.as_mut() {
+                    window.observe(&self.snapshot);
+                }
+            }
+            if let Some(message) = self
+                .protect_window
+                .as_ref()
+                .and_then(|window| window.violation)
+            {
+                self.finish_fail(&format!(
+                    "step {} ({}): protect window: {message}",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
             }
             let (arm, budget) = {
                 let wait = &self.current_step().wait;
@@ -828,6 +1069,9 @@ impl ScenarioRunner {
             self.script_started = true;
             self.script_running = false;
             self.script_receipts.clear();
+            if let Some(seeded) = protect_window_seed(&self.scenario) {
+                self.protect_window = Some(ProtectWindowObservation::new(seeded));
+            }
             // Several skills can advance before their sequential watches
             // begin (a catching Guard can die before the first cake is stolen).
             // Seed XP is excluded; fresh return-trip watches stay step-local.
@@ -858,6 +1102,10 @@ impl ScenarioRunner {
                 .iter()
                 .any(|row| row.starts_with(prefix)),
             Proof::ScriptRunning => self.script_running,
+            Proof::ClueProtectWindow { .. } => self
+                .protect_window
+                .as_ref()
+                .is_some_and(|window| window.ready(&self.snapshot, self.obj_names.as_deref())),
             other => other.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
@@ -1391,6 +1639,10 @@ impl ScenarioRunner {
             self.started,
         );
         evidence.receipt = self.script_receipts.first().cloned();
+        evidence.protect_window = self
+            .protect_window
+            .as_ref()
+            .map(ProtectWindowObservation::evidence);
         self.evidence = Some(evidence);
     }
 
@@ -1408,6 +1660,10 @@ impl ScenarioRunner {
             self.started,
         );
         evidence.receipt = self.script_receipts.first().cloned();
+        evidence.protect_window = self
+            .protect_window
+            .as_ref()
+            .map(ProtectWindowObservation::evidence);
         self.evidence = Some(evidence);
     }
 }

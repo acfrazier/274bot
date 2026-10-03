@@ -898,6 +898,10 @@ pub struct NpcNameRow {
     pub attackrate: Option<i32>,
     #[serde(default)]
     pub bespoke: bool,
+    /// True when an attack body reads `~check_protect_prayer` and will switch
+    /// onto whatever protect we are not using. Combat holds one protect.
+    #[serde(default)]
+    pub counter_protect: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
