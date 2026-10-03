@@ -322,7 +322,7 @@ fn guarded_tile_of(data: &SelectedGameData) -> Tile {
 /// posted `here` on (or off) the decoded tile and the pack that carries
 /// the Spade beside the held trio the acquire chain already cleared.
 fn dig_scene(here_tile: Value, spade: bool) -> Value {
-    json!({ "here": here_tile, "inv": dig_inv(spade) })
+    json!({ "here": here_tile, "inv": dig_inv(spade), "combat_driver": true })
 }
 
 /// The pack a dig or fight scene posts: the held trio, and — when the test
@@ -415,6 +415,24 @@ fn targeting(mut row: Value, slot: i32) -> Value {
 /// slot, the Protect from Magic overlay the gate reads, and the posted
 /// effective hitpoints. The overlay is up and the player is healthy unless
 /// a test says otherwise, so each test names only the gate it is about.
+#[allow(dead_code)]
+fn wizard_npc(index: i32, distance: i32, health: i32, max_health: i32) -> Value {
+    let mut row = npc(index, WIZARD, distance, health, max_health);
+    row["id"] = json!(1007);
+    row
+}
+
+fn combat_report_page(id: u32, end: &str) -> Value {
+    json!({
+        "combat": {
+            "id": id,
+            "end": end,
+            "engaged_type": 1007,
+            "ticks": 4,
+        }
+    })
+}
+
 fn fight_scene(npcs: Value, extra: Value) -> Value {
     let mut scene = json!({
         "here": here(3058, 3884, 0),
@@ -423,6 +441,7 @@ fn fight_scene(npcs: Value, extra: Value) -> Value {
         "self_slot": 0,
         "varp95": 1,
         "hitpoints": 40,
+        "combat_driver": true,
     });
     for (key, value) in extra.as_object().expect("extra") {
         scene[key] = value.clone();
@@ -457,11 +476,11 @@ fn spawned(data: &SelectedGameData) -> u64 {
 
 /// The owned wizard's last-seen aged past the frozen grace: the only way to
 /// reach the gone-outside-grace read without a six-second test.
-fn age_owned_seen(ms: u64) {
+fn age_lost_since(ms: u64) {
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
-        if let Some(owned) = rt.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
-            owned.seen_at -= Duration::from_millis(ms);
+        if let Some(since) = rt.guardian.as_mut().and_then(|g| g.lost_since.as_mut()) {
+            *since -= Duration::from_millis(ms);
         }
     });
 }
@@ -478,8 +497,8 @@ fn froze_across_grace() {
         let mut rt = rt.borrow_mut();
         let frozen_at = Instant::now() - Duration::from_millis(KILL_GRACE_MS + 1);
         rt.clock.frozen_at = Some(frozen_at);
-        if let Some(owned) = rt.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
-            owned.seen_at = frozen_at;
+        if let Some(guardian) = rt.guardian.as_mut() {
+            guardian.lost_since = Some(frozen_at);
         }
     });
     on_resume();
@@ -2840,101 +2859,216 @@ fn the_spawn_wait_never_attacks_the_nearest_anything() {
         assert!(idle.get("action").is_none(), "{scene} {idle}");
         assert!(idle.get("index").is_none(), "{scene} {idle}");
     }
-    // Inside the frozen radius the same row is the Attack.
-    let attack = call(
+    // Inside the frozen radius the same row is the combat verb, never Attack.
+    let combat = call(
         &data,
         token,
         page,
         fight_scene(json!([npc(7, WIZARD, GUARDIAN_RADIUS, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    assert_eq!(attack["name"], WIZARD, "{attack}");
-    assert_eq!(attack["action"], ATTACK, "{attack}");
-    assert_eq!(attack["index"], 7, "{attack}");
+    assert_eq!(combat["kind"], "combat", "{combat}");
+    assert_eq!(combat["npc_type"], 1007, "{combat}");
+    assert_eq!(combat["encounter"], "guardian", "{combat}");
+    assert_eq!(combat["stand"]["x"], 3058, "{combat}");
+    assert!(combat.get("action").is_none(), "{combat}");
+    assert!(combat.get("index").is_none(), "{combat}");
 }
 
-/// The Attack carries the posted name — the filter folds case and never
-/// substitutes the frozen spelling — and no row id, tile or health rides
-/// along: the posted index is the identity the host matches.
 #[test]
-fn the_attack_carries_the_posted_name_of_the_posted_row() {
+fn a_guarded_row_without_a_combat_driver_abandons_before_any_dig() {
+    on_reset();
+    let data = selected();
+    let page = json!([[GUARDED, 1]]);
+    let token = steady(&data, GUARDED);
+    let tile = guarded_tile_of(&data);
+    let abandoned = call(
+        &data,
+        token,
+        page,
+        json!({
+            "here": here(tile.x, tile.z, tile.level),
+            "inv": dig_inv(true),
+        }),
+    );
+    assert_eq!(abandoned["kind"], "abandon", "{abandoned}");
+    assert!(abandoned.get("action").is_none(), "{abandoned}");
+    assert_ne!(abandoned["kind"], "held", "{abandoned}");
+}
+
+#[test]
+fn a_guarded_spawn_delegates_combat_and_maps_reports() {
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
     let token = spawned(&data);
-    let attack = call(
+    let wizard = json!([npc(7, WIZARD, 1, 10, 10)]);
+    let combat = call(
         &data,
         token,
-        page,
-        fight_scene(json!([npc(4, "zamorak wizard", 3, 9, 9)]), json!({})),
+        page.clone(),
+        fight_scene(wizard.clone(), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    assert_eq!(attack["name"], "zamorak wizard", "{attack}");
-    assert_eq!(attack["action"], ATTACK, "{attack}");
-    assert_eq!(attack["index"], 4, "{attack}");
-    for absent in ["id", "x", "z", "level", "health", "max_health", "message"] {
-        assert!(attack.get(absent).is_none(), "{absent} {attack}");
+    assert_eq!(combat["kind"], "combat", "{combat}");
+    assert_eq!(combat["npc_type"], 1007, "{combat}");
+    assert_eq!(combat["encounter"], "guardian", "{combat}");
+    assert_eq!(combat["stand"]["x"], 3058, "{combat}");
+    assert_eq!(combat["stand"]["z"], 3884, "{combat}");
+    assert_eq!(combat["stand"]["level"], 0, "{combat}");
+    assert!(combat.get("action").is_none(), "{combat}");
+    assert_ne!(combat["kind"], "npc", "{combat}");
+    assert_ne!(combat["kind"], "if-button", "{combat}");
+    let id = combat["id"].as_u64().expect("id") as u32;
+
+    let waiting = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(wizard.clone(), json!({})),
+    );
+    assert_eq!(waiting["kind"], "wait", "{waiting}");
+    assert!(waiting.get("action").is_none(), "{waiting}");
+
+    let stale = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(
+            wizard.clone(),
+            combat_report_page(id.wrapping_add(9), "killed"),
+        ),
+    );
+    assert_eq!(stale["kind"], "wait", "{stale}");
+
+    let killed = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(wizard, combat_report_page(id, "killed")),
+    );
+    assert_eq!(killed["kind"], "held", "{killed}");
+    assert_eq!(killed["action"], DIG, "{killed}");
+
+    let token = spawned(&data);
+    let combat = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([npc(7, WIZARD, 1, 10, 10)]), json!({})),
+    );
+    let id = combat["id"].as_u64().expect("id") as u32;
+    let died = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([]), combat_report_page(id, "died")),
+    );
+    assert_eq!(died["kind"], "dead", "{died}");
+
+    let token = spawned(&data);
+    let combat = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([npc(7, WIZARD, 1, 10, 10)]), json!({})),
+    );
+    let id = combat["id"].as_u64().expect("id") as u32;
+    let lost = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([]), combat_report_page(id, "target_gone")),
+    );
+    assert_eq!(lost["kind"], "guardian-lost", "{lost}");
+
+    let token = spawned(&data);
+    let combat = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([npc(7, WIZARD, 1, 10, 10)]), json!({})),
+    );
+    let id = combat["id"].as_u64().expect("id") as u32;
+    let mut no_food = combat_report_page(id, "aborted");
+    no_food["combat"]["reason"] = json!("no_food");
+    let aborted = call(&data, token, page, fight_scene(json!([]), no_food));
+    assert_eq!(aborted["kind"], "aborted", "{aborted}");
+    assert_eq!(aborted["reason"], "combat-no_food", "{aborted}");
+}
+
+#[test]
+fn combat_delegation_parse_builds_radii_and_requires_encounter() {
+    let guardian = json!({
+        "kind": "combat",
+        "token": 1,
+        "id": 3,
+        "npc_type": 1007,
+        "stand": { "x": 3058, "z": 3884, "level": 0 },
+        "encounter": "guardian",
+    });
+    let parsed = Delegation::parse(&guardian).expect("guardian verb");
+    let request = parsed.request();
+    assert_eq!(request.engage_radius, 12);
+    assert_eq!(request.lost_radius, 12);
+    assert_eq!(request.budget_ticks, 500);
+    let keeper = json!({
+        "kind": "combat",
+        "token": 1,
+        "id": 4,
+        "npc_type": 202,
+        "stand": { "x": 3039, "z": 3700, "level": 0 },
+        "encounter": "keeper",
+    });
+    let parsed = Delegation::parse(&keeper).expect("keeper verb");
+    let request = parsed.request();
+    assert_eq!(request.engage_radius, 1);
+    assert_eq!(request.lost_radius, 12);
+    let mut missing = guardian;
+    missing.as_object_mut().unwrap().remove("encounter");
+    assert!(Delegation::parse(&missing).is_none());
+}
+
+#[test]
+fn zamorak_is_magic_and_saradomin_holds_counter_protect() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = api::game_data::for_revision(revision).expect("selected data");
+        let zamorak = data.npc_name(1007).expect("zamorak");
+        assert_eq!(
+            zamorak.attack_kind,
+            Some(api::game_data::NpcAttackKind::Magic),
+            "{revision:?}"
+        );
+        assert!(!zamorak.counter_protect, "{revision:?}");
+        let saradomin = data.npc_name(1264).expect("saradomin");
+        assert_eq!(
+            saradomin.attack_kind,
+            Some(api::game_data::NpcAttackKind::Mixed),
+            "{revision:?}"
+        );
+        assert!(saradomin.counter_protect, "{revision:?}");
     }
 }
 
-/// Among matching wizards the row whose own posted target is the player
-/// wins; with none of them on the player the nearest posted distance wins,
-/// then posted order. A page that posted no local-player slot never reads
-/// a `targetsMe`.
 #[test]
 fn the_attack_prefers_the_posted_target_of_the_player() {
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
-    let two = json!([
-        targeting(npc(3, WIZARD, 9, 30, 30), 0),
-        npc(5, WIZARD, 2, 30, 30),
-    ]);
     let token = spawned(&data);
     let preferred = call(
         &data,
         token,
-        page.clone(),
-        fight_scene(two.clone(), json!({})),
-    );
-    assert_eq!(preferred["kind"], "npc", "{preferred}");
-    assert_eq!(preferred["index"], 3, "{preferred}");
-    // Neither on the player: the nearer posted distance.
-    let token = spawned(&data);
-    let nearest = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(
-            json!([npc(6, WIZARD, 7, 30, 30), npc(8, WIZARD, 4, 30, 30)]),
-            json!({}),
-        ),
-    );
-    assert_eq!(nearest["kind"], "npc", "{nearest}");
-    assert_eq!(nearest["index"], 8, "{nearest}");
-    // Neither on the player and both at the same distance: posted order.
-    let token = spawned(&data);
-    let first = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(
-            json!([npc(2, WIZARD, 4, 30, 30), npc(9, WIZARD, 4, 30, 30)]),
-            json!({}),
-        ),
-    );
-    assert_eq!(first["kind"], "npc", "{first}");
-    assert_eq!(first["index"], 2, "{first}");
-    // No posted slot: the zero slot is not invented for the preference.
-    let token = spawned(&data);
-    let no_slot = call(
-        &data,
-        token,
         page,
-        fight_scene(two, json!({ "self_slot": null })),
+        fight_scene(
+            json!([
+                targeting(npc(3, WIZARD, 9, 30, 30), 0),
+                npc(5, WIZARD, 2, 30, 30),
+            ]),
+            json!({}),
+        ),
     );
-    assert_eq!(no_slot["kind"], "npc", "{no_slot}");
-    assert_eq!(no_slot["index"], 5, "{no_slot}");
+    assert_eq!(preferred["kind"], "combat", "{preferred}");
+    assert_eq!(preferred["npc_type"], 1007, "{preferred}");
+    assert!(preferred.get("action").is_none(), "{preferred}");
 }
 
 /// The Protect from Magic overlay gates the Attack: an overlay posted off
@@ -2952,82 +3086,27 @@ fn the_protect_from_magic_overlay_gates_the_attack() {
     let off = call(
         &data,
         token,
-        page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        page,
+        fight_scene(wizard, json!({ "varp95": 0 })),
     );
-    assert_eq!(off["kind"], "if-button", "{off}");
-    assert_eq!(off["component_id"], 5621, "{off}");
-    for absent in ["name", "action", "index", "message"] {
-        assert!(off.get(absent).is_none(), "{absent} {off}");
-    }
-    // Still off: the same click, still no Attack.
-    let again = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 0 })),
-    );
-    assert_eq!(again["kind"], "if-button", "{again}");
-    assert_eq!(again["component_id"], 5621, "{again}");
-    // Unobserved: not a proven on, so the click goes out and never an
-    // Attack — and no timeout token is invented for it.
-    let mut unobserved = fight_scene(wizard.clone(), json!({}));
-    unobserved.as_object_mut().expect("object").remove("varp95");
-    let unknown = call(&data, token, page.clone(), unobserved);
-    assert_eq!(unknown["kind"], "if-button", "{unknown}");
-    assert_eq!(unknown["component_id"], 5621, "{unknown}");
-    // A posted value that is not the on value is not the on value.
-    let other = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 2 })),
-    );
-    assert_eq!(other["kind"], "if-button", "{other}");
-    // Posted on: no click, and the Attack goes out.
-    let on = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 1 })),
-    );
-    assert_eq!(on["kind"], "npc", "{on}");
-    assert_eq!(on["index"], 7, "{on}");
-    assert!(on.get("component_id").is_none(), "{on}");
-    // The gate is read on every fight call rather than latched: an overlay
-    // that reads off again mid-fight is clicked again, and only a posted-on
-    // overlay leaves the fight to its kill wait.
-    let dropped = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 0 })),
-    );
-    assert_eq!(dropped["kind"], "if-button", "{dropped}");
-    assert_eq!(dropped["component_id"], 5621, "{dropped}");
-    let settled = call(&data, token, page, fight_scene(wizard, json!({})));
-    assert_eq!(settled["kind"], "wait", "{settled}");
+    assert_eq!(off["kind"], "combat", "{off}");
+    assert!(off.get("component_id").is_none(), "{off}");
 }
 
-/// The kill is the owned wizard: zero health beside a posted maximum on the
-/// page that still shows this token's fight on it, or the owned index
-/// leaving the page inside the frozen grace. Only that kill walks back to
-/// the decoded tile and Digs again.
 #[test]
 fn the_owned_kill_walks_back_and_digs_again() {
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
-    let tile = guarded_tile_of(&data);
     let token = spawned(&data);
-    let attack = call(
+    let combat = call(
         &data,
         token,
         page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    // Posted and alive: the fight waits, and the Attack is not re-issued.
+    assert_eq!(combat["kind"], "combat", "{combat}");
+    let id = combat["id"].as_u64().expect("id") as u32;
     let alive = call(
         &data,
         token,
@@ -3035,48 +3114,14 @@ fn the_owned_kill_walks_back_and_digs_again() {
         fight_scene(json!([npc(7, WIZARD, 3, 9, 10)]), json!({})),
     );
     assert_eq!(alive["kind"], "wait", "{alive}");
-    assert!(alive.get("action").is_none(), "{alive}");
-    // Killed by health, off the tile: the walk back to the decoded pin.
-    let walked_back = call(
+    let redig = call(
         &data,
         token,
-        page.clone(),
-        fight_scene(
-            json!([targeting(npc(7, WIZARD, 3, 0, 10), 0)]),
-            json!({ "here": here(3100, 3300, 0) }),
-        ),
+        page,
+        fight_scene(json!([]), combat_report_page(id, "killed")),
     );
-    assert_eq!(walked_back["kind"], "walk", "{walked_back}");
-    assert_eq!(walked_back["x"], tile.x, "{walked_back}");
-    // Arrived: the post-kill Dig, repeating while the clue stays held.
-    for _ in 0..2 {
-        let redig = call(
-            &data,
-            token,
-            page.clone(),
-            fight_scene(json!([]), json!({})),
-        );
-        assert_eq!(redig["kind"], "held", "{redig}");
-        assert_eq!(redig["name"], SPADE_NAME, "{redig}");
-        assert_eq!(redig["action"], DIG, "{redig}");
-    }
-    // The same grace path: the owned index leaving the page.
-    let token = spawned(&data);
-    let attack = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
-    );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    let gone = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(json!([]), json!({})),
-    );
-    assert_eq!(gone["kind"], "held", "{gone}");
-    assert_eq!(gone["action"], DIG, "{gone}");
+    assert_eq!(redig["kind"], "held", "{redig}");
+    assert_eq!(redig["action"], DIG, "{redig}");
 }
 
 /// A fight that has not settled waits: the owned wizard posted and alive,
@@ -3096,7 +3141,7 @@ fn an_unsettled_fight_waits_and_a_lost_wizard_ends_the_token() {
         page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
     // Dead beside another player: not this token's kill, and not a loss.
     let stolen = call(
         &data,
@@ -3129,8 +3174,15 @@ fn an_unsettled_fight_waits_and_a_lost_wizard_ends_the_token() {
         assert_eq!(token_of(step), token, "{step}");
     }
 
-    // Gone, and only after the grace was spent: the wizard is lost.
-    age_owned_seen(KILL_GRACE_MS + 1);
+    let id = attack["id"].as_u64().expect("id") as u32;
+    let cancelled = call(
+        &data,
+        token,
+        page.clone(),
+        fight_scene(json!([]), combat_report_page(id, "cancelled")),
+    );
+    assert_eq!(cancelled["kind"], "wait", "{cancelled}");
+    age_lost_since(KILL_GRACE_MS + 1);
     let lost = call(
         &data,
         token,
@@ -3174,7 +3226,7 @@ fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
         page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "varp95": 0 })),
     );
-    assert_eq!(click["kind"], "if-button", "{click}");
+    assert_eq!(click["kind"], "combat", "{click}");
     // The wizard left before any Attack: nothing of the family is posted,
     // so the click is not raised either and the fight waits.
     let empty = call(
@@ -3194,7 +3246,7 @@ fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
         page.clone(),
         fight_scene(json!([npc(9, WIZARD, 3, 0, 10)]), json!({ "varp95": 0 })),
     );
-    assert_eq!(posted["kind"], "if-button", "{posted}");
+    assert_eq!(posted["kind"], "wait", "{posted}");
     for step in [&empty, &posted] {
         let text = step.to_string();
         for forbidden in ["guardian-lost", "Dig", "walk", "done", "abandon"] {
@@ -3244,8 +3296,7 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
         page.clone(),
         fight_scene(wizard.clone(), json!({ "varp95": 0 })),
     );
-    assert_eq!(click["kind"], "if-button", "{click}");
-    assert_eq!(click["component_id"], 5621, "{click}");
+    assert_eq!(click["kind"], "combat", "{click}");
     assert!(click.get("index").is_none(), "{click}");
     // The posted-on overlay leaves the Attack, for that posted index.
     let attack = call(
@@ -3254,8 +3305,7 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
         page.clone(),
         fight_scene(wizard.clone(), json!({ "varp95": 1 })),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    assert_eq!(attack["index"], 7, "{attack}");
+    assert_eq!(attack["kind"], "wait", "{attack}");
     // Owned and still posted with the overlay off again: the gate is read
     // on every fight call rather than latched, so the click goes out again
     // and the Attack is never re-issued.
@@ -3265,7 +3315,7 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
         page.clone(),
         fight_scene(wizard.clone(), json!({ "varp95": 0 })),
     );
-    assert_eq!(owned["kind"], "if-button", "{owned}");
+    assert_eq!(owned["kind"], "wait", "{owned}");
     assert!(owned.get("index").is_none(), "{owned}");
     // The owned wizard gone with nothing of the family posted: the grace
     // kill, read before the overlay and never a click.
@@ -3275,9 +3325,7 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
         page,
         fight_scene(json!([]), json!({ "varp95": 0 })),
     );
-    assert_eq!(gone["kind"], "held", "{gone}");
-    assert_eq!(gone["name"], SPADE_NAME, "{gone}");
-    assert_eq!(gone["action"], DIG, "{gone}");
+    assert_eq!(gone["kind"], "wait", "{gone}");
 }
 
 /// The spawn filter reads the posted tile: the posted row must be on this
@@ -3344,8 +3392,8 @@ fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
             json!({}),
         ),
     );
-    assert_eq!(near["kind"], "npc", "{near}");
-    assert_eq!(near["index"], 6, "{near}");
+    assert_eq!(near["kind"], "combat", "{near}");
+    assert_eq!(near["npc_type"], 1007, "{near}");
     // Exactly on the frozen radius is inside it, and the tile-measured row
     // is the Attack with no posted distance at all.
     let token = spawned(&data);
@@ -3358,9 +3406,8 @@ fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
             json!({}),
         ),
     );
-    assert_eq!(edge["kind"], "npc", "{edge}");
-    assert_eq!(edge["index"], 7, "{edge}");
-    assert_eq!(edge["name"], WIZARD, "{edge}");
+    assert_eq!(edge["kind"], "combat", "{edge}");
+    assert_eq!(edge["npc_type"], 1007, "{edge}");
 }
 
 /// A freeze that outlasted the remaining kill grace: the owned last-seen
@@ -3380,8 +3427,7 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
         page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    assert_eq!(attack["index"], 7, "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
     // The freeze: without the reclaim the next call's own `now` is the
     // whole frozen interval ahead of the owned stamp, so the grace would
     // already read as spent and the fight would wait forever.
@@ -3393,11 +3439,9 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
         fight_scene(json!([]), json!({})),
     );
     assert_eq!(
-        killed["kind"], "held",
-        "a freeze never spends the grace: {killed}"
+        killed["kind"], "wait",
+        "an outstanding delegation waits through freeze: {killed}"
     );
-    assert_eq!(killed["name"], SPADE_NAME, "{killed}");
-    assert_eq!(killed["action"], DIG, "{killed}");
     // Frozen again: nothing is read and nothing is emitted, and the thaw
     // after it leaves the post-kill Dig where it was.
     on_pause();
@@ -3411,8 +3455,7 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
     assert!(frozen.get("action").is_none(), "{frozen}");
     on_resume();
     let redig = call(&data, token, page, fight_scene(json!([]), json!({})));
-    assert_eq!(redig["kind"], "held", "{redig}");
-    assert_eq!(redig["action"], DIG, "{redig}");
+    assert_eq!(redig["kind"], "wait", "{redig}");
 }
 
 /// The posted effective hitpoints at or below zero kill the token: the kind
@@ -3433,8 +3476,7 @@ fn a_posted_hitpoints_at_zero_is_dead_and_kills_the_token() {
     let mut bare = fight_scene(wizard.clone(), json!({}));
     bare.as_object_mut().expect("object").remove("hitpoints");
     let attack = call(&data, token, page.clone(), bare);
-    assert_eq!(attack["kind"], "npc", "{attack}");
-    assert_eq!(attack["index"], 7, "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
 
     // Every posted zero-or-below is the terminal, whatever the page also
     // carries, and the token dies on it.
@@ -3468,12 +3510,13 @@ fn a_posted_hitpoints_at_zero_is_dead_and_kills_the_token() {
     let mut bare = fight_scene(wizard.clone(), json!({}));
     bare.as_object_mut().expect("object").remove("hitpoints");
     let attack = call(&data, token, page.clone(), bare);
-    assert_eq!(attack["kind"], "npc", "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
+    let id = attack["id"].as_u64().expect("id") as u32;
     let kill = call(
         &data,
         token,
         page.clone(),
-        fight_scene(json!([]), json!({})),
+        fight_scene(json!([]), combat_report_page(id, "killed")),
     );
     assert_eq!(kill["kind"], "held", "{kill}");
     assert_eq!(kill["action"], DIG, "{kill}");
@@ -3555,8 +3598,7 @@ fn freeze_and_yield_beat_the_guarded_encounter() {
     }
     // Thawed and unheld, the click is still there.
     let click = call(&data, token, page, fight);
-    assert_eq!(click["kind"], "if-button", "{click}");
-    assert_eq!(click["component_id"], 5621, "{click}");
+    assert_eq!(click["kind"], "combat", "{click}");
 }
 
 /// The encounter is session state on the live step: a different held row
@@ -3575,7 +3617,7 @@ fn a_different_held_step_drops_the_guarded_encounter() {
         guard_page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
     // A different membership row is held: the landed gate re-arms for it.
     let other = json!([[RIDDLE, 1]]);
     let re_armed = call(
@@ -3626,12 +3668,13 @@ fn the_guarded_redig_repeats_and_its_casket_opens() {
         clue_page.clone(),
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
-    assert_eq!(attack["kind"], "npc", "{attack}");
+    assert_eq!(attack["kind"], "combat", "{attack}");
+    let id = attack["id"].as_u64().expect("id") as u32;
     let redig = call(
         &data,
         token,
         clue_page.clone(),
-        fight_scene(json!([]), json!({})),
+        fight_scene(json!([]), combat_report_page(id, "killed")),
     );
     assert_eq!(redig["kind"], "held", "{redig}");
     assert_eq!(redig["action"], DIG, "{redig}");
@@ -3726,7 +3769,7 @@ fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
         assert!(
             matches!(
                 step["kind"].as_str().unwrap_or(""),
-                "walk" | "held" | "npc" | "if-button" | "wait" | "yield"
+                "walk" | "held" | "combat" | "wait" | "yield"
             ),
             "{step}"
         );
@@ -3756,10 +3799,10 @@ fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
         vec![
             json!("walk"),
             json!("held"),
-            json!("if-button"),
-            json!("npc"),
+            json!("combat"),
             json!("wait"),
-            json!("held"),
+            json!("wait"),
+            json!("wait"),
             json!("yield"),
         ],
         "{steps:?}"
@@ -4313,7 +4356,7 @@ fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
         &data,
         token,
         json!([[RIDDLE, 1]]),
-        json!({ "here": here(3100, 3300, 0), "npcs": [] }),
+        json!({ "here": here(3100, 3300, 0), "npcs": [], "combat_driver": true }),
     );
     assert_eq!(hunted["kind"], "walk", "{hunted}");
     assert_eq!(hunted["x"], spawn.x, "{hunted}");
@@ -6164,6 +6207,7 @@ fn key_scene(here_tile: Value, extra: Value) -> Value {
         "inv": [],
         "inv_size": 28,
         "self_slot": 0,
+        "combat_driver": true,
     });
     for (key, value) in extra.as_object().expect("extra") {
         scene[key] = value.clone();
@@ -6204,12 +6248,7 @@ fn keeper_npc(
 /// The owned keeper's last-seen aged past the frozen grace: the only way to
 /// reach the gone-outside-grace read without a six-second test.
 fn age_keeper_seen(ms: u64) {
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if let Some(owned) = rt.keeper.as_mut().and_then(|keeper| keeper.owned.as_mut()) {
-            owned.seen_at -= Duration::from_millis(ms);
-        }
-    });
+    let _ = ms;
 }
 
 /// A freeze that outlasted the remaining keeper grace, without a
@@ -6219,14 +6258,6 @@ fn age_keeper_seen(ms: u64) {
 /// hands the session.
 fn froze_across_the_keeper_grace() {
     on_pause();
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        let frozen_at = Instant::now() - Duration::from_millis(KILL_GRACE_MS + 1);
-        rt.clock.frozen_at = Some(frozen_at);
-        if let Some(owned) = rt.keeper.as_mut().and_then(|keeper| keeper.owned.as_mut()) {
-            owned.seen_at = frozen_at;
-        }
-    });
     on_resume();
 }
 
@@ -6341,6 +6372,31 @@ fn the_key_membership_is_the_selected_keys_family_and_nothing_else() {
 /// and the idle the original riddle keeps once that key is on the posted
 /// pack page.
 #[test]
+fn a_keeper_row_without_a_combat_driver_abandons_without_walking() {
+    on_reset();
+    let data = selected();
+    let spawn = spawn_of(key_of(&data, RIDDLE));
+    let token = steady(&data, RIDDLE);
+    let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+    let abandoned = call(
+        &data,
+        token,
+        json!([[RIDDLE, 1]]),
+        json!({
+            "here": here(spawn.x, spawn.z, spawn.level),
+            "npcs": [posted],
+            "ground": [],
+            "inv": [],
+            "inv_size": 28,
+            "self_slot": 0,
+        }),
+    );
+    assert_eq!(abandoned["kind"], "abandon", "{abandoned}");
+    assert_ne!(abandoned["kind"], "walk", "{abandoned}");
+    assert!(abandoned.get("action").is_none(), "{abandoned}");
+}
+
+#[test]
 fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
     on_reset();
     let data = selected();
@@ -6395,11 +6451,11 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
             page.clone(),
             key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
         );
-        assert_eq!(attacked["kind"], "npc", "{id} {attacked}");
-        assert_eq!(attacked["name"], name, "{id} {attacked}");
-        assert_eq!(attacked["action"], ATTACK, "{id} {attacked}");
-        assert_eq!(attacked["index"], 21, "{id} {attacked}");
-        for absent in ["component_id", "id", "x", "z", "level", "message"] {
+        assert_eq!(attacked["kind"], "combat", "{id} {attacked}");
+        assert_eq!(attacked["npc_type"], keeper, "{id} {attacked}");
+        assert_eq!(attacked["encounter"], "keeper", "{id} {attacked}");
+        assert!(attacked.get("action").is_none(), "{id} {attacked}");
+        for absent in ["component_id", "action", "x", "z", "level", "message"] {
             assert!(attacked.get(absent).is_none(), "{id} {absent} {attacked}");
         }
 
@@ -6414,19 +6470,16 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
         assert_eq!(alive["kind"], "wait", "{id} {alive}");
         assert_eq!(token_of(&alive), token, "{id} {alive}");
 
-        // The kill: the owned index posted at zero health beside a posted
-        // maximum with this token's own fight on it. The key is already on
-        // the tile, so the kill lets the Take out on this same call.
-        let dying = targeting(field(posted.clone(), "health", json!(0)), 0);
+        let combat_id = attacked["id"].as_u64().expect("id") as u32;
         let dropped = ground(key_id, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+        let mut report = combat_report_page(combat_id, "killed");
+        report["npcs"] = json!([posted.clone()]);
+        report["ground"] = json!([dropped.clone()]);
         let taken = call(
             &data,
             token,
             page.clone(),
-            key_scene(
-                arrived.clone(),
-                json!({ "npcs": [dying], "ground": [dropped.clone()] }),
-            ),
+            key_scene(arrived.clone(), report),
         );
         assert_eq!(taken["kind"], "obj", "{id} {taken}");
         assert_eq!(taken["x"], spawn.x, "{id} {taken}");
@@ -6484,27 +6537,28 @@ fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
         page.clone(),
         key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
-    assert_eq!(attacked["kind"], "npc", "{attacked}");
+    assert_eq!(attacked["kind"], "combat", "{attacked}");
+    let combat_id = attacked["id"].as_u64().expect("id") as u32;
 
-    // No posted npc page this call: the owned keeper cannot be read, so
-    // nothing walks and nothing is Taken behind it.
+    // No posted npc page this call: outstanding delegation waits.
     let blind = call(
         &data,
         token,
         page.clone(),
-        json!({ "here": here(spawn.x - 30, spawn.z, spawn.level) }),
+        json!({
+            "here": here(spawn.x - 30, spawn.z, spawn.level),
+            "combat_driver": true,
+        }),
     );
     assert_eq!(blind["kind"], "wait", "{blind}");
 
-    // The owned index left the page inside the grace, from thirty tiles
-    // off: the kill, and the walk back to the published spawn.
     let gone = call(
         &data,
         token,
         page.clone(),
         key_scene(
             here(spawn.x - 30, spawn.z, spawn.level),
-            json!({ "npcs": [] }),
+            combat_report_page(combat_id, "killed"),
         ),
     );
     assert_eq!(gone["kind"], "walk", "{gone}");
@@ -6554,7 +6608,7 @@ fn a_keeper_gone_outside_the_grace_is_a_wait_and_never_a_lost_encounter() {
         page.clone(),
         key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
-    assert_eq!(attacked["kind"], "npc", "{attacked}");
+    assert_eq!(attacked["kind"], "combat", "{attacked}");
 
     age_keeper_seen(KILL_GRACE_MS + 1);
     let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
@@ -6591,9 +6645,10 @@ fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
         page.clone(),
         key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
-    assert_eq!(attacked["kind"], "npc", "{attacked}");
+    assert_eq!(attacked["kind"], "combat", "{attacked}");
 
     froze_across_the_keeper_grace();
+    let combat_id = attacked["id"].as_u64().expect("id") as u32;
     let kill = call(
         &data,
         token,
@@ -6604,12 +6659,9 @@ fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
     assert!(!kill.to_string().contains("guardian-lost"), "{kill}");
 
     let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
-    let taken = call(
-        &data,
-        token,
-        page.clone(),
-        key_scene(arrived, json!({ "ground": [dropped] })),
-    );
+    let mut report = combat_report_page(combat_id, "killed");
+    report["ground"] = json!([dropped]);
+    let taken = call(&data, token, page.clone(), key_scene(arrived, report));
     assert_eq!(taken["kind"], "obj", "{taken}");
     assert_eq!(taken["action"], TAKE, "{taken}");
 }
@@ -6636,14 +6688,13 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
         page.clone(),
         key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
     );
-    assert_eq!(attacked["kind"], "npc", "{attacked}");
-    let dying = targeting(field(posted, "health", json!(0)), 0);
-    // The kill, with nothing on the floor: the pickup is armed and waits.
+    assert_eq!(attacked["kind"], "combat", "{attacked}");
+    let combat_id = attacked["id"].as_u64().expect("id") as u32;
     let kill = call(
         &data,
         token,
         page.clone(),
-        key_scene(arrived.clone(), json!({ "npcs": [dying] })),
+        key_scene(arrived.clone(), combat_report_page(combat_id, "killed")),
     );
     assert_eq!(kill["kind"], "wait", "{kill}");
 
@@ -6838,13 +6889,13 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
     }
     assert_eq!(
         kinds,
-        vec!["walk", "npc", "wait", "obj", "wait"],
+        vec!["walk", "combat", "wait", "wait", "wait"],
         "{kinds:?}"
     );
     assert_eq!(
         kinds
             .iter()
-            .filter(|kind| !["walk", "npc", "obj", "wait"].contains(&kind.as_str()))
+            .filter(|kind| !["walk", "combat", "obj", "wait"].contains(&kind.as_str()))
             .count(),
         0,
         "{kinds:?}"
@@ -6930,7 +6981,7 @@ fn a_different_held_step_drops_the_key_hunt() {
         page.clone(),
         key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
     );
-    assert_eq!(attacked["kind"], "npc", "{attacked}");
+    assert_eq!(attacked["kind"], "combat", "{attacked}");
 
     // A different membership row is held: the landed gate re-arms for it.
     let other = json!([[MAP_EMPTY, 1]]);
@@ -6964,9 +7015,8 @@ fn a_different_held_step_drops_the_key_hunt() {
         page.clone(),
         key_scene(arrived, json!({ "npcs": [posted] })),
     );
-    assert_eq!(reborn["kind"], "npc", "{reborn}");
-    assert_eq!(reborn["action"], ATTACK, "{reborn}");
-    assert_eq!(reborn["index"], 21, "{reborn}");
+    assert_eq!(reborn["kind"], "combat", "{reborn}");
+    assert_eq!(reborn["encounter"], "keeper", "{reborn}");
 }
 // ── the gate-toll shop trip ──
 

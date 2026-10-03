@@ -30,8 +30,8 @@ pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use bank::bank_v2_scenario;
 pub(crate) use cell::cell_v2_scenario;
 pub(crate) use clue::{
-    sherlock_coord_scenario, sherlock_dig_scenario, sherlock_search_scenario,
-    sherlock_talk_scenario,
+    sherlock_coord_scenario, sherlock_dig_scenario, sherlock_guardian_scenario,
+    sherlock_search_scenario, sherlock_talk_scenario,
 };
 pub(crate) use gatherer::gatherer_scenario;
 

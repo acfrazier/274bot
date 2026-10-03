@@ -24,6 +24,7 @@ export type CombatNpcFacts = {
     forced_max_hit: number | null;
     dragonfire: DragonfireKind | null;
     bespoke: boolean;
+    counter_protect: boolean;
 };
 
 type ScriptSection = { kind: string; target: string | null; body: string };
@@ -282,15 +283,27 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
     const dragonfire = fireScript ? dragonfireKind(fireScript.script.relative) : null;
     const attackSections = [...apTriggers, ...opTriggers].flatMap(({ script, section }) => expandSections(section.body, script, scripts, true));
     const attacks = attackSections.map(({ body }) => bodyAttackFacts(body, maxHits));
-    const hasRange = attacks.some((attack) => attack.ranged);
-    const hasMagic = attacks.some((attack) => attack.magic);
     const hasDragonBreath = dragonfire !== null || attackSections.some(({ body }) => /\b(?:firebreath_attack|fireblast_travel|fireblast_impact)\b/.test(body));
+    const sectionKinds = new Set();
+    let mixedSection = false;
+    for (const { body } of attackSections) {
+        const facts = bodyAttackFacts(body, maxHits);
+        const melee = /~(?:npc_default_attack|npc_meleeattack)\s*(?:\(|;)/.test(body);
+        const kinds = [];
+        if (facts.ranged) kinds.push('ranged');
+        if (facts.magic) kinds.push('magic');
+        if (melee || kinds.length === 0) kinds.push('melee');
+        if (kinds.length > 1) mixedSection = true;
+        for (const kind of kinds) sectionKinds.add(kind);
+    }
     let attackKind: NpcAttackKind | null = null;
-    if (hasDragonBreath || (hasRange && hasMagic) || (opTriggers.length > 0 && (hasRange || hasMagic))) attackKind = 'mixed';
-    else if (hasRange) attackKind = 'ranged';
-    else if (hasMagic) attackKind = 'magic';
+    if (hasDragonBreath || mixedSection || sectionKinds.size > 1) attackKind = 'mixed';
+    else if (sectionKinds.has('ranged')) attackKind = 'ranged';
+    else if (sectionKinds.has('magic')) attackKind = 'magic';
+    const counterProtect = [...apTriggers, ...opTriggers].some(({ script, section }) =>
+        expandSections(section.body, script, scripts).some(({ body }) => /~check_protect_prayer\s*(?:\(|;)/.test(body)));
     const forced = attacks.flatMap((attack) => attack.forcedMaxHit === null ? [] : [attack.forcedMaxHit]);
-    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke };
+    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, counter_protect: counterProtect };
 }
 
 function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string): number | null {

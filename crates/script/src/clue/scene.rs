@@ -267,6 +267,7 @@ pub(super) fn guardian_names(row: &TrailMembershipRow) -> &'static [&'static str
 /// and `self_target_index`. Both are needed for the read, and a page that
 /// posted neither is not a target at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(super) struct SelfTarget {
     pub(super) kind: i32,
     pub(super) index: i32,
@@ -274,6 +275,7 @@ pub(super) struct SelfTarget {
 
 /// This call's posted local-player target, or `None` when the page did not
 /// post the pair.
+#[allow(dead_code)]
 pub(super) fn self_target(input: &Value) -> Option<SelfTarget> {
     Some(SelfTarget {
         kind: posted_i32(input, "self_target_kind")?,
@@ -291,6 +293,7 @@ pub(super) fn targets_me(row: &Value, self_slot: Option<i32>) -> bool {
 
 /// The mirror read: the local player's own posted target is this posted row.
 /// A page that posted no pair is never a match.
+#[allow(dead_code)]
 pub(super) fn we_target(row: &Value, target: Option<SelfTarget>) -> bool {
     target.is_some_and(|target| {
         target.kind == NPC_KIND && posted_i32(row, "index") == Some(target.index)
@@ -302,6 +305,7 @@ pub(super) fn we_target(row: &Value, target: Option<SelfTarget>) -> bool {
 /// row's own posted target is the player, or the player's own posted target is
 /// that row. A row that merely died beside another player is not this token's
 /// kill.
+#[allow(dead_code)]
 pub(super) fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<SelfTarget>) -> bool {
     posted_i32(row, "health") == Some(0)
         && posted_i32(row, "max_health").is_some_and(|max| max > 0)
@@ -323,6 +327,7 @@ pub(super) fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<Sel
 /// name the verb carries is that same posted string — no frozen debugname is
 /// ever substituted for it.
 pub(super) fn pick_npc<'a>(
+    npc_type: Option<i32>,
     names: &[&str],
     page: &'a [Value],
     self_slot: Option<i32>,
@@ -340,7 +345,9 @@ pub(super) fn pick_npc<'a>(
         else {
             continue;
         };
-        if !names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted)) {
+        let typed = npc_type.is_some_and(|id| posted_i32(row, "id") == Some(id));
+        let named = names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted));
+        if !typed && !named {
             continue;
         }
         if !posted_action(row, ATTACK) {

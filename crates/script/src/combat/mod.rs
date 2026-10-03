@@ -13,7 +13,7 @@ pub mod style {
     pub mod melee;
 }
 pub use machine::Combat;
-pub use prayer::{ClearPrayers, PrayerSweepReport};
+pub use prayer::{begin_clear_prayers, ClearPrayers, Hygiene, PrayerSweepReport};
 pub use request::*;
 pub use select::{facts, ident, retaliate, taken_by_another};
 pub use tables::CombatTables;

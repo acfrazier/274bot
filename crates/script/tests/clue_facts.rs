@@ -1485,26 +1485,6 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
     let iso = spawn_live_clue_run();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
-    let attack = ["Attack".to_string()];
-    let wizard_tile = script::isolate_fb::TileInput {
-        x: 3058,
-        z: 3884,
-        level: 0,
-    };
-    let mut mine = clue_npc(7, 107, "Zamorak Wizard", wizard_tile, 3, &attack);
-    mine.in_combat = true;
-    mine.target_kind = 2;
-    mine.target_index = 42;
-    let decoy = clue_npc(8, 108, "Zamorak Wizard", wizard_tile, 1, &attack);
-    let alive = [decoy, mine];
-    let dead = [script::isolate_fb::SceneEntityInput {
-        health: 0,
-        max_health: 10,
-        in_combat: true,
-        target_kind: 2,
-        target_index: 99,
-        ..mine
-    }];
     let stats = [script::isolate_fb::StatInput {
         index: 3,
         name: "hitpoints",
@@ -1512,137 +1492,30 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
         base: 40,
         effective: 40,
     }];
-    let overlay_off = [script::isolate_fb::VarpInput {
-        index: 95,
-        value: 0,
-    }];
-    let overlay_on = [script::isolate_fb::VarpInput {
-        index: 95,
-        value: 1,
-    }];
-    let far = script::isolate_fb::TileInput {
-        x: 3100,
-        z: 3300,
-        level: 0,
-    };
     let arrived = script::isolate_fb::TileInput {
         x: 3058,
         z: 3884,
         level: 0,
     };
-    let dig = InteractReq::Held {
-        name: "Spade".to_string(),
-        action: "Dig".to_string(),
-        slot: None,
-    };
-
-    assert_eq!(
+    assert!(
         live_clue_tick(
             &iso,
             1,
             &page,
             &Scene {
-                here: Some(far),
-                names: &names,
-                stats: &stats,
-                trio: true,
-                ..Scene::default()
-            },
-        ),
-        vec![clue_walk(3058, 3884, 0)]
-    );
-    assert_eq!(
-        live_clue_tick(
-            &iso,
-            2,
-            &page,
-            &Scene {
                 here: Some(arrived),
                 names: &names,
                 stats: &stats,
                 trio: true,
                 ..Scene::default()
             },
-        ),
-        vec![dig.clone()]
+        )
+        .is_empty(),
+        "slice 1 isolate family never posts combat_driver, so the row is abandoned before Dig"
     );
-    assert_eq!(
-        live_clue_tick(
-            &iso,
-            3,
-            &page,
-            &Scene {
-                here: Some(arrived),
-                names: &names,
-                npcs: &alive,
-                varps: &overlay_off,
-                stats: &stats,
-                self_slot: 42,
-                self_target_kind: 1,
-                self_target_index: 7,
-                trio: true,
-                ..Scene::default()
-            },
-        ),
-        vec![InteractReq::IfButton { component_id: 5621 }]
-    );
-    assert_eq!(
-        live_clue_tick(
-            &iso,
-            4,
-            &page,
-            &Scene {
-                here: Some(arrived),
-                names: &names,
-                npcs: &alive,
-                varps: &overlay_on,
-                stats: &stats,
-                self_slot: 42,
-                self_target_kind: 1,
-                self_target_index: 7,
-                trio: true,
-                ..Scene::default()
-            },
-        ),
-        vec![InteractReq::Npc {
-            name: "Zamorak Wizard".to_string(),
-            action: "Attack".to_string(),
-            index: Some(7),
-        }],
-        "the farther wizard targeting self wins over the nearer decoy"
-    );
-    assert_eq!(
-        live_clue_tick(
-            &iso,
-            5,
-            &page,
-            &Scene {
-                here: Some(arrived),
-                names: &names,
-                npcs: &dead,
-                varps: &overlay_on,
-                stats: &stats,
-                self_slot: 42,
-                self_target_kind: 1,
-                self_target_index: 7,
-                trio: true,
-                ..Scene::default()
-            },
-        ),
-        vec![dig],
-        "zero health with a positive maximum and the self target pair proves the owned kill"
-    );
-    assert!(live_clue_tick(
-        &iso,
-        6,
-        &page,
-        &Scene {
-            ours: true,
-            ..Scene::default()
-        },
-    )
-    .is_empty());
-    assert_live_yield(&iso);
+    let out = iso.probe("globalThis.__out").unwrap();
+    assert_eq!(out["kind"], "done", "{out:?}");
+    assert_eq!(out["value"]["kind"], "abandon", "{out:?}");
     iso.join();
 }
 

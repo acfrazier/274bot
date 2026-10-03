@@ -302,6 +302,7 @@ mod verbs;
 use acquire::*;
 #[cfg(test)]
 use combat::{keeper_type, key_step};
+pub(crate) use combat::{Delegation, Outcome};
 #[cfg(test)]
 use entrana::{entrana_coord, entrana_restricted_gear};
 pub(crate) use family::Clue;
@@ -445,6 +446,7 @@ const KEEPER_TYPE: &str = "type";
 /// The one selected `cap.prayer` row this fight raises, looked up in the
 /// selected table the way the landed `api::prayer::lookup` looks one up. Not a
 /// second prayer table: the component id the click carries is that row's own.
+#[allow(dead_code)]
 const PROTECT_FROM_MAGIC: &str = "Protect from Magic";
 
 /// A posted `SceneEntity.target_kind` of `2` is a player, so a row whose
@@ -454,6 +456,7 @@ const PLAYER_KIND: i32 = 2;
 
 /// A posted `self_target_kind` of `1` is an npc, so the local player's own
 /// posted target is an npc whose index can be compared with an owned one.
+#[allow(dead_code)]
 const NPC_KIND: i32 = 1;
 
 /// The selected `trail_sextant` param the coordinate trio's own membership
@@ -594,13 +597,15 @@ enum Completion {
 /// state on the live token, like `open` — never a second scheduler, never a
 /// `Phase::Fighting`, and never a cached npc page.
 struct Guardian {
-    /// The posted index this token enqueued `Attack` for. `None` until that
-    /// Attack goes out, and dropped again on the kill: an index this token
-    /// never Attacked is never a kill.
-    owned: Option<Owned>,
-    /// The kill was observed: the walk back to the decoded tile and its Dig
+    /// Outstanding combat delegation id, if the machine has handed the fight
+    /// to the driver. `None` while observing a spawn or after a report.
+    delegation: Option<u32>,
+    /// The kill was reported: the walk back to the decoded tile and its Dig
     /// replace the fight, and that Dig repeats while the same clue stays held.
     post_kill: bool,
+    /// Set when a cancelled/user-input report clears the delegation. No family
+    /// wizard posted for `KILL_GRACE_MS` after this is `guardian-lost`.
+    lost_since: Option<Instant>,
 }
 
 /// The live key-keeper hunt on the identified clue row: the keeper this token's
@@ -611,22 +616,12 @@ struct Guardian {
 /// `guardian-lost`. Session state on the live token, like `open`, never a
 /// second scheduler and never a cached npc page.
 struct Keeper {
-    /// The posted index this token enqueued `Attack` for. `None` until that
-    /// Attack goes out, and dropped again on the kill: an index this token
-    /// never Attacked is never a kill.
-    owned: Option<Owned>,
-    /// The kill was observed: the pickup replaces the hunt, and no second
-    /// keeper is Attacked while the one this token killed lies where it fell.
+    /// Outstanding combat delegation id. `None` while observing a spawn or
+    /// after a report.
+    delegation: Option<u32>,
+    /// The kill was reported: the pickup replaces the hunt, and no second
+    /// keeper is engaged while the one this token killed lies where it fell.
     post_kill: bool,
-}
-
-/// One owned wizard: the posted scene index this token enqueued `Attack` for,
-/// and the last call that index was posted on. The posted name rides the verb
-/// and is never kept — nothing is Attacked twice and no name is ever copied
-/// onto a row.
-struct Owned {
-    index: i32,
-    seen_at: Instant,
 }
 
 /// The live puzzle-box attempt on the identified clue row: the box this token
@@ -806,6 +801,12 @@ struct ClueRuntime {
     /// connection-boundary reset. Only the fresh instance [`on_stop`] builds
     /// clears it without a held row of its own.
     abandoned: Option<i32>,
+    /// Per-session combat delegation ids. Never zero.
+    next_delegation: u32,
+    /// Cached `npc_names` id for `trail_hard` / `trail_hard2`. `0` unresolved,
+    /// negative missing.
+    hard_guardian: i32,
+    hard2_guardian: i32,
 }
 
 impl ClueRuntime {
@@ -832,6 +833,9 @@ impl ClueRuntime {
             restore: None,
             stripped: Vec::new(),
             abandoned: None,
+            next_delegation: 0,
+            hard_guardian: 0,
+            hard2_guardian: 0,
         }
     }
 
@@ -856,6 +860,7 @@ impl ClueRuntime {
         self.walk_dest = None;
         self.shop = None;
         self.shopped.clear();
+        self.next_delegation = 0;
         self.clear_step();
     }
 
@@ -882,11 +887,8 @@ impl ClueRuntime {
     /// grace then measures only the time the session was actually unfrozen and
     /// observing.
     fn shift_instants(&mut self, gap: Duration) {
-        if let Some(owned) = self.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
-            owned.seen_at += gap;
-        }
-        if let Some(owned) = self.keeper.as_mut().and_then(|k| k.owned.as_mut()) {
-            owned.seen_at += gap;
+        if let Some(since) = self.guardian.as_mut().and_then(|g| g.lost_since.as_mut()) {
+            *since += gap;
         }
     }
 

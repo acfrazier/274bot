@@ -221,7 +221,7 @@ const npcSource = path.join(content, 'scripts/npc/config/combat.npc');
 const npcScriptDir = path.join(content, 'scripts/npc/scripts');
 fs.mkdirSync(path.dirname(npcSource), { recursive: true });
 fs.mkdirSync(npcScriptDir, { recursive: true });
-fs.writeFileSync(path.join(pack, 'npc.pack'), '100=test_npc\n477=khazard_warlord\n478=dragon_npc\n');
+fs.writeFileSync(path.join(pack, 'npc.pack'), '100=test_npc\n477=khazard_warlord\n478=dragon_npc\n1007=zamorak_like\n1264=saradomin_like\n');
 fs.writeFileSync(path.join(pack, 'seq.pack'), [
     '1=shared_seq', '2=staff_seq', '3=human_unarmedpunch', '4=human_unarmedkick',
     '5=test_attack_seq', '6=test_range_seq', '7=test_magic_seq', '8=dragon_seq',
@@ -252,6 +252,14 @@ name=Dragon NPC
 op1=Attack
 hitpoints=60
 param=attackrate,4
+[zamorak_like]
+name=Zamorak Like
+op1=Attack
+hitpoints=80
+[saradomin_like]
+name=Saradomin Like
+op1=Attack
+hitpoints=120
 `);
 fs.writeFileSync(path.join(npcScriptDir, 'test.rs2'), `/*
 [ai_applayer2,phantom]
@@ -270,6 +278,18 @@ npc_anim(^test_attack_seq);
 npc_anim(^test_range_seq);
 [ai_queue1,test_npc]
 ~npc_default_retaliate_ap();
+[ai_applayer2,zamorak_like]
+~npc_cast_spell(^test_spell, 4);
+[ai_opplayer2,zamorak_like]
+~npc_cast_spell(^test_spell, 4);
+[ai_applayer2,saradomin_like]
+~npc_cast_spell(^test_spell, 4);
+[ai_opplayer2,saradomin_like]
+if (~check_protect_prayer(^melee_style) = true) {
+    ~npc_cast_spell(^test_spell, 4);
+    return;
+}
+~npc_default_attack();
 `);
 fs.writeFileSync(path.join(npcScriptDir, 'dragon.rs2'), `%dragonresist = 1;
 [ai_applayer2,dragon_npc]
@@ -348,9 +368,16 @@ assert.equal(testNpc.rangebonus, 4);
 assert.equal(testNpc.undead, 1);
 assert.equal(testNpc.ap_attack, true);
 assert.equal(testNpc.attack_kind, 'mixed');
+assert.equal(testNpc.counter_protect, false);
 assert.equal(testNpc.forced_max_hit, 24, 'a dagannoth double roll is one 24-damage event');
 assert.equal(testNpc.bespoke, true);
 assert.equal(npcFacts.rows.find((row) => row.config === 'dragon_npc')?.dragonfire, 'chromatic');
+const zamorakLike = npcFacts.rows.find((row) => row.config === 'zamorak_like')!;
+assert.equal(zamorakLike.attack_kind, 'magic', 'both bodies cast; an op trigger is not mixed by itself');
+assert.equal(zamorakLike.counter_protect, false);
+const saradominLike = npcFacts.rows.find((row) => row.config === 'saradomin_like')!;
+assert.equal(saradominLike.attack_kind, 'mixed');
+assert.equal(saradominLike.counter_protect, true);
 fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
 const changedDefaults = extractNpcNamesFacts(content, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
