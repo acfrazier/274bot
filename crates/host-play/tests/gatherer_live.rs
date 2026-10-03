@@ -16,6 +16,8 @@
 //! G2 cells cover moving fishing spots, supply gates, oak respawn and scene
 //! boundaries, Auto widening, and an id-seeded gas hazard. G3 cells cover
 //! banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
+//! The Catherby harpoon Bank cell requires two positive deposit trips and fresh
+//! fishing yields after each return, with the inventory-only tool conserved.
 //! G4a cells exercise guardian-owned random-event holds and verified death
 //! recovery, including Retry and watchdog recreation; they require the
 //! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
@@ -57,6 +59,8 @@ const SHRIMP_ID: i32 = 317;
 const ANCHOVY_ID: i32 = 321;
 const TROUT_ID: i32 = 335;
 const SALMON_ID: i32 = 331;
+const TUNA_ID: i32 = 359;
+const SWORDFISH_ID: i32 = 371;
 const FEATHERS_ID: i32 = 314;
 const OAK_ID: i32 = 1281;
 const OAK_STUMP_ID: i32 = 1355;
@@ -219,6 +223,7 @@ impl Cell {
             (Self::Woodcutting, LiveCase::BankCostAirFallback) => "gatherer_bank_cost_t1",
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => "gatherer_bank_cost_no_candidate",
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
+            (Self::Fishing, LiveCase::FishHarpoonBank) => "gatherer_fish_harpoon_bank",
             (Self::Woodcutting, LiveCase::CoinRunes) => "gatherer_coin_runes",
             (Self::Woodcutting, LiveCase::CoinRunesEmpty) => "gatherer_coin_runes_empty_stock",
             (Self::Woodcutting, LiveCase::PowerToBank) => "gatherer_power_to_bank_live",
@@ -256,6 +261,7 @@ impl Cell {
             LiveCase::BankCostAirFallback => "GATHERER_BANK_T1_TILE",
             LiveCase::BankCostNoCandidate => "GATHERER_BANK_NO_CANDIDATE_TILE",
             LiveCase::FishBait => "GATHERER_FISH_BAIT_TILE",
+            LiveCase::FishHarpoonBank => "GATHERER_FISH_HARPOON_TILE",
             LiveCase::CoinRunes | LiveCase::CoinRunesEmpty => "GATHERER_COIN_RUNES_TILE",
             LiveCase::PowerToBank => "GATHERER_POWER_TO_BANK_TILE",
             LiveCase::PauseResumeOtherPlane => "GATHERER_RETURN_PAUSE_TILE",
@@ -297,6 +303,7 @@ impl Cell {
         match (self, case) {
             (Self::Fishing, LiveCase::FishNet) => "net",
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => "fly_fishing_rod",
+            (Self::Fishing, LiveCase::FishHarpoonBank) => "harpoon",
             (Self::Mining, LiveCase::BankCost) => "bronze_pickaxe",
             (Self::Mining, _) => "steel_pickaxe",
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => "rune_axe",
@@ -308,6 +315,7 @@ impl Cell {
         match (self, case) {
             (Self::Fishing, LiveCase::FishNet) => 303,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 309,
+            (Self::Fishing, LiveCase::FishHarpoonBank) => 311,
             (Self::Mining, LiveCase::BankCost) => 1265,
             (Self::Mining, _) => 1269,
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => 1359,
@@ -339,6 +347,7 @@ impl Cell {
                 | LiveCase::ReconnectReturn,
             ) => 15,
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => 20,
+            (Self::Fishing, LiveCase::FishHarpoonBank) => 99,
             (Self::Mining, LiveCase::BankCost) => 1,
             (Self::Mining, _) => 30,
             _ => 1,
@@ -370,6 +379,7 @@ impl Cell {
             ) => &[1521],
             (Self::Fishing, LiveCase::FishNet) => &[SHRIMP_ID, ANCHOVY_ID],
             (Self::Fishing, LiveCase::FishBaitGate | LiveCase::FishBait) => &[TROUT_ID, SALMON_ID],
+            (Self::Fishing, LiveCase::FishHarpoonBank) => &[TUNA_ID, SWORDFISH_ID],
             (Self::Mining, _) => MINE_PRODUCTS,
             _ => &[LOG_ID],
         }
@@ -556,13 +566,11 @@ impl Cell {
         if self == Self::Fishing {
             bag.insert(
                 "fishingMethod".into(),
-                json!(
-                    if matches!(case, LiveCase::FishBaitGate | LiveCase::FishBait) {
-                        "fishing.freshfish.op1"
-                    } else {
-                        "fishing.saltfish.op1"
-                    }
-                ),
+                json!(match case {
+                    LiveCase::FishBaitGate | LiveCase::FishBait => "fishing.freshfish.op1",
+                    LiveCase::FishHarpoonBank => "fishing.rarefish.op3",
+                    _ => "fishing.saltfish.op1",
+                }),
             );
         }
         bag.insert("targetPreference".into(), json!(self.target_preference()));
@@ -595,6 +603,7 @@ impl Cell {
                     | LiveCase::BankCostAirFallback
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::FishBait
+                    | LiveCase::FishHarpoonBank
                     | LiveCase::CoinRunes
                     | LiveCase::CoinRunesEmpty
                     | LiveCase::PauseResumeOtherPlane
@@ -613,6 +622,7 @@ impl Cell {
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
                 | LiveCase::FishBait
+                | LiveCase::FishHarpoonBank
                 | LiveCase::CoinRunes
                 | LiveCase::CoinRunesEmpty
                 | LiveCase::PowerToBank
@@ -720,6 +730,7 @@ enum LiveCase {
     BankCostAirFallback,
     BankCostNoCandidate,
     FishBait,
+    FishHarpoonBank,
     CoinRunes,
     CoinRunesEmpty,
     PowerToBank,
@@ -754,6 +765,7 @@ impl LiveCase {
             Self::BankCostAirFallback => "bank-cost-t1-air-fallback",
             Self::BankCostNoCandidate => "bank-cost-no-candidate",
             Self::FishBait => "fish-bait-bank",
+            Self::FishHarpoonBank => "fish-harpoon-bank",
             Self::CoinRunes => "coin-runes-topup",
             Self::CoinRunesEmpty => "coin-runes-empty-stock",
             Self::PowerToBank => "power-to-bank",
@@ -1078,6 +1090,7 @@ struct Witness {
     reconnect_offline_observed: bool,
     last_status_event: Option<String>,
     last_status_bank: Option<String>,
+    bank_status_sequence: Vec<Value>,
     bait_exact: bool,
     reserve_runes_intact: bool,
     bank_nonzero_roundtrips: u32,
@@ -2680,6 +2693,32 @@ impl GatherSlot {
                 self.witness.targets.insert(value);
             }
         }
+        if self.case == LiveCase::FishHarpoonBank {
+            let phase = text_field(status, "phase");
+            let event = text_field(status, "last_event");
+            let bank = text_field(status, "bank");
+            if self.witness.bank_status_sequence.last().is_none_or(|last| {
+                last["phase"].as_str() != phase
+                    || last["event"].as_str() != event
+                    || last["bank"].as_str() != bank
+            }) {
+                let row = json!({
+                    "tick": self.latest.as_ref().map(|row| row.tick),
+                    "phase": phase,
+                    "event": event,
+                    "bank": bank,
+                    "tool": text_field(status, "tool"),
+                    "trips": integer_field(status, "trips"),
+                    "deposited": integer_field(status, "deposited"),
+                    "yielded": integer_field(status, "yielded"),
+                    "xp": self.latest.as_ref().map(|row| row.xp),
+                    "tile": self.latest.as_ref().and_then(|row| row.tile),
+                    "products": self.latest.as_ref().map(|row| row.product_count),
+                });
+                println!("gatherer-bank-status {row}");
+                self.witness.bank_status_sequence.push(row);
+            }
+        }
         let previous_yielded = self.witness.last_status_yielded;
         let current_yielded = integer_field(status, "yielded").unwrap_or(previous_yielded);
         let current_trips = integer_field(status, "trips").unwrap_or(self.witness.status_trips);
@@ -3507,6 +3546,28 @@ impl GatherSlot {
                 }
                 Ok(())
             }
+            LiveCase::FishHarpoonBank => {
+                if !self.complete_bank_selection()
+                    || !self.witness.bank_loaded_observed
+                    || !self.witness.bank_closed_observed
+                    || self.witness.bank_nonzero_roundtrips < 2
+                    || self.witness.post_bank_yields < 2
+                    || self.witness.status_trips < 2
+                    || self.witness.status_deposited < i64::from(self.cycle_product_capacity() * 2)
+                    || !self.item_in_inventory()
+                    || self.item_equipped()
+                    || self.latest.as_ref().is_none_or(|latest| {
+                        latest.product_count == 0 || latest.xp <= self.baseline_xp()
+                    })
+                {
+                    return Err(format!(
+                        "{} did not complete two full fish-bank-fish trips with its harpoon in inventory: {:?}",
+                        self.name(),
+                        self.witness
+                    ));
+                }
+                Ok(())
+            }
             LiveCase::CoinRunes => {
                 if !self.complete_bank_selection()
                     || !self.witness.bank_withdrawal_confirmed
@@ -4038,6 +4099,7 @@ fn fixture_plan(
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
         LiveCase::FishBait => fixture_tile(cell.tile_env(case), FISH_BAIT_START)?,
+        LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::BankCost => world_tile(3016, 9840),
         LiveCase::BankCostAirFallback => {
             parse_tile(cell.tile_env(case), &required(cell.tile_env(case))?)?
@@ -5113,6 +5175,12 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.post_bank_yields >= 1
                     && witness.last_status_yielded > 0
             }
+            LiveCase::FishHarpoonBank => {
+                witness.status_trips >= 2
+                    && witness.bank_nonzero_roundtrips >= 2
+                    && witness.post_bank_yields >= 2
+                    && witness.bank_closed_observed
+            }
             LiveCase::CoinRunes => {
                 witness.status_trips >= 1
                     && witness.bank_withdrawal_confirmed
@@ -5287,6 +5355,28 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "failure_message": witness.failure_message,
     });
     receipt["bank_trip"] = bank_receipt;
+    receipt["bank_status_sequence"] = json!(witness.bank_status_sequence);
+    receipt["final_tick"] = json!(state
+        .lock()
+        .map_err(|_| "live state poisoned")?
+        .latest
+        .as_ref()
+        .map(|row| row.tick));
+    {
+        let slot = state.lock().map_err(|_| "live state poisoned")?;
+        receipt["final_inventory"] = json!(slot
+            .snapshot
+            .inventory()
+            .iter()
+            .map(|item| json!({"id": item.def.id, "slot": item.slot, "count": item.count}))
+            .collect::<Vec<_>>());
+        receipt["final_equipment"] = json!(slot
+            .snapshot
+            .equipment()
+            .iter()
+            .map(|item| json!({"id": item.def.id, "slot": item.slot, "count": item.count}))
+            .collect::<Vec<_>>());
+    }
     let mut fixture_receipt = json!({
             "bank_selection_elapsed_ms": witness
                 .bank_selection_elapsed
@@ -5703,6 +5793,12 @@ fn gatherer_bank_cost_no_candidate() {
 #[ignore = "requires LIVE=1 and local 289 engine; defaults to the validated fish fixture"]
 fn gatherer_fish_bait_bank() {
     run_cell(Cell::Fishing, LiveCase::FishBait).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and local 289 engine; defaults to Catherby with a harpoon"]
+fn gatherer_fish_harpoon_bank() {
+    run_cell(Cell::Fishing, LiveCase::FishHarpoonBank).unwrap();
 }
 
 #[test]

@@ -398,6 +398,7 @@ impl Gatherer {
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
                     self.advance_trip(TripStep::Return);
+                    self.set_event("returning to work area");
                 }
             }
             TripStep::Return => {

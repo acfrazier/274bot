@@ -91,6 +91,33 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+## Gatherer fishing bank returns
+
+The ignored `gatherer_live::gatherer_fish_harpoon_bank` cell starts the native
+Gatherer at Catherby with an inventory harpoon and Bank disposition. It catches
+each full pack itself, deposits the fish, and requires two positive deposit
+trips with fresh fishing yields after both returns. It never seeds fish or XP.
+
+```sh
+LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=gf \
+cargo test -p host-play --test gatherer_live gatherer_fish_harpoon_bank \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+Set a disposable `HOME` with copied `BOT_CACHE_DIR`/`CLIENT_UNPACK_DIR` inputs,
+absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT`,
+and matching explicit `WORLD_ENGINE_DIR`/`WORLD_NAV_PACK`. The defaults use the
+builder engine at `45594`/`2080`; `GATHERER_GAME_PORT`/`GATHERER_HTTP_PORT` can
+select the local engine at `44594`/`1080`. `GATHERER_FISH_HARPOON_TILE` optionally
+overrides the default `2840,3436,0`. `LIVE_EVIDENCE_DIR` saves a real client
+capture and a receipt containing the tick-stamped bank status/event sequence.
+
+Fishing tools are carried, not wielded. Returning inside the configured work
+radius does not prove that its moving fishing spots are visible: the NPC view
+is smaller than the loaded map. Gatherer approaches an unobserved fishing
+placement and reselects from fresh actors instead of declaring it absent.
+Rock and tree placement observation still uses the loaded map rectangle.
+
 ## JS API v2 GatherQuest sample checks
 
 The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
