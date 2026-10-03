@@ -1648,7 +1648,7 @@ impl TuiApp {
             return;
         }
         // Rendering never commits.
-        let mut read_only = |_: &str, _: serde_json::Value| Ok(());
+        let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
         let pane = ParamsPane {
             schema: &self.params_schema,
             bag: &mut self.params_bag,
