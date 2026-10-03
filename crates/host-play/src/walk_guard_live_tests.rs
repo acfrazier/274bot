@@ -25,7 +25,7 @@ fn path_json(dest: WorldTile) -> String {
     format!(
         r#"{{
   "schema": 2,
-  "id": "walk_guard_throwers",
+  "id": "imp",
   "display_name": "Walk Guard Throwers",
   "required": [],
   "tested_stats": null,
@@ -282,12 +282,14 @@ struct LiveState {
     quests: Arc<QuestCatalog>,
     path: Arc<CompiledPath>,
     capture: Arc<Mutex<CombatCapture>>,
+    start: WorldTile,
     dest: WorldTile,
     started: bool,
     launch_tick: Option<u32>,
     protect_tick: Option<u32>,
     arrived: bool,
     last_tile: Option<(i32, i32, i32)>,
+    attacker_staged: bool,
 }
 
 impl LiveState {
@@ -337,6 +339,18 @@ impl LiveState {
                 }
             }
         }
+        if self.started
+            && !self.attacker_staged
+            && self.last_tile.is_some_and(|(x, z, level)| {
+                x != self.start.x || z != self.start.z || level != self.start.level
+            })
+            && matches!(
+                api::interact::cheat(client, "npcadd death_troll_thrower1"),
+                client::CheatSend::Sent
+            )
+        {
+            self.attacker_staged = true;
+        }
         if first_launch_tick(&self.snapshot) && self.launch_tick.is_none() {
             self.launch_tick = Some(self.snapshot.tick());
         }
@@ -371,18 +385,11 @@ fn scenario_for(capture: Arc<Mutex<CombatCapture>>, start: WorldTile) -> Scenari
         .expect("relog step");
     let relog = scenario.steps.remove(relog_index);
     scenario.steps.insert(stand_index, relog);
-    let extra = [
-        cheat_step(
-            "seed Prayer 43",
-            "setstat prayer 43".to_owned(),
-            Proof::Stat { id: 5, min: 43 },
-        ),
-        cheat_step(
-            "stage ranged attacker beside the zoned route",
-            "npcadd ardougne_archer".to_owned(),
-            Proof::Stat { id: 5, min: 43 },
-        ),
-    ];
+    let extra = [cheat_step(
+        "seed Prayer 43",
+        "setstat prayer 43".to_owned(),
+        Proof::Stat { id: 5, min: 43 },
+    )];
     scenario
         .steps
         .splice(stand_index + 1..stand_index + 1, extra);
@@ -462,12 +469,14 @@ fn live_walk_guard_w1_protected_crossing() {
         quests,
         path,
         capture: Arc::clone(&capture),
+        start,
         dest,
         started: false,
         launch_tick: None,
         protect_tick: None,
         arrived: false,
         last_tile: None,
+        attacker_staged: false,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -554,6 +563,13 @@ fn live_walk_guard_w1_protected_crossing() {
         std::thread::sleep(Duration::from_millis(50));
     };
     let snapshot = state.lock().unwrap_or_else(|e| e.into_inner());
+    let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
+    let prayer = snapshot
+        .snapshot
+        .stats()
+        .iter()
+        .find(|row| row.index == 5)
+        .map(|row| json!({ "base": row.base, "effective": row.effective }));
     let receipt = json!({
         "proof": "WALK-GUARD",
         "case": "W1",
@@ -568,6 +584,16 @@ fn live_walk_guard_w1_protected_crossing() {
         "last_tile": snapshot.last_tile,
         "start": [start.x, start.z, start.level],
         "dest": [dest.x, dest.z, dest.level],
+        "attacker_staged": snapshot.attacker_staged,
+        "prayer": prayer,
+        "runner": format!("{:?}", snapshot.runner.status()),
+        "action_count": capture_snapshot.actions.len(),
+        "action_kinds": capture_snapshot
+            .actions
+            .iter()
+            .map(|action| action["kind"].clone())
+            .collect::<Vec<_>>(),
+        "last_status": capture_snapshot.statuses.last(),
     });
     let path = PathBuf::from(EVIDENCE_DIR).join(format!("W1-{account}-receipt.json"));
     std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).expect("write W1 receipt");

@@ -657,6 +657,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                         )
                     });
+                    tick_walk_guard(driver, snapshot, &mut bot.walk_guard);
                     let skip_follow = bot
                         .walk_guard
                         .as_ref()
@@ -687,8 +688,6 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     }
                     if bot.route.is_none() {
                         finish_walk_guard(driver, snapshot, &mut bot.walk_guard);
-                    } else {
-                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard);
                     }
                 }
             }
