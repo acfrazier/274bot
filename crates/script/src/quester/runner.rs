@@ -6,6 +6,7 @@ use super::compile::{
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
+use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
@@ -32,6 +33,7 @@ use std::time::Duration;
 // click). Adoption consumes a transaction too, but never adds a click.
 const JOURNAL_READ_ATTEMPTS: u8 = 3;
 const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
+const QUEUE_QUEST_STATUS_WAIT: Duration = Duration::from_secs(30);
 const JOURNAL_RETRY_LIMIT_BUSY: &str =
     "journal read retry limit reached (journal remained busy during read)";
 const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
@@ -1732,6 +1734,7 @@ pub struct QueuedQuester {
     last_retreat: Option<Arc<str>>,
     fields: Arc<[StatusField]>,
     gate_fields: Arc<[StatusField]>,
+    quest_status_since: Option<Duration>,
     dirty: bool,
 }
 
@@ -1758,6 +1761,7 @@ impl QueuedQuester {
             last_retreat: None,
             fields: Arc::from([]),
             gate_fields: Arc::from([]),
+            quest_status_since: None,
             dirty: true,
         };
         this.refresh_fields();
@@ -1834,12 +1838,25 @@ impl QueuedQuester {
             label: "Deaths",
             value: StatusValue::Integer(i64::from(self.deaths)),
         });
-        if phase == NativePhase::Blocked && !fields.iter().any(|field| field.key == "block_reason")
-        {
+        let failure = (phase == NativePhase::Blocked).then(|| self.blocked());
+        if let Some(failure) = &failure {
+            if !fields.iter().any(|field| field.key == "block_reason") {
+                fields.push(StatusField {
+                    key: "block_reason",
+                    label: "Queue block reason",
+                    value: StatusValue::Text(Arc::clone(&failure.message)),
+                });
+            }
+        }
+        if phase == NativePhase::Waiting {
             fields.push(StatusField {
-                key: "block_reason",
-                label: "Queue block reason",
-                value: StatusValue::Text(self.blocked().message),
+                key: "waiting_for",
+                label: "Waiting for",
+                value: StatusValue::Text(Arc::from(if self.quest_status_since.is_some() {
+                    "quest list from login; no gameplay until observed"
+                } else {
+                    "host safety hold to clear"
+                })),
             });
         }
         output.status(ScriptStatus {
@@ -1849,21 +1866,52 @@ impl QueuedQuester {
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
-            failure: (phase == NativePhase::Blocked).then(|| self.blocked()),
+            failure,
         });
     }
 
     fn blocked(&self) -> ScriptFailure {
+        if self.quest_status_since.is_some() {
+            return ScriptFailure {
+                code: Arc::from("quest-status-unobserved"),
+                message: Arc::from(
+                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester",
+                ),
+                retryable: true,
+            };
+        }
+        if !self
+            .queue
+            .rows()
+            .iter()
+            .any(|row| row.picked && !row.skipped)
+        {
+            return ScriptFailure {
+                code: Arc::from("empty-queue"),
+                message: Arc::from(
+                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then Stop/Start Quester",
+                ),
+                retryable: true,
+            };
+        }
+        let (reason, status) = self
+            .queue
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.picked && !row.skipped)
+            .find_map(|(index, row)| self.queue.reason(index).map(|reason| (reason, row.status)))
+            .unwrap_or(("no eligible selected quest", QueueStatus::Blocked));
+        // A requirement block can be changed in Script prefs; a parked run
+        // (a refused walk, a failed action) can't, so don't send the user there.
+        let recovery = if status == QueueStatus::Blocked {
+            "review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester"
+        } else {
+            "resolve the condition, then Stop/Start Quester"
+        };
         ScriptFailure {
             code: Arc::from("queue-blocked"),
-            message: self
-                .queue
-                .rows()
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| row.picked && !row.skipped)
-                .find_map(|(index, _)| self.queue.reason(index).map(Arc::from))
-                .unwrap_or_else(|| Arc::from("no eligible selected quest")),
+            message: format!("{reason}; {recovery}").into(),
             retryable: true,
         }
     }
@@ -1942,9 +1990,11 @@ impl Script for QueuedQuester {
         if self.run != tick.cx.run() {
             self.run = tick.cx.run();
             self.queue.refresh_blocked();
+            self.quest_status_since = None;
             self.refresh_fields();
         }
         if !tick.cx.eligible {
+            self.publish(tick.output, NativePhase::Waiting);
             return Ok(ScriptFlow::Continue);
         }
         if let Some(active) = self.active.as_mut() {
@@ -1976,6 +2026,36 @@ impl Script for QueuedQuester {
                     self.refresh_fields();
                 }
             }
+        }
+        if !self
+            .queue
+            .rows()
+            .iter()
+            .any(|row| row.picked && !row.skipped)
+        {
+            self.publish(tick.output, NativePhase::Blocked);
+            return Ok(ScriptFlow::Blocked(self.blocked()));
+        }
+        // Login publishes the quest-list family separately from the scene.
+        // Unknown evidence is not an ineligible quest: retain admission until
+        // it arrives, without compiling paths or emitting gameplay effects.
+        if self.queue.next_candidate().is_some() && tick.cx.snapshot().quest_statuses().is_none() {
+            let now = tick.cx.active_now();
+            if self.quest_status_since.is_none() {
+                self.quest_status_since = Some(now);
+                self.dirty = true;
+            }
+            let since = self.quest_status_since.expect("quest observation wait");
+            if now.saturating_sub(since) >= QUEUE_QUEST_STATUS_WAIT {
+                self.dirty = true;
+                self.publish(tick.output, NativePhase::Blocked);
+                return Ok(ScriptFlow::Blocked(self.blocked()));
+            }
+            self.publish(tick.output, NativePhase::Waiting);
+            return Ok(ScriptFlow::Continue);
+        }
+        if self.quest_status_since.take().is_some() {
+            self.refresh_fields();
         }
         if self
             .preparing
@@ -2061,6 +2141,7 @@ impl Script for QueuedQuester {
 
     fn retry(&mut self) -> Result<(), ScriptFailure> {
         self.queue.retry();
+        self.quest_status_since = None;
         if let Some(active) = self.active.as_mut() {
             active.retry()?;
         }
@@ -3094,3 +3175,7 @@ mod tests {
 #[cfg(test)]
 #[path = "journal_runner_tests.rs"]
 mod journal_tests;
+
+#[cfg(test)]
+#[path = "queue_runner_tests.rs"]
+mod queue_tests;

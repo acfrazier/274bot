@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use frontend_core::views::run_state_label;
+use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 use script::{JsCard, LoadStage, RunState, ScriptKind, ScriptSel, ScriptSource, SlotScript};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -358,6 +358,7 @@ pub struct ScriptPane<'a> {
     pub slot: Option<&'a SlotScript>,
     /// A reload warning awaits confirmation.
     pub reload_confirm: bool,
+    pub native_status: Option<&'a script::native::ScriptStatus>,
 }
 
 impl<'a> ScriptPane<'a> {
@@ -386,11 +387,17 @@ impl<'a> ScriptPane<'a> {
             params_available,
             slot,
             reload_confirm: false,
+            native_status: None,
         }
     }
 
     pub fn with_reload_confirm(mut self, confirm: bool) -> Self {
         self.reload_confirm = confirm;
+        self
+    }
+
+    pub fn with_native_status(mut self, status: Option<&'a script::native::ScriptStatus>) -> Self {
+        self.native_status = status;
         self
     }
 
@@ -511,7 +518,7 @@ impl Widget for ScriptPane<'_> {
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
         block.render(area, buf);
-        let state = run_state_label(self.state);
+        let state = script_status_label(self.state, self.native_status);
         let sel = self.sel.map(|s| s.label()).unwrap_or_else(|| "—".into());
         let mut buttons = String::new();
         for label in self.main_buttons() {
@@ -530,6 +537,14 @@ impl Widget for ScriptPane<'_> {
                 push_button(&mut row, label);
             }
             lines.push(Line::from(row));
+            if let Some(status) = self.native_status {
+                if let Some(reason) = script_status_reason(status) {
+                    lines.push(Line::from(reason));
+                }
+                for (label, value) in script_status_rows(status) {
+                    lines.push(Line::from(format!("{label}: {value}")));
+                }
+            }
         }
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
@@ -1062,5 +1077,46 @@ mod tests {
             ScriptClick::Button("Resume"),
             "Resume is clickable when paused"
         );
+    }
+    #[test]
+    fn native_block_is_visible_without_a_quester_window() {
+        let status = script::native::ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 2,
+                session: 3,
+            },
+            card: script::CompiledId("Quester"),
+            phase: script::native::NativePhase::Blocked,
+            active_settings: 1,
+            pending_settings: None,
+            fields: std::sync::Arc::from([]),
+            failure: Some(script::native::ScriptFailure {
+                code: "queue-blocked".into(),
+                message: "quest list unavailable; log in normally, then Stop/Start Quester".into(),
+                retryable: true,
+            }),
+        };
+        let text = render(
+            ScriptPane::new(
+                RunState::Running,
+                None,
+                &[],
+                &[],
+                false,
+                false,
+                false,
+                "",
+                false,
+                None,
+            )
+            .with_native_status(Some(&status)),
+            90,
+            10,
+        );
+        assert!(text.contains("script: blocked"), "{text:?}");
+        assert!(text.contains("quest list unavailable"), "{text:?}");
+        assert!(text.contains("Stop/Start Quester"), "{text:?}");
+        assert!(!text.contains("script: running"), "{text:?}");
     }
 }

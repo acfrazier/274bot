@@ -1019,6 +1019,60 @@ pub const fn run_state_label(state: RunState) -> &'static str {
     }
 }
 
+/// Native work can be parked while its lifecycle still owns a running instance.
+/// Both front ends must show that phase rather than a silent "running".
+pub fn script_status_label(
+    state: RunState,
+    status: Option<&script::native::ScriptStatus>,
+) -> &'static str {
+    if state != RunState::Running {
+        return run_state_label(state);
+    }
+    match status.map(|status| status.phase) {
+        Some(script::native::NativePhase::Preparing) => "preparing",
+        Some(script::native::NativePhase::Working) => "working",
+        Some(script::native::NativePhase::Waiting) => "waiting",
+        Some(script::native::NativePhase::Blocked) => "blocked",
+        Some(script::native::NativePhase::Complete) => "complete",
+        None => "running",
+    }
+}
+
+/// The current refusal or wait takes priority over a normal action caption.
+pub fn script_status_reason(status: &script::native::ScriptStatus) -> Option<&str> {
+    status
+        .failure
+        .as_ref()
+        .map(|failure| failure.message.as_ref())
+        .or_else(|| {
+            ["waiting_for", "action_state"].into_iter().find_map(|key| {
+                status.fields.iter().find_map(|field| {
+                    (field.key == key)
+                        .then_some(&field.value)
+                        .and_then(|value| match value {
+                            script::native::StatusValue::Text(text) if !text.is_empty() => {
+                                Some(text.as_ref())
+                            }
+                            _ => None,
+                        })
+                })
+            })
+        })
+}
+
+/// The short text rows (quest display, queue letters) both front ends show
+/// under the status line, as `(label, value)`.
+pub fn script_status_rows(
+    status: &script::native::ScriptStatus,
+) -> impl Iterator<Item = (&str, &str)> {
+    status.fields.iter().filter_map(|field| match &field.value {
+        script::native::StatusValue::Text(value) if matches!(field.key, "display" | "queue") => {
+            Some((field.label, value.as_ref()))
+        }
+        _ => None,
+    })
+}
+
 fn count(rows: &[FleetRow]) -> FleetCounts {
     let mut counts = FleetCounts {
         loaded: rows.len(),

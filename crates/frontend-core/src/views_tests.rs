@@ -741,3 +741,50 @@ fn world_login_uses_the_login_phase_not_script_idle() {
     logging.write_world_login(&mut out);
     assert_eq!(out, "logging in");
 }
+
+#[test]
+fn native_wait_and_refusal_override_running_but_not_pause() {
+    use script::native::{NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue};
+    use std::sync::Arc;
+
+    let mut status = ScriptStatus {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        card: script::CompiledId("Quester"),
+        phase: NativePhase::Waiting,
+        active_settings: 1,
+        pending_settings: None,
+        fields: Arc::from([StatusField {
+            key: "waiting_for",
+            label: "Waiting for",
+            value: StatusValue::Text(Arc::from("quest list from login")),
+        }]),
+        failure: None,
+    };
+    assert_eq!(
+        script_status_label(RunState::Running, Some(&status)),
+        "waiting"
+    );
+    assert_eq!(script_status_reason(&status), Some("quest list from login"));
+    status.phase = NativePhase::Blocked;
+    status.failure = Some(ScriptFailure {
+        code: Arc::from("queue-blocked"),
+        message: Arc::from("no eligible selected quest; review Script prefs, then Stop/Start"),
+        retryable: true,
+    });
+    assert_eq!(
+        script_status_label(RunState::Running, Some(&status)),
+        "blocked"
+    );
+    assert!(script_status_reason(&status)
+        .unwrap()
+        .contains("Stop/Start"));
+    assert_eq!(
+        script_status_label(RunState::Paused, Some(&status)),
+        "paused"
+    );
+    assert_eq!(script_status_label(RunState::Running, None), "running");
+}
