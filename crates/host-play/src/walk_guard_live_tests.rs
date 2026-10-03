@@ -87,7 +87,9 @@ fn path_json(dest: WorldTile) -> String {
     )
 }
 
-fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
+fn throwers_route_context(
+    world: &nav::world::NavWorld,
+) -> (nav::router::FindOptions, nav::WorldState) {
     let table = world.graph.zones.as_ref().expect("baked zone table");
     let key = table.resolve(ZONE).expect("death-plateau-throwers");
     let zones = nav::zones::ZoneExempt::named(&[key]).expect("zone exempt");
@@ -96,6 +98,11 @@ fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
         ..nav::router::FindOptions::default()
     };
     let state = nav::WorldState::empty().with_map_members(true);
+    (opts, state)
+}
+
+fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
+    let (opts, state) = throwers_route_context(world);
     let mut starts = Vec::new();
     let mut dests = Vec::new();
     for z in 3590..=3608 {
@@ -254,15 +261,6 @@ fn missiles_on(snapshot: &GameSnapshot) -> bool {
         .is_some_and(|row| row.value == 1)
 }
 
-fn first_launch_tick(snapshot: &GameSnapshot) -> bool {
-    let me = snapshot.self_slot() as usize;
-    snapshot.projectiles().iter().any(|projectile| {
-        projectile
-            .target
-            .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
-    })
-}
-
 fn arrived_at(snapshot: &GameSnapshot, dest: WorldTile) -> bool {
     snapshot.tile().is_some_and(|(x, z, level)| {
         level == dest.level && (x - dest.x).abs().max((z - dest.z).abs()) <= 1
@@ -278,6 +276,30 @@ fn prayers_active(snapshot: &GameSnapshot) -> bool {
 
 fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
+}
+
+/// NPC → player ranged queue, design §5.4 / §10.6: `floor((32 + 5d) / 30)`.
+fn npc_ranged_queue_ticks(distance: i32) -> u32 {
+    let distance = distance.max(0);
+    (32 + 5 * distance) as u32 / 30
+}
+
+fn send_cheat(client: &mut client::client::Client, command: &str) -> bool {
+    matches!(
+        api::interact::cheat(client, command),
+        client::CheatSend::Sent
+    )
+}
+
+fn reconstructed_launch_tick(tick: u32, loop_cycle: Option<i32>, t1: i32) -> u32 {
+    let Some(cycle) = loop_cycle else {
+        return tick;
+    };
+    if t1 < 0 {
+        return tick;
+    }
+    let age = cycle.saturating_sub(t1).max(0) as u32 / 30;
+    tick.saturating_sub(age)
 }
 
 #[derive(Clone, Copy)]
@@ -297,6 +319,10 @@ impl LaunchRecord {
         (self.src.x, self.src.z, self.src.level, self.t1, self.t2)
     }
 
+    fn expected_delay(self) -> u32 {
+        npc_ranged_queue_ticks(self.distance)
+    }
+
     fn json(self) -> serde_json::Value {
         json!({
             "tick": self.tick,
@@ -309,6 +335,76 @@ impl LaunchRecord {
             "observed_delay": self.observed_delay,
         })
     }
+}
+
+fn in_crossing(launch: &LaunchRecord, off_tick: Option<u32>) -> bool {
+    off_tick.is_none_or(|off| launch.tick < off)
+}
+
+/// Count-only gate that accepted the contradictory W1 receipt (two identities
+/// and two distances with any delay). Kept for the regression that proves the
+/// delay rule rejects that receipt.
+fn count_only_queue_gate(launches: &[LaunchRecord]) -> bool {
+    let measured: Vec<&LaunchRecord> = launches
+        .iter()
+        .filter(|launch| launch.observed_delay.is_some())
+        .collect();
+    let identities: std::collections::HashSet<(i32, i32, i32, i32, i32)> =
+        measured.iter().map(|launch| launch.identity()).collect();
+    let distances: std::collections::BTreeSet<i32> =
+        measured.iter().map(|launch| launch.distance).collect();
+    identities.len() >= 2 && distances.len() >= 2
+}
+
+fn queue_mismatch(launches: &[LaunchRecord]) -> Option<String> {
+    launches.iter().find_map(|launch| {
+        let delay = launch.observed_delay?;
+        let expected = launch.expected_delay();
+        (delay != expected).then(|| {
+            format!(
+                "NPC ranged queue delay {delay} at distance {} != {expected}",
+                launch.distance
+            )
+        })
+    })
+}
+
+fn queue_gate(launches: &[LaunchRecord], off_tick: Option<u32>) -> bool {
+    if launches.iter().any(|launch| {
+        launch
+            .observed_delay
+            .is_some_and(|delay| delay != launch.expected_delay())
+    }) {
+        return false;
+    }
+    let measured: Vec<&LaunchRecord> = launches
+        .iter()
+        .filter(|launch| launch.observed_delay.is_some() && in_crossing(launch, off_tick))
+        .collect();
+    let identities: std::collections::HashSet<(i32, i32, i32, i32, i32)> =
+        measured.iter().map(|launch| launch.identity()).collect();
+    let distances: std::collections::BTreeSet<i32> =
+        measured.iter().map(|launch| launch.distance).collect();
+    identities.len() >= 2 && distances.len() >= 2
+}
+
+fn attribute_due_impact(launches: &mut [LaunchRecord], tick: u32) {
+    let due: Vec<usize> = launches
+        .iter()
+        .enumerate()
+        .filter(|(_, launch)| {
+            launch.impact_tick.is_none()
+                && launch.tick <= tick
+                && tick.saturating_sub(launch.tick) == launch.expected_delay()
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if due.len() != 1 {
+        return;
+    }
+    let launch = &mut launches[due[0]];
+    launch.impact_tick = Some(tick);
+    launch.observed_delay = Some(tick.saturating_sub(launch.tick));
 }
 
 fn w1_ready(
@@ -350,13 +446,39 @@ struct LiveState {
     seen_launches: std::collections::HashSet<(i32, i32, i32, i32, i32)>,
     hit_onset: HitOnset,
     second_attacker_staged: bool,
+    tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
 }
 
 impl LiveState {
+    fn remember_tile(&mut self, tick: u32, tile: WorldTile) {
+        if let Some((last_tick, last_tile)) = self.tiles_by_tick.back_mut() {
+            if *last_tick == tick {
+                *last_tile = tile;
+                return;
+            }
+        }
+        if self.tiles_by_tick.len() == 64 {
+            self.tiles_by_tick.pop_front();
+        }
+        self.tiles_by_tick.push_back((tick, tile));
+    }
+
+    fn tile_at(&self, tick: u32) -> Option<WorldTile> {
+        self.tiles_by_tick
+            .iter()
+            .rev()
+            .find(|(at, _)| *at <= tick)
+            .map(|(_, tile)| *tile)
+    }
+
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
         self.last_tile = self.snapshot.tile();
+        let tick = self.snapshot.tick();
+        if let Some((x, z, level)) = self.last_tile {
+            self.remember_tile(tick, WorldTile { x, z, level });
+        }
         if self.runner.on_start_script() && !self.started {
             combat_proof::record_start_baseline(&self.account, &self.snapshot);
             let Some((handle, banks)) = self.start_context.as_ref() else {
@@ -401,13 +523,7 @@ impl LiveState {
         }
         if self.started
             && !self.attacker_staged
-            && self.last_tile.is_some_and(|(x, z, level)| {
-                x != self.start.x || z != self.start.z || level != self.start.level
-            })
-            && matches!(
-                api::interact::cheat(client, "npcadd death_troll_thrower1"),
-                client::CheatSend::Sent
-            )
+            && send_cheat(client, "npcadd death_troll_thrower1")
         {
             self.attacker_staged = true;
         }
@@ -417,17 +533,19 @@ impl LiveState {
                 .launches
                 .first()
                 .is_some_and(|launch| self.snapshot.tick() >= launch.tick.saturating_add(9))
-            && matches!(
-                api::interact::cheat(client, "npcadd death_troll_thrower2"),
-                client::CheatSend::Sent
-            )
+            && send_cheat(client, "npcadd death_troll_thrower2")
         {
             self.second_attacker_staged = true;
         }
-        if first_launch_tick(&self.snapshot) && self.launch_tick.is_none() {
-            self.launch_tick = Some(self.snapshot.tick());
+        let already_off = self.off_tick.is_some();
+        if self.launch_tick.is_none() {
+            self.launch_tick = self
+                .launches
+                .iter()
+                .find(|launch| chebyshev(launch.src, self.start) > 4)
+                .map(|launch| launch.tick);
         }
-        if missiles_on(&self.snapshot) && self.protect_tick.is_none() {
+        if self.started && missiles_on(&self.snapshot) && self.protect_tick.is_none() {
             self.protect_tick = Some(self.snapshot.tick());
         }
         if arrived_at(&self.snapshot, self.dest) {
@@ -440,47 +558,45 @@ impl LiveState {
             self.prayers_off_after_arrival = true;
         }
         let me = self.snapshot.self_slot() as usize;
-        let tick = self.snapshot.tick();
-        if let Some((x, z, level)) = self.last_tile {
-            let here = WorldTile { x, z, level };
-            for projectile in self.snapshot.projectiles() {
-                if !projectile
-                    .target
-                    .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
-                {
-                    continue;
+        let loop_cycle = self.snapshot.hitmarks().map(|hitmarks| hitmarks.loop_cycle);
+        if self.started && !already_off {
+            if let Some((x, z, level)) = self.last_tile {
+                let here = WorldTile { x, z, level };
+                for projectile in self.snapshot.projectiles() {
+                    if !projectile.target.is_some_and(|target| {
+                        target.kind == ActorKind::Player && target.index == me
+                    }) {
+                        continue;
+                    }
+                    let key = (
+                        projectile.src.x,
+                        projectile.src.z,
+                        projectile.src.level,
+                        projectile.t1,
+                        projectile.t2,
+                    );
+                    if !self.seen_launches.insert(key) {
+                        continue;
+                    }
+                    let launch_tick = reconstructed_launch_tick(tick, loop_cycle, projectile.t1);
+                    let here = self.tile_at(launch_tick).unwrap_or(here);
+                    self.launches.push(LaunchRecord {
+                        tick: launch_tick,
+                        src: projectile.src,
+                        here,
+                        distance: chebyshev(projectile.src, here),
+                        t1: projectile.t1,
+                        t2: projectile.t2,
+                        impact_tick: None,
+                        observed_delay: None,
+                    });
                 }
-                let key = (
-                    projectile.src.x,
-                    projectile.src.z,
-                    projectile.src.level,
-                    projectile.t1,
-                    projectile.t2,
-                );
-                if !self.seen_launches.insert(key) {
-                    continue;
-                }
-                self.launches.push(LaunchRecord {
-                    tick,
-                    src: projectile.src,
-                    here,
-                    distance: chebyshev(projectile.src, here),
-                    t1: projectile.t1,
-                    t2: projectile.t2,
-                    impact_tick: None,
-                    observed_delay: None,
-                });
             }
         }
-        if let Some(hitmarks) = self.snapshot.hitmarks() {
-            for _ in self.hit_onset.observe(&hitmarks.marks, hitmarks.loop_cycle) {
-                if let Some(launch) = self
-                    .launches
-                    .iter_mut()
-                    .find(|launch| launch.impact_tick.is_none() && launch.tick <= tick)
-                {
-                    launch.impact_tick = Some(tick);
-                    launch.observed_delay = Some(tick.saturating_sub(launch.tick));
+        if self.started {
+            if let Some(hitmarks) = self.snapshot.hitmarks() {
+                for _ in self.hit_onset.observe(&hitmarks.marks, hitmarks.loop_cycle) {
+                    attribute_due_impact(&mut self.launches, tick);
                 }
             }
         }
@@ -607,6 +723,7 @@ fn live_walk_guard_w1_protected_crossing() {
         seen_launches: std::collections::HashSet::new(),
         hit_onset: HitOnset::new(),
         second_attacker_staged: false,
+        tiles_by_tick: std::collections::VecDeque::new(),
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -652,17 +769,12 @@ fn live_walk_guard_w1_protected_crossing() {
         let prayers_off = snapshot.prayers_off_after_arrival;
         let launch_tick = snapshot.launch_tick;
         let protect_tick = snapshot.protect_tick;
-        let measured: Vec<&LaunchRecord> = snapshot
-            .launches
-            .iter()
-            .filter(|launch| launch.observed_delay.is_some())
-            .collect();
-        let distinct_projectiles: std::collections::HashSet<(i32, i32, i32, i32, i32)> =
-            measured.iter().map(|launch| launch.identity()).collect();
-        let launch_distances: std::collections::BTreeSet<i32> =
-            measured.iter().map(|launch| launch.distance).collect();
-        let queue_measured = distinct_projectiles.len() >= 2 && launch_distances.len() >= 2;
+        let mismatch = queue_mismatch(&snapshot.launches);
+        let queue_measured = queue_gate(&snapshot.launches, snapshot.off_tick);
         drop(snapshot);
+        if let Some(reason) = mismatch {
+            break ("FAIL", Some(reason));
+        }
         let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reason) = capture_snapshot.invalid_reason.clone() {
             break ("INVALID", Some(reason));
@@ -765,4 +877,179 @@ fn live_walk_guard_w1_protected_crossing() {
     let path = PathBuf::from(EVIDENCE_DIR).join(format!("W1-{account}-receipt.json"));
     std::fs::write(&path, serde_json::to_vec_pretty(&receipt).unwrap()).expect("write W1 receipt");
     assert_eq!(outcome, "PASS", "W1 {}", error.unwrap_or_default());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_row(
+    tick: u32,
+    src: [i32; 3],
+    here: [i32; 3],
+    distance: i32,
+    t1: i32,
+    t2: i32,
+    impact_tick: Option<u32>,
+    observed_delay: Option<u32>,
+) -> LaunchRecord {
+    LaunchRecord {
+        tick,
+        src: WorldTile {
+            x: src[0],
+            z: src[1],
+            level: src[2],
+        },
+        here: WorldTile {
+            x: here[0],
+            z: here[1],
+            level: here[2],
+        },
+        distance,
+        t1,
+        t2,
+        impact_tick,
+        observed_delay,
+    }
+}
+
+/// The R3-F1 receipt: two identities, distances 4 and 6, but the distance-6
+/// delay is 1 instead of `floor((32 + 5*6)/30) == 2`, and that row is after
+/// prayers off at tick 43.
+fn contradictory_w1_launches() -> Vec<LaunchRecord> {
+    vec![
+        launch_row(
+            20,
+            [2839, 3602, 0],
+            [2843, 3606, 0],
+            4,
+            364,
+            381,
+            Some(21),
+            Some(1),
+        ),
+        launch_row(
+            31,
+            [2860, 3609, 0],
+            [2864, 3609, 0],
+            4,
+            627,
+            644,
+            Some(32),
+            Some(1),
+        ),
+        launch_row(
+            56,
+            [2880, 3602, 0],
+            [2880, 3596, 0],
+            6,
+            1219,
+            1240,
+            Some(57),
+            Some(1),
+        ),
+    ]
+}
+
+#[test]
+fn npc_ranged_queue_ticks_matches_the_named_formula() {
+    assert_eq!(npc_ranged_queue_ticks(4), 1);
+    assert_eq!(npc_ranged_queue_ticks(6), 2);
+    assert_eq!(npc_ranged_queue_ticks(8), 2);
+}
+
+#[test]
+fn count_only_queue_gate_accepts_the_contradictory_w1_receipt() {
+    let launches = contradictory_w1_launches();
+    assert!(
+        count_only_queue_gate(&launches),
+        "the old count-only gate must still describe the receipt it wrongly passed"
+    );
+    assert_eq!(
+        queue_mismatch(&launches).as_deref(),
+        Some("NPC ranged queue delay 1 at distance 6 != 2")
+    );
+}
+
+#[test]
+fn npc_ranged_queue_gate_rejects_a_mismatched_delay_the_count_only_gate_accepted() {
+    let launches = contradictory_w1_launches();
+    assert!(count_only_queue_gate(&launches));
+    assert!(
+        !queue_gate(&launches, Some(43)),
+        "a distance-6 delay of 1 must not pass floor((32 + 5d)/30)"
+    );
+}
+
+#[test]
+fn npc_ranged_queue_gate_requires_two_in_crossing_distances_that_match_the_rule() {
+    let matching = vec![
+        launch_row(
+            20,
+            [2839, 3602, 0],
+            [2843, 3606, 0],
+            4,
+            364,
+            381,
+            Some(21),
+            Some(1),
+        ),
+        launch_row(
+            31,
+            [2855, 3607, 0],
+            [2855, 3601, 0],
+            6,
+            627,
+            657,
+            Some(33),
+            Some(2),
+        ),
+    ];
+    assert!(queue_gate(&matching, Some(43)));
+
+    let after_off = vec![
+        launch_row(
+            20,
+            [2839, 3602, 0],
+            [2843, 3606, 0],
+            4,
+            364,
+            381,
+            Some(21),
+            Some(1),
+        ),
+        launch_row(
+            56,
+            [2880, 3602, 0],
+            [2880, 3596, 0],
+            6,
+            1219,
+            1240,
+            Some(58),
+            Some(2),
+        ),
+    ];
+    assert!(
+        !queue_gate(&after_off, Some(43)),
+        "a second distance after prayers are off is not an in-crossing proof"
+    );
+}
+
+#[test]
+fn due_tick_attribution_does_not_attach_an_unrelated_hitmark_to_the_oldest_launch() {
+    let mut launches = vec![launch_row(
+        20,
+        [2880, 3602, 0],
+        [2880, 3596, 0],
+        6,
+        1219,
+        1240,
+        None,
+        None,
+    )];
+    attribute_due_impact(&mut launches, 21);
+    assert!(
+        launches[0].impact_tick.is_none(),
+        "a delay-1 hitmark is not the distance-6 rock"
+    );
+    attribute_due_impact(&mut launches, 22);
+    assert_eq!(launches[0].impact_tick, Some(22));
+    assert_eq!(launches[0].observed_delay, Some(2));
 }
