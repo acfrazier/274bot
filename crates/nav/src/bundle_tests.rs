@@ -424,15 +424,24 @@ fn canonical_maps(root: &Path) -> BTreeSet<String> {
     out
 }
 
-/// The canonical local content root of a revision, the same default the
-/// build script resolves.
-fn canonical_content_root(revision: u16) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let root = PathBuf::from(home).join(if revision == 289 {
-        "experiments/lostcity-289/content"
-    } else {
-        "experiments/Server/content"
-    });
+/// The canonical content root selected for this build, when explicitly configured.
+fn canonical_content_root(revision: u16) -> Option<std::path::PathBuf> {
+    let selected = std::env::var("BOT_NAV_REVISION")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(289);
+    if selected != revision {
+        return None;
+    }
+    let root = std::env::var_os("BOT_NAV_CONTENT_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let engine = std::env::var_os("BOT_NAV_ENGINE_DIR")
+                .or_else(|| std::env::var_os("ENGINE_DIR"))?;
+            std::path::PathBuf::from(engine)
+                .parent()
+                .map(|parent| parent.join("content"))
+        })?;
     root.is_dir().then_some(root)
 }
 

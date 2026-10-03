@@ -5076,7 +5076,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
         .server_root
         .clone()
         .or_else(|| std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/Users/acfrazier/experiments/Server/engine"));
+        .ok_or("offline fixture preparation requires --server-root or BOT_SERVER_ROOT")?;
     if !server_root.join("data/pack/server/obj.dat").is_file() {
         return Err(format!(
             "server root missing pack data: {} (pass --server-root or BOT_SERVER_ROOT)",

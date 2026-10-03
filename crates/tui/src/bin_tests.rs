@@ -833,6 +833,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         let env = ProfileEnvironment {
             home: Some(root.clone()),
             working_dir: Some(root.clone()),
+            engine_dir: Some(root.join("engine")),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
