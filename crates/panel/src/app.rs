@@ -3143,20 +3143,91 @@ fn persist_profile_setting(
     }
 }
 
+fn script_parameter_text_input(
+    ui: &Ui,
+    session: &mut Session,
+    selection: &script::ScriptSel,
+    profile: Option<&str>,
+    def: &script::SettingDef,
+    options: &[String],
+    current: Option<serde_json::Value>,
+) {
+    let label = def.label.as_deref().unwrap_or(&def.id);
+    let initial_text = current
+        .as_ref()
+        .map(script::format_setting_value)
+        .or_else(|| def.default.clone())
+        .unwrap_or_default();
+    let changed = {
+        let text = session.scripts.parameter_text_mut_for(
+            profile,
+            selection,
+            &def.id,
+            &initial_text,
+            current.clone(),
+        );
+        ui.input_text(format!("{label}##param-{id}", id = def.id), text)
+            .build()
+    };
+    let active = ui.is_item_active();
+    let deactivated = ui.is_item_deactivated_after_edit();
+    let enter = ui.is_key_pressed(Key::Enter) && (active || deactivated);
+    let escape = ui.is_key_pressed(Key::Escape) && (active || deactivated);
+    let commit = !escape && (deactivated || enter);
+    if escape {
+        session
+            .scripts
+            .discard_parameter_text_for(profile, selection, &def.id);
+    } else if changed || commit {
+        let value = session.scripts.validate_parameter_buffer_for(
+            profile,
+            selection,
+            &def.id,
+            (&initial_text, current.clone()),
+            def,
+            options,
+        );
+        if commit {
+            if let Ok(value) = value {
+                let edit_key =
+                    frontend_core::scripts::ParameterEditKey::new(profile, selection, &def.id);
+                let _ = session.scripts.commit_parameter_value(
+                    &mut session.core,
+                    &edit_key,
+                    selection,
+                    &def.id,
+                    value,
+                    current,
+                );
+                session.apply_script_notice();
+            }
+        }
+    }
+    if let Some(error) = session
+        .scripts
+        .parameter_text_error_for(profile, selection, &def.id)
+    {
+        ui.same_line();
+        ui.text_colored(ERROR, error);
+    }
+}
+
+/// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     let Some(selection) = session.script_sel.clone() else {
         ui.text_wrapped("select a script with a parameter schema");
         return;
     };
+    let profile = session.focused_name();
     let (schema, mut bag): (std::borrow::Cow<'_, [script::SettingDef]>, _) = match &selection {
         script::ScriptSel::Loaded(source, name) => {
             let Some(card) = session.scripts.js.get(*source, name).cloned() else {
                 ui.text_disabled("(parameters unavailable)");
                 return;
             };
-            let bag = if let Some(profile) = session.focused_name() {
+            let bag = if let Some(profile) = profile.as_deref() {
                 session.merged_profile_bag(
-                    &profile,
+                    profile,
                     *source,
                     &card.name,
                     &card.path,
@@ -3168,7 +3239,6 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             (std::borrow::Cow::Owned(card.settings_schema), bag)
         }
         script::ScriptSel::Compiled(id) => {
-            let profile = session.focused_name();
             let fields =
                 match session
                     .scripts
@@ -3227,15 +3297,15 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 }
             }
             "number" => {
-                let mut value = bag
-                    .get(&def.id)
-                    .and_then(|v| v.as_f64())
-                    .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
-                    .unwrap_or(0.0) as i32;
-                if ui.input_int(&label, &mut value) {
-                    persist_profile_setting(session, &selection, &def.id, serde_json::json!(value));
-                    bag.insert(def.id.clone(), serde_json::json!(value));
-                }
+                script_parameter_text_input(
+                    ui,
+                    session,
+                    &selection,
+                    profile.as_deref(),
+                    def,
+                    &resolved.values,
+                    bag.get(&def.id).cloned(),
+                );
             }
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
@@ -3305,16 +3375,15 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 }
             }
             "string" | "tile" | "list" | "string[]" => {
-                let mut text = bag
-                    .get(&def.id)
-                    .map(script::format_setting_value)
-                    .or(def.default.as_deref().map(String::from))
-                    .unwrap_or_default();
-                if ui.input_text(&label, &mut text).build() {
-                    let coerced = script::coerce_setting_value(&def.ty, &serde_json::json!(text));
-                    persist_profile_setting(session, &selection, &def.id, coerced.clone());
-                    bag.insert(def.id.clone(), coerced);
-                }
+                script_parameter_text_input(
+                    ui,
+                    session,
+                    &selection,
+                    profile.as_deref(),
+                    def,
+                    &resolved.values,
+                    bag.get(&def.id).cloned(),
+                );
             }
             _ => {
                 ui.text_disabled(format!("{label} (unsupported type {})", def.ty));
