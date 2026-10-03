@@ -1271,7 +1271,7 @@ fn script_params_click_and_space_toggle_persist_bool() {
         None,
     ));
     assert!(app.params_state.open);
-    let mut commit = |id: &str, value: serde_json::Value| {
+    let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
         Ok(())
     };
@@ -1313,7 +1313,7 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
     std::fs::create_dir_all(&dir).unwrap();
     let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
-    let mut commit = |id: &str, value: serde_json::Value| {
+    let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
         Ok(())
     };
