@@ -106,6 +106,8 @@ pub(super) fn zanaris_door_edges(
             open_loc_id,
             skill_req: vec![],
             item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
             quest_req: vec!["Lost City".to_string()],
             varp_req: vec![],
             worn_req: vec![staff_id],

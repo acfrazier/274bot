@@ -5373,6 +5373,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_USER_MOVE_INTENT_SEQ: ::flatbuffers::VOffsetT = 276;
   pub const VT_WALK_OUTCOME_CANCEL_REASON: ::flatbuffers::VOffsetT = 278;
   pub const VT_PROJECTILES: ::flatbuffers::VOffsetT = 280;
+  pub const VT_CHAT_PAGE_FINGERPRINT: ::flatbuffers::VOffsetT = 282;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5384,6 +5385,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
     builder.add_bank_snapshot_generation(args.bank_snapshot_generation);
     builder.add_bank_selection_generation(args.bank_selection_generation);
@@ -6501,6 +6503,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>(Snapshot::VT_PROJECTILES, None)}
   }
+  #[inline]
+  pub fn chat_page_fingerprint(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6648,6 +6657,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<u64>("user_move_intent_seq", Self::VT_USER_MOVE_INTENT_SEQ, false)?
      .visit_field::<WalkCancelReason>("walk_outcome_cancel_reason", Self::VT_WALK_OUTCOME_CANCEL_REASON, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>("projectiles", Self::VT_PROJECTILES, false)?
+     .visit_field::<u64>("chat_page_fingerprint", Self::VT_CHAT_PAGE_FINGERPRINT, false)?
      .finish();
     Ok(())
   }
@@ -6792,6 +6802,7 @@ pub struct SnapshotArgs<'a> {
     pub user_move_intent_seq: u64,
     pub walk_outcome_cancel_reason: WalkCancelReason,
     pub projectiles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>>>,
+    pub chat_page_fingerprint: u64,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6936,6 +6947,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       user_move_intent_seq: 0,
       walk_outcome_cancel_reason: WalkCancelReason::None,
       projectiles: None,
+      chat_page_fingerprint: 0,
     }
   }
 }
@@ -7502,6 +7514,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_PROJECTILES, projectiles);
   }
   #[inline]
+  pub fn add_chat_page_fingerprint(&mut self, chat_page_fingerprint: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, chat_page_fingerprint, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7658,6 +7674,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("user_move_intent_seq", &self.user_move_intent_seq());
       ds.field("walk_outcome_cancel_reason", &self.walk_outcome_cancel_reason());
       ds.field("projectiles", &self.projectiles());
+      ds.field("chat_page_fingerprint", &self.chat_page_fingerprint());
       ds.finish()
   }
 }

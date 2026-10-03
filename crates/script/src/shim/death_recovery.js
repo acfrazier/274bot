@@ -13,7 +13,7 @@ export class DeathRecovery {
     }
 
     validate() {
-        return globalThis.__rs2b0t_death_recovery_validate(this.opts);
+        return globalThis.__rs2b0t_death_recovery_validate(this, this.opts);
     }
 
     async execute() {

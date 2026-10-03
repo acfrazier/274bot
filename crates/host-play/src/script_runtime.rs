@@ -5,7 +5,7 @@ use super::*;
 mod bank;
 pub(super) use bank::fill_withdraw_action;
 pub(crate) use bank::open_bank_at_here;
-use bank::{action_slot, all_slot, deposit_all_backpack, dispatch_observed_bank_op, withdraw_id};
+use bank::{action_slot, all_slot, dispatch_observed_bank_op};
 #[path = "script_nav.rs"]
 mod script_nav;
 #[cfg(test)]

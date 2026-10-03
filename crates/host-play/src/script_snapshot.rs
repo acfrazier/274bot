@@ -1465,6 +1465,14 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         _ => CollisionViewInput::UNAVAILABLE,
     });
     let native = NativeFactsInput {
+        chat_page_fingerprint: snapshot.map_or(0, |s| {
+            api::snapshot::chat_page_fingerprint(
+                s.chat_modal_texts(),
+                s.chat_options()
+                    .iter()
+                    .map(|option| (option.component_id, option.text.as_str())),
+            )
+        }),
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
             .and_then(GameSnapshot::hint_tile)

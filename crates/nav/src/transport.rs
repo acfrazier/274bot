@@ -154,13 +154,16 @@ pub enum DoorDir {
 /// other edge kind until steps 3/4 fill them); `open_loc_id` names the
 /// door's open leaf or the web's slashed loc.
 /// Requirement vectors are `(skill id, level)` /
-/// `(item id, count)` pairs, spell/quest names, and `(varp, value)` pairs,
-/// filled from what the source scripts/defs declare (empty when the source
-/// declares nothing). `worn_req` is the obj ids of which **any one** must
-/// be equipped (a Dramen staff is a one-id list; slashable webs list
-/// every blade whose `slashattack_anim` is not unarmed). `option` 0 on a
-/// loc hop means use the first `item_req` obj on the loc (`oplocu`);
-/// option 1 is `oploc1`.
+/// `(item id, count)` pairs and spell/quest names and `(varp, value)` pairs,
+/// filled from what the source scripts/defs declare. `item_req` is a
+/// reusable held-item gate: satisfying it does not consume the item.
+/// `consumed_req` is the `(obj id, count)` supply spent by this hop.
+/// `item_returns` is the `(obj id, count)` replacement credited after that
+/// spend, derived only when the source proves an inventory transformation.
+/// `worn_req` is the obj ids of which **any one** must be equipped (a Dramen
+/// staff is a one-id list; slashable webs list every blade whose
+/// `slashattack_anim` is not unarmed). `option` 0 on a loc hop means use the
+/// first `item_req` obj on the loc (`oplocu`); option 1 is `oploc1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportEdge {
     pub kind: TransportKind,
@@ -176,7 +179,12 @@ pub struct TransportEdge {
     pub dir: Option<DoorDir>,
     pub open_loc_id: Option<i32>,
     pub skill_req: Vec<(i32, i32)>,
+    /// Reusable held-item requirement `(obj id, count)` pairs.
     pub item_req: Vec<(i32, i32)>,
+    /// Consumable inventory supply spent by a successful hop.
+    pub consumed_req: Vec<(i32, i32)>,
+    /// Content-derived replacement inventory credited after consumption.
+    pub item_returns: Vec<(i32, i32)>,
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
@@ -559,7 +567,13 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
         (
             tile(e.to),
             (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
-            (&e.skill_req, &e.item_req, &e.quest_req),
+            (
+                &e.skill_req,
+                &e.item_req,
+                &e.consumed_req,
+                &e.item_returns,
+                &e.quest_req,
+            ),
             (&e.varp_req, &e.worn_req, e.members_req, e.wildy_cap),
             &e.quest_gates,
         )
@@ -591,6 +605,7 @@ const SKIP_NO_DOOR_CONFIGS: &str = "no door configs parsed under scripts/doors/c
 const SKIP_TELEPORT_BAD_DEST: &str = "teleport destination does not parse";
 const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.pack";
 const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
+const SKIP_TELEPORT_UNPROVEN_CONSUMPTION: &str = "jewellery inventory transformation is not proven";
 const SKIP_WILDERNESS_RULES: &str = "wilderness level formula or zones cannot be derived";
 const SKIP_TELEPORT_WILDY_CAP: &str = "teleport wilderness cap cannot be derived";
 const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";

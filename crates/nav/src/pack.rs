@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 14, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 15, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -23,13 +23,15 @@
 //! same indexing — then the transport edge count u32le and per edge
 //! `(kind u8, at x/z/level, to x/z/level, loc_id, option, ticks, dir u8,
 //! open_loc_id)` i32le plus requirement vectors, membership and wilderness
-//! caps, and quest-stage gates. Version 13 appends one approach-geometry
-//! tag per edge after its quest gates (`0` absent, `1` + footprint width,
-//! length, and blocked-side mask). Version 14 reserves bit 7 of the existing
-//! kind byte for a player-relative ladder/stairs landing. The low seven bits
-//! retain the kind; flagged `to - at` encodes the content displacement, resolved
-//! against each actual takeoff stand. Absolute edge records are unchanged and
-//! the flag adds no wire bytes. The any-tile teleport layer
+//! caps, and quest-stage gates. Version 15 appends count-prefixed
+//! `(id, count)` `consumed_req` and `item_returns` vectors after reusable
+//! `item_req`; resource counts must be positive and returns require consumption.
+//! Version 13 appends one approach-geometry tag per edge after its quest gates
+//! (`0` absent, `1` + footprint width, length, and blocked-side mask). Version
+//! 14 reserves bit 7 of the existing kind byte for a player-relative
+//! ladder/stairs landing. The low seven bits retain the kind; flagged `to - at`
+//! encodes the content displacement, resolved against each actual takeoff
+//! stand. Absolute edge records are unchanged and the flag adds no wire bytes.
 //! (`TransportGraph::teleports`) round-trips inside the same edge array as
 //! kind-4 edges; [`decode`] splits them back out and never indexes them into
 //! `at`. After the edges come the content-derived bank stand table, then the
@@ -41,14 +43,14 @@
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v14 stream has `Some(ZoneTable)`, even when every row count
-//! is zero; legacy grids and synthetic in-memory graphs use `None`.
+//! Every decoded v15 stream has `Some(ZoneTable)`, even when every row count
+//! is zero; legacy grids and synthetic in-memory graphs use `zones: None`.
 //! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v13 or older whole-world stream is
+//! return [`PackError::BadLength`]. A v14 or older whole-world stream is
 //! [`PackError::BadVersion`], never compat-loaded. The raw flags, paint-reach
 //! bitset, and canlight bitset remain sidecars: flags use magic `b"274F"`,
 //! reach `b"274R"`, and canlight `b"274L"`. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v14.
+//! old `.navpack` files; `nav-pack` now writes v15.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -107,13 +109,14 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// quest family and appends typed quest-stage gates. v12 appends the
 /// content-derived zone table after Wilderness. v13 appends per-edge
 /// approach geometry after quest gates. v14 flags player-relative landings in
-/// the kind byte. [`decode`] accepts version 14 only.
-pub const VERSION: u8 = 14;
+/// the kind byte. v15 appends per-edge consumed-resource and replacement-item
+/// vectors after held `item_req`. [`decode`] accepts version 15 only.
+pub const VERSION: u8 = 15;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V14";
+pub const FORMAT_ID: &str = "274V15";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// High bit of a ladder/stairs kind byte: `to - at` is a player displacement.
@@ -419,7 +422,7 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v14 pack byte format. The graph's `at` index is not
+/// zone tables to the v15 pack byte format. The graph's `at` index is not
 /// stored; [`decode`] rebuilds it from the edges and collision. Teleports
 /// (kind-4 edges) are written after ordinary edges and always carry absent
 /// approach geometry. The raw flags are not on the wire (see the flags
@@ -449,7 +452,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
             + collision.walk.len()
             + collision.blocked.len() * 8
             + 4
-            + edge_count * 99
+            + edge_count * 107
             + 4
             + banks.len() * 48
             + zones::wire_size(graph.zones.as_ref()),
@@ -472,6 +475,8 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
     for (edge_index, e) in graph.edges.iter().chain(&graph.teleports).enumerate() {
+        validate_resource_requirements(e)
+            .expect("transport edge resource requirements must have positive counts");
         assert!(
             e.player_delta.is_none()
                 || matches!(e.kind, TransportKind::Ladder | TransportKind::Stairs),
@@ -497,6 +502,8 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         out.extend_from_slice(&e.open_loc_id.unwrap_or(-1).to_le_bytes());
         write_req_pairs(&mut out, &e.skill_req);
         write_req_pairs(&mut out, &e.item_req);
+        write_req_pairs(&mut out, &e.consumed_req);
+        write_req_pairs(&mut out, &e.item_returns);
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
@@ -530,9 +537,9 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
-/// Version 14 is the only accepted wire; older streams are rejected rather
+/// Version 15 is the only accepted wire; older streams are rejected rather
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
-/// a gate without one, or malformed gate or approach geometry, is rejected.
+/// malformed resource requirements, gates, or approach geometry are rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
     read_magic(&mut r, MAGIC)?;
@@ -581,8 +588,9 @@ fn decode_pack_body<R: PackRead>(
     // themselves still fail with Truncated past the real end.
     let remaining = r.remaining();
     let mut graph = TransportGraph {
-        edges: Vec::with_capacity(n_edges.min(remaining / 41)),
-        approaches: Vec::with_capacity(n_edges.min(remaining / 41)),
+        // A v15 edge is at least 80 bytes, including its empty vectors and trailer.
+        edges: Vec::with_capacity(n_edges.min(remaining / 80)),
+        approaches: Vec::with_capacity(n_edges.min(remaining / 80)),
         quest_family,
         ..Default::default()
     };
@@ -622,6 +630,8 @@ fn decode_pack_body<R: PackRead>(
             },
             skill_req: read_req_pairs(&mut r)?,
             item_req: read_req_pairs(&mut r)?,
+            consumed_req: read_req_pairs(&mut r)?,
+            item_returns: read_req_pairs(&mut r)?,
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
             worn_req: read_req_ids(&mut r)?,
@@ -649,6 +659,7 @@ fn decode_pack_body<R: PackRead>(
             },
             quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
         };
+        validate_resource_requirements(&edge)?;
         if player_relative {
             let delta = |to: i32, at: i32| {
                 to.checked_sub(at).ok_or_else(|| {
@@ -817,6 +828,27 @@ fn read_req_ids<R: PackRead>(r: &mut R) -> Result<Vec<i32>, PackError> {
         out.push(read_i32(r)?);
     }
     Ok(out)
+}
+
+/// Validate item requirement counts and the replacement-after-consumption invariant.
+fn validate_resource_requirements(edge: &TransportEdge) -> Result<(), PackError> {
+    for (field, requirements) in [
+        ("item_req", &edge.item_req),
+        ("consumed_req", &edge.consumed_req),
+        ("item_returns", &edge.item_returns),
+    ] {
+        if requirements.iter().any(|(_, count)| *count <= 0) {
+            return Err(PackError::BadLength(format!(
+                "{field} counts must be positive"
+            )));
+        }
+    }
+    if !edge.item_returns.is_empty() && edge.consumed_req.is_empty() {
+        return Err(PackError::BadLength(
+            "item_returns require a consumed_req".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The v11 header's quest-family binding: `0`, or `1` + digest + schema.
