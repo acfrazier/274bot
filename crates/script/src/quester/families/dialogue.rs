@@ -17,6 +17,50 @@ pub const PAGE_ACK_MS: u64 = 3_000;
 pub const CONTINUE_TICKS: u64 = 1;
 pub const CHOICE_TICKS: u64 = 2;
 
+/// The native dialogue acknowledgement shared with the v1 adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PageAcknowledgement {
+    modal: i32,
+    continue_visible: bool,
+    fingerprint: u64,
+}
+
+impl PageAcknowledgement {
+    pub(crate) fn capture(modal: i32, continue_visible: bool, fingerprint: u64) -> Self {
+        Self {
+            modal,
+            continue_visible,
+            fingerprint,
+        }
+    }
+
+    pub(crate) fn acknowledged(self, modal: i32, continue_visible: bool, fingerprint: u64) -> bool {
+        modal != self.modal
+            || continue_visible != self.continue_visible
+            || fingerprint != self.fingerprint
+    }
+}
+
+impl Default for PageAcknowledgement {
+    fn default() -> Self {
+        Self::capture(-1, false, 0)
+    }
+}
+
+/// Hash the observed dialogue text and option component/text fields.
+pub(crate) fn page_fingerprint<'a, T: Hash>(
+    texts: &[T],
+    options: impl IntoIterator<Item = (i32, &'a str)>,
+) -> u64 {
+    let mut hash = DefaultHasher::new();
+    texts.hash(&mut hash);
+    for (component_id, text) in options {
+        component_id.hash(&mut hash);
+        text.hash(&mut hash);
+    }
+    hash.finish()
+}
+
 #[derive(Clone)]
 pub struct DialogueArgs {
     pub id: i32,
@@ -44,8 +88,7 @@ pub struct Dialogue {
     due_tick: u64,
     gap_inventory: Option<u64>,
     gap_rearms_left: u64,
-    ack_modal: i32,
-    ack_page: u64,
+    ack_page: PageAcknowledgement,
     npc_index: i32,
     npc_action: Arc<str>,
     deadline_ms: u64,
@@ -76,8 +119,7 @@ impl NativeMachine for Dialogue {
                 })
                 .saturating_add(DIALOG_GAP_TICKS)
                 .min(DRIVE_STEPS as u64),
-            ack_modal: -1,
-            ack_page: 0,
+            ack_page: PageAcknowledgement::default(),
             npc_index: -1,
             npc_action: Arc::from("Talk-to"),
             deadline_ms: cx.active_now().as_millis() as u64 + DIALOGUE_OPEN_MS,
@@ -130,9 +172,9 @@ impl NativeMachine for Dialogue {
                 Poll::Pending
             }
             Phase::WaitContinueAck => {
-                if obs.modal != self.ack_modal
-                    || !obs.r#continue
-                    || obs.page_fingerprint() != self.ack_page
+                if self
+                    .ack_page
+                    .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
                     self.phase = Phase::WaitContinueTick;
                     self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
@@ -144,9 +186,9 @@ impl NativeMachine for Dialogue {
                 Poll::Pending
             }
             Phase::WaitChoiceAck => {
-                if obs.modal != self.ack_modal
-                    || obs.r#continue
-                    || obs.page_fingerprint() != self.ack_page
+                if self
+                    .ack_page
+                    .acknowledged(obs.modal, obs.r#continue, obs.page_fingerprint())
                 {
                     self.phase = Phase::WaitChoiceTicks;
                     self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
@@ -254,8 +296,8 @@ impl Dialogue {
         }
         if obs.r#continue {
             self.steps += 1;
-            self.ack_modal = obs.modal;
-            self.ack_page = obs.page_fingerprint();
+            self.ack_page =
+                PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
             self.phase = Phase::WaitContinueAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             return match cx.emit(InteractReq::ContinueDialog) {
@@ -270,8 +312,8 @@ impl Dialogue {
                     .unwrap_or(obs.options.len() as i32)
             });
             self.steps += 1;
-            self.ack_modal = obs.modal;
-            self.ack_page = obs.page_fingerprint();
+            self.ack_page =
+                PageAcknowledgement::capture(obs.modal, obs.r#continue, obs.page_fingerprint());
             self.phase = Phase::WaitChoiceAck;
             self.deadline_ms = cx.active_now().as_millis() as u64 + PAGE_ACK_MS;
             return match cx.emit(InteractReq::Answer { option }) {
@@ -314,13 +356,12 @@ impl ChatObs<'_> {
     // pages. A newer snapshot/tick alone is not an acknowledgement; the page
     // must change. Fingerprinting borrowed content avoids copying each page.
     fn page_fingerprint(&self) -> u64 {
-        let mut hash = DefaultHasher::new();
-        self.texts.hash(&mut hash);
-        for option in self.options {
-            option.component_id.hash(&mut hash);
-            option.text.hash(&mut hash);
-        }
-        hash.finish()
+        page_fingerprint(
+            self.texts,
+            self.options
+                .iter()
+                .map(|option| (option.component_id, option.text.as_str())),
+        )
     }
 }
 

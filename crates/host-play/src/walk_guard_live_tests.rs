@@ -133,14 +133,27 @@ fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
     panic!("no standable protected crossing of {ZONE}");
 }
 
-#[test]
-fn death_plateau_throwers_has_a_standable_protected_crossing() {
-    let pack =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/nav/289/274bot.navpack");
-    let pack = std::env::var_os("BOT_NAV_PACK")
+fn default_nav_pack_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("BOT_NAV_PACK")
         .map(PathBuf::from)
         .filter(|path| path.exists())
-        .unwrap_or(pack);
+    {
+        return path;
+    }
+    let profile_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent()?.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(option_env!("PROFILE").unwrap_or("debug"))
+        });
+    profile_dir.join("nav/289/274bot.navpack")
+}
+
+#[test]
+fn death_plateau_throwers_has_a_standable_protected_crossing() {
+    let pack = default_nav_pack_path();
     if !pack.exists() {
         panic!("W1 pack missing at {}", pack.display());
     }

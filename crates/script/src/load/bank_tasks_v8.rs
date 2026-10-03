@@ -8,10 +8,11 @@
 //!   `countLoot()`, `itemsThreshold()`, `minutesThreshold()` into
 //!   `shouldBankNow`). An absent option keeps the shim's default (`'off'`,
 //!   0, 15, 10).
-//! - `__rs2b0t_death_recovery_validate(opts)`: observe the posted chat,
-//!   call `opts.onDeath()` on a new death; after a finished run, clear the
-//!   latch and call `opts.onRecovered()` when frozen `near` holds; answer
-//!   due.
+//! - `__rs2b0t_death_recovery_validate(instance, opts)`: observe posted chat
+//!   for this task instance; call `opts.onDeath()` on a new death; after a
+//!   finished run, clear its latch and call `opts.onRecovered()` when the
+//!   posted tile is on the anchor's level and within its normalized radius;
+//!   answer due.
 //! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
 //!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
