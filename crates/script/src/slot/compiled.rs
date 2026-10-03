@@ -119,6 +119,30 @@ pub(super) struct Output {
     pub applied: Option<u64>,
     pub account: String,
 }
+struct StatusDetails<'a> {
+    failure_message: Option<&'a str>,
+    waiting_for: Option<&'a str>,
+    action_state: Option<&'a str>,
+    last_event: Option<&'a str>,
+}
+
+impl std::fmt::Display for StatusDetails<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(value) = self.failure_message {
+            write!(f, " failure_message={value}")?;
+        }
+        if let Some(value) = self.waiting_for {
+            write!(f, " waiting_for={value}")?;
+        }
+        if let Some(value) = self.action_state {
+            write!(f, " action_state={value}")?;
+        }
+        if let Some(value) = self.last_event {
+            write!(f, " last_event={value}")?;
+        }
+        Ok(())
+    }
+}
 
 fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
     status.fields.iter().find_map(|field| {
@@ -176,34 +200,26 @@ fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &Scrip
     let failure = status.failure.as_ref();
     let waiting_for = status_text(status, "waiting_for");
     let action_state = status_text(status, "action_state");
-    if gatherer {
-        api::host_log!(
-            api::hostlog::Category::ScriptLifecycle,
-            level,
-            slot = slot,
-            "native {} phase={} failure={} failure_message={:?} waiting_for={:?} action_state={:?} last_event={:?}",
-            status.card.0,
-            phase_label(status.phase),
-            failure.map_or("none", |failure| failure.code.as_ref()),
-            failure.map(|failure| failure.message.as_ref()),
-            waiting_for,
-            action_state,
-            status_text(status, "last_event"),
-        );
-    } else {
-        api::host_log!(
-            api::hostlog::Category::ScriptLifecycle,
-            level,
-            slot = slot,
-            "native {} phase={} failure={} failure_message={:?} waiting_for={:?} action_state={:?}",
-            status.card.0,
-            phase_label(status.phase),
-            failure.map_or("none", |failure| failure.code.as_ref()),
-            failure.map(|failure| failure.message.as_ref()),
-            waiting_for,
-            action_state,
-        );
-    }
+    let details = StatusDetails {
+        failure_message: failure.map(|failure| failure.message.as_ref()),
+        waiting_for,
+        action_state,
+        last_event: if gatherer {
+            status_text(status, "last_event")
+        } else {
+            None
+        },
+    };
+    api::host_log!(
+        api::hostlog::Category::ScriptLifecycle,
+        level,
+        slot = slot,
+        "native {} phase={} failure={}{}",
+        status.card.0,
+        phase_label(status.phase),
+        failure.map_or("none", |failure| failure.code.as_ref()),
+        details,
+    );
 }
 
 impl NativeOutput for Output {
@@ -243,6 +259,18 @@ impl NativeOutput for Output {
     fn settings_applied(&mut self, revision: u64) {
         self.applied = Some(revision);
     }
+}
+fn clear_blocked_status(output: &mut Output) {
+    let Some(previous) = output.status.as_deref() else {
+        return;
+    };
+    if previous.phase != NativePhase::Blocked {
+        return;
+    }
+    let mut status = previous.clone();
+    status.phase = NativePhase::Waiting;
+    status.failure = None;
+    output.status(status);
 }
 
 /// One frame's native authority/evidence for compiled runs and API reads.
@@ -877,9 +905,7 @@ impl SlotScript {
                 return Err(failure);
             }
         }
-        let status = Arc::make_mut(run.output.status.as_mut().expect("blocked status"));
-        status.phase = NativePhase::Waiting;
-        status.failure = None;
+        clear_blocked_status(&mut run.output);
         Ok(())
     }
 
@@ -900,13 +926,7 @@ impl SlotScript {
         match catch_unwind(AssertUnwindSafe(|| run.script.read_journal())) {
             Ok(result) => {
                 result?;
-                if let Some(status) = run.output.status.as_mut() {
-                    if status.phase == NativePhase::Blocked {
-                        let status = Arc::make_mut(status);
-                        status.phase = NativePhase::Waiting;
-                        status.failure = None;
-                    }
-                }
+                clear_blocked_status(&mut run.output);
                 Ok(())
             }
             Err(payload) => {
