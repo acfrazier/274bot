@@ -2498,6 +2498,9 @@ fn search_kernel(
     }
 }
 
+// Keep the tile-only and balance-key loops out of the shared dispatch frame.
+// Inlining both kernels otherwise shares resource-preflight code and stack space.
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn search_kernel_budget<B: Budget>(
     collision: &WorldCollision,
