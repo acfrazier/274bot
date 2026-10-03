@@ -1276,50 +1276,6 @@ fn open_npc_bank_at_here<D: Driver>(
     )
 }
 
-pub(super) fn deposit_all_backpack<D: Driver>(driver: &mut D, snapshot: &GameSnapshot) -> bool {
-    use api::interact::{ActionSpec, OpTarget, SendResult};
-    let mut ix = api::interact::Interactions::new(snapshot, driver);
-    let mut wrote = false;
-    for item in snapshot.bank_side() {
-        if let Some(op) = all_slot(&item.actions) {
-            wrote |= matches!(
-                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                SendResult::Sent { .. }
-            );
-        }
-    }
-    wrote
-}
-
-pub(super) fn withdraw_id<D: Driver>(
-    driver: &mut D,
-    snapshot: &GameSnapshot,
-    id: i32,
-    count: i32,
-) -> bool {
-    use api::interact::{ActionSpec, OpTarget, SendResult};
-    let mut ix = api::interact::Interactions::new(snapshot, driver);
-    let Some(item) = snapshot.bank().iter().find(|it| it.def.id == id) else {
-        return false;
-    };
-    let label = match count {
-        1 => "Withdraw 1",
-        5 => "Withdraw 5",
-        10 => "Withdraw 10",
-        _ => "Withdraw All",
-    };
-    if let Some(op) = action_slot(&item.actions, label)
-        .or_else(|| action_slot(&item.actions, "Withdraw 1"))
-        .or_else(|| action_slot(&item.actions, "Withdraw All"))
-    {
-        return matches!(
-            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-            SendResult::Sent { .. }
-        );
-    }
-    false
-}
-
 #[cfg(test)]
 #[path = "script_bank_tests.rs"]
 mod tests;

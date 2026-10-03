@@ -49,32 +49,35 @@ it was baked with. Rebake it after content changes or a format upgrade.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **14** (v14
-retains v11's selected quest-family binding — its `quest_facts_sha256` and
-`quest_extractor_schema` — and typed per-edge quest-stage gates; it keeps the
-content-derived bank-stand table after the edges, per-edge `members_req`, a
-per-edge wilderness teleport cap, and wilderness-level formula after the
-banks, the content-derived zone table, and v13's approach geometry after
-each edge's quest gates). Geometry is tag `0` for absent or tag `1` followed
+the derived `TransportGraph`. Magic `b"274V"`, version byte **15**. Each
+edge's reusable `item_req` remains a held-item gate; v15 adds count-prefixed
+`(id, count)` `consumed_req` and `item_returns` vectors after it. Resource
+counts must be positive, and a returned item requires consumed resources.
+Version 15 retains v11's selected quest-family binding — its
+`quest_facts_sha256` and `quest_extractor_schema` — and typed per-edge
+quest-stage gates; it keeps the content-derived bank-stand table after the
+edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
+wilderness-level formula after the banks, the content-derived zone table, and
+v13's approach geometry after each edge's quest gates. Geometry is tag `0`
 by `width:u8`, `length:u8`, and `blocked_sides:u8` (a rotated four-bit mask).
 Only footprint-backed Ladder/Stairs/AgilityShortcut/SpiritTree edges use it;
 Door, NPC and teleport admission is unchanged. Zone data includes stable
 kind identities/labels, NPC and hazard rows, curated groups, carves, and
 shaped masks. A shape row stores a zone index u16, north extent u8, and
 row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v14 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v15 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone
 spatial index. Raw `u32` flags are not on the pack wire. The optional
 `274F` sidecar holds them for collision paint; the paint-reach bitset is a
 separate `274R` sidecar bound to the pack identity.
-v14 uses bit `0x80` in the existing edge-kind byte for player-relative
+v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
-Ladder. The remaining kind value and all other fields retain their layout. A
-flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
+Ladder; v15 retains this encoding. The remaining kind value keeps its kind.
+A flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
 `player_delta = to - at`. The flag is invalid on other kinds. Absolute
 landings do not set it.
-`decode` accepts version 14 only — v13 and older are `BadVersion` and must be
+`decode` accepts version 15 only — v14 and older are `BadVersion` and must be
 rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
 files.
 
@@ -247,9 +250,13 @@ shed door with worn Dramen req, slashable webs (knife `oplocu` or worn
 slash blade), gnome gliders, and boat NPC + gangplank. A `TransportEdge`
 carries `kind` (Door/Ladder/Stairs/Boat/Teleport/AgilityShortcut/Glider/
 SpiritTree/Npc), `at`/`to`, `loc_id`, the 1-based menu `option`
-(`0` = use first `item_req` on the loc), `ticks`, and requirement
-vectors including `worn_req` (**any-of**). Spell teleports have no fixed
-origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
+(`0` = use first `item_req` on the loc), `ticks`, reusable inventory
+`item_req` gates, per-hop `consumed_req`, script-derived `item_returns`,
+and `worn_req` (**any-of**). A held `item_req` is never budgeted as spent;
+consumed counts budget supply across the full route, and returned items record
+replacement after consumption (including charged-jewellery `next_obj_stage`).
+Spell runes and script-deleted fares or passes are consumptive requirements.
+Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
 `FindOptions::allow_wilderness`. Both default **off**. Membership is the
 packed `TransportGraph::wilderness` table derived at bake; a graph with
@@ -298,9 +305,10 @@ door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
 The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v14 pack retains the v12
-zone table described above. Generator and producer-source digests invalidate
-staged bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
+it adds no door-specific wire fields. The v15 pack retains the v12
+zone table described above and carries the resource-accounting vectors
+described above. Generator and producer-source digests invalidate staged
+bundles and trigger a normal rebake, with refreshed pack/reach/canlight/
 navpois bindings. Explicit custom packs baked with the previous generator need
 to be rebaked too.
 
@@ -378,13 +386,20 @@ level exceeds the edge's packed cap (the content
 `~wilderness_level(coord) > N` gate). `Route { legs, dest, ticks }`;
 `Leg::Walk { tiles }` runs collapse, `Leg::Transport { edge }` is one per
 transport. `RouteError` is `NoPath` or `BudgetExhausted` (a node-expansion
-cap). `find` is CPU-heavy; run it off-pump (a short-lived worker) and arm
-the result.
+or resource-state cap). `find` is CPU-heavy; run it off-pump (a short-lived
+worker) and arm the result.
+
+Consumptive hops debit a path's running inventory and credit script-proven
+replacement items. Walking nodes share interned balance IDs, without a
+per-node inventory allocation. A search tracks at most 64 resource IDs and
+4096 balances; exceeding either bound fails with `BudgetExhausted`. A
+conservative supply proof keeps the original tile-only search when resources
+cannot constrain a simple path and no returned item must unlock a held gate.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
 NPC-backed hops use the live NPC tile (search radius 8). A paid Al Kharid
-toll Door hop returns `Blocked` when the packed `item_req` is short at the
+toll Door hop returns `Blocked` when the packed `consumed_req` is short at the
 gate. Glider landings settle Chebyshev 1.
 Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
@@ -605,13 +620,19 @@ never latches a bank session, and never changes ordinary walk policies.
 
 WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
 (the panel/TUI **bank fetch** checkbox, default off). `find` itself stays
-fail-closed: when the only missing gates are `item_req` / `worn_req`, the
-host plans a fetch-and-wear session from the packed bank stand table
+fail-closed: when only held, consumed, or worn item requirements are missing,
+the host plans a fetch-and-wear session from the packed bank stand table
 (`NavWorld::banks()`), walks to a standable access tile of the nearest
 stand (never the booth loc or a teller spawn behind the counter), opens
-it, deposits the backpack, withdraws what the route needs, closes the
-bank, then wears any worn item (the client cannot wear while the bank is
-open), and re-runs the strict search. Access tiles come from the one rule
+it, withdraws only shortages, closes the bank, then wears any missing worn
+item (the client cannot wear while the bank is open), and re-runs the strict
+search. It never deposits backpack items: tools, quest items, food, and existing
+route stacks remain carried, including for compatibility-v1 walks, which enable
+fetch by default. Consumed resources use the full route's running budget
+(two 30-coin fares need 60); reusable held gates use their peak requirement.
+An item needed both carried and worn reserves a separate copy for wearing.
+Exact withdrawals use fixed bank amounts or Withdraw-X when needed.
+Access tiles come from the one rule
 the named-bank stands script bank walks use (`nav::named_banks`):
 standable and never the stand tile itself. BankBudget takes the tiles in
 line with the stand (north, south, east or west), not the diagonals the

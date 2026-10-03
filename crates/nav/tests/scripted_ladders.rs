@@ -43,7 +43,7 @@ fn mainland_web_path_reaches_mage_arena_bank_cellar() {
         .legs
         .iter()
         .filter_map(|leg| match leg {
-            Leg::Transport { edge } => Some(edge),
+            Leg::Transport { edge } => Some(edge.as_ref()),
             _ => None,
         })
         .collect();

@@ -376,7 +376,7 @@ pub(super) fn door_hop_choice_blocked(
     if !is_alkharid_pay_choice(text) {
         return None;
     }
-    for &(id, count) in &edge.item_req {
+    for &(id, count) in &edge.consumed_req {
         if snapshot.inv_count(id) < count {
             return Some(format!("need {count} coins to pay the Al Kharid toll"));
         }

@@ -1,13 +1,14 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
 //! and the content-derived bank stand table ([`crate::pack::BankStand`]).
-//! The v8 pack file stores the compact packed walk surface and the
+//! The v15 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
 //! doors) still loads through [`NavWorld::from_grid`] as a fallback for
 //! old `.navpack` files.
 
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub struct NavWorld {
     pub graph: TransportGraph,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
+    transport_item_names: OnceLock<HashMap<i32, String>>,
 }
 
 impl NavWorld {
@@ -47,6 +49,15 @@ impl NavWorld {
     /// never initializes it: a later profile bind must still resolve geometry.
     pub fn named_bank_facts(&self) -> Option<&Arc<api::named_banks::NamedBankFacts>> {
         self.named_banks.get()
+    }
+
+    /// Selected-cache display names for transport resources, bound once with
+    /// the bank facts. An unbound/unknown item stays unnamed, never guessed.
+    pub fn transport_item_name(&self, id: i32) -> Option<&str> {
+        self.transport_item_names
+            .get()?
+            .get(&id)
+            .map(String::as_str)
     }
 
     /// Bind selected-content placements once. A repeated bind is rejected,
@@ -67,6 +78,28 @@ impl NavWorld {
         self.named_banks
             .set(facts)
             .map_err(|_| "bank facts already bound")?;
+        let mut ids: Vec<_> = self
+            .graph
+            .edges
+            .iter()
+            .chain(&self.graph.teleports)
+            .flat_map(|edge| edge.item_req.iter().chain(&edge.consumed_req))
+            .map(|&(id, _)| id)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let names = ids
+            .into_iter()
+            .filter_map(|id| {
+                data.item_by_id(id)?
+                    .name
+                    .as_ref()
+                    .map(|name| (id, name.clone()))
+            })
+            .collect();
+        self.transport_item_names
+            .set(names)
+            .map_err(|_| "item names already bound")?;
         Ok(())
     }
 
@@ -114,6 +147,7 @@ impl NavWorld {
             graph,
             banks,
             named_banks: OnceLock::new(),
+            transport_item_names: OnceLock::new(),
         }
     }
 
@@ -201,6 +235,8 @@ impl NavWorld {
                 open_loc_id: None,
                 skill_req: vec![],
                 item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
@@ -215,6 +251,7 @@ impl NavWorld {
             graph,
             banks: Vec::new(),
             named_banks: OnceLock::new(),
+            transport_item_names: OnceLock::new(),
         }
     }
 }

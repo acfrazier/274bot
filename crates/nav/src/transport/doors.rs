@@ -176,6 +176,8 @@ pub(super) fn door_edges(
                         open_loc_id: open_ids.get(id).copied(),
                         skill_req: vec![],
                         item_req: vec![],
+                        consumed_req: vec![],
+                        item_returns: vec![],
                         quest_req: if is_gated_reverse {
                             quest_reverse
                                 .map(|q| vec![q.to_string()])

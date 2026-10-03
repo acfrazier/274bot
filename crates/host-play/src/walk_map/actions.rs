@@ -66,6 +66,7 @@ pub enum ActionError {
     NoNavigation,
     NoPath,
     BlockedByZones { detail: Option<String> },
+    InsufficientItems { detail: String },
     MembersOnly,
     Unauthorized,
     WrongAction,
@@ -98,6 +99,7 @@ impl fmt::Display for ActionError {
             Self::BlockedByZones { detail: None } => f.write_str(
                 "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway",
             ),
+            Self::InsufficientItems { detail } => write!(f, "Insufficient route supplies: {detail}"),
             Self::MembersOnly => f.write_str("This route requires a members' world"),
             Self::Unauthorized => {
                 f.write_str("Debug Teleport requires a local loopback engine target")
@@ -121,6 +123,7 @@ impl ActionError {
             Self::NoNavigation => "navigation unavailable",
             Self::NoPath => "no path",
             Self::BlockedByZones { .. } => "blocked by danger zones",
+            Self::InsufficientItems { .. } => "insufficient route supplies",
             Self::MembersOnly => "members-only path",
             Self::Unauthorized => "not authorised",
             Self::WrongAction => "wrong action",
@@ -984,6 +987,39 @@ impl MapCommand {
             Some(name),
         );
         if result.is_err() {
+            // Diagnose a legal item-gated route before an all-exempt zone
+            // detour: a cheaper unsafe walk must not hide an unpaid fare.
+            if let Some(missing) = nav::router::find_missing_item_reqs(
+                &world.collision,
+                &world.graph,
+                world_tile(self.origin),
+                world_tile(self.destination),
+                self.options,
+                state,
+            ) {
+                let shortfalls: Vec<_> = missing
+                    .into_iter()
+                    .filter_map(|req| {
+                        let nav::router::MissingReq::Carry { id, count } = req else {
+                            return None;
+                        };
+                        let carried = state.inv.get(&id).copied().unwrap_or(0);
+                        let short = count.saturating_sub(carried);
+                        (short > 0).then(|| {
+                            let name = world
+                                .transport_item_name(id)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("item #{id}"));
+                            format!("{short} more {name} (need {count}, carrying {carried})")
+                        })
+                    })
+                    .collect();
+                if !shortfalls.is_empty() {
+                    return Err(ActionError::InsufficientItems {
+                        detail: shortfalls.join("; "),
+                    });
+                }
+            }
             if let Some(keys) = blocking_zones_for_walk(
                 world,
                 self.origin,

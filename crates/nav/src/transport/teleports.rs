@@ -34,7 +34,7 @@ pub(super) const MAGIC_SPELLS_DBROW: &str = "scripts/skill_magic/configs/magic_s
 /// `data=runesrequired,<rune>,<count>[,<rune>,<count>]` (rune names
 /// resolved through `pack/obj.pack`), `data=members,<bool>` and
 /// `data=tele_coord,<coord>` (absolute). Requirement = the magic level
-/// (`skill_req`) plus the runes (`item_req`), and a members world when the
+/// (`skill_req`) plus the runes (`consumed_req`), and a members world when the
 /// row is `members,true` (`check_spell_requirements` refuses that column on
 /// an F2P world). Ticks = [`SPELL_TELEPORT_TICKS`].
 pub(super) fn spell_teleports(
@@ -126,13 +126,17 @@ pub(super) fn push_spell_teleport(
         bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
         return;
     };
-    let mut item_req = Vec::with_capacity(block.runes.len());
+    let mut consumed_req = Vec::with_capacity(block.runes.len());
     for (rune, count) in &block.runes {
         let Some(&id) = objs.get(rune) else {
             bump(skipped, SKIP_TELEPORT_UNRESOLVED_RUNE, 1);
             return;
         };
-        item_req.push((id, *count));
+        if *count <= 0 {
+            bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
+            return;
+        }
+        consumed_req.push((id, *count));
     }
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
@@ -149,7 +153,9 @@ pub(super) fn push_spell_teleport(
         dir: None,
         open_loc_id: None,
         skill_req: vec![(SKILL_MAGIC, level)],
-        item_req,
+        item_req: vec![],
+        consumed_req,
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -165,8 +171,9 @@ pub(super) fn push_spell_teleport(
 /// `~player_teleport_normal(<coord>|map_findsquare(<coord>, …))`. The block
 /// name is the charged obj's name, or a `_`-prefixed category the obj
 /// config `skill_magic/configs/enchanted_jewelry.obj` resolves
-/// (`category=…`); obj ids come from `pack/obj.pack`. Requirement = holding
-/// the charged item (`item_req`); `option` 4 is the Rub op (`opheld4`).
+/// (`category=…`); obj ids come from `pack/obj.pack`. The successful rub
+/// consumes the current charged object and returns its content-declared
+/// `next_obj_stage` variant, if any; `option` 4 is the Rub op (`opheld4`).
 /// Ticks = [`JEWELLERY_TELEPORT_TICKS`].
 pub(super) fn jewellery_teleports(
     content_root: &Path,
@@ -175,6 +182,7 @@ pub(super) fn jewellery_teleports(
     skipped: &mut HashMap<&'static str, usize>,
 ) {
     let cats = jewellery_categories(content_root);
+    let next_stages = jewellery_next_stages(content_root);
     let dir = content_root
         .join("scripts")
         .join("general")
@@ -209,6 +217,13 @@ pub(super) fn jewellery_teleports(
                     bump(skipped, SKIP_TELEPORT_UNRESOLVED_ITEM, 1);
                     continue;
                 };
+                let Some(return_id) = next_stages
+                    .as_ref()
+                    .and_then(|stages| jewellery_item_return_id(&body, &text, &item, stages, objs))
+                else {
+                    bump(skipped, SKIP_TELEPORT_UNPROVEN_CONSUMPTION, 1);
+                    continue;
+                };
                 for dest in &dests {
                     graph.teleports.push(TransportEdge {
                         kind: TransportKind::Teleport,
@@ -221,7 +236,9 @@ pub(super) fn jewellery_teleports(
                         dir: None,
                         open_loc_id: None,
                         skill_req: vec![],
-                        item_req: vec![(obj_id, 1)],
+                        item_req: vec![],
+                        consumed_req: vec![(obj_id, 1)],
+                        item_returns: return_id.map(|id| vec![(id, 1)]).unwrap_or_default(),
                         quest_req: vec![],
                         varp_req: vec![],
                         worn_req: vec![],
@@ -267,6 +284,201 @@ pub(super) fn jewellery_categories(content_root: &Path) -> HashMap<String, Vec<S
         }
     }
     out
+}
+/// Item-name to next-charge-stage data from `enchanted_jewelry.obj`.
+/// Missing `next_obj_stage` means null only when the selected content's
+/// parameter declaration proves that default.
+fn jewellery_next_stages(content_root: &Path) -> Option<HashMap<String, Option<String>>> {
+    let config = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("skill_magic")
+            .join("configs")
+            .join("enchanted_jewelry.obj"),
+    )
+    .ok()?;
+    let params = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("player")
+            .join("configs")
+            .join("consumption")
+            .join("consume.param"),
+    )
+    .ok()?;
+    let mut in_next_stage = false;
+    let mut default_null = false;
+    for raw in params.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_next_stage = line == "[next_obj_stage]";
+        } else if in_next_stage && line == "default=null" {
+            default_null = true;
+        }
+    }
+    if !default_null {
+        return None;
+    }
+
+    let mut stages = HashMap::new();
+    let mut explicit = HashSet::new();
+    let mut current: Option<String> = None;
+    for raw in config.lines() {
+        let line = raw.split("//").next()?.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            let name = line.strip_prefix('[')?.strip_suffix(']')?;
+            if name.is_empty() || stages.insert(name.to_string(), None).is_some() {
+                return None;
+            }
+            current = Some(name.to_string());
+        } else if let Some(value) = line.strip_prefix("param=next_obj_stage,") {
+            let name = current.as_ref()?;
+            if !explicit.insert(name.clone()) {
+                return None;
+            }
+            let value = value.trim();
+            if value.is_empty() {
+                return None;
+            }
+            stages.insert(name.clone(), (value != "null").then(|| value.to_string()));
+        }
+    }
+    Some(stages)
+}
+
+fn jewellery_block_source(body: &str, script_text: &str) -> String {
+    let mut source = body.to_string();
+    let mut pending = body_labels(body);
+    let mut seen = HashSet::new();
+    while let Some(label) = pending.pop() {
+        if !seen.insert(label.clone()) {
+            continue;
+        }
+        if let Some(label_body) = label_body_raw(script_text, &label) {
+            pending.extend(body_labels(&label_body));
+            source.push_str(&label_body);
+        }
+    }
+    source
+}
+
+fn compact_rs2(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn jewellery_declared_var(lhs: &str) -> Option<String> {
+    let lhs = compact_rs2(lhs);
+    let var = ["def_namedobj", "def_obj", "def_int", "def_item"]
+        .iter()
+        .find_map(|prefix| lhs.strip_prefix(*prefix))?;
+    let end = var
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+        .unwrap_or(var.len());
+    let var = &var[..end];
+    var.starts_with('$').then(|| var.to_string())
+}
+
+fn jewellery_aliases(source: &str, target: &str) -> HashSet<String> {
+    let mut aliases = HashSet::new();
+    for statement in source.split([';', '\n', '{', '}']) {
+        let Some((lhs, rhs)) = statement.split_once('=') else {
+            continue;
+        };
+        if compact_rs2(rhs) == target {
+            if let Some(var) = jewellery_declared_var(lhs) {
+                aliases.insert(var);
+            }
+        }
+    }
+    aliases
+}
+
+fn jewellery_is_item_ref(expr: &str, item_vars: &HashSet<String>) -> bool {
+    let expr = compact_rs2(expr);
+    expr == "last_item" || item_vars.contains(&expr)
+}
+
+fn jewellery_is_slot_ref(expr: &str, slot_vars: &HashSet<String>) -> bool {
+    let expr = compact_rs2(expr);
+    expr == "last_slot" || slot_vars.contains(&expr)
+}
+
+fn jewellery_is_next_stage(expr: &str, item_vars: &HashSet<String>) -> bool {
+    let Some(args) = call_args(expr, "oc_param") else {
+        return false;
+    };
+    args.len() == 2
+        && compact_rs2(&args[1]) == "next_obj_stage"
+        && jewellery_is_item_ref(&args[0], item_vars)
+}
+
+fn jewellery_item_return_id(
+    body: &str,
+    script_text: &str,
+    item: &str,
+    stages: &HashMap<String, Option<String>>,
+    objs: &HashMap<String, i32>,
+) -> Option<Option<i32>> {
+    let next = stages.get(item)?;
+    let source = jewellery_block_source(body, script_text);
+    let teleport_at = source.find("~player_teleport_normal(")?;
+    let effects = &source[teleport_at..];
+    let item_vars = jewellery_aliases(&source, "last_item");
+    let slot_vars = jewellery_aliases(&source, "last_slot");
+    let mut stage_vars = HashSet::new();
+    for statement in source.split([';', '\n', '{', '}']) {
+        let Some((lhs, rhs)) = statement.split_once('=') else {
+            continue;
+        };
+        if jewellery_is_next_stage(rhs, &item_vars) {
+            if let Some(var) = jewellery_declared_var(lhs) {
+                stage_vars.insert(var);
+            }
+        }
+    }
+    let setslot = call_args_all(effects, "inv_setslot").iter().any(|args| {
+        args.len() == 4
+            && args[0] == "inv"
+            && jewellery_is_slot_ref(&args[1], &slot_vars)
+            && (jewellery_is_next_stage(&args[2], &item_vars)
+                || stage_vars.contains(&compact_rs2(&args[2])))
+            && compact_rs2(&args[3]) == "1"
+    });
+    let add_stage = call_args_all(effects, "inv_add").iter().any(|args| {
+        args.len() == 3
+            && args[0] == "inv"
+            && (jewellery_is_next_stage(&args[1], &item_vars)
+                || stage_vars.contains(&compact_rs2(&args[1])))
+            && compact_rs2(&args[2]) == "1"
+    });
+    let delete_item = call_args_all(effects, "inv_del").iter().any(|args| {
+        args.len() == 3
+            && args[0] == "inv"
+            && jewellery_is_item_ref(&args[1], &item_vars)
+            && compact_rs2(&args[2]) == "1"
+    });
+    let delete_slot = call_args_all(effects, "inv_delslot").iter().any(|args| {
+        args.len() == 2 && args[0] == "inv" && jewellery_is_slot_ref(&args[1], &slot_vars)
+    });
+    let compact_effects = compact_rs2(effects);
+    let null_guard = stage_vars.iter().any(|var| {
+        compact_effects.contains(&format!("if({var}=null)"))
+            || compact_effects.contains(&format!("if(null={var})"))
+    });
+    let proven = match next {
+        Some(_) => setslot || (add_stage && delete_item),
+        None => delete_item || (delete_slot && null_guard),
+    };
+    if !proven {
+        return None;
+    }
+    match next {
+        Some(name) => Some(Some(*objs.get(name)?)),
+        None => Some(None),
+    }
 }
 
 /// `(op, name, body)` blocks in an enchanted_jewellry file. Headers here

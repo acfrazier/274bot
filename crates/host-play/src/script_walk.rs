@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use api::interact::{ActionSpec, Driver, Interactions, OpTarget};
+use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
 use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
@@ -17,8 +17,8 @@ use script::native::WalkEnd;
 
 use super::play_status::lock_statuses;
 use super::{
-    deposit_all_backpack, log_walk_arm_bot, open_bank_at_here, withdraw_id, BankFetchFlight,
-    FlightTarget, NavBot, PendingBankFetch, ScriptWalkArm, SlotStatus,
+    log_walk_arm_bot, open_bank_at_here, BankFetchFlight, FlightTarget, NavBot, PendingBankFetch,
+    ScriptWalkArm, SlotStatus,
 };
 
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
@@ -495,7 +495,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     if here.is_none() {
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
-            // A missing player cannot deposit/open/wear; abort the latched
+            // A missing player cannot open/withdraw/wear; abort the latched
             // non-Walk step so disconnect does not hang with follow frozen.
             if bank_fetch_freezes_follow(bot) {
                 abort_bank_fetch(bot, "no player tile (disconnected)");
@@ -512,7 +512,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             }
             if bot.bank_fetch.is_some() {
                 step_bank_fetch_on_bot(driver, snapshot, bot, borrowed_world, here, map_members);
-                // Freeze follow for Open / Deposit / Withdraw / Wear /
+                // Freeze follow for Open / Withdraw / Withdraw-X / Wear /
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
@@ -750,15 +750,14 @@ pub(crate) fn step_nav_bot<D: Driver>(
 /// on a standable access tile (never the stand's interact tile) or once
 /// a sub-route to that tile is armed for follow; Open is a no-op while
 /// the bank is already open+loaded and honors packed booth or NPC access
-/// (falling back to another access of the same bank); DepositAll /
-/// Withdraw / Wear / Close dispatch through
-/// [`api::interact::Interactions`] and pop only after the snapshot
-/// shows the step landed. Each non-Walk step has a pump budget and does
-/// not re-send while the snapshot is unchanged; both live on the session
-/// ([`PendingBankFetch::progress`]), so a caller that re-wraps the session
-/// every pump (the panel/TUI `WalkArm`) keeps them. Clears the pending
-/// session when steps are exhausted, or on a truthful, logged failure.
-/// Returns whether the driver was written.
+/// (falling back to another access of the same bank); Withdraw / Withdraw-X /
+/// Wear / Close dispatch through [`api::interact::Interactions`] and pop
+/// only after the snapshot shows the step landed. Each non-Walk step has a
+/// pump budget and does not re-send while the snapshot is unchanged; both
+/// live on the session ([`PendingBankFetch::progress`]), so a caller that
+/// re-wraps the session every pump (the panel/TUI `WalkArm`) keeps them.
+/// Clears the pending session when steps are exhausted, or on a truthful,
+/// logged failure. Returns whether the driver was written.
 pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
@@ -937,10 +936,23 @@ fn step_bank_action<D: Driver>(
     let bank_open = snapshot.bank_component_id() >= 0;
     let landed = match step {
         BankStep::Open => snapshot.bank_loaded().then_some("loaded"),
-        BankStep::DepositAll => backpack_empty(snapshot).then_some("observed-empty"),
-        BankStep::Withdraw { id, count } => {
-            (backpack_count(snapshot, *id) >= *count).then_some("observed in the backpack")
-        }
+        BankStep::Withdraw { id, count } | BankStep::WithdrawXAmount { id, count } => pending
+            .progress
+            .flight
+            .as_ref()
+            .and_then(|flight| match &flight.target {
+                FlightTarget::Obj {
+                    id: target_id,
+                    carried,
+                    ..
+                } if target_id == id => Some(*carried),
+                _ => None,
+            })
+            .is_some_and(|carried| backpack_count(snapshot, *id) >= carried.saturating_add(*count))
+            .then_some("observed requested inventory increase"),
+        BankStep::WithdrawX { .. } => (pending.progress.flight.is_some()
+            && snapshot.count_dialog_open())
+        .then_some("amount dialog opened"),
         BankStep::Wear { id } => wearing(snapshot, *id).then_some("observed worn"),
         BankStep::Close => (!bank_open).then_some("observed closed"),
         BankStep::Walk { .. } => unreachable!("Walk steps in step_walk"),
@@ -948,17 +960,28 @@ fn step_bank_action<D: Driver>(
     if let Some(how) = landed {
         return (false, StepEnd::Landed(how));
     }
-    // The obj a Withdraw or Wear moves leaves its source (the bank row, the
-    // backpack slot) before the server's next update shows it arrived (the
-    // backpack, the worn set), so those two refusals hold only until the
-    // step's first send; after it, the step waits for the landing within
-    // its budget.
+    // A Withdraw / Wear moves its source before the server's next update
+    // shows it arrive, so these refusals hold only until the first send.
     let sent = pending.progress.flight.is_some();
     let refused = match step {
-        BankStep::DepositAll | BankStep::Withdraw { .. } if !bank_open => {
+        BankStep::Withdraw { .. }
+        | BankStep::WithdrawX { .. }
+        | BankStep::WithdrawXAmount { .. }
+            if !bank_open =>
+        {
             Some("the bank is closed")
         }
-        BankStep::Withdraw { id, .. } if !sent && !bank_holds(snapshot, *id) => {
+        BankStep::WithdrawX { .. } if !sent && snapshot.count_dialog_open() => {
+            Some("a count dialog was already open before Withdraw-X")
+        }
+        BankStep::WithdrawXAmount { .. } if !sent && !snapshot.count_dialog_open() => {
+            Some("the Withdraw-X amount dialog is not open")
+        }
+        BankStep::Withdraw { id, .. }
+        | BankStep::WithdrawX { id }
+        | BankStep::WithdrawXAmount { id, .. }
+            if !sent && !bank_holds(snapshot, *id) =>
+        {
             Some("the open bank does not hold the obj")
         }
         BankStep::Wear { .. } if bank_open => Some("the bank is open; wearing needs it closed"),
@@ -971,24 +994,33 @@ fn step_bank_action<D: Driver>(
         return (false, StepEnd::Abort(why));
     }
     // Open also waits while a bank component is up but not yet loaded.
+    // Once Withdraw-X answered, keep it latched until its inventory delta
+    // arrives; never submit the same count twice.
     let in_flight = pending
         .progress
         .flight
         .as_ref()
         .is_some_and(|flight| flight.matches(snapshot))
-        || (matches!(step, BankStep::Open) && snapshot.bank_component_id() != -1);
+        || (matches!(step, BankStep::Open) && snapshot.bank_component_id() != -1)
+        || (matches!(step, BankStep::WithdrawXAmount { .. })
+            && sent
+            && !snapshot.count_dialog_open());
     let wrote = !in_flight && {
         let wrote = match step {
             BankStep::Open => open_bank_at_here(driver, snapshot, here, world),
-            BankStep::DepositAll => deposit_all_backpack(driver, snapshot),
-            BankStep::Withdraw { id, count } => withdraw_id(driver, snapshot, *id, *count),
+            BankStep::Withdraw { id, count } => withdraw_fixed_count(driver, snapshot, *id, *count),
+            BankStep::WithdrawX { id } => open_withdraw_x(driver, snapshot, *id),
+            BankStep::WithdrawXAmount { count, .. } => matches!(
+                Interactions::new(snapshot, driver).answer_count(*count),
+                SendResult::Sent { .. }
+            ),
             BankStep::Wear { id } => {
-                let mut ix = api::interact::Interactions::new(snapshot, driver);
-                matches!(ix.wear(*id), api::interact::SendResult::Sent { .. })
+                let mut ix = Interactions::new(snapshot, driver);
+                matches!(ix.wear(*id), SendResult::Sent { .. })
             }
             BankStep::Close => {
-                let mut ix = api::interact::Interactions::new(snapshot, driver);
-                matches!(ix.close_modal(), api::interact::SendResult::Sent { .. })
+                let mut ix = Interactions::new(snapshot, driver);
+                matches!(ix.close_modal(), SendResult::Sent { .. })
             }
             BankStep::Walk { .. } => unreachable!("Walk steps in step_walk"),
         };
@@ -1008,9 +1040,47 @@ fn step_bank_action<D: Driver>(
     (wrote, StepEnd::Waiting)
 }
 
+fn withdraw_fixed_count<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    id: i32,
+    count: i32,
+) -> bool {
+    let Some(item) = snapshot.bank().iter().find(|item| item.def.id == id) else {
+        return false;
+    };
+    let Some((op, needs_amount_dialog)) =
+        super::fill_withdraw_action(&item.actions, count, item.count)
+    else {
+        return false;
+    };
+    if needs_amount_dialog {
+        return false;
+    }
+    matches!(
+        Interactions::new(snapshot, driver)
+            .interact(OpTarget::Item(item), ActionSpec::Operation(op),),
+        SendResult::Sent { .. }
+    )
+}
+
+fn open_withdraw_x<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32) -> bool {
+    let Some(item) = snapshot.bank().iter().find(|item| item.def.id == id) else {
+        return false;
+    };
+    let Some(op) = super::action_slot(&item.actions, "Withdraw X") else {
+        return false;
+    };
+    matches!(
+        Interactions::new(snapshot, driver)
+            .interact(OpTarget::Item(item), ActionSpec::Operation(op),),
+        SendResult::Sent { .. }
+    )
+}
+
 /// Whether a latched BankBudget session must freeze [`Traveller::follow`].
 /// Walk with the access sub-route armed does **not** freeze; Open /
-/// Deposit / Withdraw / Wear / Close do. Mid-session `final_route` is
+/// Withdraw / Withdraw-X / Wear / Close do. Mid-session `final_route` is
 /// never followed.
 pub(crate) fn bank_fetch_freezes_follow(bot: &NavBot) -> bool {
     session_freezes_follow(bot.bank_fetch.as_ref(), bot.route.as_ref())
@@ -1122,8 +1192,10 @@ impl BankFetchFlight {
     /// The bank session and `step`'s own target a send is judged against.
     fn of(snapshot: &GameSnapshot, step: &BankStep) -> Self {
         let target = match *step {
-            BankStep::DepositAll => FlightTarget::Backpack(backpack(snapshot).collect()),
-            BankStep::Withdraw { id, .. } | BankStep::Wear { id } => FlightTarget::Obj {
+            BankStep::Withdraw { id, .. }
+            | BankStep::WithdrawX { id }
+            | BankStep::WithdrawXAmount { id, .. }
+            | BankStep::Wear { id } => FlightTarget::Obj {
                 id,
                 carried: backpack_count(snapshot, id),
                 worn: wearing(snapshot, id),
@@ -1145,7 +1217,6 @@ impl BankFetchFlight {
             && self.bank_com == snapshot.bank_component_id()
             && match &self.target {
                 FlightTarget::Bank => true,
-                FlightTarget::Backpack(rows) => rows.iter().copied().eq(backpack(snapshot)),
                 &FlightTarget::Obj { id, carried, worn } => {
                     backpack_count(snapshot, id) == carried && wearing(snapshot, id) == worn
                 }
@@ -1167,10 +1238,6 @@ fn backpack(snapshot: &GameSnapshot) -> impl Iterator<Item = (i32, i32)> + '_ {
     rows.iter()
         .filter(|item| item.count >= 1)
         .map(|item| (item.def.id, item.count))
-}
-
-fn backpack_empty(snapshot: &GameSnapshot) -> bool {
-    backpack(snapshot).next().is_none()
 }
 
 /// The obj's total over the backpack's slots (an unstackable obj fills one

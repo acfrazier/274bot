@@ -17,6 +17,8 @@ fn edge(kind: TransportKind) -> TransportEdge {
         open_loc_id: None,
         skill_req: Vec::new(),
         item_req: Vec::new(),
+        consumed_req: Vec::new(),
+        item_returns: Vec::new(),
         quest_req: Vec::new(),
         varp_req: Vec::new(),
         worn_req: Vec::new(),
@@ -38,7 +40,9 @@ fn options(texts: &[&str]) -> Vec<api::snapshot::ChatOptionView> {
 }
 
 fn choice(kind: TransportKind, texts: &[&str]) -> Option<i32> {
-    let leg = Leg::Transport { edge: edge(kind) };
+    let leg = Leg::Transport {
+        edge: Box::new(edge(kind)),
+    };
     let chat_options = options(texts);
     hop_dialog_choice(&leg, None, None, &chat_options)
 }
@@ -46,7 +50,7 @@ fn choice(kind: TransportKind, texts: &[&str]) -> Option<i32> {
 fn door_choice(loc_id: i32, texts: &[&str]) -> Option<i32> {
     let mut e = edge(TransportKind::Door);
     e.loc_id = loc_id;
-    let leg = Leg::Transport { edge: e };
+    let leg = Leg::Transport { edge: Box::new(e) };
     hop_dialog_choice(&leg, None, None, &options(texts))
 }
 
@@ -221,7 +225,7 @@ fn npc_dialog_shanks_uses_packed_destination_edge() {
     assert_eq!(
         hop_dialog_choice(
             &Leg::Transport {
-                edge: khazard.clone(),
+                edge: Box::new(khazard.clone()),
             },
             None,
             Some(&packed),
@@ -231,7 +235,9 @@ fn npc_dialog_shanks_uses_packed_destination_edge() {
     );
     assert_eq!(
         hop_dialog_choice(
-            &Leg::Transport { edge: sarim },
+            &Leg::Transport {
+                edge: Box::new(sarim)
+            },
             None,
             Some(&packed),
             &chat_options,
@@ -240,7 +246,9 @@ fn npc_dialog_shanks_uses_packed_destination_edge() {
     );
     assert_eq!(
         hop_dialog_choice(
-            &Leg::Transport { edge: khazard },
+            &Leg::Transport {
+                edge: Box::new(khazard)
+            },
             None,
             Some(&packed),
             &options(&[
@@ -258,7 +266,7 @@ fn hop_dialog_choice_preserves_jewellery_destination_index() {
     let mut second = edge(TransportKind::Teleport);
     second.to = tile(30, 30);
     let leg = Leg::Transport {
-        edge: second.clone(),
+        edge: Box::new(second.clone()),
     };
     let teleports = vec![first, second];
     let chat_options = options(&["Edgeville.", "Karamja."]);
@@ -275,7 +283,9 @@ fn hop_dialog_choice_preserves_spirit_tree_gate_choice() {
     edge_to.to = tile(30, 30);
     let mut other = edge(TransportKind::SpiritTree);
     other.to = tile(40, 40);
-    let leg = Leg::Transport { edge: edge_to };
+    let leg = Leg::Transport {
+        edge: Box::new(edge_to),
+    };
     let packed = vec![edge(TransportKind::SpiritTree), other];
     let chat_options = options(&["No thanks, old tree.", "Where can I go?"]);
 
@@ -292,7 +302,7 @@ fn hop_dialog_choice_rides_the_young_spirit_tree_single_destination() {
     let mut young = edge(TransportKind::SpiritTree);
     young.loc_id = 1317;
     let leg = Leg::Transport {
-        edge: young.clone(),
+        edge: Box::new(young.clone()),
     };
     let packed = vec![young];
     let chat_options = options(&["Yes please.", "No thank you."]);

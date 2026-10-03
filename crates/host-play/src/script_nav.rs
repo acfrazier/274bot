@@ -1478,7 +1478,12 @@ impl ScriptRouteRequest {
         missing
             .into_iter()
             .filter_map(|req| match req {
-                MissingReq::Carry { id, count } => Some(MissingCarry { id, count }),
+                MissingReq::Carry { id, count }
+                    if state.inv.get(&id).copied().unwrap_or(0) < count =>
+                {
+                    Some(MissingCarry { id, count })
+                }
+                MissingReq::Carry { .. } => None,
                 MissingReq::WearAny { .. } => None,
             })
             .collect()

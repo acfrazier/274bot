@@ -35,7 +35,7 @@ pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
 
 /// Al Kharid border-toll and Shantay-pass edges, derived from the loc
 /// config, scripts and jm2 placements. Both toll locs have paid crossings
-/// (`item_req` coins) and, when `border_gate.rs2` proves the free branch,
+/// (`consumed_req` coins) and, when `border_gate.rs2` proves the free branch,
 /// parallel crossings gated by the corresponding completed quest journal
 /// row. `%princequest` is not transmitted to the client; `quests.rs2`
 /// links it to a green `questlist:prince` row only at `^prince_complete`,
@@ -49,17 +49,16 @@ pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
 /// The Shantay henge doorway (loc 4031,
 /// `op1=Go-through`) derives two `TransportKind::Door` edges, one per
 /// script branch — the gated hop (`at` the m51_48 (38,44) placement =
-/// (3302,3116), `to` [`SHANTAY_NORTH_TO`], `item_req` one Shantay pass,
+/// (3302,3116), `to` [`SHANTAY_NORTH_TO`], one Shantay pass consumed,
 /// from the pass/Al Kharid side `coordz(coord) > coordz(loc_coord)`, the
 /// `inv_del(inv, shantay_pass, 1)` + `[queue,shantay_pass_enter]`
 /// teleport) and the free desert exit (`at` one tile south of the
 /// placement, on the desert side `coordz(coord) <= coordz(loc_coord)`,
-/// `to` [`SHANTAY_SOUTH_TO`], **no** `item_req` — the same block's
-/// `p_telejump(movecoord(coord,0,0,3))`). The pack edge is **not** a
-/// plain walk: both hops are op interactions with the loc, and the gated
-/// hop is the only edge into the desert (a pass-side player routes
-/// through it; the free edge's `at` sits on the desert side, so the
-/// interaction never fires the pass branch).
+/// `to` [`SHANTAY_SOUTH_TO`], with no inventory requirement — the same
+/// block's `p_telejump(movecoord(coord,0,0,3))`). These edges are **not**
+/// plain walks: both interact with the loc, and only the pass-side hop
+/// enters the desert (the free edge starts on the desert side and never
+/// fires the pass branch).
 pub(super) fn toll_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -132,7 +131,7 @@ pub(super) fn toll_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                let edge = |item_req, quest_req| TransportEdge {
+                let edge = |consumed_req, quest_req| TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
                     at,
@@ -143,7 +142,9 @@ pub(super) fn toll_edges(
                     dir: Some(dir),
                     open_loc_id: open_ids.get(&id).copied(),
                     skill_req: vec![],
-                    item_req,
+                    item_req: vec![],
+                    consumed_req,
+                    item_returns: vec![],
                     quest_req,
                     varp_req: vec![],
                     worn_req: vec![],
@@ -241,7 +242,9 @@ pub(super) fn toll_shantay_henge_edges(
             dir: None,
             open_loc_id: None,
             skill_req: vec![],
-            item_req: vec![(pass_id, 1)],
+            item_req: vec![],
+            consumed_req: vec![(pass_id, 1)],
+            item_returns: vec![],
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
@@ -265,6 +268,8 @@ pub(super) fn toll_shantay_henge_edges(
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
