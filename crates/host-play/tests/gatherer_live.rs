@@ -16,8 +16,11 @@
 //! G2 cells cover moving fishing spots, supply gates, oak respawn and scene
 //! boundaries, Auto widening, and an id-seeded gas hazard. G3 cells cover
 //! banked-tool/supply trips, cost-ranked bank selection, and deposit returns.
+//! G4a cells exercise guardian-owned random-event holds and verified death
+//! recovery, including Retry and watchdog recreation; they require the
+//! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
 //! Fixture helpers alter locations only; they never inject products or XP.
-//! Every live account uses the configured `g3` prefix and a per-process minted
+//! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
 //! suffix. Each cell uses an isolated HOME plus absolute `GATHERER_ENGINE_DIR`,
 //! `GATHERER_NAV_PACK`, and `GATHERER_CATALOG_ROOT` paths. G3 bank trips default
 //! to proven oak/fishing origins; cost-ranking and real-timeout cells need
@@ -66,6 +69,16 @@ const IRON_ROCK_IDS: &[i32] = &[2092, 2093];
 const MINE_PRODUCTS: &[i32] = &[
     COPPER_ID, TIN_ID, IRON_ID, COAL_ID, 1625, 1627, 1629, 1623, 1621, 1619, 1617,
 ];
+const DEATH_FILLERS: &[(i32, &str)] = &[
+    (1073, "adamant_platelegs"),
+    (1123, "adamant_platebody"),
+    (1161, "adamant_full_helm"),
+];
+const DEATH_REGION_START: WorldTile = WorldTile {
+    x: 3219,
+    z: 3208,
+    level: 0,
+};
 const AUTO_NEXT_TILES: &[(i32, i32)] = &[(2409, 3480), (2417, 3480), (2414, 3478)];
 const FISH_NET_START: WorldTile = WorldTile {
     x: 3267,
@@ -213,6 +226,21 @@ impl Cell {
                 "gatherer_pause_resume_other_plane_live"
             }
             (Self::Woodcutting, LiveCase::ReconnectReturn) => "gatherer_reconnect_return_live",
+            (Self::Woodcutting, LiveCase::RandomEvent) => "gatherer_random",
+            (Self::Woodcutting, LiveCase::DeathReturn) => "gatherer_death_return",
+            (Self::Woodcutting, LiveCase::DeathRespawnRegion) => {
+                "gatherer_death_return_respawn_region"
+            }
+            (Self::Woodcutting, LiveCase::DeathNoStock) => "gatherer_death_return_no_stock",
+            (Self::Woodcutting, LiveCase::DeathReturnRefused) => {
+                "gatherer_death_return_refused_retry"
+            }
+            (Self::Woodcutting, LiveCase::DeathWatchdogPending) => {
+                "gatherer_death_watchdog_pending5"
+            }
+            (Self::Woodcutting, LiveCase::DeathWatchdogProving) => {
+                "gatherer_death_watchdog_proving"
+            }
             _ => "gatherer_invalid_fixture",
         }
     }
@@ -234,6 +262,13 @@ impl Cell {
             LiveCase::ReconnectReturn => "GATHERER_RECONNECT_RETURN_TILE",
             LiveCase::GasHazard => "GATHERER_GAS_TILE",
             LiveCase::OakAbsentArea => "GATHERER_WC_ABSENT_TILE",
+            LiveCase::RandomEvent => "GATHERER_WC_TILE",
+            LiveCase::DeathReturn
+            | LiveCase::DeathNoStock
+            | LiveCase::DeathWatchdogPending
+            | LiveCase::DeathWatchdogProving => "GATHERER_WC_BANK_TILE",
+            LiveCase::DeathRespawnRegion => "GATHERER_DEATH_REGION_TILE",
+            LiveCase::DeathReturnRefused => "GATHERER_DEATH_RETURN_REFUSE_TILE",
             _ => match self {
                 Self::Woodcutting => "GATHERER_WC_TILE",
                 Self::Mining => "GATHERER_MINE_TILE",
@@ -284,6 +319,15 @@ impl Cell {
         match (self, case) {
             (
                 Self::Woodcutting,
+                LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving,
+            ) => 15,
+            (
+                Self::Woodcutting,
                 LiveCase::OakRespawn
                 | LiveCase::OakNearEdge
                 | LiveCase::OakAbsentArea
@@ -303,6 +347,15 @@ impl Cell {
 
     const fn products(self, case: LiveCase) -> &'static [i32] {
         match (self, case) {
+            (
+                Self::Woodcutting,
+                LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving,
+            ) => &[1521],
             (
                 Self::Woodcutting,
                 LiveCase::OakRespawn
@@ -342,6 +395,12 @@ impl Cell {
                     | LiveCase::BankCostNoCandidate
                     | LiveCase::PauseResumeOtherPlane
                     | LiveCase::ReconnectReturn
+                    | LiveCase::DeathReturn
+                    | LiveCase::DeathRespawnRegion
+                    | LiveCase::DeathNoStock
+                    | LiveCase::DeathReturnRefused
+                    | LiveCase::DeathWatchdogPending
+                    | LiveCase::DeathWatchdogProving
             ) {
                 "oak"
             } else {
@@ -368,6 +427,15 @@ impl Cell {
             (Self::Woodcutting, LiveCase::OakRespawn | LiveCase::OakNearEdge) => {
                 Some("GATHERER_OAK_LEVEL")
             }
+            (
+                Self::Woodcutting,
+                LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving,
+            ) => Some("GATHERER_WC_BANK_LEVEL"),
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank | LiveCase::WoodcuttingBankUnwieldable,
@@ -401,6 +469,16 @@ impl Cell {
             }
             (
                 Self::Woodcutting,
+                LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving,
+            ) => std::env::var("GATHERER_WC_BANK_TOOL")
+                .unwrap_or_else(|_| self.default_tool_alias(case).into()),
+            (
+                Self::Woodcutting,
                 LiveCase::WoodcuttingBank
                 | LiveCase::BankCostAirFallback
                 | LiveCase::BankCostNoCandidate
@@ -426,6 +504,15 @@ impl Cell {
             (Self::Woodcutting, LiveCase::WoodcuttingBankUnwieldable) => {
                 Some("GATHERER_WC_BANK_BETTER_TOOL_ID")
             }
+            (
+                Self::Woodcutting,
+                LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving,
+            ) => Some("GATHERER_WC_BANK_TOOL_ID"),
             (
                 Self::Woodcutting,
                 LiveCase::WoodcuttingBank
@@ -531,6 +618,12 @@ impl Cell {
                 | LiveCase::PowerToBank
                 | LiveCase::PauseResumeOtherPlane
                 | LiveCase::ReconnectReturn
+                | LiveCase::DeathReturn
+                | LiveCase::DeathRespawnRegion
+                | LiveCase::DeathNoStock
+                | LiveCase::DeathReturnRefused
+                | LiveCase::DeathWatchdogPending
+                | LiveCase::DeathWatchdogProving
         ) {
             bag.insert(
                 "bank".into(),
@@ -554,7 +647,14 @@ impl Cell {
             "allowWilderness".into(),
             json!(case == LiveCase::BankCost && BANK_COST_FIXTURE_INTENT.allow_wilderness),
         );
-        bag.insert("deathPolicy".into(), json!("Stop"));
+        bag.insert(
+            "deathPolicy".into(),
+            json!(if case.is_death_recovery() {
+                "Recover"
+            } else {
+                "Stop"
+            }),
+        );
         bag.insert("maxDeaths".into(), json!(2));
         if case == LiveCase::FishBait {
             bag.insert("baitTarget".into(), json!(3));
@@ -600,6 +700,13 @@ enum LiveCase {
     CancelBeforeDrain,
     DeathDuringDrop,
     RunKeyChangeDuringDrop,
+    RandomEvent,
+    DeathReturn,
+    DeathRespawnRegion,
+    DeathNoStock,
+    DeathReturnRefused,
+    DeathWatchdogPending,
+    DeathWatchdogProving,
     FishNet,
     FishBaitGate,
     OakRespawn,
@@ -628,6 +735,13 @@ impl LiveCase {
             Self::DeathDuringDrop => "death-during-drop",
             Self::RunKeyChangeDuringDrop => "run-key-change-during-drop",
             Self::FishNet => "fish-net",
+            Self::RandomEvent => "random-event",
+            Self::DeathReturn => "death-return",
+            Self::DeathRespawnRegion => "death-return-respawn-region",
+            Self::DeathNoStock => "death-return-no-stock",
+            Self::DeathReturnRefused => "death-return-refused-retry",
+            Self::DeathWatchdogPending => "death-watchdog-pending5",
+            Self::DeathWatchdogProving => "death-watchdog-proving",
             Self::FishBaitGate => "fish-bait-gate",
             Self::OakRespawn => "oak-respawn",
             Self::OakNearEdge => "oak-near-edge",
@@ -647,6 +761,25 @@ impl LiveCase {
             Self::ReconnectReturn => "reconnect-return",
         }
     }
+    const fn is_death_recovery(self) -> bool {
+        matches!(
+            self,
+            Self::DeathReturn
+                | Self::DeathRespawnRegion
+                | Self::DeathNoStock
+                | Self::DeathReturnRefused
+                | Self::DeathWatchdogPending
+                | Self::DeathWatchdogProving
+        )
+    }
+
+    #[cfg(feature = "live-probe")]
+    const fn is_death_watchdog(self) -> bool {
+        matches!(
+            self,
+            Self::DeathWatchdogPending | Self::DeathWatchdogProving
+        )
+    }
 
     const fn is_power(self) -> bool {
         matches!(
@@ -656,6 +789,7 @@ impl LiveCase {
                 | Self::WoodcuttingBank
                 | Self::WoodcuttingBankUnwieldable
                 | Self::PowerToBank
+                | Self::DeathReturn
         )
     }
 
@@ -961,6 +1095,45 @@ struct Witness {
     power_to_bank_applied: bool,
     last_return_deposited: i64,
     failure: Option<String>,
+    random_owned_command_sent: bool,
+    random_owned_event_seen: bool,
+    random_owned_hold_frames: u32,
+    random_hold_baseline: Option<(i64, i64, i32, i32)>,
+    random_hold_unchanged: bool,
+    random_owned_released: bool,
+    random_release_yielded: i64,
+    random_release_xp: i32,
+    random_fresh_yield: bool,
+    random_owned_revalidated: bool,
+    random_foreign_command_sent: bool,
+    random_foreign_event_seen: bool,
+    random_foreign_not_held: bool,
+    random_foreign_yield_baseline: i64,
+    random_foreign_xp_baseline: i32,
+    random_foreign_fresh_yield: bool,
+    death_recovery_command_sent: u32,
+    death_command_while_paused: bool,
+    death_chat_observed_while_paused: bool,
+    death_recovery_in_area: bool,
+    death_command_tile: Option<(i32, i32, i32)>,
+    death_respawn_region_unchanged: bool,
+    death_progress_baselines: BTreeMap<u8, (i32, i32, i64)>,
+    death_recovered: BTreeSet<u8>,
+    death_products_after: BTreeSet<u8>,
+    death_xp_after: BTreeSet<u8>,
+    death_first_recovery_cycles: Option<u32>,
+    death_first_recovery_post_drop_gathers: Option<u32>,
+    death_haul_between: bool,
+    death_return_refused: bool,
+    death_retry_teleport_sent: bool,
+    death_retry_requested: bool,
+    death_retry_reentered: bool,
+    death_watchdog_aged: bool,
+    death_watchdog_generation_before: Option<u64>,
+    death_watchdog_recreated: bool,
+    last_deaths: u8,
+    last_recoveries: u8,
+    last_recovery_step: u8,
 }
 
 struct GatherSlot {
@@ -1263,6 +1436,17 @@ impl GatherSlot {
         if self.case == LiveCase::OakNearEdge && self.expected_preflight_build() {
             self.witness.preflight_build_observed = true;
         }
+        self.record_random_event(hold, &observation);
+        if self.case == LiveCase::DeathReturn
+            && self.witness.pause_observed
+            && self.witness.death_command_while_paused
+            && self.snapshot.chat_lines().iter().any(|line| {
+                let text = line.text.to_ascii_lowercase();
+                text.contains("oh dear") && text.contains("you are dead")
+            })
+        {
+            self.witness.death_chat_observed_while_paused = true;
+        }
         if hold {
             return;
         }
@@ -1282,6 +1466,60 @@ impl GatherSlot {
             }
         } else if let Err(error) = self.advance_prep(client) {
             self.error = Some(error);
+        }
+    }
+    fn record_random_event(&mut self, hold: bool, observation: &Observation) {
+        if self.case != LiveCase::RandomEvent {
+            return;
+        }
+        let local_index = self.snapshot.local_player().map(|local| local.player.index);
+        let event_target = self
+            .snapshot
+            .npcs()
+            .iter()
+            .find(|npc| {
+                npc.name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Mysterious Old Man"))
+            })
+            .and_then(|npc| npc.target)
+            .filter(|target| target.kind == ActorKind::Player);
+        if let Some(target) = event_target {
+            if self.witness.random_owned_command_sent
+                && local_index.is_some_and(|index| target.index == index)
+            {
+                self.witness.random_owned_event_seen = true;
+                if hold {
+                    let current = (
+                        self.witness.last_status_yielded,
+                        self.witness.last_status_dropped,
+                        observation.xp,
+                        observation.product_count,
+                    );
+                    if let Some(baseline) = self.witness.random_hold_baseline {
+                        self.witness.random_hold_unchanged &= baseline == current;
+                    } else {
+                        self.witness.random_hold_baseline = Some(current);
+                        self.witness.random_hold_unchanged = true;
+                    }
+                    self.witness.random_owned_hold_frames =
+                        self.witness.random_owned_hold_frames.saturating_add(1);
+                }
+            } else if self.witness.random_foreign_command_sent
+                && local_index.is_some_and(|index| target.index != index)
+            {
+                if !self.witness.random_foreign_event_seen {
+                    self.witness.random_foreign_not_held = true;
+                }
+                self.witness.random_foreign_event_seen = true;
+                self.witness.random_foreign_not_held &= !hold;
+            }
+        }
+        if self.witness.random_owned_hold_frames > 0 && !hold && !self.witness.random_owned_released
+        {
+            self.witness.random_owned_released = true;
+            self.witness.random_release_yielded = self.witness.last_status_yielded;
+            self.witness.random_release_xp = observation.xp;
         }
     }
 
@@ -1754,6 +1992,18 @@ impl GatherSlot {
             .max_product_count
             .max(observation.product_count);
         self.witness.last_xp = observation.xp;
+        if self.case.is_death_recovery() {
+            for (&death, &(baseline_xp, baseline_products, _)) in
+                &self.witness.death_progress_baselines
+            {
+                if observation.product_count > baseline_products {
+                    self.witness.death_products_after.insert(death);
+                }
+                if observation.xp > baseline_xp {
+                    self.witness.death_xp_after.insert(death);
+                }
+            }
+        }
         if observation.inventory.len() == 28
             && observation.product_count > 0
             && !self.witness.awaiting_drop
@@ -2435,6 +2685,17 @@ impl GatherSlot {
         let current_trips = integer_field(status, "trips").unwrap_or(self.witness.status_trips);
         let current_deposited =
             integer_field(status, "deposited").unwrap_or(self.witness.status_deposited);
+        let previous_deaths = self.witness.last_deaths;
+        let previous_recoveries = self.witness.last_recoveries;
+        let current_deaths = integer_field(status, "deaths")
+            .and_then(|value| u8::try_from(value).ok())
+            .unwrap_or(previous_deaths);
+        let current_recoveries = integer_field(status, "recoveries")
+            .and_then(|value| u8::try_from(value).ok())
+            .unwrap_or(previous_recoveries);
+        let current_recovery_step = integer_field(status, "recovery_step")
+            .and_then(|value| u8::try_from(value).ok())
+            .unwrap_or(self.witness.last_recovery_step);
         if current_trips > self.witness.status_trips {
             self.witness.bank_arrivals = self
                 .witness
@@ -2459,6 +2720,61 @@ impl GatherSlot {
         self.witness.last_status_yielded = current_yielded;
         self.witness.last_status_dropped =
             integer_field(status, "dropped").unwrap_or(self.witness.last_status_dropped);
+        self.witness.last_deaths = current_deaths;
+        self.witness.last_recoveries = current_recoveries;
+        self.witness.last_recovery_step = current_recovery_step;
+        if current_deaths > previous_deaths {
+            if let Some(latest) = self.latest.as_ref() {
+                self.witness.death_progress_baselines.insert(
+                    current_deaths,
+                    (latest.xp, latest.product_count, current_yielded),
+                );
+                self.witness.death_recovery_in_area |= latest
+                    .tile
+                    .and_then(|tile| tile_distance(tile, self.target))
+                    .is_some_and(|distance| distance <= 12);
+                if self.case == LiveCase::DeathRespawnRegion {
+                    self.witness.death_respawn_region_unchanged = self
+                        .witness
+                        .death_command_tile
+                        .zip(latest.tile)
+                        .is_some_and(|(death, respawn)| {
+                            let respawn_tile = WorldTile {
+                                x: respawn.0,
+                                z: respawn.1,
+                                level: respawn.2,
+                            };
+                            script::native::death::RESPAWN_SQUARE.contains(respawn_tile)
+                                && death.0.div_euclid(64) == respawn.0.div_euclid(64)
+                                && death.1.div_euclid(64) == respawn.1.div_euclid(64)
+                                && death.2 == respawn.2
+                        });
+                }
+            }
+        }
+        if self.case == LiveCase::RandomEvent {
+            if self.witness.random_owned_released
+                && current_yielded > self.witness.random_release_yielded
+                && self
+                    .latest
+                    .as_ref()
+                    .is_some_and(|latest| latest.xp > self.witness.random_release_xp)
+            {
+                self.witness.random_fresh_yield = true;
+                self.witness.random_owned_revalidated = text_field(status, "method")
+                    .is_some_and(|method| !method.is_empty())
+                    && text_field(status, "target").is_some_and(|target| !target.is_empty());
+            }
+            if self.witness.random_foreign_event_seen
+                && current_yielded > self.witness.random_foreign_yield_baseline
+                && self
+                    .latest
+                    .as_ref()
+                    .is_some_and(|latest| latest.xp > self.witness.random_foreign_xp_baseline)
+            {
+                self.witness.random_foreign_fresh_yield = true;
+            }
+        }
         self.witness.last_status_bank = text_field(status, "bank").map(str::to_owned);
         if let Some(bank) = self.witness.last_status_bank.as_deref() {
             if let Some((_, step)) = bank.rsplit_once("; ") {
@@ -2529,6 +2845,25 @@ impl GatherSlot {
                     .map(|started| Instant::now().duration_since(started));
             }
             self.witness.last_status_event = Some(event.to_owned());
+            if let Some(death) = event
+                .strip_prefix("recovered after death ")
+                .and_then(|value| value.parse::<u8>().ok())
+            {
+                self.witness.death_recovered.insert(death);
+                if death == 1 {
+                    self.witness.death_first_recovery_cycles = Some(self.witness.cycles);
+                    self.witness.death_first_recovery_post_drop_gathers =
+                        Some(self.witness.post_drop_gathers);
+                }
+            }
+            if self.witness.death_retry_requested
+                && status.failure.is_none()
+                && event == "returning after death"
+                && current_deaths == 1
+                && current_recovery_step == 5
+            {
+                self.witness.death_retry_reentered = true;
+            }
             if event == "bank selected" {
                 self.witness.bank_selected = true;
                 if self.case == LiveCase::PowerToBank {
@@ -2662,6 +2997,11 @@ impl GatherSlot {
                 LiveCase::OakAbsentArea => {
                     code == "resource-unavailable" && message.starts_with("resource-unavailable")
                 }
+                LiveCase::DeathNoStock => code == "supply-missing",
+                LiveCase::DeathReturnRefused => {
+                    self.witness.death_return_refused |= code == "return-failed";
+                    code == "return-failed"
+                }
                 _ => false,
             };
             if expected_block {
@@ -2707,6 +3047,20 @@ impl GatherSlot {
                     self.witness.cycle_xp_start = observation.xp;
                 }
             }
+        }
+        if self.case == LiveCase::DeathReturn
+            && self
+                .witness
+                .death_first_recovery_cycles
+                .is_some_and(|cycles| {
+                    self.witness.cycles > cycles
+                        && self
+                            .witness
+                            .death_first_recovery_post_drop_gathers
+                            .is_some_and(|gathers| self.witness.post_drop_gathers > gathers)
+                })
+        {
+            self.witness.death_haul_between = true;
         }
         Ok(())
     }
@@ -2759,6 +3113,23 @@ impl GatherSlot {
 
     fn qualifies(&self) -> Result<(), String> {
         match self.case {
+            LiveCase::RandomEvent
+            | LiveCase::DeathReturn
+            | LiveCase::DeathRespawnRegion
+            | LiveCase::DeathNoStock
+            | LiveCase::DeathReturnRefused
+            | LiveCase::DeathWatchdogPending
+            | LiveCase::DeathWatchdogProving => {
+                if interrupts_complete(self.case, &self.witness) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} interrupt proof incomplete: {:?}",
+                        self.name(),
+                        self.witness
+                    ))
+                }
+            }
             LiveCase::Power => {
                 if !self.witness.modal_observed {
                     return Err("power fixture did not observe its disposal modal".into());
@@ -3539,6 +3910,14 @@ fn fixture_plan(
         LiveCase::BankCostAirFallback
         | LiveCase::PauseResumeOtherPlane
         | LiveCase::ReconnectReturn => plan.bank_seed.push(("bronze_axe".into(), 1)),
+        LiveCase::DeathReturn => plan.bank_seed.push(("bronze_axe".into(), 3)),
+        LiveCase::DeathNoStock => plan.inventory_seed.push(("bronze_axe".into(), 1)),
+        LiveCase::DeathRespawnRegion
+        | LiveCase::DeathReturnRefused
+        | LiveCase::DeathWatchdogPending
+        | LiveCase::DeathWatchdogProving => {
+            plan.bank_seed.push(("bronze_axe".into(), 2));
+        }
         LiveCase::FishBait => plan.bank_seed.push(("feather".into(), 7)),
         LiveCase::CoinRunes => {
             plan.bank_seed.push(("coins".into(), 1_000));
@@ -3547,7 +3926,40 @@ fn fixture_plan(
         LiveCase::CoinRunesEmpty => plan.bank_seed.push(("coins".into(), 1_000)),
         _ => {}
     }
+    if case == LiveCase::DeathReturnRefused {
+        // Start with a disposable carried tool, so only the post-death return
+        // crosses the forbidden wilderness boundary.
+        plan.inventory_seed.push(("bronze_axe".into(), 1));
+    }
+    if case.is_death_recovery() {
+        plan.inventory_seed
+            .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
+    }
     let target = match case {
+        LiveCase::RandomEvent => fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?,
+        LiveCase::DeathReturn
+        | LiveCase::DeathNoStock
+        | LiveCase::DeathWatchdogPending
+        | LiveCase::DeathWatchdogProving => {
+            let tile = fixture_tile(cell.tile_env(case), OAK_RESPAWN_START)?;
+            plan.oak_tiles.push(tile);
+            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
+            tile
+        }
+        LiveCase::DeathRespawnRegion => {
+            let tile = fixture_tile(cell.tile_env(case), DEATH_REGION_START)?;
+            plan.oak_tiles.push(tile);
+            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
+            tile
+        }
+        LiveCase::DeathReturnRefused => {
+            // Authored oak in m48_55; its radius-12 return remains north of
+            // the wilderness boundary while allowWilderness stays false.
+            let tile = fixture_tile(cell.tile_env(case), world_tile(3101, 3535))?;
+            plan.oak_tiles.push(tile);
+            plan.seed_locs.push(seed(tile, "oaktree", OAK_ID));
+            tile
+        }
         LiveCase::FishNet => fixture_tile("GATHERER_FISH_TILE", FISH_NET_START)?,
         LiveCase::FishBaitGate => fixture_tile("GATHERER_FISH_TILE", FISH_BAIT_START)?,
         LiveCase::OakRespawn => {
@@ -3637,14 +4049,20 @@ fn fixture_plan(
             tile,
             stage: FixtureStage::Start,
         }),
-        LiveCase::OakNearEdge | LiveCase::OakAbsentArea | LiveCase::LocationAuto => {
-            Some(FixtureTask::Seed {
-                seeds: plan.seed_locs.clone(),
-                next: 0,
-                return_to: target,
-                stage: FixtureStage::Start,
-            })
-        }
+        LiveCase::OakNearEdge
+        | LiveCase::OakAbsentArea
+        | LiveCase::LocationAuto
+        | LiveCase::DeathReturn
+        | LiveCase::DeathRespawnRegion
+        | LiveCase::DeathNoStock
+        | LiveCase::DeathReturnRefused
+        | LiveCase::DeathWatchdogPending
+        | LiveCase::DeathWatchdogProving => Some(FixtureTask::Seed {
+            seeds: plan.seed_locs.clone(),
+            next: 0,
+            return_to: target,
+            stage: FixtureStage::Start,
+        }),
         LiveCase::GasHazard => {
             plan.inject_after_progress
                 .map(|seed| FixtureTask::InjectAfterProgress {
@@ -3722,6 +4140,11 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
+    if (case == LiveCase::RandomEvent || case.is_death_recovery())
+        && std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("g4a")
+    {
+        return Err("G4a live cells require BOT_LIVE_NAME_PREFIX=g4a".into());
+    }
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
     api::hostlog::set_debug(true);
@@ -3797,7 +4220,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             }
         }
     }
-    let helper_needed = fixture_task.is_some();
+    let helper_needed = fixture_task.is_some() || case == LiveCase::RandomEvent;
     let names = host_play::mint_live_names(if helper_needed { 2 } else { 1 });
     let credentials = host_play::mint_live_entries(&names);
     let account = names.first().cloned().ok_or("failed to mint account")?;
@@ -3828,16 +4251,27 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         }),
         false,
     )));
-    let helper_state = fixture_task.map(|task| {
-        Arc::new(Mutex::new(GatherSlot::new(
+    let helper_state = if case == LiveCase::RandomEvent {
+        Some(Arc::new(Mutex::new(GatherSlot::new(
             cell,
             case,
             target,
             plan.clone(),
-            Some(task),
+            None,
             true,
-        )))
-    });
+        ))))
+    } else {
+        fixture_task.map(|task| {
+            Arc::new(Mutex::new(GatherSlot::new(
+                cell,
+                case,
+                target,
+                plan.clone(),
+                Some(task),
+                true,
+            )))
+        })
+    };
     let start_handle: Arc<Mutex<Option<ScriptStartHandle>>> = Arc::new(Mutex::new(None));
     let frame_state = Arc::clone(&state);
     let frame_handle = Arc::clone(&start_handle);
@@ -3864,6 +4298,25 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 };
                 if let Some(helper_state) = &frame_helper_state {
                     if let Ok(mut helper) = helper_state.lock() {
+                        let spawn_foreign_event = frame_state.lock().ok().is_some_and(|main| {
+                            main.case == LiveCase::RandomEvent
+                                && main.witness.random_owned_released
+                                && main.witness.random_fresh_yield
+                                && !main.witness.random_foreign_command_sent
+                        });
+                        if !hold
+                            && spawn_foreign_event
+                            && helper.phase == Prep::Ready
+                            && helper.snapshot.ingame()
+                            && interact::cheat(client, "~macro_event 4").is_sent()
+                        {
+                            if let Ok(mut main) = frame_state.lock() {
+                                main.witness.random_foreign_command_sent = true;
+                                main.witness.random_foreign_yield_baseline =
+                                    main.witness.last_status_yielded;
+                                main.witness.random_foreign_xp_baseline = main.witness.last_xp;
+                            }
+                        }
                         helper.frame(client, hold, progress.as_ref());
                         if let Ok(mut main) = frame_state.lock() {
                             if helper.case == LiveCase::GasHazard {
@@ -3926,6 +4379,72 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                         }
                     }
                     _ => {}
+                }
+            }
+            let (spawn_owned_event, trigger_recovery_death, death_command_tile, retry_teleport) =
+                frame_state
+                    .lock()
+                    .ok()
+                    .map(|slot| {
+                        let initial_progress = slot.witness.last_status_yielded > 0
+                            && slot.witness.last_xp > slot.baseline_xp();
+                        let death_command_tile =
+                            slot.latest.as_ref().and_then(|latest| latest.tile);
+                        let death_at_target = death_command_tile
+                            .and_then(|tile| tile_distance(tile, slot.target))
+                            .is_some_and(|distance| distance <= 12);
+                        let trigger_recovery_death = !hold
+                            && slot.case.is_death_recovery()
+                            && death_at_target
+                            && (slot.case != LiveCase::DeathReturn
+                                || slot.witness.death_recovery_command_sent > 0
+                                || slot.witness.pause_observed)
+                            && if slot.case == LiveCase::DeathReturn
+                                && slot.witness.death_recovery_command_sent == 1
+                            {
+                                slot.witness.death_haul_between
+                            } else {
+                                slot.witness.death_recovery_command_sent == 0 && initial_progress
+                            };
+                        let retry_teleport = (!hold
+                            && slot.case == LiveCase::DeathReturnRefused
+                            && slot.witness.death_return_refused
+                            && !slot.witness.death_retry_teleport_sent)
+                            .then_some(WorldTile {
+                                x: slot.target.x.saturating_add(13),
+                                ..slot.target
+                            });
+                        (
+                            !hold
+                                && slot.case == LiveCase::RandomEvent
+                                && initial_progress
+                                && !slot.witness.random_owned_command_sent,
+                            trigger_recovery_death,
+                            death_command_tile,
+                            retry_teleport,
+                        )
+                    })
+                    .unwrap_or((false, false, None, None));
+            if spawn_owned_event && interact::cheat(client, "~macro_event 4").is_sent() {
+                if let Ok(mut slot) = frame_state.lock() {
+                    slot.witness.random_owned_command_sent = true;
+                }
+            }
+            if trigger_recovery_death && interact::cheat(client, "~death").is_sent() {
+                if let Ok(mut slot) = frame_state.lock() {
+                    slot.witness.death_command_while_paused |= slot.case == LiveCase::DeathReturn
+                        && slot.witness.death_recovery_command_sent == 0
+                        && slot.witness.pause_observed;
+                    slot.witness.death_recovery_command_sent =
+                        slot.witness.death_recovery_command_sent.saturating_add(1);
+                    slot.witness.death_command_tile = death_command_tile;
+                }
+            }
+            if let Some(tile) = retry_teleport {
+                if send_cheat(client, &interact::tele_args(tile.level, tile.x, tile.z)).is_ok() {
+                    if let Ok(mut slot) = frame_state.lock() {
+                        slot.witness.death_retry_teleport_sent = true;
+                    }
                 }
             }
             let plane_teleport = frame_state.lock().ok().and_then(|slot| {
@@ -4017,7 +4536,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let mut reconnect_login_armed = false;
     let result = loop {
         let lifecycle_error = play.script_last_error(&account);
-        let (phase, start_requested, ready_to_start, slot_error, witness) = {
+        let (phase, start_requested, ready_to_start, slot_error, witness, baseline_xp) = {
             let slot = state.lock().map_err(|_| "live state poisoned")?;
             (
                 slot.phase,
@@ -4025,11 +4544,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 slot.ready_to_start(),
                 slot.error.clone(),
                 slot.witness.clone(),
+                slot.baseline_xp(),
             )
         };
         let (mut helper_done, helper_error) = if let Some(helper_state) = &helper_state {
             let helper = helper_state.lock().map_err(|_| "fixture state poisoned")?;
-            (helper.fixture_done, helper.error.clone())
+            (
+                helper.fixture_done
+                    && (case != LiveCase::RandomEvent || helper.phase == Prep::Ready),
+                helper.error.clone(),
+            )
         } else {
             (true, None)
         };
@@ -4107,6 +4631,28 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             println!("{}", json!({"phase": "start", "cell": cell_name}));
         }
         let current_run = play.script_native_run(&account);
+        if case == LiveCase::DeathReturnRefused
+            && witness.death_return_refused
+            && witness.death_retry_teleport_sent
+            && !witness.death_retry_requested
+            && state
+                .lock()
+                .map_err(|_| "live state poisoned")?
+                .latest
+                .as_ref()
+                .and_then(|latest| latest.tile)
+                == Some((target.x.saturating_add(13), target.z, target.level))
+        {
+            let Some(run) = current_run else {
+                break Err(format!("{cell_name} lost the blocked run before Retry"));
+            };
+            if let Err(error) = play.script_native_retry(&account, run) {
+                break Err(format!("{cell_name} Retry failed: {error}"));
+            }
+            if let Ok(mut slot) = state.lock() {
+                slot.witness.death_retry_requested = true;
+            }
+        }
         if case == LiveCase::PowerToBank
             && !power_to_bank_edit_requested
             && witness.awaiting_drop
@@ -4194,6 +4740,64 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 }
                 power_to_bank_edit_revision = None;
             }
+        }
+        if case == LiveCase::DeathReturn
+            && witness.last_status_yielded > 0
+            && witness.last_xp > baseline_xp
+            && witness.death_recovery_command_sent == 0
+            && !pause_requested
+        {
+            let Some(run) = current_run else {
+                break Err(format!(
+                    "{cell_name} lost its run before death-watermark pause"
+                ));
+            };
+            if !play.script_native_pause(&account, run, true) {
+                break Err(format!(
+                    "{cell_name} could not pause before death watermark gap"
+                ));
+            }
+            pause_requested = true;
+        }
+        if case == LiveCase::DeathReturn
+            && pause_requested
+            && !witness.pause_observed
+            && play.script_state(&account) == script::RunState::Paused
+        {
+            state
+                .lock()
+                .map_err(|_| "live state poisoned")?
+                .witness
+                .pause_observed = true;
+        }
+        if case == LiveCase::DeathReturn
+            && pause_requested
+            && witness.death_command_while_paused
+            && witness.death_chat_observed_while_paused
+            && !resume_requested
+        {
+            let Some(run) = current_run else {
+                break Err(format!(
+                    "{cell_name} lost its run before death-watermark resume"
+                ));
+            };
+            if !play.script_native_pause(&account, run, false) {
+                break Err(format!(
+                    "{cell_name} could not resume after death watermark gap"
+                ));
+            }
+            resume_requested = true;
+        }
+        if case == LiveCase::DeathReturn
+            && resume_requested
+            && !witness.resume_observed
+            && play.script_state(&account) == script::RunState::Running
+        {
+            state
+                .lock()
+                .map_err(|_| "live state poisoned")?
+                .witness
+                .resume_observed = true;
         }
         if case == LiveCase::PauseResumeOtherPlane
             && witness.bank_return_step_seen
@@ -4358,6 +4962,64 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                 slot.baseline_xp(),
             )
         };
+        #[cfg(feature = "live-probe")]
+        if case.is_death_watchdog() {
+            let retained_step = if case == LiveCase::DeathWatchdogPending {
+                5
+            } else {
+                6
+            };
+            if witness.last_deaths == 1
+                && witness.last_recovery_step == retained_step
+                && !witness.death_watchdog_aged
+            {
+                let probe = play.manual_click_live_probe(&account);
+                if probe["script"]["watchdog_state"].as_str() == Some("Armed") {
+                    let Some(generation) = probe["script"]["runtime_generation"].as_u64() else {
+                        break Err(format!("{cell_name} has no runtime generation to age"));
+                    };
+                    let Some((x, z, level)) = latest.as_ref().and_then(|latest| latest.tile) else {
+                        break Err(format!("{cell_name} has no tile to age the watchdog at"));
+                    };
+                    let xp: Vec<i32> = state
+                        .lock()
+                        .map_err(|_| "live state poisoned")?
+                        .snapshot
+                        .stats()
+                        .iter()
+                        .map(|stat| stat.xp)
+                        .collect();
+                    if let Err(error) = play.manual_click_live_age_gameplay_with_xp(
+                        &account,
+                        WorldTile { x, z, level },
+                        &xp,
+                    ) {
+                        break Err(format!("{cell_name} watchdog age failed: {error}"));
+                    }
+                    let mut slot = state.lock().map_err(|_| "live state poisoned")?;
+                    slot.witness.death_watchdog_aged = true;
+                    slot.witness.death_watchdog_generation_before = Some(generation);
+                }
+            }
+            if witness.death_watchdog_aged {
+                let probe = play.manual_click_live_probe(&account);
+                if witness
+                    .death_watchdog_generation_before
+                    .zip(probe["script"]["runtime_generation"].as_u64())
+                    .is_some_and(|(before, after)| {
+                        after > before
+                            && witness.last_deaths == 1
+                            && witness.last_recovery_step == retained_step
+                    })
+                {
+                    state
+                        .lock()
+                        .map_err(|_| "live state poisoned")?
+                        .witness
+                        .death_watchdog_recreated = true;
+                }
+            }
+        }
         if reported
             != (
                 witness.cycles,
@@ -4416,6 +5078,13 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     && witness.last_xp > baseline_xp
             }
             LiveCase::GasHazard => witness.gas_hazard_xp_after_escape,
+            LiveCase::RandomEvent
+            | LiveCase::DeathReturn
+            | LiveCase::DeathRespawnRegion
+            | LiveCase::DeathNoStock
+            | LiveCase::DeathReturnRefused
+            | LiveCase::DeathWatchdogPending
+            | LiveCase::DeathWatchdogProving => interrupts_complete(case, &witness),
             LiveCase::CancelBeforeDrain => witness.stopped_before_drain,
             LiveCase::DeathDuringDrop => witness.death_restart_gathered,
             LiveCase::RunKeyChangeDuringDrop => {
@@ -4560,6 +5229,41 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "last_area": witness.last_area,
             "last_event": witness.last_event,
     });
+    let g4a_receipt = json!({
+            "random_owned_event_seen": witness.random_owned_event_seen,
+            "random_owned_hold_frames": witness.random_owned_hold_frames,
+            "random_hold_unchanged": witness.random_hold_unchanged,
+            "random_owned_released": witness.random_owned_released,
+            "random_fresh_yield": witness.random_fresh_yield,
+            "random_owned_revalidated": witness.random_owned_revalidated,
+            "random_foreign_event_seen": witness.random_foreign_event_seen,
+            "random_foreign_not_held": witness.random_foreign_not_held,
+            "random_foreign_fresh_yield": witness.random_foreign_fresh_yield,
+            "death_recovery_command_sent": witness.death_recovery_command_sent,
+            "death_command_while_paused": witness.death_command_while_paused,
+            "death_chat_observed_while_paused": witness.death_chat_observed_while_paused,
+            "pause_observed": witness.pause_observed,
+            "resume_observed": witness.resume_observed,
+            "death_recovery_in_area": witness.death_recovery_in_area,
+            "death_command_tile": witness.death_command_tile,
+            "death_respawn_region_unchanged": witness.death_respawn_region_unchanged,
+            "death_progress_baselines": witness.death_progress_baselines,
+            "deaths": witness.last_deaths,
+            "recoveries": witness.last_recoveries,
+            "recovery_step": witness.last_recovery_step,
+            "death_recovered": witness.death_recovered,
+            "death_products_after": witness.death_products_after,
+            "death_xp_after": witness.death_xp_after,
+            "death_haul_between": witness.death_haul_between,
+            "death_return_refused": witness.death_return_refused,
+            "death_retry_teleport_sent": witness.death_retry_teleport_sent,
+            "death_retry_requested": witness.death_retry_requested,
+            "death_retry_reentered": witness.death_retry_reentered,
+            "death_watchdog_aged": witness.death_watchdog_aged,
+            "death_watchdog_generation_before": witness.death_watchdog_generation_before,
+            "death_watchdog_recreated": witness.death_watchdog_recreated,
+    });
+    receipt["interrupts"] = g4a_receipt;
     let bank_receipt = json!({
             "bank": witness.last_status_bank,
             "bank_trips": witness.status_trips,
@@ -5029,4 +5733,117 @@ fn gatherer_bank_pause_resume_other_plane() {
 #[ignore = "requires LIVE=1 and local 289 engine; defaults to the validated oak fixture"]
 fn gatherer_bank_reconnect_return() {
     run_cell(Cell::Woodcutting, LiveCase::ReconnectReturn).unwrap();
+}
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_TILE, and local 289 engine"]
+fn gatherer_random() {
+    run_cell(Cell::Woodcutting, LiveCase::RandomEvent).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
+fn gatherer_death_return() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine; defaults to the Lumbridge respawn-region fixture"]
+fn gatherer_death_return_respawn_region() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathRespawnRegion).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+fn gatherer_death_return_no_stock() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathNoStock).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
+fn gatherer_death_return_refused_retry() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
+}
+
+#[cfg(feature = "live-probe")]
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+fn gatherer_death_watchdog_pending5() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogPending).unwrap();
+}
+
+#[cfg(feature = "live-probe")]
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, live-probe, and local 289 engine"]
+fn gatherer_death_watchdog_proving() {
+    run_cell(Cell::Woodcutting, LiveCase::DeathWatchdogProving).unwrap();
+}
+
+fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
+    match case {
+        LiveCase::RandomEvent => {
+            witness.random_owned_event_seen
+                && witness.random_owned_hold_frames > 0
+                && witness.random_hold_unchanged
+                && witness.random_owned_released
+                && witness.random_fresh_yield
+                && witness.random_owned_revalidated
+                && witness.random_foreign_event_seen
+                && witness.random_foreign_not_held
+                && witness.random_foreign_fresh_yield
+        }
+        LiveCase::DeathReturn => {
+            witness.death_recovered.contains(&1)
+                && witness.death_recovered.contains(&2)
+                && witness.death_products_after.contains(&1)
+                && witness.death_products_after.contains(&2)
+                && witness.death_xp_after.contains(&1)
+                && witness.death_xp_after.contains(&2)
+                && witness.death_haul_between
+                && witness.death_recovery_command_sent >= 2
+                && witness.death_command_while_paused
+                && witness.death_chat_observed_while_paused
+                && witness.pause_observed
+                && witness.resume_observed
+                && witness.last_deaths == 2
+                && witness.last_recoveries == 2
+        }
+        LiveCase::DeathRespawnRegion => {
+            witness.death_recovery_in_area
+                && witness.death_respawn_region_unchanged
+                && witness.death_recovered.contains(&1)
+                && witness.death_products_after.contains(&1)
+                && witness.death_xp_after.contains(&1)
+                && witness.last_deaths == 1
+                && witness.last_recoveries == 1
+        }
+        LiveCase::DeathNoStock => {
+            witness.failure_code.as_deref() == Some("supply-missing")
+                && witness.last_deaths == 1
+                && witness.death_recovery_command_sent == 1
+                && witness
+                    .last_status_bank
+                    .as_deref()
+                    .is_some_and(|bank| bank.ends_with("; Withdraw"))
+        }
+        LiveCase::DeathReturnRefused => {
+            witness.death_return_refused
+                && witness.death_retry_teleport_sent
+                && witness.death_retry_requested
+                && witness.death_retry_reentered
+                && witness.last_deaths == 1
+                && witness.death_recovery_command_sent == 1
+        }
+        LiveCase::DeathWatchdogPending | LiveCase::DeathWatchdogProving => {
+            witness.death_watchdog_aged
+                && witness.death_watchdog_generation_before.is_some()
+                && witness.death_watchdog_recreated
+                && witness.death_recovery_command_sent == 1
+                && witness.death_recovered.contains(&1)
+                && witness.last_deaths == 1
+                && witness.last_recoveries == 1
+                && witness.death_products_after.contains(&1)
+                && witness.death_xp_after.contains(&1)
+        }
+        _ => false,
+    }
 }

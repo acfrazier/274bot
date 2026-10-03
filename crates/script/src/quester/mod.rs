@@ -2,7 +2,6 @@
 pub mod bank_memo;
 pub mod card;
 pub mod compile;
-pub mod death;
 pub mod eligibility;
 pub mod families;
 pub mod loadouts;

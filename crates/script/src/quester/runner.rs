@@ -3,13 +3,13 @@ use super::bank_memo::BankMemo;
 use super::compile::{
     CompiledPath, CompiledStep, PredicateContext, StepContext, StepOutcome, StepRun,
 };
-use super::death::DeathLatch;
 use super::families::combat::CombatReceipt;
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
 use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
+use crate::native::death::DeathLatch;
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,

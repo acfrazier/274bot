@@ -176,11 +176,24 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
     snapshot
 }
 
-fn depleted_snapshot(selected: &api::game_data::SelectedGameData) -> GameSnapshot {
+fn fixture_catalog(
+    selected: &Arc<api::game_data::SelectedGameData>,
+) -> Arc<api::gather_methods::GatherCatalog> {
+    api::gather_methods::cached(selected).unwrap_or_else(|| {
+        let selected = Arc::clone(selected);
+        api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap()
+    })
+}
+
+fn depleted_snapshot(selected: &Arc<api::game_data::SelectedGameData>) -> GameSnapshot {
     use api::gather_methods::{SceneRegionInput, TargetClass};
     use api::selected::{EntityId, Knowledge};
     use api::snapshot::{LocLayer, LocView};
-    let catalog = api::gather_methods::cached(selected).expect("slot holds the catalog");
+    let catalog = fixture_catalog(selected);
     let region = SceneRegionInput {
         min_x: 3190 - 12,
         min_z: 3245 - 12,
@@ -236,13 +249,13 @@ fn depleted_snapshot(selected: &api::game_data::SelectedGameData) -> GameSnapsho
 }
 
 fn mining_snapshot(
-    selected: &api::game_data::SelectedGameData,
+    selected: &Arc<api::game_data::SelectedGameData>,
     method_id: &str,
     depleted: bool,
 ) -> GameSnapshot {
     use api::gather_methods::{known_rows, SceneRegionInput, TargetClass};
     use api::selected::{EntityId, Truth};
-    let catalog = api::gather_methods::cached(selected).expect("slot holds the catalog");
+    let catalog = fixture_catalog(selected);
     let method = catalog.method(method_id).unwrap();
     let region = SceneRegionInput {
         min_x: 0,
@@ -2173,4 +2186,782 @@ fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plan
     ] {
         run_supply_trip_scenario(incarnation, rune_stock);
     }
+}
+fn lifecycle_hitpoints(frame: &mut GameSnapshot, effective: i32, base: i32) {
+    let mut stats = frame.stats().to_vec();
+    if let Some(hitpoints) = stats.iter_mut().find(|stat| stat.index == 3) {
+        hitpoints.name = "hitpoints".into();
+        hitpoints.effective = effective;
+        hitpoints.base = base;
+    } else {
+        stats.push(StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            effective,
+            base,
+            xp: 0,
+            used: true,
+        });
+    }
+    frame.seed_stats(stats);
+}
+
+fn lifecycle_frame_copy(source: &GameSnapshot) -> GameSnapshot {
+    let mut frame = snapshot(&[]);
+    frame.seed_world(*source.world());
+    frame.seed_local_player(source.local_player().unwrap().clone());
+    frame.seed_inventory(source.inventory().to_vec(), source.inventory_size());
+    frame.seed_equipment(source.equipment().to_vec());
+    frame.seed_stats(source.stats().to_vec());
+    frame.seed_locs(source.locs().to_vec());
+    frame.seed_npcs(source.npcs().to_vec());
+    frame.seed_chat_lines(source.chat_lines().to_vec());
+    frame
+}
+
+fn lifecycle_death_frame(
+    baseline: &GameSnapshot,
+    sequence: i32,
+    tile: WorldTile,
+    hp_effective: i32,
+    hp_base: i32,
+) -> GameSnapshot {
+    let mut frame = lifecycle_frame_copy(baseline);
+    let mut player = frame
+        .local_player()
+        .expect("fixture has a local player")
+        .clone();
+    player.player.actor.tile = tile;
+    frame.seed_local_player(player);
+    lifecycle_hitpoints(&mut frame, hp_effective, hp_base);
+    frame.seed_chat_lines(vec![api::snapshot::ChatLineView {
+        type_: 0,
+        username: None,
+        text: "Oh dear, you are dead!".into(),
+        sequence,
+    }]);
+    frame
+}
+
+fn lifecycle_status_integer(slot: &SlotScript, key: &str) -> i64 {
+    let status = slot.native_status().expect("compiled status is published");
+    let field = status
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .unwrap_or_else(|| panic!("missing status field {key}"));
+    match &field.value {
+        script::native::StatusValue::Integer(value) => *value,
+        other => panic!("status field {key} is not an integer: {other:?}"),
+    }
+}
+
+fn lifecycle_status_text(slot: &SlotScript, key: &str) -> String {
+    let status = slot.native_status().expect("compiled status is published");
+    let field = status
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .unwrap_or_else(|| panic!("missing status field {key}"));
+    match &field.value {
+        script::native::StatusValue::Text(value) => value.to_string(),
+        other => panic!("status field {key} is not text: {other:?}"),
+    }
+}
+
+fn recreate_gatherer(slot: &mut SlotScript) {
+    slot.restart_from_identity(Instant::now())
+        .expect("watchdog recreation should retain the active run");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while slot.state() == script::RunState::Starting {
+        assert!(Instant::now() < deadline, "compiled recreation stalled");
+        slot.observe_lifecycle();
+        std::thread::yield_now();
+    }
+    assert_eq!(slot.state(), script::RunState::Running);
+}
+
+fn complete_lifecycle_walk(
+    slot: &mut SlotScript,
+    authority: &script::native::HostAuthority,
+    request_id: u64,
+    now: u64,
+    end: script::native::WalkEnd,
+) {
+    slot.complete_native_walk(
+        authority,
+        script::native::WalkReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            end,
+            blocked: None,
+            detail: None,
+        },
+    );
+}
+
+fn lifecycle_bank(
+    tile: WorldTile,
+) -> (
+    api::named_banks::NamedBank,
+    Arc<api::named_banks::NamedBankFacts>,
+) {
+    let bank = api::named_banks::NamedBank::new("fixture-bank", tile);
+    let facts = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![bank]));
+    (bank, facts)
+}
+
+fn accept_lifecycle_bank_pick(
+    slot: &mut SlotScript,
+    authority: &script::native::HostAuthority,
+    request_id: u64,
+    now: u64,
+    bank: api::named_banks::NamedBank,
+    bank_tile: WorldTile,
+) {
+    use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
+
+    slot.complete_native_bank_pick(
+        authority,
+        BankPickReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            selected: SelectedBank {
+                bank_index: 0,
+                access_tile: bank_tile,
+                kind: PickKind::Reachable,
+                access: Some(Arc::new(BankStandAccess {
+                    bank,
+                    stand_tile: bank_tile,
+                    kind: AccessKind::Booth,
+                    stand_op: 2,
+                    name: Some(Arc::from("Bank booth")),
+                    choose: None,
+                })),
+            },
+        },
+    );
+}
+
+const LUMBRIDGE_RESPAWN_EDGE: WorldTile = WorldTile {
+    x: 3224,
+    z: 3215,
+    level: 0,
+};
+
+#[test]
+fn same_frame_death_observation_uses_default_recovery_inside_the_same_scene() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let initial_world = *initial.world();
+    // Deliberately omit deathPolicy/maxDeaths: G4a defaults to Recover/2.
+    let mut slot = started(4400, &selected);
+    tick(&mut slot, &initial, 1);
+
+    // The death line, restored base HP and Lumbridge respawn tile all arrive
+    // together. The tile is on the edge of the inclusive ±3 square.
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    assert_eq!(death.world().map_base_x, initial_world.map_base_x);
+    assert_eq!(death.world().map_base_z, initial_world.map_base_z);
+    tick(&mut slot, &death, 2);
+    assert_ne!(
+        slot.native_status().unwrap().phase,
+        NativePhase::Blocked,
+        "the death latch frame already proves respawn"
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+
+    for now in 3..=5 {
+        tick(&mut slot, &death, now);
+        assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    }
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 2);
+    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Working);
+    assert_ne!(anchor, LUMBRIDGE_RESPAWN_EDGE);
+    slot.stop();
+}
+
+#[test]
+fn recreated_runner_latches_gap_death_after_empty_or_initialized_watermark() {
+    for (incarnation, baseline_sequence) in [(4401, None), (4402, Some(7))] {
+        let selected = selected();
+        let mut initial = depleted_snapshot(&selected);
+        lifecycle_hitpoints(&mut initial, 10, 10);
+        initial.seed_chat_lines(
+            baseline_sequence
+                .map(|sequence| {
+                    vec![api::snapshot::ChatLineView {
+                        type_: 0,
+                        username: None,
+                        text: "Welcome to RuneScape".into(),
+                        sequence,
+                    }]
+                })
+                .unwrap_or_default(),
+        );
+        let mut slot = started(incarnation, &selected);
+        tick(&mut slot, &initial, 1);
+        assert_eq!(lifecycle_status_integer(&slot, "deaths"), 0);
+
+        // No instance examines the new death line. In particular, the empty
+        // ring above retains Some(0), so sequence 1 is new after recreation.
+        recreate_gatherer(&mut slot);
+        let death_sequence = baseline_sequence.map_or(1, |sequence| sequence + 1);
+        let death = lifecycle_death_frame(&initial, death_sequence, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+        tick(&mut slot, &death, 2);
+        assert_ne!(
+            slot.native_status().unwrap().phase,
+            NativePhase::Blocked,
+            "a death delivered in the recreation gap must start recovery"
+        );
+        assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+        assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+        slot.stop();
+    }
+}
+
+#[test]
+fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let bank_tile = WorldTile {
+        x: anchor.x + 20,
+        z: anchor.z,
+        level: anchor.level,
+    };
+    let (bank, banks) = lifecycle_bank(bank_tile);
+    let mut slot = started_with_banks(4403, &selected, SettingsBag::new(), banks);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+
+    // Death removed the only usable axe. The death frame is still a valid
+    // respawn observation; recovery must reach its shared supply sequence.
+    let mut death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    death.seed_inventory(Vec::new(), 28);
+    death.seed_equipment(Vec::new());
+    now += 1;
+    tick(&mut slot, &death, now);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(
+        matches!(effect, HostEffect::BankPick(_)),
+        "a missing post-death tool must select a bank before recovery can continue"
+    );
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
+    accept_lifecycle_bank_pick(&mut slot, &authority, request_id, now, bank, bank_tile);
+
+    let work_locs = initial.locs().to_vec();
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    trip_position(&mut death, bank_tile);
+    let mut booth = work_locs[0].clone();
+    booth.id = 2213;
+    booth.tile = bank_tile;
+    booth.name = Some("Bank booth".into());
+    booth.actions = vec![None, Some("Use-quickly".into())];
+    death.seed_locs(vec![booth]);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::OpenStand { .. })
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+
+    // An unopened/unread bank is not an empty-stock observation.
+    death.seed_bank_observation(1, 1, None, Vec::new());
+    for _ in 0..3 {
+        now += 1;
+        tick(&mut slot, &death, now);
+        assert!(!slot.has_native_actions());
+        assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    }
+
+    death.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+    for _ in 0..10 {
+        now += 1;
+        tick(&mut slot, &death, now);
+        assert!(
+            slot.take_native_action().is_none(),
+            "an empty loaded bank must not produce a withdrawal"
+        );
+        if slot.native_status().unwrap().phase == NativePhase::Blocked {
+            break;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "supply-missing");
+    assert!(failure.message.to_ascii_lowercase().contains("axe"));
+    assert!(failure.retryable);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
+    slot.stop();
+}
+
+#[test]
+fn refused_death_return_retry_and_recreation_resume_retained_steps() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4404, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &death, now);
+
+    let (old_authority, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("recovery step 5 must return to the retained anchor")
+    };
+    assert_eq!(request.target, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+
+    // Recreate while the return walk is pending. The old death line remains
+    // in the ring but is already behind the retained watermark.
+    recreate_gatherer(&mut slot);
+    assert!(!old_authority.live());
+    let (fresh_authority, fresh_request, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("Pending step 5 recreation must re-enter the return step")
+    };
+    assert_eq!(request.target, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+
+    complete_lifecycle_walk(
+        &mut slot,
+        &fresh_authority,
+        fresh_request,
+        now,
+        script::native::WalkEnd::Refused,
+    );
+    now += 1;
+    tick(&mut slot, &death, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "return-failed");
+    assert!(failure.retryable);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+
+    slot.retry_compiled(slot.native_run().unwrap())
+        .expect("Retry consents to the retained return");
+    let (retry_authority, retry_request, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("Retry must resume recovery at step 5")
+    };
+    assert_eq!(request.target, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    let mut returned = lifecycle_frame_copy(&death);
+    trip_position(&mut returned, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &retry_authority,
+        retry_request,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    now += 1;
+    tick(&mut slot, &returned, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+
+    // Proving is retained too; the old death line cannot start another run.
+    recreate_gatherer(&mut slot);
+    now += 1;
+    tick(&mut slot, &returned, now);
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+    assert_eq!(lifecycle_status_integer(&slot, "recoveries"), 0);
+
+    let mut product_only = lifecycle_frame_copy(&returned);
+    product_only.seed_inventory(vec![log(0)], 28);
+    now += 1;
+    tick(&mut slot, &product_only, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+    assert_eq!(lifecycle_status_integer(&slot, "recoveries"), 0);
+
+    let mut proof = product_only;
+    let mut stats = proof.stats().to_vec();
+    let woodcutting = stats
+        .iter_mut()
+        .find(|stat| stat.name.eq_ignore_ascii_case("woodcutting"))
+        .unwrap();
+    woodcutting.xp = woodcutting.xp.saturating_add(50);
+    proof.seed_stats(stats);
+    now += 1;
+    tick(&mut slot, &proof, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 0);
+    assert_eq!(lifecycle_status_integer(&slot, "recoveries"), 1);
+    assert_eq!(
+        lifecycle_status_text(&slot, "last_event"),
+        "recovered after death 1"
+    );
+    slot.stop();
+}
+
+#[test]
+fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_death() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    // Keep both G4a settings at their defaults: Recover, maxDeaths = 2.
+    let mut slot = started(4405, &selected);
+    let mut now = 1;
+    tick(&mut slot, &initial, now);
+    let mut first_death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &first_death, now);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &first_death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    trip_position(&mut first_death, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request_id,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    now += 1;
+    tick(&mut slot, &first_death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+
+    let mut product_and_xp = lifecycle_frame_copy(&first_death);
+    product_and_xp.seed_inventory(vec![log(0)], 28);
+    let mut stats = product_and_xp.stats().to_vec();
+    let woodcutting = stats
+        .iter_mut()
+        .find(|stat| stat.name.eq_ignore_ascii_case("woodcutting"))
+        .unwrap();
+    woodcutting.xp += 50;
+    product_and_xp.seed_stats(stats);
+    now += 1;
+    tick(&mut slot, &product_and_xp, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 0);
+    assert_eq!(lifecycle_status_integer(&slot, "recoveries"), 1);
+
+    // Complete one observed disposal before the next death.
+    let mut full_pack = lifecycle_frame_copy(&product_and_xp);
+    let mut present: Vec<i32> = (0..28).collect();
+    full_pack.seed_inventory(present.iter().copied().map(log).collect(), 28);
+    let mut hauled = false;
+    for _ in 0..12 {
+        now += 1;
+        full_pack.seed_inventory(present.iter().copied().map(log).collect(), 28);
+        tick(&mut slot, &full_pack, now);
+        let sent = drain(&mut slot, now);
+        present.retain(|slot| !sent.contains(slot));
+        if present.is_empty() {
+            now += 1;
+            full_pack.seed_inventory(Vec::new(), 28);
+            tick(&mut slot, &full_pack, now);
+            assert!(drain(&mut slot, now).is_empty());
+            hauled = true;
+            break;
+        }
+    }
+    assert!(hauled, "the first post-recovery disposal must complete");
+    assert_eq!(lifecycle_status_integer(&slot, "dropped"), 28);
+
+    let second_death = lifecycle_death_frame(&full_pack, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &second_death, now);
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+
+    let third_death = lifecycle_death_frame(&second_death, 3, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &third_death, now);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "max-deaths");
+    assert!(!failure.retryable);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 3);
+    slot.stop();
+}
+
+#[test]
+fn stop_policy_is_explicit_and_retry_consents_to_recovery() {
+    let selected = selected();
+    let mut settings = SettingsBag::new();
+    settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let mut slot = started_with(4406, &selected, settings);
+    tick(&mut slot, &initial, 1);
+    let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    tick(&mut slot, &death, 2);
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "died");
+    assert!(failure.retryable);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+
+    slot.retry_compiled(slot.native_run().unwrap())
+        .expect("Retry explicitly consents to recovery");
+    for now in 3..=6 {
+        tick(&mut slot, &death, now);
+        if lifecycle_status_integer(&slot, "recovery_step") == 2 {
+            break;
+        }
+    }
+    assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 2);
+    slot.stop();
+}
+
+#[test]
+fn random_hold_release_revalidates_lost_or_broken_pickaxe_before_gathering() {
+    for (incarnation, broken_head) in [(4407, false), (4408, true)] {
+        let selected = selected();
+        let frame = mining_snapshot(&selected, "mining.coal", false);
+        let anchor = frame.local_player().unwrap().player.actor.tile;
+        let bank_tile = WorldTile {
+            x: anchor.x + 20,
+            z: anchor.z,
+            level: anchor.level,
+        };
+        let (bank, banks) = lifecycle_bank(bank_tile);
+        let mut settings = SettingsBag::new();
+        settings.insert("skill".into(), serde_json::json!("Mining"));
+        settings.insert("miningResources".into(), serde_json::json!(["coal"]));
+        settings.insert("disposition".into(), serde_json::json!("Bank"));
+        let mut slot = started_with_banks(incarnation, &selected, settings, banks);
+
+        tick(&mut slot, &frame, 1);
+        assert!(
+            slot.has_native_actions(),
+            "live mining should enqueue its op"
+        );
+        tick_with_hold(&mut slot, &frame, 2, true);
+        assert!(
+            !slot.has_native_actions(),
+            "an owned random hold revokes queued gathering before dispatch"
+        );
+
+        let mut released = lifecycle_frame_copy(&frame);
+        released.seed_equipment(Vec::new());
+        if broken_head {
+            // This is an observed replacement object from the blast event, not
+            // a supported pickaxe id in the selected catalogue.
+            let mut broken = log(0);
+            broken.def = def(i32::MAX, "Broken pickaxe");
+            released.seed_inventory(vec![broken], 28);
+        } else {
+            // Lost-head event: the handle has been reattached but no head is
+            // left in the player's inventory.
+            released.seed_inventory(Vec::new(), 28);
+        }
+        let mut now = 2;
+        let (authority, request_id, effect) = next_trip_effect(&mut slot, &released, &mut now);
+        assert!(
+            matches!(effect, HostEffect::BankPick(_)),
+            "release must revalidate and enter the shared supply trip"
+        );
+        assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 0);
+        accept_lifecycle_bank_pick(&mut slot, &authority, request_id, now, bank, bank_tile);
+        slot.stop();
+    }
+}
+
+#[test]
+fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
+    let selected = selected();
+    let mut frame = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut frame, 6, 10);
+    frame.seed_chat_lines(Vec::new());
+    let anchor = frame.local_player().unwrap().player.actor.tile;
+    let bank_tile = WorldTile {
+        x: anchor.x + 20,
+        z: anchor.z,
+        level: anchor.level,
+    };
+    let (bank, banks) = lifecycle_bank(bank_tile);
+    let mut settings = SettingsBag::new();
+    settings.insert("food".into(), serde_json::json!("Lobster"));
+    settings.insert("foodTarget".into(), serde_json::json!(1));
+    settings.insert("eatBelow".into(), serde_json::json!(5));
+    let mut lobster = log(0);
+    lobster.def = def(379, "Lobster");
+    lobster.actions = vec![Some("Eat".into()), Some("Drop".into())];
+    frame.seed_inventory(vec![lobster], 28);
+    let mut slot = started_with_banks(4409, &selected, settings, banks);
+
+    tick(&mut slot, &frame, 1);
+    assert!(
+        !slot.has_native_actions(),
+        "HP above eatBelow does not consume food"
+    );
+    lifecycle_hitpoints(&mut frame, 5, 10);
+    tick(&mut slot, &frame, 2);
+    let eat = slot
+        .take_native_action()
+        .expect("HP at eatBelow should start an Eat operation");
+    assert!(matches!(
+        eat.effect,
+        HostEffect::Interaction(InteractReq::Held {
+            ref name,
+            ref action,
+            ..
+        }) if name == "Lobster" && action == "Eat"
+    ));
+    let authority = eat.authority();
+    accept_trip_operation(&mut slot, &authority, eat.request_id.get(), 2);
+
+    // An accepted packet alone is not an observed meal, and must not be
+    // reissued while the same food and HP remain visible.
+    tick(&mut slot, &frame, 3);
+    assert!(!slot.has_native_actions());
+    frame.seed_inventory(Vec::new(), 28);
+    lifecycle_hitpoints(&mut frame, 7, 10);
+    let mut now = 3;
+    tick(&mut slot, &frame, 4);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(
+        matches!(effect, HostEffect::BankPick(_)),
+        "the observed empty food slot must re-enter the supply trip"
+    );
+    accept_lifecycle_bank_pick(&mut slot, &authority, request_id, now, bank, bank_tile);
+    slot.stop();
+}
+
+#[test]
+fn recreated_pending_respawn_still_requires_position_and_restored_hitpoints() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let outside = WorldTile {
+        x: 3225,
+        z: 3218,
+        level: 0,
+    };
+    let mut slot = started(4410, &selected);
+    tick(&mut slot, &initial, 1);
+    let mut death = lifecycle_death_frame(&initial, 1, outside, 10, 10);
+    tick(&mut slot, &death, 2);
+    recreate_gatherer(&mut slot);
+    for now in 3..=8 {
+        tick(&mut slot, &death, now);
+        assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+        assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+        assert!(!slot.has_native_actions());
+    }
+    trip_position(&mut death, LUMBRIDGE_RESPAWN_EDGE);
+    lifecycle_hitpoints(&mut death, 9, 10);
+    tick(&mut slot, &death, 9);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+    lifecycle_hitpoints(&mut death, 10, 10);
+    for now in 10..=13 {
+        tick(&mut slot, &death, now);
+    }
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 2);
+    slot.stop();
+}
+
+#[test]
+fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4411, &selected);
+    tick(&mut slot, &initial, 1);
+    let mut death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    let mut now = 2;
+    tick(&mut slot, &death, now);
+    let (authority, request, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    trip_position(&mut death, anchor);
+    complete_lifecycle_walk(
+        &mut slot,
+        &authority,
+        request,
+        now,
+        script::native::WalkEnd::Arrived,
+    );
+    now += 1;
+    tick(&mut slot, &death, now);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
+    recreate_gatherer(&mut slot);
+    let second = lifecycle_death_frame(&death, 2, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    now += 1;
+    tick(&mut slot, &second, now);
+    let status = slot.native_status().unwrap();
+    let failure = status.failure.as_ref().unwrap();
+    assert_eq!(failure.code.as_ref(), "died-again");
+    assert!(failure.retryable);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
+    assert!(!slot.has_native_actions());
+    slot.stop();
+}
+
+#[test]
+fn recovery_return_reconnect_on_another_plane_keeps_the_retained_destination() {
+    let selected = selected();
+    let mut initial = depleted_snapshot(&selected);
+    lifecycle_hitpoints(&mut initial, 10, 10);
+    initial.seed_chat_lines(Vec::new());
+    let anchor = initial.local_player().unwrap().player.actor.tile;
+    let mut slot = started(4412, &selected);
+    tick(&mut slot, &initial, 1);
+    let mut death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
+    let mut now = 2;
+    tick(&mut slot, &death, now);
+    let (old, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    assert!(matches!(effect, HostEffect::Walk(_)));
+    slot.pause();
+    trip_position(
+        &mut death,
+        WorldTile {
+            level: 1,
+            ..LUMBRIDGE_RESPAWN_EDGE
+        },
+    );
+    slot.resume();
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    assert!(!old.live());
+    let (_, _, effect) = next_trip_effect(&mut slot, &death, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("reconnect must re-enter the retained return, not gather or supply");
+    };
+    assert_eq!(request.target, anchor);
+    assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 5);
+    assert_eq!(lifecycle_status_integer(&slot, "deaths"), 1);
+    assert!(slot.native_status().unwrap().failure.is_none());
+    slot.stop();
 }
