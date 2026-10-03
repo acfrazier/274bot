@@ -63,9 +63,9 @@ pub struct PanelUiState {
     /// with the TUI. Absent (0.1.8.1) or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
-    /// Keep the shared log in a separate in-app window.
-    #[serde(default)]
-    pub log_detached: bool,
+    /// Legacy flag migrated to a one-time Log tab open at session startup.
+    #[serde(default, rename = "log_detached", skip_serializing)]
+    pub(crate) legacy_log_detached: bool,
     /// Write a per-session log file under `~/.274bot/logs/` (shared with the
     /// TUI as `frontend_core::log_file::SESSION_LOG_KEY`). Absent = off.
     #[serde(default)]
@@ -139,11 +139,17 @@ impl Default for PanelUiState {
             background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
             map_bake: frontend_core::MapBakeChoice::Ask,
-            log_detached: false,
+            legacy_log_detached: false,
             session_log_file: false,
             fleet_columns: HashMap::new(),
             debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
         }
+    }
+}
+
+impl PanelUiState {
+    pub(crate) fn take_legacy_log_detached(&mut self) -> bool {
+        std::mem::take(&mut self.legacy_log_detached)
     }
 }
 
@@ -632,21 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn detached_log_defaults_in_panel_and_roundtrips() {
-        let old: PanelUiState =
+    fn legacy_detached_log_opens_the_log_tab_once() {
+        let mut old: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
-        assert!(
-            !old.log_detached,
-            "old preferences keep the log in the panel"
-        );
+        assert!(!old.take_legacy_log_detached());
 
-        let state = PanelUiState {
-            log_detached: true,
-            ..Default::default()
-        };
+        let mut state: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{},"log_detached":true}"#)
+                .unwrap();
+        assert!(state.take_legacy_log_detached());
+        assert!(!state.take_legacy_log_detached());
+
         let bytes = serde_json::to_vec(&state).unwrap();
-        let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
-        assert!(back.log_detached);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            value.get("log_detached").is_none(),
+            "the legacy setting is consumed on save"
+        );
     }
 
     #[test]
