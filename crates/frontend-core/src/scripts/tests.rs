@@ -5,9 +5,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::{Notice, Scripts};
+use super::{parse_parameter_text, Notice, ParameterCommit, ParameterEditKey, Scripts};
 use crate::marked::prepare_apply_settings_marked;
-use crate::operations::Outcome;
+use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
@@ -229,6 +229,268 @@ fn newer_native_edit_keeps_the_copy_drafts_assignment() {
     );
 }
 
+#[test]
+fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
+    let mut f = fixture("parameter-text-commit", &["alice"]);
+    let card = f.card(
+        "counter.ts",
+        "export const SETTINGS = { count: { type: 'number', default: 1 } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("alice", &card);
+    let selection = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let key = ParameterEditKey::new(Some("alice"), &selection, "count");
+    let def = card
+        .settings_schema
+        .iter()
+        .find(|setting| setting.id == "count")
+        .unwrap();
+    let current = json!(1);
+    f.scripts.merged_profile_bag(
+        &mut f.core,
+        "alice",
+        card.source,
+        &card.name,
+        &card.path,
+        &card.settings_schema,
+    );
+    f.core.flush_writes();
+    let before = f.core.last_operation().map(|report| report.id);
+
+    for text in ["1", "12", "123"] {
+        let buffer = f.scripts.parameter_text_mut_for(
+            Some("alice"),
+            &selection,
+            "count",
+            "1",
+            Some(current.clone()),
+        );
+        buffer.clear();
+        buffer.push_str(text);
+        assert_eq!(
+            f.scripts.validate_parameter_buffer_for(
+                Some("alice"),
+                &selection,
+                "count",
+                ("1", Some(current.clone())),
+                def,
+                &[],
+            ),
+            Ok(json!(text.parse::<u64>().unwrap()))
+        );
+        assert_eq!(f.core.last_operation().map(|report| report.id), before);
+    }
+
+    let buffer = f.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        "count",
+        "1",
+        Some(current.clone()),
+    );
+    buffer.clear();
+    buffer.push('-');
+    assert!(f
+        .scripts
+        .validate_parameter_buffer_for(
+            Some("alice"),
+            &selection,
+            "count",
+            ("1", Some(current.clone())),
+            def,
+            &[],
+        )
+        .is_err());
+    assert_eq!(
+        f.core.last_operation().map(|report| report.id),
+        before,
+        "an invalid partial number never creates a save operation"
+    );
+    let buffer = f.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        "count",
+        "1",
+        Some(current.clone()),
+    );
+    buffer.clear();
+    buffer.push_str("123");
+    assert_eq!(
+        f.scripts.validate_parameter_buffer_for(
+            Some("alice"),
+            &selection,
+            "count",
+            ("1", Some(current.clone())),
+            def,
+            &[],
+        ),
+        Ok(json!(123))
+    );
+
+    let start_error = f
+        .scripts
+        .start_profile(&mut f.core, "alice", None)
+        .unwrap_err();
+    assert!(start_error.contains("uncommitted"));
+    assert_eq!(f.core.last_operation().map(|report| report.id), before);
+    assert!(
+        f.scripts.parameter_edit_blocks_start("alice"),
+        "a valid but uncommitted draft must hold Start"
+    );
+
+    let value = parse_parameter_text(def, "123", &[]).unwrap();
+    let op = match f
+        .scripts
+        .commit_parameter_value(
+            &mut f.core,
+            &key,
+            &selection,
+            "count",
+            value.clone(),
+            Some(current),
+        )
+        .unwrap()
+    {
+        ParameterCommit::Submitted(op) => op,
+        other => panic!("expected one queued profile save, got {other:?}"),
+    };
+    assert_eq!(
+        f.core.last_operation().map(|report| report.id),
+        Some(op),
+        "the explicit commit adds exactly one operation"
+    );
+    assert_eq!(
+        f.core.operation(op).unwrap().action,
+        ActionKind::SaveProfile
+    );
+    assert_eq!(
+        f.scripts
+            .commit_parameter_value(
+                &mut f.core,
+                &key,
+                &selection,
+                "count",
+                value.clone(),
+                Some(json!(1)),
+            )
+            .unwrap(),
+        ParameterCommit::Pending(op),
+        "the same in-flight value must reuse its operation"
+    );
+    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.core.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+    assert_eq!(
+        f.scripts
+            .commit_parameter_value(
+                &mut f.core,
+                &key,
+                &selection,
+                "count",
+                value.clone(),
+                Some(value),
+            )
+            .unwrap(),
+        ParameterCommit::Unchanged
+    );
+    assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+}
+
+#[test]
+fn rejected_parameter_save_is_not_retried_on_later_frames() {
+    let mut f = native_fixture("parameter-save-rejected", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let selection = script::ScriptSel::Compiled(id);
+    let setup = f
+        .scripts
+        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Mining"))
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.core.operation(setup).unwrap().outcome("alice"),
+        Some(&Outcome::Completed)
+    );
+    let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let current = bag.get("miningResources").cloned().unwrap();
+    let schema = (script::compiled_card(id).unwrap().schema)();
+    let def = schema
+        .iter()
+        .find(|setting| setting.id == "miningResources")
+        .unwrap();
+    let key = ParameterEditKey::new(Some("alice"), &selection, "miningResources");
+    let initial_text = script::format_setting_value(&current);
+    let invalid_text = "coppe";
+    let buffer = f.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        "miningResources",
+        &initial_text,
+        Some(current.clone()),
+    );
+    buffer.clear();
+    buffer.push_str(invalid_text);
+    assert_eq!(
+        f.scripts
+            .validate_parameter_buffer_for(
+                Some("alice"),
+                &selection,
+                "miningResources",
+                (&initial_text, Some(current.clone())),
+                def,
+                &[],
+            )
+            .unwrap(),
+        json!(["coppe"]),
+        "the typo is syntactically valid but not a known Mining resource"
+    );
+    let before = f.core.last_operation().map(|report| report.id);
+    let result = f.scripts.commit_parameter_value(
+        &mut f.core,
+        &key,
+        &selection,
+        "miningResources",
+        json!(["coppe"]),
+        Some(current),
+    );
+    let op = match result {
+        Ok(ParameterCommit::Submitted(op) | ParameterCommit::Pending(op)) => op,
+        Err(_) => f.core.last_operation().unwrap().id,
+        other => panic!("expected one rejected Save profile attempt, got {other:?}"),
+    };
+    assert_ne!(Some(op), before);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let report = f.core.operation(op).unwrap();
+    assert_eq!(report.action, ActionKind::SaveProfile);
+    assert!(
+        matches!(report.outcome("alice"), Some(Outcome::Failed(_))),
+        "expected invalid Gatherer settings to fail: {report:?}"
+    );
+    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+
+    for _ in 0..4 {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        assert!(f
+            .scripts
+            .commit_parameter_value(
+                &mut f.core,
+                &key,
+                &selection,
+                "miningResources",
+                json!(["coppe"]),
+                Some(json!(["copper", "tin"])),
+            )
+            .is_err());
+        assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
+    }
+}
 fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
     pairs
         .iter()
