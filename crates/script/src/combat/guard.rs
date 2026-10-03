@@ -2,14 +2,14 @@
 //! no flick. The host follow sites own one driver per armed route.
 use super::arbiter;
 use super::frame::Frame;
-use super::schedule::reached;
+use super::schedule::{reached, InputEffect, OpKind, Schedule};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
-use super::threats::ThreatSet;
+use super::threats::{StyleObs, ThreatSet};
 use crate::native::WalkRequest;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
-use api::snapshot::SnapshotView;
+use api::snapshot::{ActorKind, SnapshotView};
 use std::sync::{Arc, LazyLock};
 
 const LOWEST_PROTECT: i32 = 37;
@@ -48,16 +48,18 @@ pub enum GuardRefusal {
 pub struct WalkGuard {
     threats: ThreatSet,
     tables: Arc<CombatTables>,
+    schedule: Schedule,
     last_tick: u16,
-    input_lock: u16,
-    earliest_drink: u16,
+    follow_until: u16,
     drop_component: i32,
+    pending_com: i32,
     unprotectable: u8,
     flags: u8,
 }
 
-const FLAG_LOCK: u8 = 1;
+const FLAG_FOLLOW: u8 = 1;
 const FLAG_SEEN: u8 = 2;
+const FLAG_ON: u8 = 4;
 
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 256);
 
@@ -110,10 +112,13 @@ impl WalkGuard {
 
     /// Host/tests supply the pin's tables explicitly.
     pub fn begin_with(
-        _request: &WalkRequest,
+        request: &WalkRequest,
         snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
+        if !request.allow.prayer {
+            return Err(GuardRefusal::PrayerDisallowed);
+        }
         let base = prayer_base(snapshot).ok_or(GuardRefusal::Snapshot)?;
         if base < LOWEST_PROTECT {
             return Err(GuardRefusal::PrayerTooLow);
@@ -121,19 +126,37 @@ impl WalkGuard {
         Ok(Self {
             threats: ThreatSet::default(),
             tables,
+            schedule: Schedule::default(),
             last_tick: 0,
-            input_lock: 0,
-            earliest_drink: 0,
+            follow_until: 0,
             drop_component: 0,
+            pending_com: 0,
             unprotectable: 0,
             flags: 0,
         })
     }
 
-    /// Previous drink lock still covers `tick`: the route owner issues no
-    /// follow click.
+    /// Previous drink lock or protect click still covers `tick`: the route
+    /// owner issues no follow click.
     pub fn blocks_follow(&self, tick: u16) -> bool {
-        self.flags & FLAG_LOCK != 0 && !reached(tick, self.input_lock)
+        (self.flags & FLAG_FOLLOW != 0 && !reached(tick, self.follow_until))
+            || self.schedule.locked(tick)
+    }
+
+    /// Refresh observed-on state from the arrival snapshot before [`end`].
+    pub fn observe_prayer(&mut self, snapshot: &SnapshotView<'_>) {
+        let Some(frame) = Frame::borrow(*snapshot) else {
+            return;
+        };
+        if let Some(fact) = select::active_protect(&frame, &self.tables)
+            .and_then(|style| select::protect_fact(&self.tables, style))
+        {
+            self.drop_component = fact.button_com;
+            self.flags |= FLAG_ON;
+            self.schedule.settle(OpKind::Prayer);
+        } else {
+            self.flags &= !FLAG_ON;
+        }
     }
 
     /// Observe threats and, when needed, one protect click or prayer dose.
@@ -147,20 +170,38 @@ impl WalkGuard {
         self.last_tick = tick;
         if self.blocks_follow(tick) {
             return Some(GuardOp::Locked {
-                until: self.input_lock,
+                until: if self.schedule.locked(tick) {
+                    self.schedule.input_lock
+                } else {
+                    self.follow_until
+                },
             });
         }
         self.threats.observe(&frame, &self.tables, tick);
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
         let (hp, hp_max) = arbiter::stat(&frame, HITPOINTS_STAT);
-        let wanted =
-            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false);
         if let Some(fact) = select::active_protect(&frame, &self.tables)
             .and_then(|style| select::protect_fact(&self.tables, style))
         {
             self.drop_component = fact.button_com;
+            self.flags |= FLAG_ON;
+            self.schedule.settle(OpKind::Prayer);
+        } else {
+            self.flags &= !FLAG_ON;
         }
-        let wanted = wanted?;
+        let mut wanted =
+            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
+        if frame.projectiles.iter().any(|projectile| {
+            projectile.target.is_some_and(|target| {
+                target.kind == ActorKind::Player && target.index == frame.me()
+            })
+        }) {
+            if let Some(missiles) = select::protect_fact(&self.tables, StyleObs::Ranged) {
+                if base >= missiles.level {
+                    wanted = missiles;
+                }
+            }
+        }
         if base < wanted.level {
             let kind = protect_kind(&self.tables, wanted)?;
             let bit = kind_bit(kind);
@@ -173,30 +214,44 @@ impl WalkGuard {
         self.unprotectable = 0;
         if select::prayer_on(&frame, wanted.varp) {
             self.drop_component = wanted.button_com;
+            self.flags |= FLAG_ON;
+            self.schedule.settle(OpKind::Prayer);
             return self.maybe_floor_sip(&frame, tick, points, base, hp, hp_max);
+        }
+        let same_toggle = self.pending_com == wanted.button_com;
+        if self.schedule.pending(OpKind::Prayer) && same_toggle {
+            if !self.schedule.ready(OpKind::Prayer, tick) {
+                return None;
+            }
+            self.schedule.timeout(OpKind::Prayer);
+        }
+        if !self.schedule.ready(OpKind::Prayer, tick) && same_toggle {
+            return None;
         }
         if points == 0 {
             return self.drink(&frame, tick, hp, hp_max, true);
         }
         // A walk hop on this tick would drop the prayer packet; lock follow
-        // and keep offering the click until the varp sticks.
-        self.input_lock = tick.wrapping_add(1);
-        self.flags |= FLAG_LOCK;
-        self.drop_component = wanted.button_com;
+        // and do not click the same toggle again while it is unacknowledged.
+        self.schedule
+            .admitted(OpKind::Prayer, tick, 0, false, InputEffect::PrayerOn);
+        self.pending_com = wanted.button_com;
+        self.follow_until = tick.wrapping_add(1);
+        self.flags |= FLAG_FOLLOW;
         Some(GuardOp::IfButton {
             component: wanted.button_com,
         })
     }
 
-    /// Always drops the protect this driver raised or last observed.
+    /// Off-click only when the last observation had the protect on.
     pub fn end(self) -> GuardOp {
         GuardOp::IfButton {
-            component: self.drop_component,
+            component: if self.flags & FLAG_ON != 0 {
+                self.drop_component
+            } else {
+                0
+            },
         }
-    }
-
-    fn drink_ready(&self, tick: u16) -> bool {
-        self.earliest_drink == 0 || reached(tick, self.earliest_drink)
     }
 
     fn drink_gate(danger: Option<i32>, hp: i32, hp_max: i32) -> bool {
@@ -230,7 +285,7 @@ impl WalkGuard {
         hp_max: i32,
         gated: bool,
     ) -> Option<GuardOp> {
-        if !self.drink_ready(tick) {
+        if self.schedule.pending(OpKind::Drink) || !self.schedule.ready(OpKind::Drink, tick) {
             return None;
         }
         if gated {
@@ -246,9 +301,8 @@ impl WalkGuard {
             .find(|row| row.def.id == id)
             .and_then(|row| row.def.name.as_deref())
             .map(Arc::<str>::from)?;
-        self.earliest_drink = tick.wrapping_add(3);
-        self.input_lock = tick.wrapping_add(3);
-        self.flags |= FLAG_LOCK;
+        self.schedule
+            .admitted(OpKind::Drink, tick, 0, false, InputEffect::Standard);
         Some(GuardOp::Drink { name })
     }
 }
@@ -436,6 +490,7 @@ mod tests {
                 evidence: None,
                 cross: Box::default(),
                 protect: true,
+                allow: Default::default(),
             }
         }
 
@@ -470,6 +525,14 @@ mod tests {
 
         fn missiles(&self) -> &PrayerFact {
             self.tables.prayer(PrayerRole::Protect, 1).unwrap()
+        }
+
+        fn set_missiles(&mut self, on: bool) {
+            let varp = self.missiles().varp;
+            if let Some(row) = self.varps.iter_mut().find(|row| row.index == varp) {
+                row.value = i32::from(on);
+            }
+            self.refresh();
         }
 
         fn add_prayer_potion(&mut self) {
@@ -549,11 +612,86 @@ mod tests {
             "the protect click must not share its tick with a walk hop"
         );
         assert!(!guard.blocks_follow(1));
-        let end = guard.end();
         assert_eq!(
-            end,
+            guard.end(),
+            GuardOp::IfButton { component: 0 },
+            "a proposed click is not an observed-on off click"
+        );
+    }
+
+    #[test]
+    fn begin_refuses_when_the_owner_disallows_prayer() {
+        let scene = Scene::new(43);
+        let mut request = scene.request();
+        request.allow.prayer = false;
+        assert_eq!(
+            WalkGuard::begin_with(&request, &scene.view(), Arc::clone(&scene.tables)).err(),
+            Some(GuardRefusal::PrayerDisallowed)
+        );
+    }
+
+    #[test]
+    fn pending_protect_click_is_not_repeated_before_ack() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let first = guard.tick(&scene.view_at(0));
+        assert!(matches!(first, Some(GuardOp::IfButton { .. })), "{first:?}");
+        assert!(
+            !matches!(
+                guard.tick(&scene.view_at(1)),
+                Some(GuardOp::IfButton { .. })
+            ),
+            "unacknowledged protect must not toggle again"
+        );
+        assert!(
+            !matches!(
+                guard.tick(&scene.view_at(2)),
+                Some(GuardOp::IfButton { .. })
+            ),
+            "three-tick prayer pacing must hold after the first click"
+        );
+    }
+
+    #[test]
+    fn end_does_not_click_when_protect_was_never_on() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let _ = guard.tick(&scene.view());
+        assert_eq!(guard.end(), GuardOp::IfButton { component: 0 });
+    }
+
+    #[test]
+    fn end_does_not_click_when_protect_was_turned_off() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let _ = guard.tick(&scene.view_at(0));
+        scene.set_missiles(true);
+        assert!(guard.tick(&scene.view_at(3)).is_none());
+        scene.set_missiles(false);
+        guard.observe_prayer(&scene.view_at(4));
+        assert_eq!(
+            guard.end(),
+            GuardOp::IfButton { component: 0 },
+            "a remembered button must not toggle an already-off prayer on"
+        );
+    }
+
+    #[test]
+    fn end_clicks_only_the_protect_last_observed_on() {
+        let mut scene = Scene::new(43);
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let _ = guard.tick(&scene.view_at(0));
+        scene.set_missiles(true);
+        assert!(guard.tick(&scene.view_at(3)).is_none());
+        let missiles = scene.missiles().button_com;
+        assert_eq!(
+            guard.end(),
             GuardOp::IfButton {
-                component: missiles.button_com
+                component: missiles
             }
         );
     }

@@ -12,7 +12,8 @@ use nav::router::{
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
-use script::combat::GuardOp;
+use script::combat::{GuardOp, GuardProtect};
+use script::native::WalkEnd;
 
 use super::play_status::lock_statuses;
 use super::{
@@ -86,9 +87,27 @@ fn guard_view(snapshot: &GameSnapshot) -> SnapshotView<'_> {
     )
 }
 
-pub(crate) fn apply_guard_op<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, op: GuardOp) {
+fn unprotectable_detail(protect: GuardProtect) -> Arc<str> {
+    Arc::from(match protect {
+        GuardProtect::Magic => "magic",
+        GuardProtect::Missiles => "missiles",
+        GuardProtect::Melee => "melee",
+    })
+}
+
+pub(crate) fn apply_guard_op<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    op: GuardOp,
+    account: Option<&str>,
+) {
+    let _ = account;
     match op {
         GuardOp::IfButton { component } if component > 0 => {
+            #[cfg(test)]
+            if let Some(account) = account {
+                crate::combat_proof::record_guard(account, snapshot, "if-button", Some(component));
+            }
             let ctx = ReadContext::new(snapshot);
             if let Some(widget) = ctx.component(component) {
                 let _ = Interactions::new(snapshot, driver).if_button(widget);
@@ -97,6 +116,10 @@ pub(crate) fn apply_guard_op<D: Driver>(driver: &mut D, snapshot: &GameSnapshot,
             }
         }
         GuardOp::Drink { name } => {
+            #[cfg(test)]
+            if let Some(account) = account {
+                crate::combat_proof::record_guard(account, snapshot, "drink", None);
+            }
             if let Some(item) = snapshot.inventory().iter().find(|row| {
                 row.def
                     .name
@@ -115,9 +138,11 @@ pub(crate) fn finish_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
+    account: Option<&str>,
 ) {
-    if let Some(guard) = guard.take() {
-        apply_guard_op(driver, snapshot, guard.end());
+    if let Some(mut guard) = guard.take() {
+        guard.observe_prayer(&guard_view(snapshot));
+        apply_guard_op(driver, snapshot, guard.end(), account);
     }
 }
 
@@ -125,12 +150,16 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
-) {
-    let Some(guard) = guard.as_mut() else {
-        return;
-    };
-    if let Some(op) = guard.tick(&guard_view(snapshot)) {
-        apply_guard_op(driver, snapshot, op);
+    account: Option<&str>,
+) -> Option<GuardOp> {
+    let guard = guard.as_mut()?;
+    let op = guard.tick(&guard_view(snapshot))?;
+    match &op {
+        GuardOp::Unprotectable { .. } | GuardOp::Locked { .. } => Some(op),
+        _ => {
+            apply_guard_op(driver, snapshot, op.clone(), account);
+            Some(op)
+        }
     }
 }
 
@@ -645,7 +674,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         if bot.route.is_some() {
             // `requested_route == armed`: the arrival above is for this walk.
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
-                finish_walk_guard(driver, snapshot, &mut bot.walk_guard);
+                finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
@@ -657,11 +686,17 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                         )
                     });
-                    tick_walk_guard(driver, snapshot, &mut bot.walk_guard);
-                    let skip_follow = bot
-                        .walk_guard
-                        .as_ref()
-                        .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16));
+                    if let Some(GuardOp::Unprotectable { protect }) =
+                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                    {
+                        abort_walk_on_bot_with_end(bot, WalkEnd::Unprotectable);
+                        bot.walk_outcome_detail = Some(unprotectable_detail(protect));
+                    }
+                    let skip_follow = bot.route.is_none()
+                        || bot
+                            .walk_guard
+                            .as_ref()
+                            .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16));
                     if !skip_follow {
                         let follow_outcome = {
                             let mut options = TravelOptions {
@@ -687,7 +722,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         }
                     }
                     if bot.route.is_none() {
-                        finish_walk_guard(driver, snapshot, &mut bot.walk_guard);
+                        finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
                     }
                 }
             }

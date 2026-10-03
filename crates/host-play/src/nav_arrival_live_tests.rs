@@ -102,6 +102,7 @@ impl WalkSpec {
             evidence: None,
             cross: Box::default(),
             protect: false,
+            allow: Default::default(),
         }
     }
 }

@@ -1862,6 +1862,7 @@ impl Combat {
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
             protect: false,
+            allow: Default::default(),
         })?;
         self.pending_walk = NonZeroU64::new(id);
         self.schedule.clear(tick, 1, false);
