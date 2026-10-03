@@ -3,6 +3,7 @@ use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
+use nav::arrival::ArrivalKind;
 use std::num::NonZeroU64;
 use std::task::Poll;
 use std::time::Duration;
@@ -16,6 +17,7 @@ pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
 pub struct Walk {
     key: WalkKey,
     loc_id: Option<i32>,
+    arrival: ArrivalKind,
     request_id: u64,
     required_after: EvidenceStamp,
     deadline: Duration,
@@ -26,6 +28,7 @@ struct Frame<'a> {
     snapshot: SnapshotView<'a>,
     outcome: HostOutcome,
     loc_id: Option<i32>,
+    arrival: ArrivalKind,
 }
 
 impl Observation for Frame<'_> {
@@ -41,11 +44,21 @@ impl Observation for Frame<'_> {
         let Some(here) = self.snapshot.here() else {
             return false;
         };
-        match self.loc_id {
-            Some(id) => self
+        match (self.arrival, self.loc_id) {
+            (ArrivalKind::Area, None) => {
+                nav::arrival::arrived_in_area(here.value, key.tile, key.radius, |tile| {
+                    self.snapshot
+                        .reach()
+                        .is_some_and(|reach| reach.value.walkable(tile))
+                })
+            }
+            (ArrivalKind::Area, Some(_)) => false,
+            (ArrivalKind::Reach, Some(id)) => self
                 .snapshot
                 .walk_loc_arrived(here.value, key.tile, key.radius, id),
-            None => self.snapshot.walk_arrived(here.value, key.tile, key.radius),
+            (ArrivalKind::Reach, None) => {
+                self.snapshot.walk_arrived(here.value, key.tile, key.radius)
+            }
         }
     }
 }
@@ -61,6 +74,7 @@ impl NativeMachine for Walk {
             allow_teleports: request.options.allow_teleports,
         };
         let loc_id = request.loc_id;
+        let arrival = request.arrival;
         let required_after = request.required_after;
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
@@ -72,6 +86,7 @@ impl NativeMachine for Walk {
         Ok(Self {
             key,
             loc_id,
+            arrival,
             request_id,
             required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -117,6 +132,7 @@ impl NativeMachine for Walk {
             snapshot: cx.snapshot(),
             outcome,
             loc_id: self.loc_id,
+            arrival: self.arrival,
         };
         if !self.wait.poll(self.request_id, &frame) {
             return Poll::Pending;
@@ -161,6 +177,61 @@ mod tests {
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
 
+    #[test]
+    fn area_arrival_uses_loaded_standability_without_reaching_the_centre() {
+        let here = WorldTile {
+            x: 2840,
+            z: 3436,
+            level: 0,
+        };
+        let centre = WorldTile {
+            x: 2848,
+            z: 3426,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(here));
+        let mut reach = api::query::ReachQueryView::unavailable();
+        reach.available = true;
+        reach.base_x = here.x;
+        reach.base_z = here.z;
+        reach.level = here.level;
+        reach.width = 1;
+        reach.height = 1;
+        reach.walkable = vec![1];
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let key = WalkKey {
+            tile: centre,
+            radius: 40,
+            allow_teleports: false,
+        };
+        let arrived = |arrival, loc_id, view: &api::query::ReachQueryView| {
+            Frame {
+                snapshot: SnapshotView::new(Some(&snapshot), stamp).with_reach(Some(view)),
+                outcome: HostOutcome::empty(),
+                loc_id,
+                arrival,
+            }
+            .arrived(key)
+        };
+        assert!(arrived(ArrivalKind::Area, None, &reach));
+        assert!(!arrived(ArrivalKind::Reach, None, &reach));
+        assert!(!arrived(ArrivalKind::Area, Some(1), &reach));
+        reach.walkable[0] = 0;
+        assert!(!arrived(ArrivalKind::Area, None, &reach));
+        reach.walkable[0] = 1;
+        reach.available = false;
+        assert!(!arrived(ArrivalKind::Area, None, &reach));
+    }
     #[test]
     fn user_input_receipt_precedes_arrival_deadline_and_required_evidence() {
         let run = RunKey {

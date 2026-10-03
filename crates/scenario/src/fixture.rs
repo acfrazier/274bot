@@ -939,9 +939,10 @@ mod tests {
 
     #[test]
     fn offline_prepare_writer_roundtrip_when_engine_present() {
-        let eng = std::env::var("BOT_SERVER_ROOT")
-            .unwrap_or_else(|_| "/Users/acfrazier/experiments/Server/engine".into());
-        let eng = PathBuf::from(eng);
+        let Some(eng) = std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from) else {
+            eprintln!("skip: set BOT_SERVER_ROOT to the local engine root");
+            return;
+        };
         if !eng.join("data/pack/server/obj.dat").is_file() {
             eprintln!("skip: no engine pack at {}", eng.display());
             return;
@@ -986,9 +987,10 @@ mod tests {
 
     #[test]
     fn offline_prepare_bone_burier_v2_when_engine_present() {
-        let eng = std::env::var("BOT_SERVER_ROOT")
-            .unwrap_or_else(|_| "/Users/acfrazier/experiments/Server/engine".into());
-        let eng = PathBuf::from(eng);
+        let Some(eng) = std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from) else {
+            eprintln!("skip: set BOT_SERVER_ROOT to the local engine root");
+            return;
+        };
         if !eng.join("data/pack/server/obj.dat").is_file() {
             eprintln!("skip: no engine pack at {}", eng.display());
             return;

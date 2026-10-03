@@ -14,7 +14,7 @@ pub mod threats;
 pub mod style {
     pub mod melee;
 }
-pub use guard::{GuardOp, GuardProtect, GuardRefusal, WalkGuard};
+pub use guard::{GuardFailure, GuardOp, GuardProtect, GuardRefusal, WalkGuard};
 pub use machine::Combat;
 pub use policy::{prayer_restore, prayer_sip_due, prayer_sip_floor, wanted_protect};
 pub use prayer::{begin_clear_prayers, ClearPrayers, Hygiene, PrayerSweepReport};

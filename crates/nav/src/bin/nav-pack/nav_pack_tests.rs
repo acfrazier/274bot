@@ -134,12 +134,23 @@ fn flags_path_for_swaps_pack_extension() {
 }
 
 #[test]
-fn default_paths_follow_engine_dir() {
-    let content = client::content_dir();
-    assert_eq!(default_maps_dir(), content.join("maps"));
-    assert_eq!(default_doors_dir(), content.join("scripts/doors/configs"));
+fn legacy_default_paths_follow_explicit_engine_dir() {
+    let engine_dir = PathBuf::from("/fixture/274/engine");
+    let (maps, doors, config) = legacy_default_paths(Some(engine_dir)).unwrap();
+    assert_eq!(maps, PathBuf::from("/fixture/274/content/maps"));
     assert_eq!(
-        default_config_jag(),
-        client::engine_dir().join("data/pack/config")
+        doors,
+        PathBuf::from("/fixture/274/content/scripts/doors/configs")
     );
+    assert_eq!(
+        config,
+        PathBuf::from("/fixture/274/engine/data/pack/config")
+    );
+}
+
+#[test]
+fn legacy_default_paths_require_an_engine_root() {
+    let error = legacy_default_paths(None).unwrap_err();
+    assert!(error.contains("BOT_NAV_ENGINE_DIR"));
+    assert!(error.contains("ENGINE_DIR"));
 }
