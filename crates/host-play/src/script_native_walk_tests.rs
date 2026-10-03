@@ -17,6 +17,7 @@ struct Walker {
     begun: usize,
     walks: usize,
     cross_first: Vec<Arc<str>>,
+    protect: bool,
     later_target: Option<WorldTile>,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
@@ -73,6 +74,7 @@ impl Script for WalkerScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
+                protect: shared.protect,
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => self.handle = Some(handle),
@@ -367,6 +369,52 @@ fn a_native_walk_refused_for_lack_of_a_world_gets_a_refused_receipt() {
     rig.observe(1);
     rig.observe(2);
     assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+}
+
+fn seed_prayer(snapshot: &mut GameSnapshot, base: i32) {
+    snapshot.seed_stats(vec![api::snapshot::StatView {
+        index: 5,
+        name: "prayer".into(),
+        effective: base,
+        base,
+        xp: 0,
+        used: true,
+    }]);
+}
+
+#[test]
+fn a_protected_walk_refuses_when_prayer_cannot_protect() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_prayer(&mut rig.snapshot, 36);
+    rig.observe(1);
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    assert!(
+        !rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_guard.is_some()),
+        "a refused protect walk must not arm a driver"
+    );
+}
+
+#[test]
+fn a_protected_walk_arms_the_hold_mode_driver() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_prayer(&mut rig.snapshot, 43);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(
+        rig.navs
+            .lock()
+            .unwrap()
+            .get("alice")
+            .is_some_and(|bot| bot.walk_guard.is_some()),
+        "protect walk must arm WalkGuard before follow"
+    );
 }
 
 #[test]

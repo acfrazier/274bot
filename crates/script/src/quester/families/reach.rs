@@ -525,6 +525,7 @@ pub fn walk_request(
         required_after,
         evidence: None,
         cross: Vec::new().into_boxed_slice(),
+        protect: false,
     }
 }
 
