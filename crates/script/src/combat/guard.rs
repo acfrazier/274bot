@@ -4,12 +4,12 @@ use super::arbiter;
 use super::frame::Frame;
 use super::schedule::{reached, InputEffect, OpKind, Schedule};
 use super::select;
-use super::tables::{CombatTables, PotionKind, PrayerRole};
-use super::threats::ThreatSet;
+use super::tables::{CombatTables, PotionKind, PrayerRole, StyleWhere};
+use super::threats::{StyleObs, ThreatSet};
 use crate::native::WalkRequest;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
-use api::snapshot::SnapshotView;
+use api::snapshot::{ActorKind, SnapshotView};
 use std::sync::{Arc, LazyLock};
 
 const LOWEST_PROTECT: i32 = 37;
@@ -105,6 +105,42 @@ fn kind_bit(kind: GuardProtect) -> u8 {
     }
 }
 
+/// Use the projectile's own style when one is on us. Do not treat every
+/// projectile as Missiles: a magic shot must stay Magic, and an unclassified
+/// shot does not override the shared selector.
+fn classified_incoming_protect<'a>(
+    frame: &Frame<'_>,
+    tables: &'a CombatTables,
+) -> Option<&'a PrayerFact> {
+    let me = frame.me();
+    let mut chosen: Option<&PrayerFact> = None;
+    for projectile in frame.projectiles {
+        if !projectile
+            .target
+            .is_some_and(|target| target.kind == ActorKind::Player && target.index == me)
+        {
+            continue;
+        }
+        let Some(style) = tables
+            .style_spotanim(projectile.spotanim)
+            .filter(|row| row.where_ == StyleWhere::Projectile)
+            .map(|row| select::style_from_mask(row.style))
+            .filter(|style| *style != StyleObs::Unknown)
+        else {
+            continue;
+        };
+        let Some(fact) = select::protect_fact(tables, style) else {
+            continue;
+        };
+        match chosen {
+            Some(previous) if previous.varp != fact.varp => return None,
+            Some(_) => {}
+            None => chosen = Some(fact),
+        }
+    }
+    chosen
+}
+
 impl WalkGuard {
     /// Documented begin. Refuses before the route is armed when no protect
     /// is reachable at all.
@@ -194,8 +230,9 @@ impl WalkGuard {
             self.flags &= !FLAG_ON;
         }
         self.settle_drink(&frame, tick, points);
-        let wanted =
-            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
+        let wanted = classified_incoming_protect(&frame, &self.tables).or_else(|| {
+            select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)
+        })?;
         if base < wanted.level {
             let kind = protect_kind(&self.tables, wanted)?;
             let bit = kind_bit(kind);
@@ -772,6 +809,49 @@ mod tests {
                 component: scene.missiles().button_com
             }),
             "a classified rock projectile must select Missiles, got {op:?}"
+        );
+    }
+
+    #[test]
+    fn a_ranged_projectile_onset_does_not_select_melee() {
+        let mut scene = Scene::new(43);
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let row = data.npc_by_config("death_troll_thrower1").unwrap();
+        scene.npcs[0].r#type = Some(row.id as usize);
+        scene.npcs[0].name = row.display.clone();
+        scene.npcs[0].animation = 1142;
+        scene.npcs[0].tile = scene.local.player.actor.tile;
+        scene.npcs[0].network = scene.local.player.actor.tile;
+        scene.launch_style(276);
+        scene.npcs[0].in_combat = false;
+        scene.projectiles[0].src = tile(scene.npcs[0].tile.x, scene.npcs[0].tile.z + 1);
+        scene.projectiles[0].t1 = 364;
+        scene.projectiles[0].t2 = 381;
+        scene.refresh();
+        scene.snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 360,
+        });
+        let mut guard = scene.begin().unwrap();
+        let op = guard.tick(&scene.view());
+        let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap();
+        assert_ne!(
+            op,
+            Some(GuardOp::IfButton {
+                component: melee.button_com
+            }),
+            "a ranged projectile onset must not select Melee, got {op:?}"
+        );
+        assert_eq!(
+            op,
+            Some(GuardOp::IfButton {
+                component: scene.missiles().button_com
+            }),
+            "a ranged projectile onset must select Missiles, got {op:?}"
         );
     }
 
