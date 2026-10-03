@@ -36,33 +36,6 @@
     "async": true
   },
   {
-    "id": "not-impl:api/acquisition/Tools.js:missingToolLabels",
-    "module": "api/acquisition/Tools.js",
-    "selector": "missingToolLabels",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/tools.js:73",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/acquisition/Tools.js:toolKitLabel",
-    "module": "api/acquisition/Tools.js",
-    "selector": "toolKitLabel",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/tools.js:77",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/acquisition/Tools.js:bankHasBetterGatherTool",
-    "module": "api/acquisition/Tools.js",
-    "selector": "bankHasBetterGatherTool",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/tools.js:81",
-    "async": false
-  },
-  {
     "id": "not-impl:api/bank/bankSortRules.js:categoryOf",
     "module": "api/bank/bankSortRules.js",
     "selector": "categoryOf",

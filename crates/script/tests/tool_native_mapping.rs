@@ -1,17 +1,16 @@
 //! Tools exports: one native call per export (`__rs2b0t_tools`), with Rust
 //! invoking the script's own callbacks.
 //!
-//! Expected call sequences and results are the frozen
-//! `bot/api/acquisition/Tools.ts` bodies (`bestFromTiers`, `hasToolReq`,
-//! `hasAllTools`, `toolRestockPlan`) over the selected-revision tool tables;
-//! a `tiered` requirement stays an explicit `notImpl`.
+//! Expected call sequences and results preserve frozen `Tools.ts` callback
+//! semantics while tiered requirements use the selected native tool gates.
 
 use script::{LoadIsolate, LoadShape};
 use serde_json::json;
 
 fn probe(src_body: &str, key: &str) -> serde_json::Value {
     let src = format!(
-        "import {{ bestAxe, bestPickaxe, canWieldTool, hasAllTools, hasToolReq, toolRestockPlan }} \
+        "import {{ AXES, PICKAXES, axeReq, bestAxe, bestPickaxe, bankHasBetterGatherTool, canWieldTool, \
+         hasAllTools, hasToolReq, missingToolLabels, pickaxeReq, toolKeepNames, toolKitLabel, toolRestockPlan }} \
          from '../../api/acquisition/Tools.js';\n\
          const capture = (fn) => {{ try {{ return fn(); }} catch (e) {{ return 'THREW ' + (e && e.name) + ': ' + (e && e.message); }} }};\n\
          {src_body}\n\
@@ -133,7 +132,7 @@ globalThis.__out = { hit, log };
 }
 
 #[test]
-fn has_all_tools_is_every_exact_requirement_in_order() {
+fn has_all_tools_is_every_exact_and_tiered_requirement_in_order() {
     let actual = probe(
         r#"
 const short = [];
@@ -158,8 +157,8 @@ globalThis.__out = {
         return 1;
     })),
     boomCalls: boom,
-    tiered: capture(() => hasAllTools([{ kind: 'tiered', skill: 'mining' }], () => 1,
-        (n) => { tiered.push(n); return 1; })),
+    tiered: hasAllTools([pickaxeReq()], (s) => { tiered.push('skill:' + s); return 30; },
+        (n) => { tiered.push(n); return n === 'Steel pickaxe'; }),
     tieredCalls: tiered,
     // `reqs.every` skips holes; an explicit undefined slot is read.
     sparse: hasAllTools([, { name: 'Tinderbox' }], null, (n) => { sparse.push(n); return 1; }),
@@ -184,8 +183,8 @@ globalThis.__out = {
             "stringCompare": true,
             "boom": "THREW Error: inv boom",
             "boomCalls": ["A", "B"],
-            "tiered": "THREW Error: not impl: Tools.hasAllTools",
-            "tieredCalls": [],
+            "tiered": true,
+            "tieredCalls": ["skill:mining", "Mithril pickaxe", "Steel pickaxe"],
             "sparse": true,
             "sparseCalls": ["Tinderbox"],
             "undefinedSlot": "THREW TypeError: Cannot read properties of undefined (reading 'kind')",
@@ -199,11 +198,13 @@ globalThis.__out = {
 }
 
 #[test]
-fn tool_restock_plan_asks_inv_then_bank_per_exact_requirement() {
+fn tool_restock_plan_preserves_exact_and_tiered_callback_order() {
     let actual = probe(
         r#"
 const log = [];
 const stocked = [];
+const tieredLog = [];
+const tieredReq = pickaxeReq();
 globalThis.__out = {
     plan: toolRestockPlan([{ name: 'Tinderbox', min: 2, restock: 4, equip: true }, { name: 'Hammer' }], null,
         (n) => { log.push('inv:' + n); return n === 'Hammer' ? 0 : 1; },
@@ -214,7 +215,10 @@ globalThis.__out = {
         (n) => { stocked.push('bank:' + n); return 5; }),
     stockedLog: stocked,
     emptyBank: toolRestockPlan([{ name: 'Tinderbox' }], null, () => 0, () => 0),
-    tiered: capture(() => toolRestockPlan([{ kind: 'tiered' }], null, () => 0, () => 1)),
+    tiered: toolRestockPlan([tieredReq], (s) => { tieredLog.push('skill:' + s); return 30; },
+        (n) => { tieredLog.push('inv:' + n); return 0; },
+        (n) => { tieredLog.push('bank:' + n); return n === 'Steel pickaxe' ? 1 : 0; }),
+    tieredLog,
     bankBoom: capture(() => toolRestockPlan([{ name: 'Tinderbox' }], null, () => 0,
         () => { throw new Error('bank boom'); })),
     nanQty: Number.isNaN(toolRestockPlan([{ name: 'Tinderbox', restock: NaN }], null, () => 0, () => 1)[0].qty),
@@ -233,10 +237,87 @@ globalThis.__out = {
             "stocked": [],
             "stockedLog": ["inv:Tinderbox"],
             "emptyBank": [],
-            "tiered": "THREW Error: not impl: Tools.toolRestockPlan",
+            "tiered": [{"name": "Steel pickaxe", "qty": 1, "equip": true}],
+            "tieredLog": [
+                "skill:mining",
+                "inv:Mithril pickaxe", "bank:Mithril pickaxe",
+                "inv:Steel pickaxe", "bank:Steel pickaxe",
+                "inv:Steel pickaxe", "bank:Steel pickaxe",
+            ],
             "bankBoom": "THREW Error: bank boom",
             "nanQty": true,
         })
+    );
+}
+
+#[test]
+fn tiered_helpers_use_native_tools_and_preserve_helper_results() {
+    let actual = probe(
+        r#"
+const req = pickaxeReq();
+const bankReq = { ...req };
+const bankCalls = [];
+const axe = axeReq(false);
+const pickaxe = pickaxeReq();
+globalThis.__out = {
+    keep: toolKeepNames([{ name: 'Hammer' }, req, { name: 'Steel pickaxe' }]),
+    missing: missingToolLabels([req, { name: 'Hammer' }], () => 30, () => 0),
+    label: toolKitLabel([req, { name: 'Hammer' }], () => 30, (n) => n === 'Steel pickaxe' ? 1 : 0),
+    fallbackLabel: toolKitLabel([req, { name: 'Hammer' }], () => 30, () => 0),
+    emptyLabel: toolKitLabel([], null, null),
+    axeShape: [axe.kind, axe.skill, axe.label, axe.equip, axe.tiers === AXES],
+    pickaxeShape: [pickaxe.kind, pickaxe.skill, pickaxe.label, pickaxe.equip, pickaxe.tiers === PICKAXES],
+    bankBetter: bankHasBetterGatherTool([bankReq], (s) => { bankCalls.push('skill:' + s); return 30; },
+        (n) => { bankCalls.push('inv:' + n); return 0; },
+        (n) => { bankCalls.push('bank:' + n); return n === 'Steel pickaxe' ? 1 : 0; }),
+    bankCalls,
+    bankAlreadyBest: bankHasBetterGatherTool([bankReq], () => 30,
+        () => 1, () => 1),
+    exactBankNotTool: bankHasBetterGatherTool([{ name: 'Hammer' }], null, () => 0, () => 1),
+};
+"#,
+        "__out",
+    );
+    assert_eq!(
+        actual,
+        json!({
+            "keep": ["Hammer", "Rune pickaxe", "Adamant pickaxe", "Mithril pickaxe", "Steel pickaxe", "Iron pickaxe", "Bronze pickaxe"],
+            "missing": ["pickaxe", "Hammer"],
+            "label": "Steel pickaxe + Hammer",
+            "fallbackLabel": "pickaxe (bronze→rune) + Hammer",
+            "emptyLabel": "gear",
+            "axeShape": ["tiered", "woodcutting", "axe", false, true],
+            "pickaxeShape": ["tiered", "mining", "pickaxe", true, true],
+            "bankBetter": true,
+            "bankCalls": [
+                "skill:mining",
+                "inv:Mithril pickaxe", "bank:Mithril pickaxe",
+                "inv:Steel pickaxe", "bank:Steel pickaxe",
+                "inv:Steel pickaxe", "bank:Steel pickaxe",
+            ],
+            "bankAlreadyBest": false,
+            "exactBankNotTool": false,
+        })
+    );
+}
+
+#[test]
+fn tiered_axe_helpers_follow_native_selection_without_a_woodcutting_gate() {
+    let actual = probe(
+        r#"
+const count = (name) => name === 'Steel axe' ? 1 : 0;
+const req = axeReq();
+globalThis.__out = {
+    native: bestAxe(NaN, (name) => count(name)),
+    hasReq: hasToolReq(req, () => NaN, count),
+    label: toolKitLabel([req], () => NaN, count),
+};
+"#,
+        "__out",
+    );
+    assert_eq!(
+        actual,
+        json!({"native": "Steel axe", "hasReq": true, "label": "Steel axe"})
     );
 }
 
