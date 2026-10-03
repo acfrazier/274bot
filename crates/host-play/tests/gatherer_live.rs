@@ -247,9 +247,7 @@ impl Cell {
             }
             (Self::Mining, LiveCase::BankCost) => "gatherer_mining_bank_cost_walk_ranked",
             (Self::Woodcutting, LiveCase::BankCostFirstGoal) => "gatherer_bank_cost_t1",
-            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => {
-                "gatherer_bank_cost_seers_maple"
-            }
+            (Self::Woodcutting, LiveCase::BankCostSeersMaple) => "gatherer_bank_cost_seers_maple",
             (Self::Woodcutting, LiveCase::BankCostNoCandidate) => "gatherer_bank_cost_no_candidate",
             (Self::Fishing, LiveCase::FishBait) => "gatherer_fish_bait",
             (Self::Fishing, LiveCase::FishHarpoonBank) => "gatherer_fish_harpoon_bank",
@@ -4305,12 +4303,6 @@ impl GatherSlot {
             .filter(|kind| !kind.is_empty())
     }
 
-    fn observed_live_oak_near_target(&self) -> bool {
-        self.witness
-            .oak_live_tiles
-            .iter()
-            .any(|&tile| tile_distance(tile, self.target).is_some_and(|distance| distance <= 12))
-    }
     fn complete_bank_selection(&self) -> bool {
         self.witness.bank_selected
             && self.selected_bank_name().is_some()
@@ -4731,7 +4723,8 @@ fn fixture_plan(
     ) && (!plan.seed_locs.is_empty() || !plan.oak_tiles.is_empty() || task.is_some())
     {
         return Err(
-            "real-content bank fixtures must use live scene resources without location seeds".into(),
+            "real-content bank fixtures must use live scene resources without location seeds"
+                .into(),
         );
     }
     Ok((target, plan, task))
@@ -5779,13 +5772,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             }
             LiveCase::BankCost => witness.bank_loaded_observed,
             LiveCase::BankCostFirstGoal | LiveCase::BankCostSeersMaple => {
-                real_content_bank_lifecycle_complete(
-                    case,
-                    &witness,
-                    &plan,
-                    target,
-                    baseline_xp,
-                )
+                real_content_bank_lifecycle_complete(case, &witness, &plan, target, baseline_xp)
             }
             LiveCase::BankCostNoCandidate => {
                 witness.failure_code.as_deref() == Some("bank-unavailable")
@@ -6805,12 +6792,14 @@ fn real_content_bank_lifecycle_complete(
         && plan.seed_locs.is_empty()
         && plan.oak_tiles.is_empty()
         && (case != LiveCase::BankCostFirstGoal
-            || witness.oak_live_tiles.iter().any(|&tile| {
-                tile_distance(tile, target).is_some_and(|distance| distance <= 12)
-            }))
-        && witness.last_status_bank.as_deref().is_some_and(|bank| {
-            bank.starts_with(bank_prefix) && bank.contains("; access:")
-        })
+            || witness
+                .oak_live_tiles
+                .iter()
+                .any(|&tile| tile_distance(tile, target).is_some_and(|distance| distance <= 12)))
+        && witness
+            .last_status_bank
+            .as_deref()
+            .is_some_and(|bank| bank.starts_with(bank_prefix) && bank.contains("; access:"))
         && witness.last_xp > baseline_xp
 }
 
@@ -6915,7 +6904,9 @@ fn seers_maple_lifecycle_requires_the_named_bank_and_a_returned_yield() {
 
     witness.products_seen.insert(MAPLE_LOG_ID);
     let mut seeded_scene = FixturePlan::default();
-    seeded_scene.seed_locs.push(seed(world_tile(1, 1), "oaktree", OAK_ID));
+    seeded_scene
+        .seed_locs
+        .push(seed(world_tile(1, 1), "oaktree", OAK_ID));
     assert!(
         !real_content_bank_lifecycle_complete(
             LiveCase::BankCostSeersMaple,
