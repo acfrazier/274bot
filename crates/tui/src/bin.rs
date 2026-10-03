@@ -1917,24 +1917,42 @@ impl TuiSession {
             return AppAction::None;
         };
         let data = self.template.as_ref().and_then(|t| t.game_data());
-        let scripts = &mut self.scripts;
-        let core = &mut self.core;
-        let mut commit = |field: &str, value: serde_json::Value| match &selection {
-            script::ScriptSel::Compiled(id) => scripts
-                .set_compiled_setting(core, &profile, *id, field, value)
-                .map(|_| ()),
-            script::ScriptSel::Loaded(source, lookup) => {
-                let (name, path) = scripts
-                    .js
-                    .get(*source, lookup)
-                    .map(|card| (card.name.clone(), card.path.clone()))
-                    .ok_or("parameters unavailable")?;
-                scripts
-                    .set_profile_setting(core, &profile, *source, &name, &path, field, value)
-                    .map(|_| ())
-            }
+        let was_open = app.params_state.open;
+        let was_editing = app.params_state.editing;
+        let action = {
+            let scripts = &mut self.scripts;
+            let core = &mut self.core;
+            let mut commit =
+                |field: &str, value: serde_json::Value, current: Option<serde_json::Value>| {
+                    let edit_key = frontend_core::scripts::ParameterEditKey::new(
+                        Some(&profile),
+                        &selection,
+                        field,
+                    );
+                    scripts
+                        .commit_parameter_value(core, &edit_key, &selection, field, value, current)
+                        .map(|_| ())
+                };
+            app.params_on_key(&mut commit, &self.loadouts, data.as_deref(), key)
         };
-        let action = app.params_on_key(&mut commit, &self.loadouts, data.as_deref(), key);
+        if key.code == crossterm::event::KeyCode::Esc
+            && was_open
+            && (!app.params_state.open || (was_editing && !app.params_state.editing))
+        {
+            if let Some(field) = app
+                .params_schema
+                .iter()
+                .filter(|def| script::setting_visible(def.show_if.as_deref(), &app.params_bag))
+                .nth(app.params_state.cursor)
+            {
+                let edit_key = frontend_core::scripts::ParameterEditKey::new(
+                    Some(&profile),
+                    &selection,
+                    &field.id,
+                );
+                self.scripts.discard_parameter_text(&edit_key);
+            }
+        }
         self.apply_script_notice(app);
         action
     }

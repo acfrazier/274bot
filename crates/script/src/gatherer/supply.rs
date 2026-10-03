@@ -447,6 +447,29 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
     ids
 }
 
+/// Return every observed inventory item ID with a positive count except
+/// applicable gathering tools and prepared supplies. Incidental non-products
+/// are banked too, without special-casing individual drops.
+pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
+    let protected = protected_ids(prepared, tool_id);
+    let mut ids = Vec::with_capacity(inventory.len());
+    for item in inventory {
+        let id = item.def.id;
+        if id < 0 || item.count <= 0 || protected.as_slice().contains(&id) || ids.contains(&id) {
+            continue;
+        }
+        let gathering_tool = prepared.methods.iter().any(|&index| {
+            known_rows(&prepared.catalog.methods()[index].tools)
+                .iter()
+                .any(|tool| tool.item == id)
+        });
+        if !gathering_tool {
+            ids.push(id);
+        }
+    }
+    Arc::from(ids)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItem {
     pub id: i32,
@@ -1145,6 +1168,101 @@ mod tests {
     }
 
     #[test]
+    fn bank_deposit_ids_include_incidental_items_and_protect_current_supplies() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let spell = selected
+            .teleports()
+            .iter()
+            .find(|spell| {
+                spell.available()
+                    && !spell.runes.is_empty()
+                    && spell
+                        .runes
+                        .iter()
+                        .all(|rune| rune.id >= 0 && !rune.name.trim().is_empty() && rune.count > 0)
+            })
+            .unwrap()
+            .clone();
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Fishing"));
+        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
+        settings.insert("baitTarget".into(), json!(10));
+        settings.insert("food".into(), json!("Raw trout"));
+        settings.insert("foodTarget".into(), json!(5));
+        settings.insert("coinTarget".into(), json!(500));
+        settings.insert("reserveTeleport".into(), json!(spell.name));
+        settings.insert("reserveCasts".into(), json!(5));
+        let prepared = prepare(settings);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let bait = prepared.supply.bait.as_ref().unwrap();
+        let food = prepared.supply.food.as_ref().unwrap();
+        let coin_name = prepared.supply.coin_name.as_deref().unwrap();
+        let reserve = prepared.supply.reserve.as_ref().unwrap();
+        let protected = protected_ids(&prepared, tool_id);
+        let product_id = prepared
+            .products
+            .iter()
+            .copied()
+            .find(|id| !protected.as_slice().contains(id))
+            .expect("the selected fishing method has an unprotected fish product");
+        let product_name = prepared
+            .selected
+            .item_by_id(product_id)
+            .and_then(|item| item.name.as_deref())
+            .unwrap();
+        assert!(!prepared.products.contains(&405));
+
+        let mut inventory = vec![
+            item(product_id, product_name, 1, ItemContainer::Inventory),
+            item(405, "Fishing casket", 1, ItemContainer::Inventory),
+            item(product_id, product_name, 2, ItemContainer::Inventory),
+            item(405, "Fishing casket", 1, ItemContainer::Inventory),
+            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
+            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
+            item(food.id, &food.name, 2, ItemContainer::Inventory),
+            item(COINS_ID, coin_name, 100, ItemContainer::Inventory),
+        ];
+        inventory.extend(
+            reserve
+                .runes()
+                .map(|rune| item(rune.id, &rune.name, rune.per_cast, ItemContainer::Inventory)),
+        );
+        inventory.push(item(0, "Dwarf remains", 1, ItemContainer::Inventory));
+        inventory.push(item(406, "Empty row", 0, ItemContainer::Inventory));
+        inventory.push(item(-1, "Unknown item", 1, ItemContainer::Inventory));
+
+        let deposit_ids = bank_deposit_ids(&prepared, tool_id, &inventory);
+        assert_eq!(deposit_ids.as_ref(), &[product_id, 405, 0]);
+        for id in [tool_id, bait.id, food.id, COINS_ID] {
+            assert!(protected.as_slice().contains(&id));
+            assert!(!deposit_ids.contains(&id));
+        }
+        for rune in reserve.runes() {
+            assert!(protected.as_slice().contains(&rune.id));
+            assert!(!deposit_ids.contains(&rune.id));
+        }
+    }
+
+    #[test]
+    fn bank_deposit_keeps_alternate_content_defined_gathering_tools() {
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let tools = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools);
+        assert!(
+            tools.len() > 1,
+            "woodcutting has multiple applicable tool tiers"
+        );
+        let mut inventory: Vec<_> = tools
+            .iter()
+            .map(|tool| item(tool.item, "Gathering tool", 1, ItemContainer::Inventory))
+            .collect();
+        inventory.push(item(405, "Casket", 1, ItemContainer::Inventory));
+        assert_eq!(
+            bank_deposit_ids(&prepared, tools[0].item, &inventory).as_ref(),
+            &[405]
+        );
+    }
+
+    #[test]
     fn reserve_gate_requires_one_complete_cast_from_combined_stock() {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
@@ -1299,5 +1417,92 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(1359, 1)]
         );
+    }
+
+    #[test]
+    fn every_content_defined_fishing_tool_is_inventory_ready_without_wielding() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Fishing"));
+        let mut prepared = prepare(settings);
+        let catalog = Arc::clone(&prepared.catalog);
+        let prepared = Arc::get_mut(&mut prepared).expect("test owns the prepared config");
+        let mut tested_tools = std::collections::BTreeSet::new();
+        for (index, method) in catalog
+            .methods()
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.skill == api::gather_methods::GatherSkill::Fishing)
+        {
+            // Exercise tool/supply semantics even for content methods whose
+            // unrelated quest/form facts keep the whole method unselectable.
+            prepared.methods = Arc::from([index]);
+            prepared.settings.fishing_method = method.id.0.to_string();
+            prepared.supply = PreparedSupply::prepare(
+                &mut prepared.settings,
+                &prepared.selected,
+                &catalog,
+                &prepared.methods,
+            )
+            .unwrap();
+            let stats = stats(prepared);
+            for tool in known_rows(&method.tools) {
+                let name = prepared
+                    .selected
+                    .item_by_id(tool.item)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap();
+                let mut held = vec![item(tool.item, name, 1, ItemContainer::Inventory)];
+                if let Some(bait) = &prepared.supply.bait {
+                    held.push(item(bait.id, &bait.name, 1, ItemContainer::Inventory));
+                }
+                let choice = best_tool(prepared, &stats, &held, &[]).unwrap();
+                assert_eq!(choice.id, tool.item, "{}", method.id.0);
+                assert!(!choice.worn);
+                assert!(!can_wield(prepared, choice.id, &held, &stats));
+                assert!(!SupplyPlan::due(prepared, &stats, &held, &[]));
+                assert!(protected_ids(prepared, choice.id)
+                    .as_slice()
+                    .contains(&tool.item));
+                assert!(matches!(
+                    &SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&[])),
+                    SupplyPlanResult::Ready(plan) if plan.iter().next().is_none()
+                ));
+
+                // A lost tool must still use the same bank stock machinery.
+                held.remove(0);
+                assert!(SupplyPlan::due(prepared, &stats, &held, &[]));
+                let bank = [item(tool.item, name, 1, ItemContainer::Bank)];
+                let plan =
+                    match SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&bank)) {
+                        SupplyPlanResult::Ready(plan) => plan,
+                        other => panic!(
+                            "{} tool stock must admit withdrawal: {other:?}",
+                            method.id.0
+                        ),
+                    };
+                assert_eq!(plan.missing(), None);
+                assert_eq!(plan.to_withdrawals()[0].id, tool.item);
+                assert_eq!(plan.to_withdrawals()[0].target, 1);
+                tested_tools.insert(tool.item);
+            }
+        }
+        for alias in [
+            "net",
+            "big_net",
+            "lobster_pot",
+            "harpoon",
+            "fishing_rod",
+            "fly_fishing_rod",
+            "oily_fishing_rod",
+            "tbwt_karambwan_vessel_loaded_with_karambwanji",
+        ] {
+            let id = prepared.selected.item_by_alias(alias).unwrap().id;
+            assert!(
+                tested_tools.contains(&id),
+                "missing fishing tool coverage: {alias}"
+            );
+        }
     }
 }

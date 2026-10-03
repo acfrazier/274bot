@@ -3,7 +3,10 @@ use super::card::Prepared;
 use super::drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
 use super::gather::{GatherEnd, GatherResult, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS};
 use super::oneop::{OneOp, OneOpArgs};
-use super::select::{select, AvoidedTile, PlacementClass, SelectedTarget, Selection, TargetPlan};
+use super::select::{
+    resource_return_target, select, AvoidedTile, FishingSurvey, PlacementClass, ReturnObservation,
+    SelectedTarget, Selection, TargetPlan, RESOURCE_APPROACH_RADIUS,
+};
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
 use super::supply::{self, SupplyPlan, SupplyPlanResult};
@@ -20,6 +23,7 @@ use crate::FindOptions;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
+use nav::arrival::ArrivalKind;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -111,6 +115,24 @@ enum TripStep {
     Return,
 }
 
+fn walk_failure_message(receipt: &WalkReceipt) -> String {
+    match receipt
+        .detail
+        .as_deref()
+        .filter(|detail| !detail.is_empty())
+    {
+        Some(detail) => format!("walk ended with {:?}: {detail}", receipt.end),
+        None => format!("walk ended with {:?}", receipt.end),
+    }
+}
+
+/// Cold session collections share one allocation to retain the inline budget.
+#[derive(Default)]
+struct GatherScratch {
+    fishing: FishingSurvey,
+    withdrawals: Option<Arc<[bank::Withdrawal]>>,
+}
+
 pub struct Gatherer {
     run: RunKey,
     config: Arc<PreparedConfig>,
@@ -121,13 +143,13 @@ pub struct Gatherer {
     active: Active,
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
+    scratch: Box<GatherScratch>,
     wait_until: Option<u64>,
     widen: WidenCursor,
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
     selected_bank: Option<SelectedBank>,
-    withdrawals: Option<Arc<[bank::Withdrawal]>>,
     supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
@@ -177,13 +199,13 @@ impl Gatherer {
                 worn: false,
             },
             avoid: [AvoidedTile::EMPTY; MAX_AVOID],
+            scratch: Box::default(),
             wait_until: None,
             widen: WidenCursor::default(),
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
             selected_bank: None,
-            withdrawals: None,
             supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
@@ -244,7 +266,7 @@ impl Gatherer {
         self.target = None;
         self.wait_until = None;
         self.selected_bank = None;
-        self.withdrawals = None;
+        self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
@@ -258,11 +280,18 @@ impl Gatherer {
         }
     }
 
-    fn trip_walk(&mut self, target: WorldTile, radius: u16, tick: &mut NativeTick<'_>) {
+    fn trip_walk(
+        &mut self,
+        target: WorldTile,
+        radius: u16,
+        arrival: ArrivalKind,
+        tick: &mut NativeTick<'_>,
+    ) {
         let request = WalkRequest {
             target,
             loc_id: None,
             radius,
+            arrival,
             options: FindOptions {
                 allow_teleports: self.settings().allow_teleports,
                 allow_wilderness: self.settings().allow_wilderness,
@@ -278,6 +307,59 @@ impl Gatherer {
             Ok(handle) => self.active = Active::Walk(handle),
             Err(error) => self.action_failure(error),
         }
+    }
+
+    fn return_to_resources(&mut self, tick: &mut NativeTick<'_>) {
+        let Some(area) = self.area else {
+            self.fail(
+                "return-failed",
+                "the resource work area is unavailable",
+                true,
+            );
+            return;
+        };
+        let snapshot = tick.cx.snapshot();
+        let Some(here) = snapshot.here() else {
+            return;
+        };
+        let Some(target) = resource_return_target(
+            &self.prepared.catalog,
+            &self.prepared.methods,
+            self.settings(),
+            area,
+            ReturnObservation {
+                here: here.value,
+                now: tick.cx.evidence().tick,
+                skill_stat: self.skill_stat(snapshot.stats()),
+                avoided: &self.avoid,
+            },
+        ) else {
+            self.fail(
+                "return-failed",
+                "no usable resource observation stand in the work area",
+                true,
+            );
+            return;
+        };
+        let stand = target.tile;
+        self.method = Arc::clone(&target.alias);
+        self.target = Some(target);
+        self.trip_walk(stand, RESOURCE_APPROACH_RADIUS, ArrivalKind::Area, tick);
+        self.dirty = true;
+    }
+
+    fn resource_return_arrived(&self, tick: &NativeTick<'_>) -> bool {
+        self.target.as_ref().is_some_and(|target| {
+            tick.cx.snapshot().here().is_some_and(|here| {
+                here.value.level == target.tile.level
+                    && here
+                        .value
+                        .x
+                        .abs_diff(target.tile.x)
+                        .max(here.value.z.abs_diff(target.tile.z))
+                        <= u32::from(RESOURCE_APPROACH_RADIUS)
+            })
+        })
     }
 
     fn begin_trip(&mut self, tick: &mut NativeTick<'_>) {
@@ -313,7 +395,7 @@ impl Gatherer {
             }
             TripStep::Access => {
                 if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 1, tick);
+                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, tick);
                 }
             }
             TripStep::Open => {
@@ -344,8 +426,16 @@ impl Gatherer {
                 }
             }
             TripStep::Deposit => {
+                let snapshot = tick.cx.snapshot();
+                let Some(inventory) = snapshot.inventory() else {
+                    return;
+                };
                 let args = bank::DepositArgs {
-                    products: Arc::clone(&self.prepared.products),
+                    products: supply::bank_deposit_ids(
+                        &self.prepared,
+                        self.tool.id,
+                        inventory.value,
+                    ),
                     keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
                 };
                 match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
@@ -354,7 +444,7 @@ impl Gatherer {
                 }
             }
             TripStep::Withdraw => {
-                if self.withdrawals.is_none() {
+                if self.scratch.withdrawals.is_none() {
                     let snapshot = tick.cx.snapshot();
                     let (Some(stats), Some(inventory), Some(equipment)) =
                         (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
@@ -375,13 +465,16 @@ impl Gatherer {
                         }
                         SupplyPlanResult::Ready(plan) => {
                             self.supply_missing = plan.missing().cloned();
-                            self.withdrawals = Some(plan.to_withdrawals());
+                            self.scratch.withdrawals = Some(plan.to_withdrawals());
                         }
                     }
                 }
                 let args = bank::WithdrawArgs {
                     withdrawals: Arc::clone(
-                        self.withdrawals.as_ref().expect("latched supply plan"),
+                        self.scratch
+                            .withdrawals
+                            .as_ref()
+                            .expect("latched supply plan"),
                     ),
                 };
                 match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
@@ -398,13 +491,10 @@ impl Gatherer {
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
                     self.advance_trip(TripStep::Return);
+                    self.set_event("returning to work area");
                 }
             }
-            TripStep::Return => {
-                if let Some(area) = self.area {
-                    self.trip_walk(area.anchor, area.radius, tick);
-                }
-            }
+            TripStep::Return => self.return_to_resources(tick),
         }
     }
 
@@ -450,7 +540,7 @@ impl Gatherer {
     fn apply_pending(&mut self, disposal_due: bool) -> Option<u64> {
         // A hold revokes the machine, not its full-batch reserve target.
         // Keep both the plan and its configuration stable until settlement.
-        if self.withdrawals.is_some() {
+        if self.scratch.withdrawals.is_some() {
             return None;
         }
         let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
@@ -795,11 +885,12 @@ impl Gatherer {
         self.target = Some(selected.plan.clone());
         // Observed NPC ops own their client-side approach. Their occupied water
         // tile is not a navigation destination (and can move before arrival).
+        let observation_approach = selected.class == PlacementClass::Unloaded;
         let loc_id = match selected.plan.entity {
-            api::selected::EntityId::Loc(id) => Some(id),
+            api::selected::EntityId::Loc(id) if !observation_approach => Some(id),
             _ => None,
         };
-        let needs_walk = if selected.class == PlacementClass::Unloaded {
+        let needs_walk = if observation_approach {
             true
         } else if selected.plan.npc_index >= 0 {
             false
@@ -814,7 +905,12 @@ impl Gatherer {
             let request = WalkRequest {
                 target: selected.plan.tile,
                 loc_id,
-                radius: 1,
+                radius: RESOURCE_APPROACH_RADIUS,
+                arrival: if observation_approach {
+                    ArrivalKind::Area
+                } else {
+                    ArrivalKind::Reach
+                },
                 options: FindOptions {
                     allow_teleports: self.settings().allow_teleports,
                     allow_wilderness: self.settings().allow_wilderness,
@@ -903,6 +999,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
+                self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
                 self.retained.yielded = self.yielded;
                 self.xp = self.xp.saturating_add(xp);
@@ -1022,7 +1119,7 @@ impl Gatherer {
                 } else {
                     "walk-failed"
                 },
-                format!("walk ended with {:?}", result.end),
+                walk_failure_message(&result),
                 true,
             );
             return;
@@ -1035,21 +1132,11 @@ impl Gatherer {
                 return;
             }
             TripStep::Return => {
-                let arrived = self.area.is_some_and(|area| {
-                    tick.cx.snapshot().here().is_some_and(|here| {
-                        here.value.level == area.anchor.level
-                            && here
-                                .value
-                                .x
-                                .abs_diff(area.anchor.x)
-                                .max(here.value.z.abs_diff(area.anchor.z))
-                                <= u32::from(area.radius)
-                    })
-                });
+                let arrived = self.resource_return_arrived(tick);
                 if !arrived {
                     self.fail(
                         "return-failed",
-                        "return receipt did not establish arrival in the work area",
+                        "return receipt did not establish arrival at the resource observation stand",
                         true,
                     );
                     return;
@@ -1213,7 +1300,7 @@ impl Gatherer {
                 Poll::Pending => self.active = Active::Withdraw(handle),
                 Poll::Ready(Ok(true)) => {
                     self.fence.seal();
-                    self.withdrawals = None;
+                    self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
                         self.fail("supply-missing", format!("supply-missing:{item}"), true);
                         return;
@@ -1378,10 +1465,11 @@ impl Gatherer {
         let Some(npcs) = snapshot.npcs() else {
             return;
         };
+        let skill_stat = self.skill_stat(snapshot.stats());
         let selected = select(
             &self.prepared.catalog,
             &self.prepared.methods,
-            self.settings(),
+            &self.prepared.settings,
             area,
             &self.avoid,
             super::select::SelectionObservation {
@@ -1390,7 +1478,8 @@ impl Gatherer {
                 npcs: npcs.value,
                 here: here.value,
                 now: tick.cx.evidence().tick,
-                skill_stat: self.skill_stat(snapshot.stats()),
+                skill_stat,
+                fishing: &mut self.scratch.fishing,
             },
         );
         self.zone_gated = selected.zone_gated;
@@ -1476,6 +1565,7 @@ impl Gatherer {
             },
             loc_id: None,
             radius: 0,
+            arrival: ArrivalKind::Reach,
             options: FindOptions {
                 allow_teleports: false,
                 allow_wilderness: self.settings().allow_wilderness,
@@ -1594,10 +1684,21 @@ impl Gatherer {
             method: Arc::clone(&self.method),
             phase,
             area: Arc::<str>::from(self.area_label()),
-            target: self
-                .target
-                .as_ref()
-                .map_or_else(|| Arc::from("—"), |target| Arc::clone(&target.alias)),
+            target: self.target.as_ref().map_or_else(
+                || Arc::from("—"),
+                |target| {
+                    if self.trip == TripStep::Return
+                        || self.retained.recovery == (RecoveryState::Pending { step: 5 })
+                    {
+                        Arc::from(format!(
+                            "{}; observation stand:{},{},{}",
+                            target.alias, target.tile.x, target.tile.z, target.tile.level,
+                        ))
+                    } else {
+                        Arc::clone(&target.alias)
+                    }
+                },
+            ),
             tool: if self.tool.id >= 0 {
                 Arc::from(format!(
                     "{}{}",
@@ -1946,6 +2047,162 @@ mod tests {
             size_of::<GatherRetained>()
         );
     }
+    #[test]
+    fn bank_inside_auto_radius_returns_to_resource_observation_stand() {
+        use crate::quester::families::tests::{local_player, with_tick};
+        use api::snapshot::GameSnapshot;
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut bag = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.rarefish.op3")),
+            ("location", serde_json::json!("Auto")),
+            ("radius", serde_json::json!(40)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            bag.insert(key.into(), value);
+        }
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(bag),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let mut gatherer = Gatherer::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            Arc::clone(&config),
+            Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+            GatherRetained::default(),
+        );
+        gatherer.area = Some(WorkArea {
+            mode: super::super::area::AreaMode::Auto,
+            anchor: WorldTile {
+                x: 2848,
+                z: 3426,
+                level: 0,
+            },
+            radius: 40,
+        });
+        gatherer.trip = TripStep::Return;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        }));
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+        assert_eq!(gatherer.trip, TripStep::Return);
+        assert_eq!(gatherer.trips, 0);
+        let action = &ledger.as_ref().unwrap().outbox[0];
+        let crate::native::HostEffect::Walk(request) = &action.effect else {
+            panic!("the resource return must arm a walk");
+        };
+        assert_ne!(request.target, gatherer.area.unwrap().anchor);
+        assert_eq!(
+            request.radius, 1,
+            "r40 bounds gathering, not resource observation"
+        );
+        assert_eq!(request.arrival, ArrivalKind::Area);
+        assert!(gatherer
+            .status_data(None)
+            .target
+            .contains("observation stand:"));
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                },
+                tick,
+            );
+        });
+        assert_eq!(
+            gatherer.trips, 0,
+            "bank membership is not resource observation"
+        );
+        assert_eq!(
+            gatherer.failure.as_ref().unwrap().code.as_ref(),
+            "return-failed"
+        );
+    }
+
+    #[test]
+    fn bank_return_failure_preserves_walk_receipt_detail() {
+        use crate::quester::families::tests::with_tick;
+        use api::snapshot::GameSnapshot;
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(crate::native::SettingsBag::new()),
+                selected,
+                Arc::default(),
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        };
+        let mut gatherer = Gatherer::new(
+            run,
+            Arc::clone(&config),
+            Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+            GatherRetained::default(),
+        );
+        gatherer.trip = TripStep::Return;
+        gatherer.set_event("returning to work area");
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    request_id: 7,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Failed,
+                    blocked: None,
+                    detail: Some(Arc::from(
+                        "Dropped: stuck at (2809,3441,0), aiming (2848,3426,0)",
+                    )),
+                },
+                tick,
+            );
+        });
+        let failure = gatherer.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "return-failed");
+        assert!(failure.message.contains("Dropped"));
+        assert!(failure.message.contains("2809,3441,0"));
+        assert!(failure.message.contains("2848,3426,0"));
+        assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+        assert_eq!(gatherer.trips, 0);
+    }
+
     #[test]
     fn user_input_walk_parks_gatherer_until_retry() {
         use crate::quester::families::tests::with_tick;

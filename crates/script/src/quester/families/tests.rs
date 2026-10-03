@@ -3565,6 +3565,78 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
 }
 
 #[test]
+fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
+    let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3100, 3200)));
+    let mut ledger = None;
+    let plan = WalkPlan {
+        tile: tile(3200, 3200),
+        radius: 1,
+        cross: Box::default(),
+        protect: true,
+    };
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+    let (authority, request_id) = {
+        let action = &ledger.as_ref().unwrap().outbox[0];
+        (action.authority(), action.request_id.get())
+    };
+    ledger
+        .as_mut()
+        .unwrap()
+        .walk_events
+        .push(crate::native::WalkEvent {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 2,
+                sequence: 2,
+            },
+            kind: crate::native::WalkEventKind::Unprotectable {
+                protect: crate::combat::GuardProtect::Missiles,
+            },
+            detail: Arc::from("Prayer 40 needed for Protect from Missiles"),
+        });
+    for tick in 2..5 {
+        assert!(with_tick(&snapshot, &mut ledger, tick, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let (label, detail) = run
+            .waiting_for()
+            .expect("warning surfaces through runner status");
+        assert_eq!(label, "Walk protection");
+        assert_eq!(
+            detail.as_ref(),
+            "Prayer 40 needed for Protect from Missiles"
+        );
+        assert!(
+            authority.live(),
+            "a warning must leave the walk's request live"
+        );
+        assert_eq!(
+            ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "keep the same walk"
+        );
+        assert!(
+            ledger.as_ref().unwrap().walk_events.is_empty(),
+            "consume the event once"
+        );
+    }
+    snapshot.seed_local_player(local_player(tile(3200, 3200)));
+    assert!(
+        matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| with_step(tick, |cx| run
+                .poll(cx))),
+            Poll::Ready(Ok(_))
+        ),
+        "the warned walk can still arrive successfully"
+    );
+}
+
+#[test]
 fn talk_walk_user_input_blocks_before_dialogue_interaction() {
     let snapshot = ready();
     let mut ledger = None;

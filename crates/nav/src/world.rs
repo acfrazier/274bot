@@ -117,16 +117,24 @@ impl NavWorld {
         }
     }
 
-    /// `$NAV_PACK` or `~/.274bot/274bot.navpack` (same default `nav-pack` writes).
+    /// `$NAV_PACK` or the host-play build's revision-289 pack under this
+    /// Cargo test executable's profile directory. Tests never read the
+    /// operator's home directory.
     #[cfg(test)]
     pub(crate) fn default_pack_path() -> PathBuf {
-        match std::env::var("NAV_PACK") {
-            Ok(p) => PathBuf::from(p),
-            Err(_) => match client::operator_home() {
-                Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
-                Err(_) => PathBuf::from(".274bot/274bot.navpack"),
-            },
+        if let Some(path) = std::env::var_os("NAV_PACK") {
+            return PathBuf::from(path);
         }
+
+        let profile_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent()?.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../target")
+                    .join(option_env!("PROFILE").unwrap_or("debug"))
+            });
+        profile_dir.join("nav/289/274bot.navpack")
     }
 
     /// Whole-world pack proofs. GitHub has no pack and no Server tree —
@@ -137,7 +145,10 @@ impl NavWorld {
         match Self::load_pack(&path) {
             Ok(w) => Some(w),
             Err(e) => {
-                eprintln!("SKIP: no nav pack at {} ({e:?})", path.display());
+                eprintln!(
+                    "SKIP: could not load nav pack at {} ({e:?}); set NAV_PACK or build host-play's revision-289 pack",
+                    path.display()
+                );
                 None
             }
         }

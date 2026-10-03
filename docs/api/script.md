@@ -527,11 +527,45 @@ WalkTo stays the panel **WalkTo** button + traveller. Script walk requests use
 the host's shared `nav::router::find` and the slot pump's
 `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
-the slot pump under the existing admission fence. Typed native walk operations
-are not installed by the registration cutover. Authored Path `walk` steps do
-not yet implement protected walking: a nonempty `cross` is rejected during
-Path compilation with code `invalid-args` and detail
-`walk: cross needs protected walk (combat slice)`.
+the slot pump under the existing admission fence. Typed native walks correlate
+host outcomes with their run, action and request owners. Authored Path `walk`
+steps may opt into hold-mode protection with `guard: "protect"` and name the
+protected-zone exemptions in `cross`; a nonempty `cross` without that guard is
+rejected during compilation.
+
+The guard holds the selected protection prayer without attacking, eating or
+flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces
+one non-terminal `WalkEventKind::Unprotectable` warning for that style and cause.
+The native owner consumes it with `NativeActions::take_walk_event`; the walk
+keeps following and any other held protection remains managed. Quester shows
+the cause under **Walk protection**, for example “Prayer 40 needed for Protect
+from Missiles”, without parking or retrying the step.
+
+The guard owns only a protect it raised during this walk. A protect already on
+when the walk begins, or raised by another owner, is not turned off at the end.
+Only one protect can be active: switching from a pre-existing user protect to
+the guard's protect deactivates the old style in the game. The guard clears only
+its own new style at the end; it never restores the user's old style.
+A late on observation beyond the three-tick admission window is not adopted
+as guard-owned, even while the walk is still active.
+
+Arrival, Stop, Pause, cancellation, owner revocation and manual takeover retire
+the guard but preserve its conditional off-click on the host. An in-flight
+enable or switch has three ticks from successful send admission to be observed
+on; otherwise the host logs and drops the debt without a click. An observed-on
+owned protect receives an off-click, and the debt remains until that protect is
+observed off. If it stays on, the host retries once after three ticks and drops
+the debt after three more ticks if the retry has not been observed off.
+An already-off protect receives no toggle. Later walks and bank work resume
+after at most the first three-tick window, even while cleanup is watched; a
+new guard cannot raise protection until that old cleanup ends.
+
+Cleanup reads the current snapshot, not another owner's not-yet-observed
+same-frame prayer write. Such writes are not an atomic handoff: a simultaneous
+combat prayer switch can still conflict with cleanup before its varps arrive.
+Once the switch is observed, the old protect's off state settles the debt
+without another click. Relog and death discard the obligation because the
+server resets temporary prayer state. The manual WalkTo arm installs no guard.
 
 Manual game movement or a TUI Manual step takes ownership before either follow
 pump. A matching native walk returns a normal `WalkReceipt` with

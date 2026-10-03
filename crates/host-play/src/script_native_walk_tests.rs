@@ -1,10 +1,11 @@
 //! Typed native walks through the real host pump: `script_observe`'s receipt
 //! delivery and native drain, the off-pump route worker and `step_nav_bot`.
 use super::*;
+use client::dash3d::CollisionFlag;
 use script::native::walk::Walk;
 use script::native::{
-    ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkReceipt,
-    WalkRequest,
+    ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
+    WalkEventKind, WalkReceipt, WalkRequest,
 };
 use std::task::Poll;
 
@@ -19,9 +20,13 @@ struct Walker {
     cross_first: Vec<Arc<str>>,
     protect: bool,
     disallow_prayer: bool,
+    target: Option<WorldTile>,
     later_target: Option<WorldTile>,
+    radius: u16,
+    arrival: nav::arrival::ArrivalKind,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
+    events: Vec<WalkEvent>,
 }
 
 /// One native `Walk` to `(4, 0, 0)`, begun on the first eligible tick and
@@ -41,6 +46,9 @@ impl Script for WalkerScript {
             shared.begun = 0;
         }
         if let Some(handle) = &self.handle {
+            while let Some(event) = tick.actions.take_walk_event(handle, &mut tick.cx) {
+                shared.events.push(event);
+            }
             if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
                 shared.result = Some(result.clone());
                 shared.results.push(result);
@@ -54,11 +62,11 @@ impl Script for WalkerScript {
                 Vec::new()
             };
             let target = if first_walk {
-                WorldTile {
+                shared.target.unwrap_or(WorldTile {
                     x: 4,
                     z: 0,
                     level: 0,
-                }
+                })
             } else {
                 shared.later_target.unwrap_or(WorldTile {
                     x: 4,
@@ -69,7 +77,8 @@ impl Script for WalkerScript {
             shared.begun += 1;
             let request = WalkRequest {
                 target,
-                radius: 0,
+                radius: shared.radius,
+                arrival: shared.arrival,
                 loc_id: None,
                 options: script::FindOptions::default(),
                 required_after: tick.cx.evidence(),
@@ -108,6 +117,7 @@ struct Rig {
     world: Option<Arc<NavWorld>>,
     shared: Arc<parking_lot::Mutex<Walker>>,
     driver: NavRec,
+    client: client::client::Client,
     snapshot: GameSnapshot,
 }
 
@@ -143,6 +153,7 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
         world,
         shared,
         driver: NavRec::default(),
+        client,
         snapshot,
     }
 }
@@ -150,6 +161,98 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
 fn open_rig(blocked: bool) -> Rig {
     rig(Some(Arc::new(open_world(40, 1))), blocked)
 }
+#[test]
+fn native_follow_failure_preserves_hop_detail_in_receipt() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let failure = nav::traveller::TravelOutcome::Stalled {
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        aiming: WorldTile {
+            x: 4,
+            z: 0,
+            level: 0,
+        },
+        why: nav::traveller::HopFailure::Dropped,
+        tries: 3,
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        super::apply_nav_follow_outcome(navs.get_mut("alice").unwrap(), Some(failure), false);
+    }
+    rig.observe(2);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Failed);
+    let detail = receipt
+        .detail
+        .as_deref()
+        .expect("hop failure detail is owed to the caller");
+    assert!(detail.contains("Dropped"), "{detail}");
+    assert!(detail.contains("tries: 3"), "{detail}");
+    assert!(detail.contains("aiming"), "{detail}");
+}
+
+#[test]
+fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
+    let failure = || nav::traveller::TravelOutcome::Stalled {
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        aiming: WorldTile {
+            x: 4,
+            z: 0,
+            level: 0,
+        },
+        why: nav::traveller::HopFailure::Dropped,
+        tries: 3,
+    };
+
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_outcome_detail = Some(Arc::from("newer correlated outcome"));
+        bot.walk_request_id = bot.walk_request_id.wrapping_add(1);
+        super::apply_nav_follow_outcome(bot, Some(failure()), false);
+        assert_eq!(
+            bot.walk_outcome_detail.as_deref(),
+            Some("newer correlated outcome")
+        );
+        assert!(bot.native_walk_failure.is_none());
+    }
+
+    let mut legacy = NavBot {
+        requested_route: Some((
+            WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            1,
+            false,
+            false,
+            false,
+            Default::default(),
+        )),
+        ..Default::default()
+    };
+    super::apply_nav_follow_outcome(&mut legacy, Some(failure()), false);
+    assert!(legacy.native_walk_failure.is_none());
+    assert!(
+        legacy.walk_outcome_detail.is_none(),
+        "a legacy route has no native receipt detail"
+    );
+}
+
 fn zoned_open_world() -> NavWorld {
     let mut world = open_world(40, 1);
     let zones = vec![nav::zones::Zone::npc(
@@ -266,13 +369,42 @@ fn catalog_open_world() -> NavWorld {
 
 impl Rig {
     fn observe(&mut self, tick: u64) {
+        self.observe_with_here(
+            tick,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+        );
+    }
+
+    fn rebuild_snapshot_at(&mut self, here: WorldTile) {
+        let x = here.x - self.client.map_build_base_x;
+        let z = here.z - self.client.map_build_base_z;
+        let mut player = client::dash3d::ClientPlayer::at(x, z);
+        player.x = x * 128 + player.size * 64;
+        player.z = z * 128 + player.size * 64;
+        self.client.local_player = Some(player);
+        self.client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+        self.client
+            .bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        self.snapshot.rebuild(&self.client);
+    }
+
+    fn observe_at(&mut self, tick: u64, here: WorldTile) {
+        self.rebuild_snapshot_at(here);
+        self.observe_with_here(tick, here);
+    }
+
+    fn observe_with_here(&mut self, tick: u64, here: WorldTile) {
         script_observe(
             &mut self.driver,
             "alice",
             true,
             true,
             tick,
-            Some((0, 0, 0)),
+            Some((here.x, here.z, here.level)),
             None,
             None,
             Some(&self.snapshot),
@@ -286,11 +418,13 @@ impl Rig {
         );
     }
 
+    /// Steps from the snapshot's own (network route-head) tile, the same
+    /// position authority the host passes in production.
     fn step(&mut self) {
         step_nav_bot(
             &mut self.driver,
             "alice",
-            Some((0, 0, 0)),
+            self.snapshot.tile(),
             &self.snapshot,
             &self.navs,
             &self.statuses,
@@ -299,6 +433,11 @@ impl Rig {
             false,
             no_reach,
         );
+    }
+
+    fn step_at(&mut self, here: WorldTile) {
+        self.rebuild_snapshot_at(here);
+        self.step();
     }
 
     fn walk_armed(&self) -> bool {
@@ -477,6 +616,51 @@ fn seed_protect_frame(snapshot: &mut GameSnapshot, prayer_base: i32) {
     });
 }
 
+fn seed_prayer_widgets(snapshot: &mut GameSnapshot) {
+    use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
+    snapshot.seed_main_modal(
+        5608,
+        [5621, 5622, 5623]
+            .into_iter()
+            .map(|component_id| WidgetView {
+                kind: WidgetKind::Widget,
+                component_id,
+                layer_id: 5608,
+                parent_id: 5608,
+                root_component_id: 5608,
+                root: WidgetRoot::Main,
+                type_: 4,
+                button_type: 1,
+                client_code: 0,
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+                scroll_height: 0,
+                scroll_position: 0,
+                hidden: false,
+                text: None,
+                alternate_text: None,
+                button_text: None,
+                target_verb: None,
+                target_base: None,
+                target_mask: 0,
+                model_type: 0,
+                model_id: 0,
+                alternate_model_type: 0,
+                alternate_model_id: 0,
+                scripts: None,
+                script_comparators: None,
+                script_operands: None,
+                varp_bindings: Vec::new(),
+                colour: 0,
+                actions: Vec::new(),
+                items: Vec::new(),
+            })
+            .collect(),
+    );
+}
+
 fn seed_missile_launch(snapshot: &mut GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let row = data.npc_by_config("ardougne_archer").unwrap();
@@ -542,6 +726,251 @@ fn seed_missile_launch(snapshot: &mut GameSnapshot) {
     }]);
 }
 
+fn seed_protect_state(snapshot: &mut GameSnapshot, varp: Option<i32>) {
+    let mut rows = snapshot.varps().to_vec();
+    for row in &mut rows {
+        row.value = i32::from(Some(row.index) == varp);
+    }
+    snapshot.seed_varps(rows);
+}
+
+fn protected_rig() -> Rig {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    rig
+}
+
+fn raise_owned_missiles(rig: &mut Rig) {
+    rig.snapshot.seed_tick(2);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_projectiles(Vec::new());
+    rig.snapshot.seed_npcs(Vec::new());
+    rig.snapshot.seed_tick(3);
+    rig.step();
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GuardEndSeam {
+    Stop,
+    Pause,
+    Cancel,
+    Manual,
+    CarryHold,
+    OwnerRevoked,
+}
+
+fn check_guard_end(seam: GuardEndSeam) {
+    for was_on in [true, false] {
+        let mut rig = protected_rig();
+        raise_owned_missiles(&mut rig);
+        match seam {
+            GuardEndSeam::Stop => {
+                rig.slot().lock().unwrap().stop();
+                reset_script_nav(&rig.navs, "alice");
+            }
+            GuardEndSeam::Pause => {
+                pause_script(&mut rig.slot().lock().unwrap(), &rig.navs, "alice");
+            }
+            GuardEndSeam::Cancel => abort_script_walk(&rig.navs, "alice"),
+            GuardEndSeam::Manual => {
+                rig.navs
+                    .lock()
+                    .unwrap()
+                    .get_mut("alice")
+                    .unwrap()
+                    .cancel_for_manual_input();
+            }
+            GuardEndSeam::CarryHold => hold_script_nav(&rig.navs, "alice", None),
+            GuardEndSeam::OwnerRevoked => {
+                rig.slot().lock().unwrap().stop();
+                rig.step();
+            }
+        }
+        assert_eq!(
+            rig.driver.if_button_components,
+            vec![5622],
+            "{seam:?} cannot click without the pump driver"
+        );
+        seed_protect_state(&mut rig.snapshot, was_on.then_some(96));
+        rig.snapshot.seed_tick(4);
+        rig.step();
+        let expected = if was_on { vec![5622, 5622] } else { vec![5622] };
+        assert_eq!(
+            rig.driver.if_button_components, expected,
+            "{seam:?} must discharge only an observed-on owned protect on the next pump"
+        );
+        rig.step();
+        rig.snapshot.seed_tick(5);
+        rig.step();
+        assert_eq!(
+            rig.driver.if_button_components, expected,
+            "{seam:?} must not double-toggle a stale on observation"
+        );
+    }
+}
+
+#[test]
+fn stop_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Stop);
+}
+
+#[test]
+fn pause_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Pause);
+}
+
+#[test]
+fn cancel_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Cancel);
+}
+
+#[test]
+fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    rig.slot().lock().unwrap().stop();
+    reset_script_nav(&rig.navs, "alice");
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "a conditional off must not turn an already-off protect back on"
+    );
+}
+
+#[test]
+fn manual_takeover_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::Manual);
+}
+
+#[test]
+fn carry_hold_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::CarryHold);
+}
+
+#[test]
+fn owner_revocation_owes_exactly_one_protect_off_on_the_next_pump() {
+    check_guard_end(GuardEndSeam::OwnerRevoked);
+}
+
+fn check_pending_arrival(previous: Option<i32>) {
+    let mut rig = protected_rig();
+    rig.snapshot.seed_tick(2);
+    seed_protect_state(&mut rig.snapshot, previous);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    // T+1: the route ends before the enable/switch has been acknowledged.
+    let mut client = nav_client();
+    client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+    nav_snapshot_at(&mut client, &mut rig.snapshot, 4, 0);
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    seed_protect_state(&mut rig.snapshot, previous);
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].route.is_none(),
+        "T+1 really ends the route before the pending protect is observed"
+    );
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "arrival cannot toggle an old style while the new protect is in flight"
+    );
+    // T+2: the server applies the in-flight protect after the walk ended.
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622],
+        "the late acknowledged protect must receive its single off-click"
+    );
+    rig.step();
+    rig.snapshot.seed_tick(5);
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+}
+
+#[test]
+fn arrival_before_protect_acknowledgement_owes_the_late_off() {
+    check_pending_arrival(None);
+}
+
+#[test]
+fn arrival_during_a_pending_protect_switch_does_not_double_toggle() {
+    check_pending_arrival(Some(97));
+}
+
+#[test]
+fn a_missing_prayer_widget_does_not_admit_or_log_a_guard_click() {
+    let mut rig = protected_rig();
+    seed_missile_launch(&mut rig.snapshot);
+    rig.snapshot.seed_main_modal(-1, Vec::new());
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert!(rig.driver.if_button_components.is_empty());
+    assert!(!rig.navs.lock().unwrap()["alice"]
+        .walk_guard
+        .as_ref()
+        .unwrap()
+        .blocks_follow(2));
+    seed_prayer_widgets(&mut rig.snapshot);
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "a refused proposal spends no pacing"
+    );
+}
+
+#[test]
+fn relog_discards_temporary_prayer_debt_without_a_click() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    crate::play_slots::reset_slot_session_work(
+        "alice",
+        &rig.scripts,
+        &rig.cheats,
+        &Arc::new(Mutex::new(HashMap::new())),
+        &rig.navs,
+        false,
+    );
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+}
+
+#[test]
+fn death_discards_protect_without_a_toggle() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .unwrap()
+        .effective = 0;
+    rig.snapshot.seed_stats(stats);
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+}
+
 #[test]
 fn unprotectable_is_delivered_to_the_walk_owner() {
     let mut rig = open_rig(false);
@@ -552,29 +981,242 @@ fn unprotectable_is_delivered_to_the_walk_owner() {
     rig.wait_routed();
     seed_missile_launch(&mut rig.snapshot);
     rig.step();
-    rig.observe(2);
-    let receipt = rig
-        .shared
-        .lock()
-        .result
-        .clone()
-        .expect("Unprotectable must complete the walk")
-        .expect("Unprotectable is a successful host terminal");
-    assert_eq!(
-        receipt.end,
-        WalkEnd::Unprotectable,
-        "the host must deliver Unprotectable to the walk owner"
+    assert!(
+        rig.walk_armed(),
+        "Unprotectable must leave the route following"
     );
-    assert_eq!(
-        receipt.detail.as_deref(),
-        Some("missiles"),
-        "Unprotectable must keep the wanted protection style on the receipt"
+    rig.observe(2);
+    assert_eq!(rig.end(), None, "the warning must not complete its walk");
+    {
+        let shared = rig.shared.lock();
+        assert_eq!(shared.events.len(), 1);
+        assert_eq!(
+            shared.events[0].kind,
+            WalkEventKind::Unprotectable {
+                protect: script::combat::GuardProtect::Missiles
+            }
+        );
+        assert_eq!(
+            shared.events[0].detail.as_ref(),
+            "Prayer 40 needed for Protect from Missiles"
+        );
+    }
+    for tick in 3..6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    assert!(
+        rig.walk_armed(),
+        "the owner still follows the unprotected crossing"
     );
     assert!(
-        rig.driver.if_button_components.is_empty(),
-        "Unprotectable must not send a prayer packet, got {:?}",
-        rig.driver.if_button_components
+        rig.driver.move_calls > 0,
+        "the route keeps issuing follow work"
     );
+    assert_eq!(
+        rig.shared.lock().events.len(),
+        1,
+        "the owner sees the warning once"
+    );
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
+#[test]
+fn exhausted_guard_reports_once_and_keeps_the_walk_following() {
+    let mut rig = protected_rig();
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 5)
+        .unwrap()
+        .effective = 0;
+    rig.snapshot.seed_stats(stats);
+    seed_missile_launch(&mut rig.snapshot);
+    for tick in 2..6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    let shared = rig.shared.lock();
+    assert!(shared.result.is_none());
+    assert_eq!(shared.events.len(), 1);
+    assert_eq!(
+        shared.events[0].kind,
+        WalkEventKind::Unprotectable {
+            protect: script::combat::GuardProtect::Missiles,
+        }
+    );
+    assert_eq!(
+        shared.events[0].detail.as_ref(),
+        "No Prayer points or prayer potion available for Protect from Missiles"
+    );
+    assert!(rig.walk_armed());
+    assert!(rig.driver.move_calls > 0);
+    assert!(rig.driver.if_button_components.is_empty());
+}
+
+#[test]
+fn unprotectable_leaves_a_preexisting_user_style_on_when_the_walk_ends() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().protect = true;
+    seed_protect_frame(&mut rig.snapshot, 37);
+    seed_prayer_widgets(&mut rig.snapshot);
+    seed_protect_state(&mut rig.snapshot, Some(95));
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    rig.observe(2);
+    assert!(rig.walk_armed());
+    assert_eq!(rig.shared.lock().events.len(), 1);
+    assert!(rig.driver.if_button_components.is_empty());
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        Vec::<i32>::new(),
+        "the guard never raised the user's Magic and must leave it on"
+    );
+}
+
+#[test]
+fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user_prayer() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    rig.snapshot.seed_tick(2);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622]);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_projectiles(Vec::new());
+    rig.snapshot.seed_npcs(Vec::new());
+    for tick in 3..=4 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+        rig.observe(u64::from(tick));
+    }
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none(),
+        "the dropped enable debt expires three ticks after its admission"
+    );
+    assert!(
+        rig.driver.move_calls > moves,
+        "the second walk follows on the deadline pump"
+    );
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(8);
+    rig.step();
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(9);
+    rig.step();
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "neither stale debt nor the second guard may turn off a later user prayer"
+    );
+}
+
+#[test]
+fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some(),
+        "sending the off-click does not establish that the server applied it"
+    );
+    for tick in 5..=6 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
+    rig.snapshot.seed_tick(7);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622, 5622]);
+    for tick in 8..=10 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    for tick in 11..=20 {
+        rig.snapshot.seed_tick(tick);
+        rig.step();
+    }
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622, 5622, 5622],
+        "a dropped retry must not leave a permanent debt or admit a third off-click"
+    );
+}
+
+#[test]
+fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
+    let mut rig = protected_rig();
+    rig.shared.lock().walks = 2;
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.shared.lock().protect = false;
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    rig.observe(4);
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    rig.observe(5);
+    assert_eq!(rig.shared.lock().begun, 2);
+    rig.wait_routed();
+    let moves = rig.driver.move_calls;
+    rig.snapshot.seed_tick(6);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    assert!(
+        rig.driver.move_calls > moves,
+        "navigation resumes after three ticks even while the off receipt is outstanding"
+    );
+}
+
+#[test]
+fn another_owners_observed_protect_switch_settles_the_off_without_a_toggle() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    seed_protect_state(&mut rig.snapshot, Some(95));
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    assert_eq!(
+        rig.driver.if_button_components,
+        vec![5622],
+        "observing another style on means the owed style is already off"
+    );
+}
+
+#[test]
+fn observed_off_settles_cleanup_before_retry_and_leaves_a_later_user_enable_alone() {
+    let mut rig = protected_rig();
+    raise_owned_missiles(&mut rig);
+    abort_script_walk(&rig.navs, "alice");
+    rig.snapshot.seed_tick(4);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_some());
+    seed_protect_state(&mut rig.snapshot, None);
+    rig.snapshot.seed_tick(5);
+    rig.step();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard_off.is_none());
+    seed_protect_state(&mut rig.snapshot, Some(96));
+    rig.snapshot.seed_tick(9);
+    rig.step();
+    assert_eq!(rig.driver.if_button_components, vec![5622, 5622]);
 }
 
 #[test]
@@ -1725,4 +2367,341 @@ fn held_manual_input_cancels_only_its_operator_walk_once() {
     assert_eq!(alice.lock().unwrap().route_generation, 18);
     assert!(bob.lock().unwrap().route.is_some());
     assert_eq!(bob.lock().unwrap().route_generation, 19);
+}
+const WATER_CENTER: WorldTile = WorldTile {
+    x: 60,
+    z: 60,
+    level: 0,
+};
+const WATER_SHORE: WorldTile = WorldTile {
+    x: 20,
+    z: 60,
+    level: 0,
+};
+const ISOLATED_SHORE: WorldTile = WorldTile {
+    x: 65,
+    z: 65,
+    level: 0,
+};
+
+fn water_area_world(separating_wall: bool) -> NavWorld {
+    const SIZE: usize = 128;
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for x in 20..=100 {
+        for z in 20..=100 {
+            if (x, z) != (WATER_SHORE.x as usize, WATER_SHORE.z as usize)
+                && (x, z) != (ISOLATED_SHORE.x as usize, ISOLATED_SHORE.z as usize)
+            {
+                flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
+            }
+        }
+    }
+    if separating_wall {
+        for z in 0..SIZE {
+            flags[z * SIZE + 10] |= CollisionFlag::SQ_BLOCKED as u32;
+        }
+    }
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    )
+}
+
+fn water_area_rig(separating_wall: bool, radius: u16) -> Rig {
+    let mut rig = rig(Some(Arc::new(water_area_world(separating_wall))), false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(WATER_CENTER);
+        shared.radius = radius;
+        shared.arrival = nav::arrival::ArrivalKind::Area;
+    }
+    for tile in [
+        WATER_CENTER,
+        WorldTile {
+            x: WATER_CENTER.x - 1,
+            ..WATER_CENTER
+        },
+        WorldTile {
+            x: WATER_CENTER.x + 1,
+            ..WATER_CENTER
+        },
+        WorldTile {
+            z: WATER_CENTER.z - 1,
+            ..WATER_CENTER
+        },
+        WorldTile {
+            z: WATER_CENTER.z + 1,
+            ..WATER_CENTER
+        },
+    ] {
+        let x = (tile.x - rig.client.map_build_base_x) as usize;
+        let z = (tile.z - rig.client.map_build_base_z) as usize;
+        rig.client.collision[0].flags[x][z] |= CollisionFlag::SQ_BLOCKED;
+    }
+    rig.rebuild_snapshot_at(WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    rig
+}
+
+fn wait_for_native_route_outcome(rig: &Rig) {
+    assert!(
+        wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.walk_outcome_seq != 0 && bot.route_worker.is_none())
+        }),
+        "the native route worker published a terminal outcome"
+    );
+}
+
+#[test]
+fn area_walk_routes_to_reachable_shore_and_native_receipt_settles_there() {
+    let mut rig = water_area_rig(false, 40);
+    rig.observe(1);
+    rig.wait_routed();
+
+    let route = rig.navs.lock().unwrap()["alice"]
+        .route
+        .clone()
+        .expect("reachable shore route");
+    let goal = route.dest;
+    assert_eq!(
+        goal, WATER_SHORE,
+        "the connected shoreline is the reachable area goal"
+    );
+    assert!(
+        goal.x
+            .abs_diff(WATER_CENTER.x)
+            .max(goal.z.abs_diff(WATER_CENTER.z))
+            <= 40,
+        "goal {goal:?} is within the area's Chebyshev radius"
+    );
+    assert!(rig.world.as_ref().unwrap().collision.standable(goal));
+    assert_ne!(
+        goal, WATER_CENTER,
+        "area routing does not require the water center"
+    );
+    assert_ne!(
+        goal, ISOLATED_SHORE,
+        "a disconnected stand is not a route goal"
+    );
+
+    rig.step_at(goal);
+    rig.observe_at(2, goal);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Arrived);
+}
+
+#[test]
+fn area_walk_does_not_arrive_on_a_disconnected_candidate() {
+    let mut rig = water_area_rig(true, 40);
+    rig.observe(1);
+    wait_for_native_route_outcome(&rig);
+    rig.observe(2);
+
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Failed)));
+    assert!(
+        rig.navs.lock().unwrap()["alice"].route.is_none(),
+        "a standable candidate across a full collision wall is not reachable"
+    );
+}
+
+#[test]
+fn zero_radius_area_refuses_a_nonstandable_target() {
+    let mut rig = water_area_rig(false, 0);
+    rig.observe(1);
+    wait_for_native_route_outcome(&rig);
+    rig.observe(2);
+
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Failed);
+    let detail = receipt
+        .detail
+        .as_deref()
+        .expect("NoPath diagnostic is owed");
+    assert!(detail.contains("Area arrival"), "{detail}");
+    assert!(detail.contains(&format!("to {WATER_CENTER:?}")), "{detail}");
+    assert!(detail.contains("within radius 0"), "{detail}");
+}
+
+#[test]
+fn reach_walk_keeps_adjacent_solid_target_arrival() {
+    let target = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let mut world = open_world(40, 40);
+    let index = target.z as usize * world.collision.width + target.x as usize;
+    world.collision.blocked[index / 64] |= 1 << (index % 64);
+    let mut rig = rig(Some(Arc::new(world)), false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(target);
+        shared.radius = 1;
+        shared.arrival = nav::arrival::ArrivalKind::Reach;
+    }
+    let x = (target.x - rig.client.map_build_base_x) as usize;
+    let z = (target.z - rig.client.map_build_base_z) as usize;
+    rig.client.collision[0].flags[x][z] |= CollisionFlag::SQ_BLOCKED;
+    rig.rebuild_snapshot_at(WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    rig.observe(1);
+    rig.wait_routed();
+
+    let goal = rig.navs.lock().unwrap()["alice"]
+        .route
+        .as_ref()
+        .expect("reach route to the solid target's approach")
+        .dest;
+    assert_eq!(
+        goal.x.abs_diff(target.x).max(goal.z.abs_diff(target.z)),
+        1,
+        "Reach retains the old adjacent-solid target behavior"
+    );
+    rig.step_at(goal);
+    rig.observe_at(2, goal);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Arrived)));
+}
+
+#[test]
+fn area_route_refresh_keeps_mode_through_native_receipt() {
+    let mut rig = water_area_rig(false, 40);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_worker.is_none() && bot.pending_route.is_none() && bot.route.is_some()
+            })
+        }),
+        "the initial area route completed"
+    );
+
+    let (request_id, generation, authority) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").unwrap();
+        (
+            bot.walk_request_id,
+            bot.route_generation,
+            bot.native_walk.clone().expect("native walk owner"),
+        )
+    };
+    let arm = crate::script_runtime::ScriptWalkArm {
+        here: Some((0, 0, 0)),
+        world: rig.world.clone(),
+        navs: Arc::clone(&rig.navs),
+        name: "alice".to_owned(),
+        state: None,
+        bank: Vec::new(),
+    };
+    assert!(arm.refresh_route_in_snapshot(
+        &rig.snapshot,
+        WATER_CENTER,
+        40,
+        nav::router::FindOptions {
+            allow_teleports: true,
+            ..nav::router::FindOptions::default()
+        },
+        request_id,
+        crate::script_runtime::ScriptRouteExclusions::default(),
+        Some(authority),
+        None,
+        nav::arrival::ArrivalKind::Area,
+    ));
+    assert!(
+        wait_until(5_000, || {
+            rig.navs.lock().unwrap().get("alice").is_some_and(|bot| {
+                bot.route_generation != generation
+                    && bot.route_worker.is_none()
+                    && bot.pending_route.is_none()
+                    && bot.route.is_some()
+            })
+        }),
+        "the refreshed area route completed"
+    );
+
+    let (goal, arrival) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").unwrap();
+        (
+            bot.route.as_ref().expect("refreshed route").dest,
+            bot.route_arrival,
+        )
+    };
+    assert_eq!(arrival, nav::arrival::ArrivalKind::Area);
+    assert_eq!(goal, WATER_SHORE);
+    rig.step_at(goal);
+    rig.observe_at(2, goal);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::Arrived)));
+}
+
+#[test]
+#[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
+fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal() {
+    use crate::ScriptRouteRequest;
+    use nav::arrival::ArrivalKind;
+
+    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
+    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+    let centre = WorldTile {
+        x: 2848,
+        z: 3426,
+        level: 0,
+    };
+    let shore = WorldTile {
+        x: 2840,
+        z: 3436,
+        level: 0,
+    };
+    assert!(!world.collision.standable(centre));
+    assert!(world.collision.standable(shore));
+    let mut request = ScriptRouteRequest {
+        generation: 1,
+        request_id: 1,
+        world,
+        from: shore,
+        to: centre,
+        radius: 40,
+        loc_id: None,
+        arrival: ArrivalKind::Area,
+        opts: FindOptions::default(),
+        state: None,
+        bank: Vec::new(),
+        live_candidates: None,
+        exclusions: None,
+        completion: Default::default(),
+    };
+    let (area, _) = request.calculate();
+    let RouteOutcome::Routed(route) = area else {
+        panic!("Area arrival must accept the real standable Catherby shoreline");
+    };
+    assert_eq!(route.dest, shore);
+    assert!(request.world.collision.standable(route.dest));
+    request.arrival = ArrivalKind::Reach;
+    let (reach, _) = request.calculate();
+    assert!(matches!(reach, RouteOutcome::NoPath));
 }
