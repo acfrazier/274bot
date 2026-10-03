@@ -21,8 +21,9 @@ pub fn prayer_sip_due(points: i32, base: i32) -> bool {
     base > 0 && points <= prayer_sip_floor(base)
 }
 
-/// Select protection from a unanimous classified incoming volley first,
-/// then from the compact saved-damage threat score.
+/// Select protection from a unanimous classified incoming volley first
+/// (agreement is by protection varp, so Magic and Dragonfire agree), then
+/// from the compact saved-damage threat score.
 pub fn wanted_protect<'a>(
     threats: &ThreatSet,
     frame: &Frame<'_>,
@@ -85,7 +86,7 @@ fn wanted_protect_with<'a>(
     shield: bool,
     antifire: bool,
 ) -> Option<&'a PrayerFact> {
-    let mut incoming = None;
+    let mut incoming: Option<&PrayerFact> = None;
     let mut disagreement = false;
     for (spotanim, target) in projectiles {
         if !target.is_some_and(|target| {
@@ -101,21 +102,20 @@ fn wanted_protect_with<'a>(
         else {
             continue;
         };
+        let Some(fact) = select::protect_fact(tables, style) else {
+            continue;
+        };
         match incoming {
-            Some(previous) if previous != style => {
+            Some(previous) if previous.varp != fact.varp => {
                 disagreement = true;
                 break;
             }
             Some(_) => {}
-            None => incoming = Some(style),
+            None => incoming = Some(fact),
         }
     }
-    if !disagreement {
-        if let Some(style) = incoming {
-            if let Some(fact) = select::protect_fact(tables, style) {
-                return Some(fact);
-            }
-        }
+    if !disagreement && incoming.is_some() {
+        return incoming;
     }
     let protect_styles = [StyleObs::Melee, StyleObs::Ranged, StyleObs::Magic];
     let mut scores = [0i64; 3];

@@ -314,6 +314,13 @@ table ApiProgress {
 // Bounded cancellation reason for the retained host walk outcome.
 enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
 
+// One live projectile's combat-classification inputs. Only the spotanim and
+// decoded local-player target are needed by Hunt's borrowed protect frame.
+table CombatProjectile {
+  spotanim: int;
+  target_player_index: int = null;
+}
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -331,12 +338,6 @@ enum WalkCancelReason:ubyte { None = 0, UserInput = 1 }
 // Packed `banks` are keyframed and re-posted only when the NavWorld
 // identity changes, never merely because the stand list is rebuilt
 // unchanged.
-// One live projectile's combat-classification inputs. Only the spotanim and
-// decoded local-player target are needed by Hunt's borrowed protect frame.
-table CombatProjectile {
-  spotanim: int;
-  target_player_index: int = null;
-}
 table Snapshot {
   tick: ulong;
   here: Tile;

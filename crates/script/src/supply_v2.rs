@@ -12,6 +12,8 @@ thread_local! {
     /// weak cache, and released when the slot is reconfigured or the thread ends.
     static GATHERING: RefCell<Option<Arc<GatherCatalog>>> = const { RefCell::new(None) };
     static RANDOM_EVENT_CASKET_ID: Cell<Option<i32>> = const { Cell::new(None) };
+    #[cfg(feature = "load")]
+    static COMBAT: RefCell<Option<Result<Arc<crate::combat::tables::CombatTables>, crate::native::ActionError>>> = const { RefCell::new(None) };
 }
 /// The actionable explanation when selected content facts were not verified.
 pub(crate) const GAME_DATA_UNAVAILABLE: &str =
@@ -22,10 +24,28 @@ pub fn configure(data: Option<Arc<SelectedGameData>>) {
     GAME_DATA.with(|slot| *slot.borrow_mut() = data);
     GATHERING.with(|slot| slot.borrow_mut().take());
     RANDOM_EVENT_CASKET_ID.with(|slot| slot.set(casket_id));
+    #[cfg(feature = "load")]
+    COMBAT.with(|slot| slot.borrow_mut().take());
 }
 
 pub(crate) fn selected_data() -> Option<Arc<SelectedGameData>> {
     GAME_DATA.with(|slot| slot.borrow().clone())
+}
+
+/// Cache both the selected combat index and an actionable build failure until
+/// this isolate's selected content is reconfigured.
+#[cfg(feature = "load")]
+pub(crate) fn combat_tables() -> Result<Arc<crate::combat::tables::CombatTables>, crate::native::ActionError> {
+    COMBAT.with(|slot| {
+        let mut cached = slot.borrow_mut();
+        cached
+            .get_or_insert_with(|| {
+                selected_data()
+                    .ok_or_else(|| crate::native::ActionError::Unavailable(GAME_DATA_UNAVAILABLE.into()))
+                    .and_then(crate::combat::tables::CombatTables::build)
+            })
+            .clone()
+    })
 }
 
 pub(crate) fn random_event_casket_id() -> Option<i32> {
