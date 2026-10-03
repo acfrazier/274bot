@@ -117,9 +117,21 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 and `gang` are per-account settings, not bulk-copy settings; partner quest
 execution remains separate from this release slice.
 
+In the panel, edit these settings in **Script prefs**; in the TUI, use **Params**.
+For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
+The other released IDs are `sheep`, `runemysteries`, `romeojuliet`, and `imp`.
+
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
 already consumed them. An unread bank is unknown, not an empty bank.
+
+An unobserved quest-list family waits without compiling a Path or sending gameplay
+effects for up to 30 seconds of eligible active time. It admits automatically when
+the family arrives; otherwise it blocks with normal-login recovery instructions.
+Missing individual quest rows and unknown colours remain fail-closed. Excluding
+every selected quest is a blocked queue, not successful completion.
+The existing panel script section and TUI status show the native phase and the
+current wait or refusal reason, including how to resolve it before Stop/Start.
 
 For Paths that do not own their inventory, provisioning checks the pack before
 withdrawing or acquiring supplies, preserves tools when freshening the pack,
