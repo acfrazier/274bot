@@ -23,6 +23,7 @@ fn overview_offers_memory_relog_after_leaving_settings_until_login_or_queue() {
         desired_lowmem: false,
         relog_pending: false,
         connected: true,
+        login_applies_memory: true,
     });
     assert_eq!(app.on_key(ch('r')), AppAction::MemoryRelog("alice".into()));
     assert!(app.key_hints().contains("r Relog now"));

@@ -195,6 +195,8 @@ pub struct MemoryNotice {
     pub relog_pending: bool,
     /// Whether the slot currently has a connected session to relog.
     pub connected: bool,
+    /// The host's handshake gate: a dirty reconnect keeps the applied mode.
+    pub login_applies_memory: bool,
 }
 
 impl MemoryNotice {
@@ -222,6 +224,9 @@ impl MemoryNotice {
         if self.relog_pending {
             "Relog queued — login follows once logged out."
         } else if !self.connected {
+            if !self.login_applies_memory {
+                return "Connection dropped — Log in keeps the current mode. Relog after connecting to apply the queued mode.";
+            }
             "Applies at the next Log in."
         } else {
             "Applies at the next login. Relog now to apply it."
@@ -232,8 +237,13 @@ impl MemoryNotice {
     pub fn status_text(lowmem: bool, notice: Option<Self>) -> std::borrow::Cow<'static, str> {
         match notice {
             Some(n) if n.differs() => std::borrow::Cow::Owned(format!(
-                "{} (next login {})",
+                "{} ({} {})",
                 Self::mode_name(n.login_lowmem),
+                if !n.connected && !n.login_applies_memory {
+                    "queued"
+                } else {
+                    "next login"
+                },
                 Self::mode_name(n.desired_lowmem)
             )),
             Some(n) => std::borrow::Cow::Borrowed(Self::mode_name(n.login_lowmem)),
@@ -943,6 +953,11 @@ impl<Io> OperatorSession<Io> {
             desired_lowmem: self.memory_mode(name)?,
             relog_pending: self.mem_relog.contains(name) || self.mem_relog_login.contains(name),
             connected: status.connected,
+            login_applies_memory: self
+                .play
+                .as_ref()
+                .and_then(|play| play.arm(name))
+                .is_some_and(|arm| arm.login_applies_memory()),
         })
     }
 

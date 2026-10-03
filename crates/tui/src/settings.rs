@@ -562,6 +562,7 @@ mod tests {
             desired_lowmem: true,
             relog_pending: false,
             connected: true,
+            login_applies_memory: true,
         });
         assert_eq!(
             pane.on_key(key(KeyCode::Char('r'))),
@@ -591,6 +592,7 @@ mod tests {
             desired_lowmem: false,
             relog_pending: false,
             connected: true,
+            login_applies_memory: true,
         });
         let text = render(pane, 60, 14);
         assert!(
