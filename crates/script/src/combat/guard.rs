@@ -5,11 +5,11 @@ use super::frame::Frame;
 use super::schedule::{reached, InputEffect, OpKind, Schedule};
 use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
-use super::threats::{StyleObs, ThreatSet};
+use super::threats::ThreatSet;
 use crate::native::WalkRequest;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
-use api::snapshot::{ActorKind, SnapshotView};
+use api::snapshot::SnapshotView;
 use std::sync::{Arc, LazyLock};
 
 const LOWEST_PROTECT: i32 = 37;
@@ -55,6 +55,8 @@ pub struct WalkGuard {
     pending_com: i32,
     unprotectable: u8,
     flags: u8,
+    drink_points: u8,
+    drink_doses: u8,
 }
 
 const FLAG_FOLLOW: u8 = 1;
@@ -133,6 +135,8 @@ impl WalkGuard {
             pending_com: 0,
             unprotectable: 0,
             flags: 0,
+            drink_points: 0,
+            drink_doses: 0,
         })
     }
 
@@ -189,19 +193,9 @@ impl WalkGuard {
         } else {
             self.flags &= !FLAG_ON;
         }
-        let mut wanted =
+        self.settle_drink(&frame, tick, points);
+        let wanted =
             select::wanted_protect(&self.threats, &frame, &self.tables, tick, false, false)?;
-        if frame.projectiles.iter().any(|projectile| {
-            projectile.target.is_some_and(|target| {
-                target.kind == ActorKind::Player && target.index == frame.me()
-            })
-        }) {
-            if let Some(missiles) = select::protect_fact(&self.tables, StyleObs::Ranged) {
-                if base >= missiles.level {
-                    wanted = missiles;
-                }
-            }
-        }
         if base < wanted.level {
             let kind = protect_kind(&self.tables, wanted)?;
             let bit = kind_bit(kind);
@@ -301,9 +295,28 @@ impl WalkGuard {
             .find(|row| row.def.id == id)
             .and_then(|row| row.def.name.as_deref())
             .map(Arc::<str>::from)?;
+        let (points, _) = arbiter::stat(frame, PRAYER_STAT);
+        self.drink_points = u8::try_from(points.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX);
+        self.drink_doses = u8::try_from(
+            arbiter::doses(frame, &self.tables, PotionKind::Prayer).clamp(0, i16::from(u8::MAX)),
+        )
+        .unwrap_or(u8::MAX);
         self.schedule
             .admitted(OpKind::Drink, tick, 0, false, InputEffect::Standard);
         Some(GuardOp::Drink { name })
+    }
+
+    fn settle_drink(&mut self, frame: &Frame<'_>, tick: u16, points: i32) {
+        if !self.schedule.pending(OpKind::Drink) {
+            return;
+        }
+        let doses = arbiter::doses(frame, &self.tables, PotionKind::Prayer);
+        let observed = points > i32::from(self.drink_points) || doses < i16::from(self.drink_doses);
+        if observed {
+            self.schedule.settle(OpKind::Drink);
+        } else if self.schedule.ready(OpKind::Drink, tick) {
+            self.schedule.timeout(OpKind::Drink);
+        }
     }
 }
 
@@ -507,10 +520,10 @@ mod tests {
             self.refresh();
         }
 
-        fn launch_arrow(&mut self) {
+        fn launch_style(&mut self, spotanim: i32) {
             self.face_us();
             self.projectiles = vec![ProjectileView {
-                spotanim: 9,
+                spotanim,
                 level: 0,
                 src: self.npcs[0].tile,
                 target: Some(ActorTargetView {
@@ -521,6 +534,18 @@ mod tests {
                 t2: 30,
             }];
             self.refresh();
+        }
+
+        fn launch_arrow(&mut self) {
+            self.launch_style(9);
+        }
+
+        fn launch_spell(&mut self) {
+            self.launch_style(88);
+        }
+
+        fn magic(&self) -> &PrayerFact {
+            self.tables.prayer(PrayerRole::Protect, 0).unwrap()
         }
 
         fn missiles(&self) -> &PrayerFact {
@@ -715,5 +740,86 @@ mod tests {
         );
         assert!(guard.blocks_follow(12));
         assert!(!guard.blocks_follow(13));
+    }
+
+    #[test]
+    fn a_troll_rock_launch_selects_missiles() {
+        let mut scene = Scene::new(43);
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let row = data.npc_by_config("death_troll_thrower1").unwrap();
+        scene.npcs[0].r#type = Some(row.id as usize);
+        scene.npcs[0].name = row.display.clone();
+        scene.npcs[0].animation = 1142;
+        scene.npcs[0].tile = scene.local.player.actor.tile;
+        scene.npcs[0].network = scene.local.player.actor.tile;
+        scene.launch_style(276);
+        scene.projectiles[0].t1 = 364;
+        scene.projectiles[0].t2 = 381;
+        scene.refresh();
+        scene.snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 364,
+        });
+        let mut guard = scene.begin().unwrap();
+        let op = guard.tick(&scene.view());
+        assert_eq!(
+            op,
+            Some(GuardOp::IfButton {
+                component: scene.missiles().button_com
+            }),
+            "a classified rock projectile must select Missiles, got {op:?}"
+        );
+    }
+
+    #[test]
+    fn incoming_projectile_does_not_override_selected_protect() {
+        let mut scene = Scene::new(43);
+        scene.launch_spell();
+        let mut guard = scene.begin().unwrap();
+        let op = guard.tick(&scene.view());
+        let magic = scene.magic();
+        let missiles = scene.missiles();
+        assert_eq!(
+            op,
+            Some(GuardOp::IfButton {
+                component: magic.button_com
+            }),
+            "a magic projectile must keep the shared selector's Protect from Magic, got {op:?}"
+        );
+        assert_ne!(
+            op,
+            Some(GuardOp::IfButton {
+                component: missiles.button_com
+            }),
+            "an incoming projectile must not override the selected style with Missiles"
+        );
+    }
+
+    #[test]
+    fn first_dose_does_not_leave_drink_pending() {
+        let mut scene = Scene::new(43);
+        scene.stats[5].effective = 0;
+        scene.add_prayer_potion();
+        scene.launch_arrow();
+        let mut guard = scene.begin().unwrap();
+        let first = guard.tick(&scene.view_at(10));
+        assert!(
+            matches!(first, Some(GuardOp::Drink { .. })),
+            "got {first:?}"
+        );
+        assert_eq!(
+            guard.tick(&scene.view_at(11)),
+            Some(GuardOp::Locked { until: 13 })
+        );
+        let _ = guard.tick(&scene.view_at(12));
+        let second = guard.tick(&scene.view_at(13));
+        assert!(
+            matches!(second, Some(GuardOp::Drink { .. })),
+            "a later dose on the same route must still be admitted after the first is refused, got {second:?}"
+        );
     }
 }
