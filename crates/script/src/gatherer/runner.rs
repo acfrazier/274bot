@@ -3,7 +3,9 @@ use super::card::Prepared;
 use super::drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
 use super::gather::{GatherEnd, GatherResult, GatherRun, GatherRunArgs, DEFAULT_STALL_TICKS};
 use super::oneop::{OneOp, OneOpArgs};
-use super::select::{select, AvoidedTile, PlacementClass, SelectedTarget, Selection, TargetPlan};
+use super::select::{
+    select, AvoidedTile, FishingSurvey, PlacementClass, SelectedTarget, Selection, TargetPlan,
+};
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
 use super::supply::{self, SupplyPlan, SupplyPlanResult};
@@ -111,6 +113,13 @@ enum TripStep {
     Return,
 }
 
+/// Cold session collections share one allocation to retain the inline budget.
+#[derive(Default)]
+struct GatherScratch {
+    fishing: FishingSurvey,
+    withdrawals: Option<Arc<[bank::Withdrawal]>>,
+}
+
 pub struct Gatherer {
     run: RunKey,
     config: Arc<PreparedConfig>,
@@ -121,13 +130,13 @@ pub struct Gatherer {
     active: Active,
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
+    scratch: Box<GatherScratch>,
     wait_until: Option<u64>,
     widen: WidenCursor,
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
     selected_bank: Option<SelectedBank>,
-    withdrawals: Option<Arc<[bank::Withdrawal]>>,
     supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
@@ -177,13 +186,13 @@ impl Gatherer {
                 worn: false,
             },
             avoid: [AvoidedTile::EMPTY; MAX_AVOID],
+            scratch: Box::default(),
             wait_until: None,
             widen: WidenCursor::default(),
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
             selected_bank: None,
-            withdrawals: None,
             supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
@@ -244,7 +253,7 @@ impl Gatherer {
         self.target = None;
         self.wait_until = None;
         self.selected_bank = None;
-        self.withdrawals = None;
+        self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
@@ -344,8 +353,16 @@ impl Gatherer {
                 }
             }
             TripStep::Deposit => {
+                let snapshot = tick.cx.snapshot();
+                let Some(inventory) = snapshot.inventory() else {
+                    return;
+                };
                 let args = bank::DepositArgs {
-                    products: Arc::clone(&self.prepared.products),
+                    products: supply::bank_deposit_ids(
+                        &self.prepared,
+                        self.tool.id,
+                        inventory.value,
+                    ),
                     keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
                 };
                 match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
@@ -354,7 +371,7 @@ impl Gatherer {
                 }
             }
             TripStep::Withdraw => {
-                if self.withdrawals.is_none() {
+                if self.scratch.withdrawals.is_none() {
                     let snapshot = tick.cx.snapshot();
                     let (Some(stats), Some(inventory), Some(equipment)) =
                         (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
@@ -375,13 +392,16 @@ impl Gatherer {
                         }
                         SupplyPlanResult::Ready(plan) => {
                             self.supply_missing = plan.missing().cloned();
-                            self.withdrawals = Some(plan.to_withdrawals());
+                            self.scratch.withdrawals = Some(plan.to_withdrawals());
                         }
                     }
                 }
                 let args = bank::WithdrawArgs {
                     withdrawals: Arc::clone(
-                        self.withdrawals.as_ref().expect("latched supply plan"),
+                        self.scratch
+                            .withdrawals
+                            .as_ref()
+                            .expect("latched supply plan"),
                     ),
                 };
                 match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
@@ -398,6 +418,7 @@ impl Gatherer {
                 // for its equipment settlement before this return boundary.
                 if !self.needs_validate {
                     self.advance_trip(TripStep::Return);
+                    self.set_event("returning to work area");
                 }
             }
             TripStep::Return => {
@@ -450,7 +471,7 @@ impl Gatherer {
     fn apply_pending(&mut self, disposal_due: bool) -> Option<u64> {
         // A hold revokes the machine, not its full-batch reserve target.
         // Keep both the plan and its configuration stable until settlement.
-        if self.withdrawals.is_some() {
+        if self.scratch.withdrawals.is_some() {
             return None;
         }
         let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
@@ -903,6 +924,7 @@ impl Gatherer {
                 self.last_gameplay_tick = tick.cx.evidence().tick;
             }
             if gained != 0 || xp != 0 {
+                self.scratch.fishing.progress();
                 self.yielded = self.yielded.saturating_add(gained);
                 self.retained.yielded = self.yielded;
                 self.xp = self.xp.saturating_add(xp);
@@ -1213,7 +1235,7 @@ impl Gatherer {
                 Poll::Pending => self.active = Active::Withdraw(handle),
                 Poll::Ready(Ok(true)) => {
                     self.fence.seal();
-                    self.withdrawals = None;
+                    self.scratch.withdrawals = None;
                     if let Some(item) = self.supply_missing.take() {
                         self.fail("supply-missing", format!("supply-missing:{item}"), true);
                         return;
@@ -1378,10 +1400,11 @@ impl Gatherer {
         let Some(npcs) = snapshot.npcs() else {
             return;
         };
+        let skill_stat = self.skill_stat(snapshot.stats());
         let selected = select(
             &self.prepared.catalog,
             &self.prepared.methods,
-            self.settings(),
+            &self.prepared.settings,
             area,
             &self.avoid,
             super::select::SelectionObservation {
@@ -1390,7 +1413,8 @@ impl Gatherer {
                 npcs: npcs.value,
                 here: here.value,
                 now: tick.cx.evidence().tick,
-                skill_stat: self.skill_stat(snapshot.stats()),
+                skill_stat,
+                fishing: &mut self.scratch.fishing,
             },
         );
         self.zone_gated = selected.zone_gated;
