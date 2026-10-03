@@ -1667,9 +1667,12 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         };
     if let Some((owner, end)) = bot.native_end.take() {
         let request_id = owner.request_id().get();
-        let detail = (bot.walk_outcome_request_id == request_id)
-            .then(|| bot.walk_outcome_detail.clone())
-            .flatten();
+        let detail =
+            if bot.walk_outcome_request_id == 0 || bot.walk_outcome_request_id == request_id {
+                bot.walk_outcome_detail.take()
+            } else {
+                None
+            };
         slot.complete_native_walk(&owner, receipt(&owner, end, None, detail));
         if bot.walk_outcome_request_id == request_id {
             bot.walk_outcome_detail = None;

@@ -9,6 +9,7 @@ use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{ActorKind, GameSnapshot, WorldTile};
 use host::{FrameBuf, Pump};
 use scenario::{Proof, RunnerStatus, Scenario, ScenarioRunner, Step, StepKind, Wait};
+use script::combat::HitOnset;
 use script::quester::compile::{compile_path, CompiledPath};
 use script::quester::runner::Quester;
 use serde_json::json;
@@ -279,8 +280,35 @@ fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
-fn npc_queue_ticks(distance: i32) -> i32 {
-    (32 + 5 * distance) / 30
+#[derive(Clone, Copy)]
+struct LaunchRecord {
+    tick: u32,
+    src: WorldTile,
+    here: WorldTile,
+    distance: i32,
+    t1: i32,
+    t2: i32,
+    impact_tick: Option<u32>,
+    observed_delay: Option<u32>,
+}
+
+impl LaunchRecord {
+    fn identity(self) -> (i32, i32, i32, i32, i32) {
+        (self.src.x, self.src.z, self.src.level, self.t1, self.t2)
+    }
+
+    fn json(self) -> serde_json::Value {
+        json!({
+            "tick": self.tick,
+            "src": [self.src.x, self.src.z, self.src.level],
+            "here": [self.here.x, self.here.z, self.here.level],
+            "distance": self.distance,
+            "t1": self.t1,
+            "t2": self.t2,
+            "impact_tick": self.impact_tick,
+            "observed_delay": self.observed_delay,
+        })
+    }
 }
 
 fn w1_ready(
@@ -318,8 +346,10 @@ struct LiveState {
     attacker_staged: bool,
     prayers_off_after_arrival: bool,
     off_tick: Option<u32>,
-    launches: Vec<serde_json::Value>,
-    seen_launches: std::collections::HashSet<(u32, i32, i32, i32, i32)>,
+    launches: Vec<LaunchRecord>,
+    seen_launches: std::collections::HashSet<(i32, i32, i32, i32, i32)>,
+    hit_onset: HitOnset,
+    second_attacker_staged: bool,
 }
 
 impl LiveState {
@@ -381,6 +411,19 @@ impl LiveState {
         {
             self.attacker_staged = true;
         }
+        if self.attacker_staged
+            && !self.second_attacker_staged
+            && self
+                .launches
+                .first()
+                .is_some_and(|launch| self.snapshot.tick() >= launch.tick.saturating_add(9))
+            && matches!(
+                api::interact::cheat(client, "npcadd death_troll_thrower2"),
+                client::CheatSend::Sent
+            )
+        {
+            self.second_attacker_staged = true;
+        }
         if first_launch_tick(&self.snapshot) && self.launch_tick.is_none() {
             self.launch_tick = Some(self.snapshot.tick());
         }
@@ -397,6 +440,7 @@ impl LiveState {
             self.prayers_off_after_arrival = true;
         }
         let me = self.snapshot.self_slot() as usize;
+        let tick = self.snapshot.tick();
         if let Some((x, z, level)) = self.last_tile {
             let here = WorldTile { x, z, level };
             for projectile in self.snapshot.projectiles() {
@@ -407,26 +451,37 @@ impl LiveState {
                     continue;
                 }
                 let key = (
-                    self.snapshot.tick(),
                     projectile.src.x,
                     projectile.src.z,
+                    projectile.src.level,
                     projectile.t1,
                     projectile.t2,
                 );
                 if !self.seen_launches.insert(key) {
                     continue;
                 }
-                let distance = chebyshev(projectile.src, here);
-                self.launches.push(json!({
-                    "tick": self.snapshot.tick(),
-                    "src": [projectile.src.x, projectile.src.z, projectile.src.level],
-                    "here": [here.x, here.z, here.level],
-                    "distance": distance,
-                    "t1": projectile.t1,
-                    "t2": projectile.t2,
-                    "visual_cycles": projectile.t2.saturating_sub(projectile.t1),
-                    "queue_ticks": npc_queue_ticks(distance),
-                }));
+                self.launches.push(LaunchRecord {
+                    tick,
+                    src: projectile.src,
+                    here,
+                    distance: chebyshev(projectile.src, here),
+                    t1: projectile.t1,
+                    t2: projectile.t2,
+                    impact_tick: None,
+                    observed_delay: None,
+                });
+            }
+        }
+        if let Some(hitmarks) = self.snapshot.hitmarks() {
+            for _ in self.hit_onset.observe(&hitmarks.marks, hitmarks.loop_cycle) {
+                if let Some(launch) = self
+                    .launches
+                    .iter_mut()
+                    .find(|launch| launch.impact_tick.is_none() && launch.tick <= tick)
+                {
+                    launch.impact_tick = Some(tick);
+                    launch.observed_delay = Some(tick.saturating_sub(launch.tick));
+                }
             }
         }
         if matches!(
@@ -550,6 +605,8 @@ fn live_walk_guard_w1_protected_crossing() {
         off_tick: None,
         launches: Vec::new(),
         seen_launches: std::collections::HashSet::new(),
+        hit_onset: HitOnset::new(),
+        second_attacker_staged: false,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -595,11 +652,16 @@ fn live_walk_guard_w1_protected_crossing() {
         let prayers_off = snapshot.prayers_off_after_arrival;
         let launch_tick = snapshot.launch_tick;
         let protect_tick = snapshot.protect_tick;
-        let launch_distances: std::collections::BTreeSet<i64> = snapshot
+        let measured: Vec<&LaunchRecord> = snapshot
             .launches
             .iter()
-            .filter_map(|launch| launch["distance"].as_i64())
+            .filter(|launch| launch.observed_delay.is_some())
             .collect();
+        let distinct_projectiles: std::collections::HashSet<(i32, i32, i32, i32, i32)> =
+            measured.iter().map(|launch| launch.identity()).collect();
+        let launch_distances: std::collections::BTreeSet<i32> =
+            measured.iter().map(|launch| launch.distance).collect();
+        let queue_measured = distinct_projectiles.len() >= 2 && launch_distances.len() >= 2;
         drop(snapshot);
         let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reason) = capture_snapshot.invalid_reason.clone() {
@@ -611,7 +673,8 @@ fn live_walk_guard_w1_protected_crossing() {
         }) {
             break ("FAIL", Some("W1 emitted Attack".into()));
         }
-        if w1_ready(&capture_snapshot, launched, protected, at_dest, prayers_off) {
+        if w1_ready(&capture_snapshot, launched, protected, at_dest, prayers_off) && queue_measured
+        {
             if let (Some(launch), Some(protect)) = (launch_tick, protect_tick) {
                 let delta = protect.abs_diff(launch);
                 if delta > 2 {
@@ -631,14 +694,6 @@ fn live_walk_guard_w1_protected_crossing() {
                 break (
                     "FAIL",
                     Some("W1 receipt is missing walk-guard clicks".into()),
-                );
-            }
-            if launch_distances.len() < 2 {
-                break (
-                    "FAIL",
-                    Some(format!(
-                        "W1 needs launch-distance evidence at two distances, got {launch_distances:?}"
-                    )),
                 );
             }
             break ("PASS", None);
@@ -686,7 +741,13 @@ fn live_walk_guard_w1_protected_crossing() {
         "attacker_staged": snapshot.attacker_staged,
         "prayer": prayer,
         "runner": format!("{:?}", snapshot.runner.status()),
-        "launches": snapshot.launches.clone(),
+        "launches": snapshot
+            .launches
+            .iter()
+            .copied()
+            .map(LaunchRecord::json)
+            .collect::<Vec<_>>(),
+        "second_attacker_staged": snapshot.second_attacker_staged,
         "guard_clicks": capture_snapshot
             .actions
             .iter()

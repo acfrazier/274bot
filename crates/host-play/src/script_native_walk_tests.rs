@@ -553,10 +553,22 @@ fn unprotectable_is_delivered_to_the_walk_owner() {
     seed_missile_launch(&mut rig.snapshot);
     rig.step();
     rig.observe(2);
+    let receipt = rig
+        .shared
+        .lock()
+        .result
+        .clone()
+        .expect("Unprotectable must complete the walk")
+        .expect("Unprotectable is a successful host terminal");
     assert_eq!(
-        rig.end(),
-        Some(Ok(WalkEnd::Unprotectable)),
+        receipt.end,
+        WalkEnd::Unprotectable,
         "the host must deliver Unprotectable to the walk owner"
+    );
+    assert_eq!(
+        receipt.detail.as_deref(),
+        Some("missiles"),
+        "Unprotectable must keep the wanted protection style on the receipt"
     );
     assert!(
         rig.driver.if_button_components.is_empty(),
