@@ -533,18 +533,30 @@ struct CombatRun {
     walk_outcome_seq_at_begin: u64,
 }
 
+/// Whether walk outcome `seq` was cancelled by user input. The cancel reason
+/// lives in the isolate's observed scene, which exists only with `load`.
+#[cfg(feature = "load")]
+fn user_walk_cancelled(seq: u64) -> bool {
+    crate::observed::with(|scene| {
+        let latest = scene.latest();
+        latest.walk_outcome_seq() == Some(seq)
+            && latest.walk_outcome_cancel_reason()
+                == Some(crate::isolate_fb::WalkCancelReason::UserInput)
+    })
+}
+
+#[cfg(not(feature = "load"))]
+fn user_walk_cancelled(_seq: u64) -> bool {
+    false
+}
+
 impl CombatRun {
     fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
         let current_seq = cx.tick.cx.observed_walk_outcome_seq;
         if current_seq == self.walk_outcome_seq_at_begin {
             return false;
         }
-        crate::observed::with(|scene| {
-            let latest = scene.latest();
-            latest.walk_outcome_seq() == Some(current_seq)
-                && latest.walk_outcome_cancel_reason()
-                    == Some(crate::isolate_fb::WalkCancelReason::UserInput)
-        })
+        user_walk_cancelled(current_seq)
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
