@@ -98,8 +98,8 @@ function namesOf(list) {
 }
 
 const steelIdx = AXES.findIndex((a) => a.name === 'Steel axe');
-globalThis.__axes = AXES.map((a) => ({ name: a.name, id: a.id }));
-globalThis.__picks = PICKAXES.map((a) => ({ name: a.name, id: a.id }));
+globalThis.__axes = AXES.map(({ name, level, attackLevel }) => ({ name, level, attackLevel }));
+globalThis.__picks = PICKAXES.map(({ name, level, attackLevel }) => ({ name, level, attackLevel }));
 globalThis.__steelOrBetter = steelIdx < 0 ? [] : namesOf(AXES).filter((_, i) => i <= steelIdx);
 globalThis.__belowSteel = steelIdx < 0 ? namesOf(AXES) : namesOf(AXES).filter((_, i) => i > steelIdx);
 
@@ -177,7 +177,7 @@ fn tick(iso: &LoadIsolate, n: u64) {
 }
 
 #[test]
-fn posted_axes_are_best_first_with_real_ids_including_black() {
+fn posted_tool_tiers_are_best_first_and_use_native_gates() {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(SRC.to_string(), LoadShape::CompatClass, vec![], data)
@@ -186,25 +186,25 @@ fn posted_axes_are_best_first_with_real_ids_including_black() {
     assert_eq!(
         axes,
         serde_json::json!([
-            {"name": "Rune axe", "id": 1359},
-            {"name": "Adamant axe", "id": 1357},
-            {"name": "Mithril axe", "id": 1355},
-            {"name": "Black axe", "id": 1361},
-            {"name": "Steel axe", "id": 1353},
-            {"name": "Iron axe", "id": 1349},
-            {"name": "Bronze axe", "id": 1351},
+            {"name": "Rune axe", "level": 0, "attackLevel": 40},
+            {"name": "Adamant axe", "level": 0, "attackLevel": 30},
+            {"name": "Mithril axe", "level": 0, "attackLevel": 20},
+            {"name": "Black axe", "level": 0, "attackLevel": 10},
+            {"name": "Steel axe", "level": 0, "attackLevel": 5},
+            {"name": "Iron axe", "level": 0, "attackLevel": 1},
+            {"name": "Bronze axe", "level": 0},
         ])
     );
     let picks = iso.probe("__picks").unwrap();
     assert_eq!(
         picks,
         serde_json::json!([
-            {"name": "Rune pickaxe", "id": 1275},
-            {"name": "Adamant pickaxe", "id": 1271},
-            {"name": "Mithril pickaxe", "id": 1273},
-            {"name": "Steel pickaxe", "id": 1269},
-            {"name": "Iron pickaxe", "id": 1267},
-            {"name": "Bronze pickaxe", "id": 1265},
+            {"name": "Rune pickaxe", "level": 41, "attackLevel": 40},
+            {"name": "Adamant pickaxe", "level": 31, "attackLevel": 30},
+            {"name": "Mithril pickaxe", "level": 21, "attackLevel": 20},
+            {"name": "Steel pickaxe", "level": 6, "attackLevel": 5},
+            {"name": "Iron pickaxe", "level": 0, "attackLevel": 1},
+            {"name": "Bronze pickaxe", "level": 0},
         ])
     );
     assert_eq!(
