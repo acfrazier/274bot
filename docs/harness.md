@@ -91,6 +91,26 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+### Gatherer target-switch checks
+
+`gatherer_live::gatherer_mine_tier_power` supports a single selected ore through
+`GATHERER_MINE_RESOURCES` and an explicit `GATHERER_MINE_TILE=x,z,level`.
+At Varrock East, `(3286,3365,0)` with `tin` exercises one-step switches;
+the same origin with `copper` exercises targets operable from one stand.
+The fixture requires real yield, two full disposal cycles, and renewed gathering.
+It seeds one uncut sapphire before Start and requires observed disposal of that
+gem. Naturally mined gems are reported as observations (`not_exercised` if none);
+an incidental random drop is never required to pass. The fixed deadline remains.
+
+The Gatherer runner reselects on the same observation that completes a depleted
+or missing target, or a resource-approach walk. It still validates supplies and
+equipment before the next action. An already usable loc stand permits one gather
+click; targets requiring movement retain native navigation and its approach and
+danger-zone rules. Bank, recovery, disposal, refusal and failed-walk settlement
+remain fenced to a later tick. If no replacement target is available, terminal
+unavailability is confirmed on the next observation so a delayed yield packet is
+accounted before the runner blocks.
+
 ## JS API v2 GatherQuest sample checks
 
 The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
