@@ -878,6 +878,8 @@ pub struct Session {
     /// The log section's filtered view and controls over the shared
     /// `frontend_core::log` store.
     pub log_pane: crate::log_pane::LogPane,
+    /// Whether the dockable Log window is open; this is session-local.
+    pub log_window_open: bool,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt
     /// (zeroed when cleared or dropped).
     pub pass_scratch: Secret,
@@ -1290,7 +1292,11 @@ impl Session {
     pub fn with_instance(_instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
-        let ui = crate::ui_state::load();
+        let mut ui = crate::ui_state::load();
+        let log_window_open = ui.take_legacy_log_detached();
+        if log_window_open {
+            crate::ui_state::save(&ui);
+        }
         let capture_pref = ui.capture;
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
@@ -1319,6 +1325,7 @@ impl Session {
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
             log_pane: crate::log_pane::LogPane::default(),
+            log_window_open,
             pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
             cred_user: String::new(),
