@@ -6,8 +6,10 @@ use super::oneop::{OneOp, OneOpArgs};
 use super::select::{select, AvoidedTile, PlacementClass, SelectedTarget, Selection, TargetPlan};
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
+use super::supply::{self, SupplyPlan, SupplyPlanResult};
 use super::widen::{remember_group, SearchExclusions, SearchResult, TriedGroup, WidenCursor};
 use super::{GatherRetained, RecoveryState};
+use crate::bank::{self, PickKind, SelectedBank};
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
@@ -15,8 +17,8 @@ use crate::native::{
     WalkRequest,
 };
 use crate::FindOptions;
-use api::gather_methods::{known_rows, ToolUse};
-use api::selected::{Knowledge, RunKey, Truth};
+use api::gather_methods::known_rows;
+use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
 use std::sync::Arc;
 use std::task::Poll;
@@ -78,6 +80,11 @@ enum Active {
     Drop(ActionHandle<DropBatch>),
     Walk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
+    Select(ActionHandle<bank::Select>),
+    Open(ActionHandle<bank::Open>),
+    Deposit(ActionHandle<bank::Deposit>),
+    Withdraw(ActionHandle<bank::Withdraw>),
+    Close(ActionHandle<bank::Close>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +92,20 @@ enum Validation {
     Ready,
     Pending,
     Wear(ToolState),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum TripStep {
+    #[default]
+    Idle,
+    Select,
+    Access,
+    Open,
+    Deposit,
+    Withdraw,
+    Close,
+    Validate,
+    Return,
 }
 
 pub struct Gatherer {
@@ -101,6 +122,12 @@ pub struct Gatherer {
     widen: WidenCursor,
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
+    trip: TripStep,
+    selected_bank: Option<SelectedBank>,
+    withdrawals: Option<Arc<[bank::Withdrawal]>>,
+    supply_missing: Option<Arc<str>>,
+    bank_label: Arc<str>,
+    trips: u16,
     last_gameplay_tick: u64,
     last_paint_tick: u64,
     fence: TickPacketFence,
@@ -146,6 +173,12 @@ impl Gatherer {
             widen: WidenCursor::default(),
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
+            trip: TripStep::Idle,
+            selected_bank: None,
+            withdrawals: None,
+            supply_missing: None,
+            bank_label: Arc::from("—"),
+            trips: 0,
             last_gameplay_tick: 0,
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
@@ -169,6 +202,195 @@ impl Gatherer {
 
     fn settings(&self) -> &GathererSettings {
         &self.prepared.settings
+    }
+
+    fn advance_trip(&mut self, step: TripStep) {
+        self.trip = step;
+        if let Some(selected) = &self.selected_bank {
+            if let Some(bank) = self
+                .prepared
+                .banks
+                .banks()
+                .get(usize::from(selected.bank_index))
+            {
+                self.bank_label = Arc::from(format!(
+                    "{}; {:?}; access:{},{},{}; {:?}",
+                    bank.name,
+                    selected.kind,
+                    selected.access_tile.x,
+                    selected.access_tile.z,
+                    selected.access_tile.level,
+                    step
+                ));
+            }
+        }
+        self.dirty = true;
+    }
+
+    fn start_trip(&mut self) {
+        self.target = None;
+        self.wait_until = None;
+        self.selected_bank = None;
+        self.withdrawals = None;
+        self.supply_missing = None;
+        self.advance_trip(TripStep::Select);
+        self.set_event("bank trip due");
+    }
+
+    fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
+        if self.settings().disposition.eq_ignore_ascii_case("Bank") {
+            self.start_trip();
+        } else {
+            self.start_drop(tick);
+        }
+    }
+
+    fn trip_walk(&mut self, target: WorldTile, radius: u16, tick: &mut NativeTick<'_>) {
+        let request = WalkRequest {
+            target,
+            loc_id: None,
+            radius,
+            options: FindOptions {
+                allow_teleports: self.settings().allow_teleports,
+                allow_wilderness: self.settings().allow_wilderness,
+                allow_bank_fetch: false,
+            },
+            required_after: tick.cx.evidence(),
+            evidence: None,
+            cross: Box::default(),
+        };
+        match tick.actions.begin::<Walk>(request, &mut tick.cx) {
+            Ok(handle) => self.active = Active::Walk(handle),
+            Err(error) => self.action_failure(error),
+        }
+    }
+
+    fn begin_trip(&mut self, tick: &mut NativeTick<'_>) {
+        if matches!(self.trip, TripStep::Deposit | TripStep::Withdraw)
+            && tick
+                .cx
+                .snapshot()
+                .bank_session()
+                .is_some_and(|session| !session.value.open)
+        {
+            // A hold may dismiss the modal without consuming the trip step.
+            self.advance_trip(TripStep::Open);
+            return;
+        }
+        match self.trip {
+            TripStep::Idle => {}
+            TripStep::Select => {
+                let Some(here) = tick.cx.snapshot().here() else {
+                    return;
+                };
+                let args = bank::SelectArgs {
+                    facts: Arc::clone(&self.prepared.banks),
+                    from: here.value,
+                    preferences: self.settings().bank_preferences(),
+                    allow_wilderness: self.settings().allow_wilderness,
+                    explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
+                        .then(|| Arc::from(self.settings().bank.as_str())),
+                };
+                match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
+                    Ok(handle) => self.active = Active::Select(handle),
+                    Err(error) => self.action_failure(error),
+                }
+            }
+            TripStep::Access => {
+                if let Some(selected) = &self.selected_bank {
+                    self.trip_walk(selected.access_tile, 1, tick);
+                }
+            }
+            TripStep::Open => {
+                let Some(selected) = &self.selected_bank else {
+                    return;
+                };
+                let Some(access) = &selected.access else {
+                    self.fail(
+                        "bank-unavailable",
+                        format!(
+                            "bank-unavailable:{}: no packed stand or declared NPC access",
+                            self.prepared
+                                .banks
+                                .banks()
+                                .get(usize::from(selected.bank_index))
+                                .map_or(self.settings().bank.as_str(), |bank| bank.name)
+                        ),
+                        true,
+                    );
+                    return;
+                };
+                let args = bank::OpenArgs {
+                    access: Arc::clone(access),
+                };
+                match tick.actions.begin::<bank::Open>(args, &mut tick.cx) {
+                    Ok(handle) => self.active = Active::Open(handle),
+                    Err(error) => self.action_failure(error),
+                }
+            }
+            TripStep::Deposit => {
+                let args = bank::DepositArgs {
+                    products: Arc::clone(&self.prepared.products),
+                    keep: Arc::from(supply::protected_ids(&self.prepared, self.tool.id).as_slice()),
+                };
+                match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
+                    Ok(handle) => self.active = Active::Deposit(handle),
+                    Err(error) => self.action_failure(error),
+                }
+            }
+            TripStep::Withdraw => {
+                if self.withdrawals.is_none() {
+                    let snapshot = tick.cx.snapshot();
+                    let (Some(stats), Some(inventory), Some(equipment)) =
+                        (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
+                    else {
+                        return;
+                    };
+                    match SupplyPlan::from_loaded_bank(
+                        &self.prepared,
+                        stats.value,
+                        inventory.value,
+                        equipment.value,
+                        snapshot.bank().map(|bank| bank.value),
+                    ) {
+                        SupplyPlanResult::Pending => return,
+                        SupplyPlanResult::Missing(item) => {
+                            self.fail("supply-missing", format!("supply-missing:{item}"), true);
+                            return;
+                        }
+                        SupplyPlanResult::Ready(plan) => {
+                            self.supply_missing = plan.missing().cloned();
+                            self.withdrawals = Some(plan.to_withdrawals());
+                        }
+                    }
+                }
+                let args = bank::WithdrawArgs {
+                    withdrawals: Arc::clone(
+                        self.withdrawals.as_ref().expect("latched supply plan"),
+                    ),
+                };
+                match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
+                    Ok(handle) => self.active = Active::Withdraw(handle),
+                    Err(error) => self.action_failure(error),
+                }
+            }
+            TripStep::Close => match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+                Ok(handle) => self.active = Active::Close(handle),
+                Err(error) => self.action_failure(error),
+            },
+            TripStep::Validate => {
+                // V-resume derives the observed tool and, if possible, waits
+                // for its equipment settlement before this return boundary.
+                if !self.needs_validate {
+                    self.advance_trip(TripStep::Return);
+                }
+            }
+            TripStep::Return => {
+                if let Some(area) = self.area {
+                    self.trip_walk(area.anchor, area.radius, tick);
+                }
+            }
+        }
     }
 
     fn fail(&mut self, code: &'static str, message: impl Into<Arc<str>>, retryable: bool) {
@@ -210,7 +432,30 @@ impl Gatherer {
         latched
     }
 
-    fn apply_pending(&mut self) -> Option<u64> {
+    fn apply_pending(&mut self, disposal_due: bool) -> Option<u64> {
+        // A hold revokes the machine, not its full-batch reserve target.
+        // Keep both the plan and its configuration stable until settlement.
+        if self.withdrawals.is_some() {
+            return None;
+        }
+        let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
+        let current = self.settings();
+        let changed_bank = current.bank != next.settings.bank
+            || current.use_mage_bank != next.settings.use_mage_bank
+            || current.use_zanaris_bank != next.settings.use_zanaris_bank;
+        // A bag is atomic: a disposition+bank edit is admitted together at
+        // the disposal boundary that starts (or disables) the next bank trip.
+        let next_disposal = disposal_due
+            && self.trip == TripStep::Idle
+            && current.disposition != next.settings.disposition;
+        if changed_bank && self.trip != TripStep::Select && !next_disposal {
+            return None;
+        }
+        if current.disposition != next.settings.disposition
+            && (!disposal_due || self.trip != TripStep::Idle)
+        {
+            return None;
+        }
         let config = self.pending.take()?;
         let Some(prepared) = config.get::<Arc<Prepared>>() else {
             self.fail(
@@ -376,40 +621,34 @@ impl Gatherer {
             return Validation::Pending;
         }
 
-        for &index in self.prepared.methods.iter() {
-            for consume in known_rows(&self.prepared.catalog.methods()[index].consumes) {
-                if !inventory
-                    .value
-                    .iter()
-                    .any(|row| row.def.id == consume.item && row.count > 0)
-                {
-                    let name = self
-                        .prepared
-                        .catalog
-                        .alias(api::selected::EntityId::Obj(consume.item))
-                        .unwrap_or("bait");
-                    self.fail("supply-missing", format!("supply-missing:{name}"), true);
-                    return Validation::Pending;
-                }
-            }
-        }
-        let Some(tool) = self.derive_tool(skill, skill_stat, inventory.value, equipment.value)
-        else {
-            self.fail(
-                "tool-missing",
-                "no usable selected gathering tool is held",
-                true,
-            );
-            return Validation::Pending;
-        };
-        self.tool = tool;
         self.area = Some(area);
+        let tool = self.derive_tool(stats.value, inventory.value, equipment.value);
+        self.tool = tool.unwrap_or(ToolState {
+            id: -1,
+            worn: false,
+        });
         self.dirty = true;
-        if skill != Skill::Fishing
-            && !tool.worn
-            && self.can_wield(tool, inventory.value, stats.value)
-        {
-            return Validation::Wear(tool);
+        // Resume revalidates the area and account facts, not the retained
+        // trip's supply/equipment boundary. Never equip inside an open bank.
+        if self.trip != TripStep::Idle && self.trip != TripStep::Validate {
+            return Validation::Ready;
+        }
+        if SupplyPlan::due(
+            &self.prepared,
+            stats.value,
+            inventory.value,
+            equipment.value,
+        ) {
+            self.start_trip();
+            return Validation::Ready;
+        }
+        if let Some(tool) = tool {
+            if skill != Skill::Fishing
+                && !tool.worn
+                && self.can_wield(tool, inventory.value, stats.value)
+            {
+                return Validation::Wear(tool);
+            }
         }
         Validation::Ready
     }
@@ -420,58 +659,18 @@ impl Gatherer {
 
     fn derive_tool(
         &self,
-        skill: Skill,
-        skill_stat: &StatView,
+        stats: &[StatView],
         inventory: &[ItemView],
         equipment: &[ItemView],
     ) -> Option<ToolState> {
-        let mut best: Option<(ToolState, i32)> = None;
-        for &index in self.prepared.methods.iter() {
-            let Some(method) = self.prepared.catalog.methods().get(index) else {
-                continue;
-            };
-            let Knowledge::Known(tools) = &method.tools else {
-                continue;
-            };
-            for tool in tools.iter() {
-                if !tool_gate_met(tool, skill, skill_stat) {
-                    continue;
-                }
-                let worn = equipment.iter().any(|row| row.def.id == tool.item);
-                let held = inventory.iter().any(|row| row.def.id == tool.item);
-                if !worn && !held {
-                    continue;
-                }
-                let level = tool.use_gate.map_or(0, |gate| i32::from(gate.level));
-                let state = ToolState {
-                    id: tool.item,
-                    worn,
-                };
-                if best.as_ref().is_none_or(|(_, current)| level > *current) {
-                    best = Some((state, level));
-                }
-            }
-        }
-        best.map(|(tool, _)| tool)
+        supply::best_tool(&self.prepared, stats, inventory, equipment).map(|tool| ToolState {
+            id: tool.id,
+            worn: tool.worn,
+        })
     }
 
     fn can_wield(&self, tool: ToolState, inventory: &[ItemView], stats: &[StatView]) -> bool {
-        if tool.worn || !inventory.iter().any(|row| row.def.id == tool.id) {
-            return false;
-        }
-        self.prepared.methods.iter().any(|&index| {
-            known_rows(&self.prepared.catalog.methods()[index].tools)
-                .iter()
-                .any(|candidate| {
-                    candidate.item == tool.id
-                        && candidate.wield_gate.is_none_or(|gate| {
-                            stats.iter().any(|stat| {
-                                stat.index == i32::from(gate.skill)
-                                    && stat.base >= i32::from(gate.level)
-                            })
-                        })
-                })
-        })
+        !tool.worn && supply::can_wield(&self.prepared, tool.id, inventory, stats)
     }
 
     fn begin_wear(&mut self, tick: &mut NativeTick<'_>) {
@@ -539,22 +738,9 @@ impl Gatherer {
         };
         let products = Arc::clone(&self.prepared.products);
         let mut protected = [0; 8];
-        let mut protected_len = if self.tool.id >= 0 {
-            protected[0] = self.tool.id;
-            1
-        } else {
-            0
-        };
-        for &index in self.prepared.methods.iter() {
-            for consume in known_rows(&self.prepared.catalog.methods()[index].consumes) {
-                if !protected[..protected_len].contains(&consume.item)
-                    && protected_len < protected.len()
-                {
-                    protected[protected_len] = consume.item;
-                    protected_len += 1;
-                }
-            }
-        }
+        let ids = supply::protected_ids(&self.prepared, self.tool.id);
+        let protected_len = ids.as_slice().len();
+        protected[..protected_len].copy_from_slice(ids.as_slice());
         let args = DropBatchArgs {
             products: Arc::clone(&products),
             protected,
@@ -699,7 +885,6 @@ impl Gatherer {
         match result.end {
             GatherEnd::Full => {
                 self.set_event("inventory full");
-                self.start_drop(tick);
             }
             GatherEnd::TargetGone => self.set_event("target gone"),
             GatherEnd::Depleted => {
@@ -763,7 +948,7 @@ impl Gatherer {
         self.dirty = true;
     }
 
-    fn handle_walk(&mut self, result: WalkReceipt) {
+    fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
         if result.end == WalkEnd::UserInput {
             self.target = None;
             self.fail("manual-movement", "cancelled by user input", true);
@@ -772,11 +957,50 @@ impl Gatherer {
         if result.end != WalkEnd::Arrived {
             self.target = None;
             self.fail(
-                "walk-failed",
+                if self.trip == TripStep::Return {
+                    "return-failed"
+                } else if self.trip == TripStep::Access {
+                    "bank-unavailable"
+                } else {
+                    "walk-failed"
+                },
                 format!("walk ended with {:?}", result.end),
                 true,
             );
             return;
+        }
+        match self.trip {
+            TripStep::Access => {
+                if self.selected_bank.is_some() {
+                    self.advance_trip(TripStep::Open);
+                }
+                return;
+            }
+            TripStep::Return => {
+                let arrived = self.area.is_some_and(|area| {
+                    tick.cx.snapshot().here().is_some_and(|here| {
+                        here.value.level == area.anchor.level
+                            && here
+                                .value
+                                .x
+                                .abs_diff(area.anchor.x)
+                                .max(here.value.z.abs_diff(area.anchor.z))
+                                <= u32::from(area.radius)
+                    })
+                });
+                if !arrived {
+                    self.fail(
+                        "return-failed",
+                        "return receipt did not establish arrival in the work area",
+                        true,
+                    );
+                    return;
+                }
+                self.trips = self.trips.saturating_add(1);
+                self.advance_trip(TripStep::Idle);
+                self.needs_validate = true;
+            }
+            _ => {}
         }
         self.hazard_escape = None;
         // A walk receipt is not resource evidence: the target may have
@@ -826,7 +1050,7 @@ impl Gatherer {
                 Poll::Pending => self.active = Active::Walk(handle),
                 Poll::Ready(Ok(result)) => {
                     self.fence.seal();
-                    self.handle_walk(result);
+                    self.handle_walk(result, tick);
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
@@ -843,6 +1067,111 @@ impl Gatherer {
                     } else {
                         self.fail("oneop-failed", "one operation did not settle", true);
                     }
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fence.seal();
+                    self.action_failure(error);
+                }
+            },
+            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::Select(handle),
+                Poll::Ready(Ok(selected)) => {
+                    self.fence.seal();
+                    if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX {
+                        self.bank_label =
+                            Arc::from(format!("{}; NoCandidate", self.settings().bank));
+                        self.fail(
+                            "bank-unavailable",
+                            format!("bank-unavailable:{}", self.settings().bank),
+                            true,
+                        );
+                    } else {
+                        self.selected_bank = Some(selected);
+                        self.advance_trip(TripStep::Access);
+                        self.set_event("bank selected");
+                    }
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fence.seal();
+                    self.fail(
+                        "bank-unavailable",
+                        format!("bank selection failed: {error:?}"),
+                        true,
+                    );
+                }
+            },
+            Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::Open(handle),
+                Poll::Ready(Ok(())) => {
+                    self.fence.seal();
+                    self.advance_trip(TripStep::Deposit);
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fence.seal();
+                    self.fail(
+                        "bank-unavailable",
+                        format!("bank open failed: {error:?}"),
+                        true,
+                    );
+                }
+            },
+            Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::Deposit(handle),
+                Poll::Ready(Ok(deposited)) => {
+                    self.fence.seal();
+                    self.retained.deposited = self.retained.deposited.saturating_add(deposited);
+                    if deposited > 0 {
+                        self.retained.haul_since_death = true;
+                    }
+                    self.sync_retained(tick);
+                    self.advance_trip(TripStep::Withdraw);
+                    self.set_event("deposit confirmed");
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fence.seal();
+                    self.fail(
+                        "bank-deposit-failed",
+                        format!("bank deposit failed: {error:?}"),
+                        true,
+                    );
+                }
+            },
+            Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::Withdraw(handle),
+                Poll::Ready(Ok(true)) => {
+                    self.fence.seal();
+                    self.withdrawals = None;
+                    if let Some(item) = self.supply_missing.take() {
+                        self.fail("supply-missing", format!("supply-missing:{item}"), true);
+                        return;
+                    }
+                    self.advance_trip(TripStep::Close);
+                    self.set_event("withdrawal confirmed");
+                }
+                Poll::Ready(Ok(false)) => {
+                    self.fence.seal();
+                    self.fail(
+                        "bank-withdraw-failed",
+                        "supply withdrawal was incomplete",
+                        true,
+                    );
+                }
+                Poll::Ready(Err(error)) => {
+                    self.fence.seal();
+                    self.fail(
+                        "bank-withdraw-failed",
+                        format!("supply withdrawal failed: {error:?}"),
+                        true,
+                    );
+                }
+            },
+            Active::Close(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::Close(handle),
+                Poll::Ready(Ok(_)) => {
+                    self.fence.seal();
+                    self.advance_trip(TripStep::Validate);
+                    self.needs_validate = true;
+                    self.set_event("bank closed; validating equipment");
                 }
                 Poll::Ready(Err(error)) => {
                     self.fence.seal();
@@ -874,6 +1203,42 @@ impl Gatherer {
         true
     }
 
+    fn begin_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(food) = &self.prepared.supply.food else {
+            return false;
+        };
+        let snapshot = tick.cx.snapshot();
+        let (Some(stats), Some(inventory)) = (snapshot.stats(), snapshot.inventory()) else {
+            return false;
+        };
+        let Some(hp) = stats.value.iter().find(|stat| stat.index == 3) else {
+            return false;
+        };
+        let below = if self.settings().eat_below == 0 {
+            hp.base.saturating_add(1) / 2
+        } else {
+            self.settings().eat_below
+        };
+        let held = inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == food.id)
+            .map(|row| row.count)
+            .sum::<i32>();
+        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+            return false;
+        }
+        let args = OneOpArgs::eat(&food.name, food.id, held, hp.effective);
+        match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
+            Ok(handle) => {
+                self.active = Active::Tend(handle);
+                self.set_event("eating at boundary");
+            }
+            Err(error) => self.action_failure(error),
+        }
+        true
+    }
+
     fn begin_idle(&mut self, tick: &mut NativeTick<'_>) {
         if self.fence.sealed {
             return;
@@ -889,6 +1254,27 @@ impl Gatherer {
                 Validation::Ready => self.needs_validate = false,
             }
         }
+        if self.begin_eat(tick) {
+            return;
+        }
+        if self.trip != TripStep::Idle {
+            self.begin_trip(tick);
+            return;
+        }
+        let snapshot = tick.cx.snapshot();
+        if let (Some(stats), Some(inventory), Some(equipment)) =
+            (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
+        {
+            if SupplyPlan::due(
+                &self.prepared,
+                stats.value,
+                inventory.value,
+                equipment.value,
+            ) {
+                self.start_trip();
+                return;
+            }
+        }
         let Some(area) = self.area else {
             self.needs_validate = true;
             return;
@@ -899,7 +1285,7 @@ impl Gatherer {
             .zip(snapshot.inventory_capacity())
             .is_some_and(|(rows, capacity)| rows.value.len() >= usize::from(capacity.value))
         {
-            self.start_drop(tick);
+            self.start_dispose(tick);
             return;
         }
         if self.begin_stray_modal(tick) {
@@ -1039,6 +1425,7 @@ impl Gatherer {
     }
 
     fn avoid(&mut self, tile: WorldTile, until: u64) {
+        let until = until.min(u64::from(u32::MAX)) as u32;
         if let Some(entry) = self.avoid.iter_mut().find(|entry| entry.tile == tile) {
             entry.until = until;
             return;
@@ -1046,7 +1433,7 @@ impl Gatherer {
         if let Some(entry) = self
             .avoid
             .iter_mut()
-            .find(|entry| entry.until <= self.last_gameplay_tick)
+            .find(|entry| u64::from(entry.until) <= self.last_gameplay_tick)
         {
             *entry = AvoidedTile { tile, until };
             return;
@@ -1068,6 +1455,9 @@ impl Gatherer {
         if self.paused {
             return ("paused", NativePhase::Waiting);
         }
+        if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
+            return ("banking", NativePhase::Working);
+        }
         match self.active {
             Active::None => {
                 if self.wait_until.is_some() {
@@ -1080,11 +1470,31 @@ impl Gatherer {
             Active::Drop(_) => ("dropping", NativePhase::Working),
             Active::Walk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
+            Active::Select(_)
+            | Active::Open(_)
+            | Active::Deposit(_)
+            | Active::Withdraw(_)
+            | Active::Close(_) => ("banking", NativePhase::Working),
         }
     }
 
-    fn status_data(&self) -> StatusData {
+    fn status_data(&self, inventory: Option<&[ItemView]>) -> StatusData {
         let (phase, _) = self.phase();
+        let count = |id| {
+            inventory.map_or(-1, |rows| {
+                rows.iter()
+                    .filter(|row| row.def.id == id)
+                    .map(|row| i64::from(row.count))
+                    .sum::<i64>()
+            })
+        };
+        let bait = self
+            .prepared
+            .methods
+            .iter()
+            .flat_map(|&index| known_rows(&self.prepared.catalog.methods()[index].consumes))
+            .next()
+            .map_or(0, |item| count(item.item));
         StatusData {
             skill: self.settings().skill_kind().name(),
             method: Arc::clone(&self.method),
@@ -1103,16 +1513,21 @@ impl Gatherer {
             } else {
                 Arc::from("—")
             },
-            bait: -1,
-            food: -1,
-            coins: -1,
+            bait,
+            food: self
+                .prepared
+                .supply
+                .food
+                .as_ref()
+                .map_or(0, |food| count(food.id)),
+            coins: count(995),
             yielded: self.yielded,
             dropped: self.dropped,
             deposited: self.retained.deposited,
-            trips: 0,
+            trips: u32::from(self.trips),
             xp: self.xp,
             xp_per_hour: None,
-            bank: Arc::from("—"),
+            bank: Arc::clone(&self.bank_label),
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
             absent: self.absent,
@@ -1152,7 +1567,7 @@ impl Gatherer {
         }
         self.dirty = false;
         let (_, native_phase) = self.phase();
-        let data = self.status_data();
+        let data = self.status_data(tick.cx.snapshot().inventory().map(|rows| rows.value));
         status::publish(
             tick.output,
             self.run,
@@ -1201,7 +1616,13 @@ impl Script for Gatherer {
         }
         self.observe_progress(tick);
         if self.active_matches_none() {
-            if let Some(revision) = self.apply_pending() {
+            let disposal_due = tick
+                .cx
+                .snapshot()
+                .inventory()
+                .zip(tick.cx.snapshot().inventory_capacity())
+                .is_some_and(|(rows, capacity)| rows.value.len() >= usize::from(capacity.value));
+            if let Some(revision) = self.apply_pending(disposal_due) {
                 tick.output.settings_applied(revision);
             }
         }
@@ -1303,23 +1724,15 @@ impl Script for Gatherer {
     }
 
     fn recovery_anchor(&self) -> Option<WorldTile> {
-        self.retained.anchor
+        (self.trip == TripStep::Idle)
+            .then_some(self.retained.anchor)
+            .flatten()
     }
 }
 
 impl Gatherer {
     fn active_matches_none(&self) -> bool {
         matches!(self.active, Active::None)
-    }
-}
-
-fn tool_gate_met(tool: &ToolUse, skill: Skill, stat: &StatView) -> bool {
-    if let Some(gate) = tool.use_gate {
-        i32::from(gate.skill) == stat.index && stat.base >= i32::from(gate.level)
-    } else {
-        match skill {
-            Skill::Woodcutting | Skill::Mining | Skill::Fishing => true,
-        }
     }
 }
 
@@ -1455,26 +1868,31 @@ mod tests {
             Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
             GatherRetained::default(),
         );
-        gatherer.handle_walk(WalkReceipt {
-            request_id: 7,
-            evidence: api::quest_progress::EvidenceStamp {
-                run,
-                tick: 1,
-                sequence: 1,
-            },
-            end: WalkEnd::UserInput,
-            blocked: None,
-            detail: None,
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |native| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    request_id: 7,
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run,
+                        tick: 1,
+                        sequence: 1,
+                    },
+                    end: WalkEnd::UserInput,
+                    blocked: None,
+                    detail: None,
+                },
+                native,
+            );
         });
         let failure = gatherer.failure.as_ref().unwrap();
         assert_eq!(failure.code.as_ref(), "manual-movement");
         assert_eq!(failure.message.as_ref(), "cancelled by user input");
         assert!(failure.retryable);
 
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
-        snapshot.seed_inventory(vec![], 28);
-        let mut ledger = None;
         for tick in 1..=3 {
             assert!(matches!(
                 with_tick(&snapshot, &mut ledger, tick, |native| {

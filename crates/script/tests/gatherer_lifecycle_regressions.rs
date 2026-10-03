@@ -1006,6 +1006,17 @@ fn started_with(
     selected: &Arc<api::game_data::SelectedGameData>,
     bag: SettingsBag,
 ) -> SlotScript {
+    started_with_banks(incarnation, selected, bag, Arc::default())
+}
+
+fn started_with_banks(
+    incarnation: u64,
+    selected: &Arc<api::game_data::SelectedGameData>,
+    mut bag: SettingsBag,
+    banks: Arc<api::named_banks::NamedBankFacts>,
+) -> SlotScript {
+    bag.entry("disposition")
+        .or_insert_with(|| serde_json::json!("Power"));
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
     slot.start_compiled(
@@ -1013,7 +1024,7 @@ fn started_with(
         script::CompiledId("Gatherer"),
         Arc::new(bag),
         Arc::clone(selected),
-        Arc::default(),
+        banks,
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -1034,6 +1045,96 @@ fn started_with(
 
 fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
+}
+
+#[test]
+fn gather_progress_must_not_hide_a_later_idle_stall() {
+    use api::gather_methods::{known_rows, TargetClass};
+    use api::selected::EntityId;
+
+    let selected = selected();
+    let mut slot = started(4290, &selected);
+    let mut frame = depleted_snapshot(&selected);
+    let catalog = api::gather_methods::cached(&selected).unwrap();
+    let method = catalog.methods_for_resource("normal").next().unwrap();
+    let EntityId::Loc(id) = known_rows(&method.targets)
+        .iter()
+        .find(|row| row.class == TargetClass::Resource)
+        .unwrap()
+        .entity
+    else {
+        panic!("normal woodcutting has loc resources");
+    };
+    let mut target = frame.locs()[0].clone();
+    target.id = id;
+    target.name = Some("Tree".into());
+    target.actions = vec![Some("Chop down".into())];
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = WorldTile {
+        x: target.tile.x + 1,
+        ..target.tile
+    };
+    player.player.actor.animation = -1;
+    frame.seed_local_player(player);
+    frame.seed_locs(vec![target]);
+
+    let mut chops = Vec::new();
+    let mut gain_seeded = false;
+    for now in 1..80 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            if matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Loc { action, .. })
+                    if action == "Chop down"
+            ) {
+                chops.push(now);
+            }
+            let authority = action.authority();
+            slot.complete_native_interaction(
+                &authority,
+                InteractionReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: now,
+                        sequence: now,
+                    },
+                    accepted: true,
+                    chat_since: 0,
+                },
+            );
+        }
+        if !chops.is_empty() && !gain_seeded {
+            frame.seed_inventory(vec![log(0)], 28);
+            let mut stats = frame.stats().to_vec();
+            stats.iter_mut().find(|row| row.index == 8).unwrap().xp = 25;
+            frame.seed_stats(stats);
+            gain_seeded = true;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    for (key, expected) in [("yielded", 1), ("xp", 25)] {
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == key)
+                .unwrap()
+                .value,
+            script::native::StatusValue::Integer(expected),
+            "the first yield remains counted after the idle attempt ends"
+        );
+    }
+    slot.stop();
+    assert!(
+        gain_seeded,
+        "must reach the real GatherRun and observe its first product/XP gain"
+    );
+    assert!(
+        chops.len() >= 2,
+        "after an observed gain, an unchanged idle target must be retried instead of waiting forever; chops={chops:?}"
+    );
 }
 
 /// A level-up's unlock page is a new modal, not a failed close of the first page.
@@ -1442,4 +1543,634 @@ fn restart_required_edit_supersedes_an_older_boundary_edit() {
         "the active work area must remain unchanged"
     );
     slot.stop();
+}
+
+#[test]
+fn a_missing_tool_enters_bank_selection_instead_of_blocking_before_stock_is_read() {
+    let selected = selected();
+    let mut slot = started(4300, &selected);
+    let mut frame = depleted_snapshot(&selected);
+    frame.seed_inventory(Vec::new(), 28);
+    frame.seed_equipment(Vec::new());
+    for now in 1..20 {
+        tick(&mut slot, &frame, now);
+        while let Some(action) = slot.take_native_action() {
+            assert!(!matches!(
+                action.effect,
+                HostEffect::Interaction(InteractReq::Loc { .. })
+            ));
+        }
+        if slot
+            .native_status()
+            .is_some_and(|status| status.phase == NativePhase::Blocked)
+        {
+            break;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "bank-unavailable"
+    );
+    slot.stop();
+}
+
+#[test]
+fn power_to_bank_edit_waits_for_the_live_drop_batch_and_the_next_full_pack() {
+    let selected = selected();
+    let mut slot = started(4301, &selected);
+    let mut present: Vec<i32> = (0..28).collect();
+    let mut now = 1;
+    let sent = loop {
+        tick(&mut slot, &snapshot(&present), now);
+        let sent = drain(&mut slot, now);
+        if !sent.is_empty() {
+            break sent;
+        }
+        now += 1;
+        assert!(now < 20);
+    };
+    let preparation_selected = Arc::clone(&selected);
+    let next = api::selected::FamilyPreparation::run(move |families| {
+        script::slot::prepare_config(
+            families,
+            script::CompiledId("Gatherer"),
+            2,
+            Arc::new(
+                [("disposition".into(), serde_json::json!("Bank"))]
+                    .into_iter()
+                    .collect(),
+            ),
+            preparation_selected,
+            Arc::default(),
+        )
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    slot.configure_compiled(next, slot.native_run().unwrap());
+    assert_eq!(slot.native_status().unwrap().active_settings, 1);
+    present.retain(|row| !sent.contains(row));
+    while !present.is_empty() {
+        now += 1;
+        tick(&mut slot, &snapshot(&present), now);
+        let status = slot.native_status().unwrap();
+        assert_eq!(
+            status.active_settings, 1,
+            "a boundary edit must not change a live batch"
+        );
+        let sent = drain(&mut slot, now);
+        present.retain(|row| !sent.contains(row));
+        assert!(now < 80);
+    }
+    for _ in 0..5 {
+        now += 1;
+        tick(&mut slot, &depleted_snapshot(&selected), now);
+        while let Some(action) = slot.take_native_action() {
+            assert!(
+                !matches!(action.effect, HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drop")
+            );
+        }
+    }
+    // A newly full pack selects banking; no drop from the pending disposition
+    // can escape while the previous batch is still settling.
+    for _ in 0..20 {
+        now += 1;
+        tick(&mut slot, &snapshot(&(0..28).collect::<Vec<_>>()), now);
+        while let Some(action) = slot.take_native_action() {
+            assert!(
+                !matches!(action.effect, HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drop")
+            );
+        }
+        if slot
+            .native_status()
+            .is_some_and(|status| status.phase == NativePhase::Blocked)
+        {
+            break;
+        }
+    }
+    let status = slot.native_status().unwrap();
+    assert_eq!(status.active_settings, 2);
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "bank-unavailable"
+    );
+    slot.stop();
+}
+
+fn next_trip_effect(
+    slot: &mut SlotScript,
+    frame: &GameSnapshot,
+    now: &mut u64,
+) -> (script::native::HostAuthority, u64, HostEffect) {
+    for _ in 0..40 {
+        *now += 1;
+        tick(slot, frame, *now);
+        if let Some(action) = slot.take_native_action() {
+            return (action.authority(), action.request_id.get(), action.effect);
+        }
+        assert_ne!(
+            slot.native_status().unwrap().phase,
+            NativePhase::Blocked,
+            "{:?}",
+            slot.native_status()
+        );
+    }
+    panic!("trip did not advance: {:?}", slot.native_status());
+}
+
+fn accept_trip_operation(
+    slot: &mut SlotScript,
+    authority: &script::native::HostAuthority,
+    id: u64,
+    now: u64,
+) {
+    slot.complete_native_interaction(
+        authority,
+        InteractionReceipt {
+            request_id: id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+}
+
+fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
+    let mut player = frame.local_player().unwrap().clone();
+    player.player.actor.tile = here;
+    frame.seed_local_player(player);
+    let mut world = *frame.world();
+    world.level = here.level;
+    world.map_base_x = here.x - 52;
+    world.map_base_z = here.z - 52;
+    frame.seed_world(world);
+}
+
+#[derive(Clone, Copy)]
+enum RuneStock {
+    Full,
+    Partial,
+    Empty,
+}
+
+fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
+    use api::named_banks::{NamedBank, NamedBankFacts};
+    use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
+    use script::native::{WalkEnd, WalkReceipt};
+
+    const RUNE_COSTS: [(i32, i32); 3] = [(554, 1), (556, 3), (563, 1)];
+    const PARTIAL_BANK_RUNES: [(i32, i32); 3] = [(554, 3), (556, 9), (563, 3)];
+
+    let selected = selected();
+    let mut frame = snapshot(&[]);
+    let anchor = frame.local_player().unwrap().player.actor.tile;
+    let bank_tile = WorldTile {
+        x: anchor.x + 20,
+        z: anchor.z,
+        level: 1,
+    };
+    let spell = selected
+        .teleports()
+        .iter()
+        .find(|spell| {
+            spell.available()
+                && spell.runes.len() == RUNE_COSTS.len()
+                && RUNE_COSTS.iter().all(|(id, count)| {
+                    spell
+                        .runes
+                        .iter()
+                        .any(|rune| rune.id == *id && rune.count == *count)
+                })
+                && spell
+                    .runes
+                    .iter()
+                    .all(|rune| rune.id >= 0 && rune.count > 0 && !rune.name.is_empty())
+        })
+        .unwrap()
+        .clone();
+    let bank = NamedBank::new("fixture-bank", bank_tile);
+    let facts = Arc::new(NamedBankFacts::from_banks(vec![bank]));
+    let mut settings = SettingsBag::new();
+    settings.insert("disposition".into(), serde_json::json!("Bank"));
+    settings.insert("reserveTeleport".into(), serde_json::json!(spell.name));
+    settings.insert("reserveCasts".into(), serde_json::json!(5));
+    let mut slot = started_with_banks(incarnation, &selected, settings.clone(), Arc::clone(&facts));
+    frame = depleted_snapshot(&selected);
+    let work_locs = frame.locs().to_vec();
+    let mut held: Vec<_> = spell
+        .runes
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(index, rune)| ItemView {
+            def: def(rune.id, &rune.name),
+            count: rune.count,
+            ..log(index as i32 + 1)
+        })
+        .collect();
+    frame.seed_inventory(held.clone(), 28);
+    frame.seed_equipment(Vec::new());
+    let mut stats = frame.stats().to_vec();
+    stats.push(StatView {
+        index: 0,
+        name: "attack".into(),
+        effective: 1,
+        base: 1,
+        xp: 0,
+        used: true,
+    });
+    frame.seed_stats(stats);
+    let axe = ItemView {
+        def: def(1351, "Bronze axe"),
+        actions: vec![Some("Wield".into()), Some("Drop".into())],
+        ..log(0)
+    };
+    let mut stock = axe.clone();
+    stock.container = ItemContainer::Bank;
+    stock.actions = vec![
+        Some("Withdraw-1".into()),
+        Some("Withdraw-5".into()),
+        Some("Withdraw-10".into()),
+        None,
+        Some("Withdraw-X".into()),
+    ];
+    let mut bank_stock = vec![stock];
+    for (index, rune) in spell.runes.iter().enumerate() {
+        let count = match rune_stock {
+            RuneStock::Full => 10_000,
+            RuneStock::Partial => PARTIAL_BANK_RUNES
+                .iter()
+                .find(|(id, _)| *id == rune.id)
+                .map(|(_, count)| *count)
+                .expect("the partial rune stock names every reserve rune"),
+            RuneStock::Empty => 0,
+        };
+        if count == 0 {
+            continue;
+        }
+        bank_stock.push(ItemView {
+            def: def(rune.id, &rune.name),
+            count,
+            container: ItemContainer::Bank,
+            actions: vec![
+                Some("Withdraw-1".into()),
+                Some("Withdraw-5".into()),
+                Some("Withdraw-10".into()),
+                None,
+                Some("Withdraw-X".into()),
+            ],
+            ..log(index as i32 + 1)
+        });
+    }
+    let mut now = 0;
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(effect, HostEffect::BankPick(_)));
+    slot.complete_native_bank_pick(
+        &authority,
+        BankPickReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            selected: SelectedBank {
+                bank_index: 0,
+                access_tile: bank_tile,
+                kind: PickKind::Reachable,
+                access: Some(Arc::new(BankStandAccess {
+                    bank,
+                    stand_tile: bank_tile,
+                    kind: AccessKind::Booth,
+                    stand_op: 2,
+                    name: Some(Arc::from("Bank booth")),
+                    choose: None,
+                })),
+            },
+        },
+    );
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("selection must approach bank")
+    };
+    assert_eq!(request.target, bank_tile);
+    trip_position(&mut frame, bank_tile);
+    let mut booth = work_locs[0].clone();
+    booth.id = 2213;
+    booth.tile = bank_tile;
+    booth.name = Some("Bank booth".into());
+    booth.actions = vec![None, Some("Use-quickly".into())];
+    frame.seed_locs(vec![booth]);
+    slot.complete_native_walk(
+        &authority,
+        WalkReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+        },
+    );
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::OpenStand { .. })
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    frame.seed_bank_observation(1, 1, None, Vec::new());
+    for _ in 0..3 {
+        now += 1;
+        tick(&mut slot, &frame, now);
+        assert!(!slot.has_native_actions(), "unread bank is not empty stock");
+        assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
+    }
+    frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::WithdrawX {
+            bank_item_id: 1351,
+            lands_as_id: 1351,
+            count: 1,
+            ..
+        })
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    now += 1;
+    tick(&mut slot, &frame, now);
+    assert!(
+        !slot.has_native_actions(),
+        "accepted withdrawal is not an observed tool"
+    );
+    held.push(axe.clone());
+    bank_stock.remove(0);
+    frame.seed_inventory(held.clone(), 28);
+    frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    let first = &spell.runes[0];
+    if matches!(rune_stock, RuneStock::Empty) {
+        for _ in 0..8 {
+            now += 1;
+            tick(&mut slot, &frame, now);
+            assert!(
+                slot.take_native_action().is_none(),
+                "zero-rune stock must block after the tool withdrawal"
+            );
+            if slot
+                .native_status()
+                .is_some_and(|status| status.phase == NativePhase::Blocked)
+            {
+                break;
+            }
+        }
+        let status = slot.native_status().unwrap();
+        assert_eq!(status.phase, NativePhase::Blocked);
+        let failure = status.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "supply-missing");
+        assert!(failure.message.contains(first.name.as_str()));
+        slot.stop();
+        return;
+    }
+    let first_withdrawal = match rune_stock {
+        RuneStock::Full => first.count * 5,
+        RuneStock::Partial => PARTIAL_BANK_RUNES
+            .iter()
+            .find(|(id, _)| *id == first.id)
+            .map(|(_, count)| *count)
+            .unwrap(),
+        RuneStock::Empty => unreachable!(),
+    };
+    let (old_authority, old_request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(
+        matches!(effect, HostEffect::Interaction(InteractReq::WithdrawX {
+        bank_item_id, lands_as_id, count, ..
+    }) if bank_item_id == first.id && lands_as_id == first.id && count == first_withdrawal)
+    );
+    accept_trip_operation(&mut slot, &old_authority, old_request, now);
+    let first_bank_row = bank_stock
+        .iter_mut()
+        .find(|item| item.def.id == first.id)
+        .unwrap();
+    first_bank_row.count -= first_withdrawal;
+    held.push(ItemView {
+        def: def(first.id, &first.name),
+        count: first_withdrawal,
+        ..log(1)
+    });
+    frame.seed_inventory(held.clone(), 28);
+    frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    slot.pause();
+    assert!(!old_authority.live());
+    let pending = api::selected::FamilyPreparation::run({
+        let selected = Arc::clone(&selected);
+        move |families| {
+            settings.insert("reserveCasts".into(), serde_json::json!(1));
+            script::slot::prepare_config(
+                families,
+                script::CompiledId("Gatherer"),
+                2,
+                Arc::new(settings),
+                selected,
+                facts,
+            )
+        }
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    slot.configure_compiled(pending, slot.native_run().unwrap());
+    slot.resume();
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::SetNoteMode { on: false })
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    // The latched stock-limited plan must finish after this one-cast edit.
+    for rune in spell.runes.iter().skip(1) {
+        let expected_withdrawal = rune.count
+            * match rune_stock {
+                RuneStock::Full => 4,
+                RuneStock::Partial => 3,
+                RuneStock::Empty => unreachable!(),
+            };
+        let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+        assert!(
+            matches!(effect, HostEffect::Interaction(InteractReq::WithdrawX {
+            bank_item_id, lands_as_id, count, ..
+        }) if bank_item_id == rune.id && lands_as_id == rune.id && count == expected_withdrawal)
+        );
+        assert_eq!(slot.native_status().unwrap().active_settings, 1);
+        assert_eq!(slot.native_status().unwrap().pending_settings, Some(2));
+        accept_trip_operation(&mut slot, &authority, request_id, now);
+        held.iter_mut()
+            .find(|item| item.def.id == rune.id)
+            .unwrap()
+            .count += expected_withdrawal;
+        bank_stock
+            .iter_mut()
+            .find(|item| item.def.id == rune.id)
+            .unwrap()
+            .count -= expected_withdrawal;
+        frame.seed_inventory(held.clone(), 28);
+        frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    }
+    for rune in &spell.runes {
+        let expected = match rune_stock {
+            RuneStock::Full => rune.count * 5,
+            RuneStock::Partial if rune.id == first.id => rune.count * 3,
+            RuneStock::Partial => rune.count * 4,
+            RuneStock::Empty => unreachable!(),
+        };
+        assert_eq!(
+            held.iter()
+                .find(|item| item.def.id == rune.id)
+                .unwrap()
+                .count,
+            expected
+        );
+    }
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(matches!(
+        effect,
+        HostEffect::Interaction(InteractReq::Close)
+    ));
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    frame.seed_bank_observation(-1, now, None, Vec::new());
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    assert!(
+        matches!(effect, HostEffect::Interaction(InteractReq::Held { ref action, .. }) if action == "Wield")
+    );
+    accept_trip_operation(&mut slot, &authority, request_id, now);
+    now += 1;
+    tick(&mut slot, &frame, now);
+    assert!(
+        !slot.has_native_actions(),
+        "return must wait for observed equipment"
+    );
+    let mut worn = axe;
+    worn.container = ItemContainer::Equipment;
+    frame.seed_equipment(vec![worn]);
+    held.retain(|item| item.def.id != 1351);
+    frame.seed_inventory(held, 28);
+    let (old_authority, old_request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("wear settlement must return")
+    };
+    assert_eq!(request.target, anchor);
+    slot.pause();
+    assert!(!old_authority.live());
+    slot.resume();
+    let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("off-plane Resume must retain return step")
+    };
+    assert_eq!(request.target, anchor);
+    assert_eq!(request.target.level, 0);
+    slot.complete_native_walk(
+        &old_authority,
+        WalkReceipt {
+            request_id: old_request,
+            evidence: EvidenceStamp {
+                run: old_authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+        },
+    );
+    slot.reconnect_session_work();
+    slot.on_is_up(true);
+    assert!(!authority.live());
+    let (fresh_authority, fresh_request, effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    let HostEffect::Walk(request) = effect else {
+        panic!("reconnect must retain return step")
+    };
+    assert_eq!(request.target, anchor);
+    assert_ne!(fresh_authority.run().session, authority.run().session);
+    let _ = request_id;
+    trip_position(&mut frame, anchor);
+    let mut locs = work_locs;
+    locs[0].id = 1276;
+    locs[0].name = Some("Tree".into());
+    locs[0].actions = vec![Some("Chop down".into())];
+    let fresh_tree = locs[0].tile;
+    frame.seed_locs(locs);
+    slot.complete_native_walk(
+        &fresh_authority,
+        WalkReceipt {
+            request_id: fresh_request,
+            evidence: EvidenceStamp {
+                run: fresh_authority.run(),
+                tick: now,
+                sequence: now,
+            },
+            end: WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+        },
+    );
+    let (authority, request_id, mut effect) = next_trip_effect(&mut slot, &frame, &mut now);
+    if let HostEffect::Walk(request) = effect {
+        assert_eq!(request.target, fresh_tree);
+        assert_eq!(request.radius, 1);
+        trip_position(
+            &mut frame,
+            WorldTile {
+                x: fresh_tree.x - 1,
+                ..fresh_tree
+            },
+        );
+        slot.complete_native_walk(
+            &authority,
+            WalkReceipt {
+                request_id,
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: now,
+                    sequence: now,
+                },
+                end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
+            },
+        );
+        effect = next_trip_effect(&mut slot, &frame, &mut now).2;
+    }
+    assert!(
+        matches!(effect, HostEffect::Interaction(InteractReq::Loc { .. })),
+        "only observed return permits gathering: {:?}",
+        slot.native_status()
+    );
+    slot.stop();
+}
+
+#[test]
+fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plane_interrupts() {
+    for (incarnation, rune_stock) in [
+        (4302, RuneStock::Full),
+        (4303, RuneStock::Partial),
+        (4304, RuneStock::Empty),
+    ] {
+        run_supply_trip_scenario(incarnation, rune_stock);
+    }
 }

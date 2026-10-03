@@ -448,19 +448,24 @@ fn has_lost_tool(snap: &GameSnapshot) -> bool {
 
 /// A tool handle name (`*axe handle` / `*pickaxe handle`).
 fn is_tool_handle(name: Option<&str>) -> bool {
-    name.is_some_and(|n| {
-        let l = n.to_lowercase();
-        l.contains("axe handle") || l.contains("pickaxe handle")
-    })
+    tool_part(name, "handle").is_some()
 }
 
-/// A tool head name (`*axe head` / `*pickaxe head`): the ground half the
-/// lost-tool random knocks off, reattached with the handle.
-fn is_tool_head(name: Option<&str>) -> bool {
-    name.is_some_and(|n| {
-        let l = n.to_lowercase();
-        (l.contains("axe") || l.contains("pickaxe")) && l.contains("head")
-    })
+// The content names are "Axe/Pickaxe handle/head"; tier-prefixed names
+// are also accepted, but an axe handle must never be used on a pickaxe head.
+fn tool_part(name: Option<&str>, part: &str) -> Option<bool> {
+    let (tool, suffix) = name?.trim().rsplit_once(' ')?;
+    if !suffix.eq_ignore_ascii_case(part) {
+        return None;
+    }
+    let tool = tool.rsplit(' ').next()?;
+    if tool.eq_ignore_ascii_case("pickaxe") {
+        Some(true)
+    } else if tool.eq_ignore_ascii_case("axe") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// A hazard loc name (the 0.1.2 detect list).

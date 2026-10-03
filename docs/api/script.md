@@ -147,13 +147,19 @@ start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
 
-### Gatherer power gathering
+### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
 equipped tool, at the Start area, a Custom location or an Auto-selected area.
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
+
+With random-event handling enabled, a lost axe or pickaxe head is picked up
+before the two held pieces are reattached. Recovery is bounded to twelve
+seconds, including time for the flying head to land. If it cannot settle,
+Gatherer revalidates the headless tool as missing and makes a replacement-tool
+bank trip instead of remaining held until the watchdog restarts it.
 
 Incidental uncut gems are power-dropped along with mining products. Tools,
 fishing bait and other non-products are kept. If protected items fill the pack
@@ -170,6 +176,11 @@ gameplay cap across depleted groups rather than restarting it at each group.
 A recreated card starts with a fresh wait baseline rather than immediately
 treating the wait as expired.
 
+When gathering becomes idle, the content-derived stall window permits one
+retry before reselection. Each fresh product or XP gain resets that window;
+an earlier gain cannot keep a later idle attempt alive. Confirmed yield and
+XP totals remain intact across the retry.
+
 Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
 anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
@@ -184,10 +195,58 @@ Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
 An unchanged page still fails after eight ticks rather than waiting indefinitely.
 
-Changes marked restart-required (including skill, resources and location)
-remain pending until the slot restarts; they never switch the active run in
-place. Death stops the card; automatic recovery, banking and supply trips are
-not part of this stage. Closest mode and shop provisioning are not offered.
+The compiled Gatherer card schema is version 3. `disposition` defaults to
+`Bank`; `Power` drops selected gathering products, while `Bank` returns to the
+selected bank and deposits them. Bank mode also makes a trip when no inventory
+slot is free; Power mode can still take a supply-only trip. `bank` defaults to
+`Nearest` and also offers named banks present in the selected cache;
+`useMageBank` and `useZanarisBank` add those special banks to the preference.
+The unsupported `Closest` mode is not offered.
+Ordinary banks use packed stand access. Declared teller banks use the same
+live NPC/dialogue opener as `Bank.openNpcAccess`, including multi-page chat;
+an open modal without a loaded item table is not a successful native open.
+A bank without packed stand or declared NPC access fails closed with its name.
+Native counted withdrawals use the same session-fenced host amount-dialog
+continuation as compatibility scripts; dispatch alone never confirms a transfer.
+Named bank deposits use one content `Deposit All` operation for all held copies
+of that item, rather than sending an operation for each occupied slot. Other
+item types and configured keep items are untouched; observed inventory changes,
+not accepted dispatch alone, still settle the transfer.
+
+Supply targets are upper bounds, not a requirement that the bank contain the
+entire refill. Each withdrawal targets the lesser of the configured count and
+the combined held and loaded-bank stock. A usable partial refill continues
+gathering; `supply-missing` means a required tool, bait, configured food or a
+complete reserve cast is unavailable. Coins never gate a trip. Available
+withdrawals, including the tool, settle before another unavailable supply is
+reported. Transfer failures use `bank-deposit-failed` or `bank-withdraw-failed`,
+not a missing-supply or full-inventory label. Product deposits succeed only
+after inventory confirms that no unprotected gathering products remain.
+
+`baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
+that consumes bait uses it: zero held bait makes a trip due, and the next bank
+trip tops it up to the target. `food` is an optional selected-cache item name;
+`foodTarget` defaults to 0 (range 0–28); with a configured food name, a nonzero
+target makes a trip due only when no food is held. `eatBelow` defaults to 0
+(meaning half the observed maximum HP, rounded up; a nonzero setting is an
+explicit 1–99 HP threshold). At a boundary the card eats configured food only
+when it is held and current HP is at or below that threshold. Food is protected
+from deposits and product disposal.
+
+`coinTarget` defaults to 0 (range 0–2,000,000,000). Coins top up to that
+target during another bank trip but a coin deficit never starts a trip.
+`reserveTeleport` defaults to `Off`; its options are the selected cache's
+available teleport spells. An enabled spell requires `reserveCasts` of at
+least 1 (maximum 1,000). A reserve refill becomes due only when the held runes
+cannot pay for one cast; once due, the whole selected rune-cost batch is
+planned to the configured cast count. Stocking those runes does not enable
+teleport walking: `allowTeleports` remains a separate opt-in. Unread bank
+contents are pending, not empty; missing stock is reported only after a loaded
+bank observation. `deathPolicy` remains `Stop` only; automatic death recovery
+is not part of this stage. Shop provisioning is not offered.
+Skill, resource and location changes remain pending until the slot restarts.
+Bank and supply settings apply at a pending boundary, never midway through a
+bank batch.
 
 ### Quiet quest-journal painting
 

@@ -1,8 +1,9 @@
 //! Rust-native gathering for woodcutting, mining and fishing.
 //!
 //! Start, Custom and bounded Auto use observed resource identity and content
-//! placements. Power disposal includes incidental mining gems. Banking,
-//! combat and death recovery remain later-stage capabilities.
+//! Power drops selected products; Bank mode deposits products and maintains
+//! supplies from loaded bank observations. Combat and death recovery remain
+//! later-stage capabilities.
 
 mod area;
 mod card;
@@ -13,6 +14,7 @@ mod runner;
 mod select;
 pub mod settings;
 pub mod status;
+mod supply;
 mod widen;
 
 pub use area::{AreaMode, WorkArea};
@@ -39,7 +41,12 @@ pub(crate) fn test_full_pack_fixture(
     use api::ItemDefView;
     use std::sync::Arc;
 
-    let config = card::prepare(cx, 1, Arc::new(crate::native::SettingsBag::new()))?;
+    let mut settings = crate::native::SettingsBag::new();
+    settings.insert(
+        "disposition".into(),
+        serde_json::Value::String("Power".into()),
+    );
+    let config = card::prepare(cx, 1, Arc::new(settings))?;
     let prepared = config
         .get::<Arc<card::Prepared>>()
         .expect("Gatherer card preparation returns its own payload");
@@ -224,7 +231,6 @@ pub enum RecoveryState {
 pub struct GatherRetained {
     pub anchor: Option<WorldTile>,
     pub start_tile: Option<WorldTile>,
-    pub bank_tile: Option<WorldTile>,
     pub deaths: u8,
     pub recoveries: u8,
     pub death_seq: Option<i32>,
@@ -240,7 +246,6 @@ impl Default for GatherRetained {
         Self {
             anchor: None,
             start_tile: None,
-            bank_tile: None,
             deaths: 0,
             recoveries: 0,
             death_seq: None,
@@ -257,7 +262,6 @@ impl GatherRetained {
     pub const fn is_fresh(&self) -> bool {
         self.anchor.is_none()
             && self.start_tile.is_none()
-            && self.bank_tile.is_none()
             && self.deaths == 0
             && self.recoveries == 0
             && self.death_seq.is_none()

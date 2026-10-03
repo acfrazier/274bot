@@ -1,5 +1,8 @@
 use super::*;
+
 use api::hostlog::{Category, Level};
+const LOST_TOOL_BOUND_MS: u64 = 12_000;
+
 /// The chrome contract both views bind (guardian spec `RandomStatus`):
 /// published every tick on the slot status row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +100,10 @@ pub struct Guardian {
     /// Lost-tool: the handle's base tool name (the handle name minus the
     /// "handle" suffix), the re-wield target after reattach.
     tool_handle_base: Option<String>,
+    /// One bounded recovery per handle observation; failure releases the
+    /// native Gatherer's missing-tool supply trip instead of holding forever.
+    tool_deadline_ms: Option<u64>,
+    tool_stalled: bool,
     /// Mime: the last emote anim seq the mime NPC showed.
     mime_last_seen: Option<i32>,
     /// Mime: the emote button went out for the open chat — no repeat
@@ -166,6 +173,8 @@ impl Guardian {
             flee_from: None,
             tool_was_worn: false,
             tool_handle_base: None,
+            tool_deadline_ms: None,
+            tool_stalled: false,
             mime_last_seen: None,
             mime_answered: false,
             box_answer_count: None,
@@ -302,6 +311,14 @@ impl Guardian {
                 };
             }
         }
+        if !has_lost_tool(snap) || !settings.random_events {
+            self.tool_deadline_ms = None;
+            self.tool_stalled = false;
+        }
+        let inert_tool = self.tool_stalled
+            && ev
+                .as_ref()
+                .is_some_and(|event| event.kind == RandomKind::LostTool);
 
         // A stalled redemption unlocks on the two operator-visible state
         // changes: the lamp left the pack, or lamp auto went off (the next
@@ -326,6 +343,7 @@ impl Guardian {
             && settings.random_events
             && self.claim == RandomClaim::Host
             && !inert_lamp
+            && !inert_tool
         {
             let plant_before_act = self.plant.clone();
             let ignored_before_act = self.plant_ignored.len();
@@ -351,6 +369,11 @@ impl Guardian {
         // `EventSignal.pending` (hold OR ours) clears immediately.
         let inert_lamp = inert_lamp
             || (self.lamp_stalled && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp));
+        let inert_tool = inert_tool
+            || (self.tool_stalled
+                && ev
+                    .as_ref()
+                    .is_some_and(|event| event.kind == RandomKind::LostTool));
 
         let cooldown = ev
             .as_ref()
@@ -361,7 +384,7 @@ impl Guardian {
             name: ev.as_ref().map(|e| e.name.clone()),
             // Inert leftover lamp still detects for the status row, but
             // must not publish ours — EventSignal.pending is hold OR ours.
-            ours: !inert_lamp && ev.as_ref().map(|e| e.ours).unwrap_or(false),
+            ours: !inert_lamp && !inert_tool && ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
             hold: settings.random_events
                 && self.claim == RandomClaim::Host
@@ -588,6 +611,8 @@ impl Guardian {
                 self.flee_from = snap.tile().map(|(x, z, _)| (x, z));
             }
             RandomKind::LostTool => {
+                self.tool_deadline_ms
+                    .get_or_insert(now_ms.saturating_add(LOST_TOOL_BOUND_MS));
                 // Remember whether the handle was worn so the reattached
                 // tool is re-wielded.
                 self.tool_was_worn = snap
@@ -630,7 +655,7 @@ impl Guardian {
             RandomKind::Hazard => self.step_hazard(driver, snap),
             RandomKind::Lamp => self.step_lamp(driver, snap, settings),
             RandomKind::LostGear => self.step_lost_gear(driver, snap, ev),
-            RandomKind::LostTool => self.step_lost_tool(driver, snap),
+            RandomKind::LostTool => self.step_lost_tool(driver, snap, now_ms),
             RandomKind::Mime => self.step_mime(driver, snap),
             RandomKind::Box => self.step_box(driver, snap),
             RandomKind::Maze => self.step_maze(driver, snap),
@@ -647,15 +672,21 @@ impl Guardian {
                 walk(driver, fx, fz);
             }
         }
-        // Re-wield a formerly worn handle after the reattach (best
-        // effort): the combined tool carries the handle's base name.
+        // Content handles omit the tier: "Axe handle" can restore "Rune axe".
+        // Re-wield only a formerly worn tool; Gatherer also validates its gates.
         if self.acting_kind == RandomKind::LostTool && self.tool_was_worn {
-            if let Some(base) = self.tool_handle_base.clone() {
+            if let Some(base) = self
+                .tool_handle_base
+                .as_deref()
+                .and_then(|n| n.rsplit(' ').next())
+            {
                 if let Some(tool) = snap.inventory().iter().find(|i| {
-                    i.def
-                        .name
-                        .as_deref()
-                        .is_some_and(|n| n.trim().to_lowercase() == base)
+                    i.def.name.as_deref().is_some_and(|name| {
+                        name.trim()
+                            .rsplit(' ')
+                            .next()
+                            .is_some_and(|last| last.eq_ignore_ascii_case(base))
+                    })
                 }) {
                     let mut ix = Interactions::new(snap, driver);
                     let _ = ix.wear(tool.def.id);
@@ -1268,20 +1299,14 @@ impl Guardian {
         }
     }
 
-    /// Reattach the lost tool: unequip a worn handle, then use the handle
-    /// on the ground (or held) head. No head on the ground → fail closed,
-    /// no fake use-on. The re-wield of a formerly worn handle happens in
-    /// [`Guardian::resolve`].
-    fn step_lost_tool<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
-        let head_ground = snap
-            .ground_items()
-            .iter()
-            .find(|g| g.distance <= LOST_GEAR_RADIUS && is_tool_head(g.def.name.as_deref()));
-        let head_inv = snap
-            .inventory()
-            .iter()
-            .find(|i| is_tool_head(i.def.name.as_deref()));
-        if head_ground.is_none() && head_inv.is_none() {
+    /// Content reattachment is held-on-held only: take the head first.
+    /// Failure releases the script to replace the missing tool at a bank.
+    fn step_lost_tool<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, now_ms: u64) {
+        if self
+            .tool_deadline_ms
+            .is_some_and(|deadline| now_ms >= deadline)
+        {
+            self.tool_stalled = true;
             self.acting = false;
             return;
         }
@@ -1297,30 +1322,46 @@ impl Guardian {
             self.acting = false;
             return;
         };
-        // A worn handle must come off before it can be used on the head.
-        if handle_worn.is_some() {
+        let kind = tool_part(handle.def.name.as_deref(), "handle");
+        let head_inv = snap
+            .inventory()
+            .iter()
+            .find(|i| i.count > 0 && tool_part(i.def.name.as_deref(), "head") == kind);
+        let head_ground = snap.ground_items().iter().find(|g| {
+            g.distance <= LOST_GEAR_RADIUS && tool_part(g.def.name.as_deref(), "head") == kind
+        });
+        if head_ground.is_none() && head_inv.is_none() {
+            // The content replaces the tool before its projectile lands.
+            // Keep only this bounded grace period for the head to appear.
+            return;
+        }
+        if (handle_worn.is_some() || head_inv.is_none()) && pack_full(snap) {
+            let Some(junk) = sacrificial_item(snap) else {
+                self.tool_stalled = true;
+                self.acting = false;
+                return;
+            };
             let mut ix = Interactions::new(snap, driver);
-            match ix.interact(
-                OpTarget::Item(handle),
-                ActionSpec::Label("Remove".to_string()),
-            ) {
-                SendResult::Sent { .. } => {}
-                SendResult::Refused { .. } => self.acting = false,
-            }
+            let _ = ix.interact(OpTarget::Item(junk), ActionSpec::Label("Drop".to_string()));
             return;
         }
         let mut ix = Interactions::new(snap, driver);
-        let result = if let Some(head) = head_ground {
-            ix.use_item_on(handle, OpTarget::GroundItem(head))
+        let result = if handle_worn.is_some() {
+            ix.interact(
+                OpTarget::Item(handle),
+                ActionSpec::Label("Remove".to_string()),
+            )
+        } else if let Some(head) = head_inv {
+            ix.use_item_on(head, OpTarget::Item(handle))
         } else {
-            ix.use_item_on(
-                handle,
-                OpTarget::Item(head_inv.expect("head_ground or head_inv above")),
+            ix.interact(
+                OpTarget::GroundItem(head_ground.expect("head is observed above")),
+                ActionSpec::Label("Take".to_string()),
             )
         };
-        match result {
-            SendResult::Sent { .. } => {}
-            SendResult::Refused { .. } => self.acting = false,
+        if matches!(result, SendResult::Refused { .. }) {
+            self.tool_stalled = true;
+            self.acting = false;
         }
     }
 

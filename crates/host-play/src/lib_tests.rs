@@ -7189,6 +7189,67 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
 }
 
 #[test]
+fn shared_deposit_all_sends_one_packet_for_a_full_nonstackable_load() {
+    let mut c = bank_client();
+    let mut slots = vec![2; 28];
+    slots[27] = 3; // A different item must remain outside this deposit.
+    c.set_iface(
+        701,
+        IfType {
+            id: 701,
+            layer_id: 700,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Deposit 1".into()),
+                Some("Deposit 5".into()),
+                Some("Deposit 10".into()),
+                Some("Deposit All".into()),
+                Some("Deposit X".into()),
+            ],
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        701,
+        IfTypeMut {
+            link_obj_type: Some(slots),
+            link_obj_number: Some(vec![1; 28]),
+            ..Default::default()
+        },
+    );
+    c.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let (navs, world) = empty_nav();
+    let checkpoint = api::interact::Driver::packet_checkpoint(&c).unwrap();
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snapshot,
+        Some(&names),
+        snapshot.tile(),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![script::shim::InteractReq::Deposit {
+            name: "bOnEs".into(),
+        }],
+    ));
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &c,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert_eq!(
+        packets,
+        [client::io::ClientProt::INV_BUTTON4.id as u8],
+        "the content Deposit All op transfers all copies of one item, not one slot"
+    );
+}
+
+#[test]
 fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
     let from = WorldTile {
         x: 0,
@@ -7854,6 +7915,181 @@ export default class T extends LoopingBot {
         .lock()
         .unwrap()
         .stop();
+}
+
+#[test]
+fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
+    use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
+    use script::native_bank::{BankAction, BankMachine, BankRequest, Withdrawal};
+    use std::task::Poll;
+
+    struct WithdrawScript {
+        target: i32,
+        handle: Option<ActionHandle<BankMachine>>,
+        complete: Arc<Mutex<bool>>,
+    }
+    impl Script for WithdrawScript {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.handle.is_none() {
+                self.handle = Some(
+                    tick.actions
+                        .begin::<BankMachine>(
+                            BankRequest {
+                                bank: None,
+                                action: BankAction::WithdrawTo {
+                                    withdrawals: Arc::from([Withdrawal {
+                                        id: 2,
+                                        name: "Knife".into(),
+                                        target: self.target,
+                                    }]),
+                                },
+                                memo_ids: Arc::from([]),
+                                partial_ok: false,
+                            },
+                            &mut tick.cx,
+                        )
+                        .unwrap(),
+                );
+            }
+            match tick
+                .actions
+                .poll(self.handle.as_ref().unwrap(), &mut tick.cx)
+            {
+                Poll::Ready(Ok(receipt)) => {
+                    assert!(receipt.complete);
+                    *self.complete.lock().unwrap() = true;
+                    Ok(ScriptFlow::Complete)
+                }
+                Poll::Ready(Err(error)) => panic!("native withdrawal failed: {error:?}"),
+                Poll::Pending => Ok(ScriptFlow::Continue),
+            }
+        }
+    }
+
+    for target in [1, 7] {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats = Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let complete = Arc::new(Mutex::new(false));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        slot.lock()
+            .unwrap()
+            .start_test_script(
+                Box::new(WithdrawScript {
+                    target,
+                    handle: None,
+                    complete: Arc::clone(&complete),
+                }),
+                None,
+            )
+            .unwrap();
+        let mut c = bank_fetch_client();
+        c.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601, 602, 603]),
+                ..Default::default()
+            },
+        );
+        for (id, text) in [(602, "Note"), (603, "Item")] {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 600,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_TOGGLE,
+                    text: text.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let observe = |c: &mut Client, snap: &GameSnapshot, tick, inv: &[(i32, i32)]| {
+            script_observe(
+                c,
+                "alice",
+                true,
+                true,
+                tick,
+                Some((3205, 3205, 0)),
+                Some(inv),
+                None,
+                Some(snap),
+                Some(&names),
+                &scripts,
+                &cheats,
+                &navs,
+                &world,
+                false,
+                false,
+            );
+        };
+        observe(&mut c, &snap, 1, &[]);
+        let before = c.out.pos;
+        observe(&mut c, &snap, 2, &[]);
+        assert!(
+            c.out.pos > before,
+            "native withdrawal must reach the driver"
+        );
+        let phase = slot
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .expect("native withdrawal must retain the shared host continuation")
+            .phase;
+        assert_eq!(
+            phase,
+            if target == 1 {
+                script::slot::PendingWithdrawXPhase::Settlement
+            } else {
+                script::slot::PendingWithdrawXPhase::Dialog
+            },
+        );
+        assert!(!*complete.lock().unwrap(), "dispatch is not settlement");
+        if target == 7 {
+            c.apply_p_countdialog();
+            c.bump_gens(ServerProt::P_COUNTDIALOG);
+            snap.rebuild(&c);
+            let before = c.out.pos;
+            observe(&mut c, &snap, 3, &[]);
+            assert!(
+                c.out.pos > before,
+                "fresh count dialog must receive an amount"
+            );
+            assert!(matches!(
+                slot.lock().unwrap().pending_withdraw_x().unwrap().phase,
+                script::slot::PendingWithdrawXPhase::Settlement
+            ));
+        }
+        c.set_iface_mut(
+            500,
+            IfTypeMut {
+                link_obj_type: Some(vec![3, 0]),
+                link_obj_number: Some(vec![target, 0]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        snap.rebuild(&c);
+        observe(&mut c, &snap, 4, &[(2, target)]);
+        assert!(
+            *complete.lock().unwrap(),
+            "fresh inventory must settle the exact native target"
+        );
+        assert!(slot.lock().unwrap().pending_withdraw_x().is_none());
+    }
 }
 
 #[test]

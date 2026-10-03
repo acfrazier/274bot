@@ -962,7 +962,14 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
             flags: None,
         },
         TransportGraph::default(),
-        vec![teller],
+        vec![
+            nav::pack::BankStand {
+                name: "Bank booth".to_owned(),
+                tile: tile(7, 8),
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            },
+            teller,
+        ],
     );
     let definition = api::named_banks::BANK_CATALOG
         .iter()
@@ -1001,4 +1008,63 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
     assert_eq!(access.kind, NativeAccessKind::Booth);
     assert_eq!(access.name.as_deref(), Some("Shantay chest"));
     assert_eq!(access.stand_op, 0);
+}
+
+#[test]
+fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
+    let definition = api::named_banks::BANK_CATALOG
+        .iter()
+        .find(|definition| definition.name == "Mage Arena")
+        .unwrap();
+    for stands in [
+        Vec::new(),
+        vec![
+            nav::pack::BankStand {
+                name: "Bank booth".to_owned(),
+                tile: definition.tile,
+                access: nav::pack::BankAccess::Booth { op: 2 },
+            },
+            nav::pack::BankStand {
+                name: "Other teller".to_owned(),
+                tile: definition.tile,
+                access: nav::pack::BankAccess::Npc {
+                    name: "Other teller".to_owned(),
+                    op: 1,
+                    choose: None,
+                },
+            },
+        ],
+    ] {
+        let flags = vec![0; 4 * 16 * 16];
+        let (walk, blocked) = pack_walk(&flags);
+        let world = NavWorld::from_parts(
+            WorldCollision {
+                origin: tile(definition.tile.x - 8, definition.tile.z - 8),
+                width: 16,
+                height: 16,
+                walk,
+                blocked,
+                flags: None,
+            },
+            TransportGraph::default(),
+            stands,
+        );
+        let mage_bank = api::named_banks::NamedBank {
+            name: definition.name,
+            tile: definition.tile,
+            definition: Some(definition),
+            routable: true,
+        };
+        let (access_tile, access) = native_bank_access(&world, mage_bank, definition.tile).unwrap();
+        assert_eq!(access_tile, definition.tile);
+        assert_eq!(access.stand_tile, definition.tile);
+        assert_eq!(access.kind, NativeAccessKind::Teller);
+        assert_eq!(access.name.as_deref(), Some("Gundai"));
+        assert_eq!(access.stand_op, 0);
+        assert_eq!(
+            access.choose.as_deref(),
+            Some("I'd like to access my bank account")
+        );
+        assert!(native_bank_access(&world, bank("Unmapped", 8, 8), definition.tile).is_none());
+    }
 }

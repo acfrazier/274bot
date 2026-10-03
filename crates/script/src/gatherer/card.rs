@@ -1,5 +1,6 @@
 use super::runner::Gatherer;
 use super::settings::{resolve_methods, schema, GathererSettings};
+use super::supply::PreparedSupply;
 use crate::native::{
     CompiledCard, ConfigError, PrepareContext, PreparedConfig, RetainedMemory, SettingsBag,
     StartError,
@@ -14,7 +15,7 @@ pub const CARD: CompiledCard = CompiledCard {
     name: "Gatherer",
     description: "Gather selected woodcutting, mining and fishing resources from live observation.",
     category: "Gathering",
-    schema_version: 2,
+    schema_version: 3,
     schema,
     per_account_settings: &[],
     prepare,
@@ -29,6 +30,8 @@ pub struct Prepared {
     pub methods: Arc<[usize]>,
     pub excluded_targets: Arc<str>,
     pub products: Arc<[i32]>,
+    pub banks: Arc<api::named_banks::NamedBankFacts>,
+    pub supply: PreparedSupply,
 }
 
 pub fn prepare(
@@ -45,10 +48,12 @@ pub fn prepare(
     {
         return Err(StartError::Facts(api::selected::FactError::PinMismatch));
     }
-    let settings = GathererSettings::from_bag(&bag).map_err(StartError::Config)?;
+    let mut settings = GathererSettings::from_bag(&bag).map_err(StartError::Config)?;
     let catalog =
         api::gather_methods::prepare(&cx.selected, cx.families).map_err(StartError::Facts)?;
     let (method_bits, methods) = resolve_methods(&settings, &cx.selected, &catalog)?;
+    let supply = PreparedSupply::prepare(&mut settings, &cx.selected, &catalog, &methods)
+        .map_err(StartError::Config)?;
     let excluded_targets: Arc<str> = methods
         .iter()
         .flat_map(|&index| api::gather_methods::known_rows(&catalog.methods()[index].targets))
@@ -73,6 +78,8 @@ pub fn prepare(
         revision,
         bag,
         Arc::new(Prepared {
+            banks: Arc::clone(&cx.banks),
+            supply,
             selected: Arc::clone(&cx.selected),
             catalog,
             settings,

@@ -123,6 +123,8 @@ impl NativeMachine for GatherRun {
         };
         let current_products = product_count(inventory.value, &self.args.target);
         let current_xp = stat_xp(stats.value, self.args.target.skill_stat);
+        let previous_gained = self.gained;
+        let previous_xp_gain = self.xp_gain;
         self.gained = current_products
             .saturating_sub(self.baseline_products)
             .try_into()
@@ -169,7 +171,8 @@ impl NativeMachine for GatherRun {
         let animated = snapshot
             .local_player()
             .is_some_and(|player| player.value.player.actor.animation != -1);
-        let progressed = current_products > self.baseline_products || current_xp > self.baseline_xp;
+        // A prior yield stays in the receipt, but only a new delta keeps this attempt alive.
+        let progressed = self.gained > previous_gained || self.xp_gain > previous_xp_gain;
         if progressed || animated {
             self.quiet_ticks = 0;
         } else {
@@ -181,8 +184,6 @@ impl NativeMachine for GatherRun {
         if !self.retried {
             self.retried = true;
             self.quiet_ticks = 0;
-            self.baseline_products = current_products;
-            self.baseline_xp = current_xp;
             if cx.evidence().tick > self.last_emit_tick {
                 self.emit_click(cx)?;
             }
