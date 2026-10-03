@@ -539,40 +539,36 @@ fn read_journal_retries_a_park_with_fresh_failure_budgets() {
 }
 
 #[test]
-fn blocked_slot_read_journal_reopens_dispatch_and_emits_a_real_read() {
+fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
     let (mut script, snapshot) = fixture(true);
     script.parked = true;
     script.run.session = 0;
     let mut slot = crate::SlotScript::new();
     slot.bind_incarnation(1);
     slot.start_test_script(Box::new(script), None).unwrap();
-    let tick = |slot: &mut crate::SlotScript, tick| {
-        slot.on_game_tick(&mut crate::ScriptCtx {
-            driver: &mut crate::ctx::test_support::NullDriver::default(),
-            tick,
-            here: None,
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: Some(&snapshot),
-            obj_names: None,
-            compiled: crate::CompiledTick::default(),
-        });
-    };
-    tick(&mut slot, 1);
-    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Blocked);
     let run = slot.native_run().unwrap();
-    slot.read_journal_compiled(run).unwrap();
-    assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
-    assert!(slot.native_status().unwrap().failure.is_none());
-    tick(&mut slot, 2);
-    tick(&mut slot, 3);
-    let action = slot.take_native_action().expect("Read now must dispatch");
-    assert!(action.live());
-    assert!(matches!(
-        action.effect,
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id: 42 })
-    ));
+    slot.on_game_tick(&mut crate::ScriptCtx {
+        driver: &mut crate::ctx::test_support::NullDriver::default(),
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(&snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+    assert_eq!(slot.state(), crate::RunState::Idle);
+    assert!(slot.native_run().is_none());
+    let status = slot
+        .native_status()
+        .expect("terminal blocked diagnostic survives Stop");
+    assert_eq!(status.run, run);
+    assert_eq!(status.phase, NativePhase::Blocked);
+    assert_eq!(
+        status.failure.as_ref().unwrap().message.as_ref(),
+        "no progress"
+    );
 }
 
 #[test]

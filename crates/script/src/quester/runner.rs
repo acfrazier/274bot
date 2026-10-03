@@ -10,7 +10,7 @@ use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
-use crate::native::death::DeathLatch;
+use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
@@ -42,6 +42,7 @@ const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
 enum QuesterFailureKind {
     Other,
     ManualMovement,
+    MaxDeaths,
 }
 
 pub struct Quester {
@@ -87,6 +88,7 @@ pub struct Quester {
     waiting: Option<(&'static str, Arc<str>)>,
     deaths: u8,
     prior_deaths: u16,
+    max_deaths: u8,
     attempts: u8,
     fail_streak: u8,
     parked: bool,
@@ -387,6 +389,7 @@ impl Quester {
             last_error_kind: QuesterFailureKind::Other,
             waiting: None,
             deaths: 0,
+            max_deaths: default_max_deaths(),
             prior_deaths: 0,
             attempts: 0,
             fail_streak: 0,
@@ -509,13 +512,14 @@ impl Quester {
         ScriptFailure {
             code: Arc::from(match self.last_error_kind {
                 QuesterFailureKind::ManualMovement => "manual-movement",
+                QuesterFailureKind::MaxDeaths => "max-deaths",
                 QuesterFailureKind::Other => "parked",
             }),
             message: self
                 .last_error
                 .clone()
                 .unwrap_or_else(|| Arc::from(self.park_reason)),
-            retryable: true,
+            retryable: self.last_error_kind != QuesterFailureKind::MaxDeaths,
         }
     }
 
@@ -593,8 +597,10 @@ impl Quester {
         let phase = if !self.queue_fields.is_empty()
             && (phase == NativePhase::Complete
                 || (phase == NativePhase::Blocked
-                    && self.last_error_kind != QuesterFailureKind::ManualMovement))
-        {
+                    && !matches!(
+                        self.last_error_kind,
+                        QuesterFailureKind::ManualMovement | QuesterFailureKind::MaxDeaths
+                    ))) {
             NativePhase::Working
         } else {
             phase
@@ -1221,6 +1227,10 @@ impl Script for Quester {
             self.dirty = true;
         }
         if self.death.observe(tick.cx.snapshot()) {
+            let exceeded = death_cap_exceeded(
+                self.prior_deaths.saturating_add(u16::from(self.deaths)),
+                self.max_deaths,
+            );
             self.cancel_step(tick);
             self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
@@ -1230,6 +1240,15 @@ impl Script for Quester {
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
+            if exceeded {
+                self.parked = true;
+                self.set_last_error(
+                    QuesterFailureKind::MaxDeaths,
+                    Arc::from("maximum deaths exceeded; Stop/Start required"),
+                );
+                self.emit_status(tick.output, NativePhase::Blocked);
+                return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+            }
         }
         if let Some(result) = self
             .clear_prayers
@@ -1730,6 +1749,7 @@ pub struct QueuedQuester {
     preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
     completed: u16,
     deaths: u16,
+    max_deaths: u8,
     retreats: u16,
     last_retreat: Option<Arc<str>>,
     fields: Arc<[StatusField]>,
@@ -1746,6 +1766,17 @@ impl QueuedQuester {
         banks: Arc<api::named_banks::NamedBankFacts>,
         queue: super::queue::Queue<'static>,
     ) -> Self {
+        Self::new_with_max_deaths(run, selected, quests, banks, queue, default_max_deaths())
+    }
+
+    pub(super) fn new_with_max_deaths(
+        run: RunKey,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        queue: super::queue::Queue<'static>,
+        max_deaths: u8,
+    ) -> Self {
         let mut this = Self {
             run,
             selected,
@@ -1757,6 +1788,7 @@ impl QueuedQuester {
             preparing: None,
             completed: 0,
             deaths: 0,
+            max_deaths,
             retreats: 0,
             last_retreat: None,
             fields: Arc::from([]),
@@ -1948,6 +1980,7 @@ impl QueuedQuester {
                     Arc::clone(&self.banks),
                 );
                 active.prior_deaths = self.deaths;
+                active.max_deaths = self.max_deaths;
                 active.required_vs_live = skill_status_fields(&result.skill_gates);
                 active.tested_stats_warning = match active.path.tested_stats.as_deref() {
                     None => Arc::from("No qualified stats recorded"),
@@ -2001,7 +2034,9 @@ impl Script for QueuedQuester {
             let flow = active.tick(tick)?;
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
-                ScriptFlow::Blocked(failure) if failure.code.as_ref() == "manual-movement" => {
+                ScriptFlow::Blocked(failure)
+                    if matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
+                {
                     return Ok(flow);
                 }
                 ScriptFlow::Complete | ScriptFlow::Blocked(_) => {

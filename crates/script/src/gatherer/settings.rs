@@ -156,7 +156,7 @@ fn default_death_policy() -> String {
     "Recover".into()
 }
 fn default_max_deaths() -> u8 {
-    2
+    crate::native::death::default_max_deaths()
 }
 
 impl Default for GathererSettings {

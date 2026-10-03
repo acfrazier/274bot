@@ -149,6 +149,8 @@ pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
+    /// Diagnostic only: a blocked run has no instance or restart authority.
+    terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
     #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
@@ -270,6 +272,7 @@ impl SlotScript {
             want_run: false,
             state: RunState::Idle,
             compiled: None,
+            terminal_native_status: None,
             preparing: None,
             #[cfg(feature = "load")]
             api: None,
@@ -481,6 +484,7 @@ impl SlotScript {
         self.last_error = None;
         self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
+        self.terminal_native_status = None;
         self.ticks = 0;
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = 0;
@@ -882,6 +886,7 @@ impl SlotScript {
     }
 
     fn stop_with_reason(&mut self, reason: StopReason, message: &'static str) {
+        self.terminal_native_status = None;
         let native = self.compiled.is_some() || self.preparing.is_some();
         if native {
             self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
@@ -2020,14 +2025,6 @@ impl SlotScript {
         let Some(run) = self.compiled.as_mut() else {
             return;
         };
-        if run
-            .output
-            .status
-            .as_ref()
-            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
-        {
-            return;
-        }
         // Park this slot's interact queue in the ctx for the tick: the verbs
         // the card dispatches then land on the same drain the isolate's
         // forwarded requests ride.
@@ -2057,34 +2054,24 @@ impl SlotScript {
             );
         }
         match result {
-            Ok(ScriptFlow::Continue) => {}
-            Ok(ScriptFlow::Blocked(failure)) => {
-                // Blocked closes dispatch: this tick's queued effects, the
-                // walk follow and any quiet lease lose their authority
-                // before the host can drain them. Retry begins fresh work.
-                self.native_runtime.revoke();
-                self.revoke_native_input();
-                #[cfg(feature = "load")]
-                {
-                    self.compiled_interacts.clear();
-                    self.compiled_interact_outcome_seqs.clear();
-                }
-                if let Some(run) = &mut self.compiled {
-                    run.output.status = Some(Arc::new(crate::native::ScriptStatus {
-                        run: run.run,
-                        card: run.config.card(),
-                        phase: crate::native::NativePhase::Blocked,
-                        active_settings: run.config.revision(),
-                        pending_settings: run.pending.as_ref().map(|next| next.revision()),
-                        fields: run
-                            .output
-                            .status
-                            .as_ref()
-                            .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
-                        failure: Some(failure),
-                    }));
-                }
+            Ok(ScriptFlow::Continue | ScriptFlow::Complete)
+                if self.compiled.as_ref().is_some_and(|run| {
+                    run.output.status.as_ref().is_some_and(|status| {
+                        status.phase == crate::native::NativePhase::Blocked
+                            && status.failure.is_some()
+                    })
+                }) =>
+            {
+                let failure = self
+                    .compiled
+                    .as_ref()
+                    .and_then(|run| run.output.status.as_ref())
+                    .and_then(|status| status.failure.clone())
+                    .expect("terminal blocked status");
+                self.stop_blocked(failure, ctx.tick);
             }
+            Ok(ScriptFlow::Continue) => {}
+            Ok(ScriptFlow::Blocked(failure)) => self.stop_blocked(failure, ctx.tick),
             Ok(ScriptFlow::Complete) => {
                 self.revoke_native_input();
                 #[cfg(feature = "load")]
@@ -2105,6 +2092,44 @@ impl SlotScript {
             }
             Err(failure) => self.fail_compiled(failure),
         }
+    }
+
+    /// Use the operator Stop cleanup, retaining only the terminal diagnostic.
+    /// A Blocked flow is terminal even when the card omitted its status;
+    /// a published Blocked phase is terminal only when it carries a failure.
+    fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
+        use crate::native::NativeOutput;
+        let run = self.compiled.as_mut().expect("blocked compiled run");
+        let status = crate::native::ScriptStatus {
+            run: run.run,
+            card: run.config.card(),
+            phase: crate::native::NativePhase::Blocked,
+            active_settings: run.config.revision(),
+            pending_settings: run.pending.as_ref().map(|next| next.revision()),
+            fields: run
+                .output
+                .status
+                .as_ref()
+                .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
+            failure: Some(failure),
+        };
+        // Publish through the same change-only logging seam as card statuses.
+        run.output.status(status);
+        let status = run.output.status.clone().expect("blocked status");
+        let generation = self.runtime_generation;
+        self.stop();
+        self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+            runtime_generation: generation,
+            state: ScriptTerminalState::Failed,
+            tick,
+            reason: status
+                .failure
+                .as_ref()
+                .expect("blocked failure")
+                .message
+                .to_string(),
+        });
+        self.terminal_native_status = Some(status);
     }
 
     pub fn state(&self) -> RunState {
