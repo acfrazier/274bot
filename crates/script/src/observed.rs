@@ -609,6 +609,8 @@ scene_pages! {
         self_target_kind: i32,
         self_target_index: i32,
         user_move_intent_seq: u64,
+        /// Host-published fingerprint of the current chat-modal page.
+        chat_page_fingerprint: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -1026,6 +1028,9 @@ impl Scene {
         }
         if snap.has_user_move_intent_seq() {
             p.user_move_intent_seq(snap.user_move_intent_seq());
+        }
+        if snap.has_chat_page_fingerprint() {
+            p.chat_page_fingerprint(snap.chat_page_fingerprint());
         }
 
         if snap.has_self_target_index() {

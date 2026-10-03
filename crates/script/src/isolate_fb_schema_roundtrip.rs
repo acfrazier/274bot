@@ -242,3 +242,21 @@ fn absent_quest_status_defaults_to_unknown() {
     crate::observed::on_reset();
     assert_eq!(observed_status, "unknown");
 }
+
+#[test]
+fn older_snapshot_without_chat_page_fingerprint_reads_as_default() {
+    let mut b = flatbuffers::FlatBufferBuilder::new();
+    let root = {
+        let mut snapshot = SnapshotBuilder::new(&mut b);
+        snapshot.add_tick(1);
+        snapshot.finish()
+    };
+    b.finish(root, None);
+
+    let snapshot = decode_snapshot(b.finished_data()).expect("older snapshot verifies");
+    assert!(
+        !snapshot.has_chat_page_fingerprint(),
+        "older wire data has no fingerprint slot"
+    );
+    assert_eq!(snapshot.chat_page_fingerprint(), 0);
+}
