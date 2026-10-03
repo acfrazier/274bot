@@ -1531,10 +1531,21 @@ impl Run {
         self.card.is_some()
     }
 
-    fn start_script(&self, play: &Play, name: &str) -> Result<(), String> {
+    /// `false` keeps the seed's Start pending while a settings copy owns admission.
+    fn start_script(&self, play: &Play, name: &str) -> Result<bool, String> {
         let Some(card) = &self.card else {
-            return Ok(());
+            return Ok(true);
         };
+        // This fixture-owned loadout path starts the slot directly. Take the
+        // same hold lock as dispatch_start and retain it through the slot call,
+        // so publishing a copy cannot race admission.
+        let start_hold = play
+            .script_start_hold
+            .lock()
+            .map_err(|_| "script start hold unavailable".to_string())?;
+        if start_hold.upgrade().is_some() {
+            return Ok(false);
+        }
         if self.scenario_name.as_deref() == Some("thiever")
             && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
         {
@@ -1556,7 +1567,7 @@ impl Run {
             slot.post_settings_bag(&bag);
             drop(slot);
             play.wake(name);
-            return Ok(());
+            return Ok(true);
         }
         // Fixtures must not read the operator's saved loadouts.
         let slot = crate::script_slot_or_insert(&play.scripts, name);
@@ -1572,7 +1583,7 @@ impl Run {
         slot.post_settings_bag(&card.bag);
         drop(slot);
         play.wake(name);
-        Ok(())
+        Ok(true)
     }
 
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
@@ -1660,8 +1671,7 @@ impl Run {
                                         return Err(self.duel_fleet_failure(play, failure)?);
                                     }
                                 };
-                            if permitted {
-                                self.start_script(play, name)?;
+                            if permitted && self.start_script(play, name)? {
                                 seed_arc.lock().unwrap().started = true;
                             }
                         }
@@ -2529,6 +2539,74 @@ mod tests {
             warmup: Duration::from_secs(1),
             observe: Duration::from_secs(1),
             teardown: Duration::from_secs(1),
+        }
+    }
+
+    #[test]
+    fn fleet_copy_hold_blocks_memory_benchmark_in_both_loadout_modes() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _iso = script::IsolatedEnv::enter("memory-benchmark-copy-hold");
+        let _env = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SUSTAIN",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ]);
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
+        let source = crate::external_loader::default_frozen_source();
+        let mut library =
+            script::JsLibrary::with_cache(_iso.dir.join("scripts.json"), _iso.dir.join("js-cache"));
+        library.load(&source).unwrap();
+        let lookup = source.display().to_string();
+        library
+            .ensure_js(script::ScriptSource::File, &lookup)
+            .unwrap();
+        run.card = Some(ScriptCard {
+            card: library
+                .get(script::ScriptSource::File, &lookup)
+                .unwrap()
+                .clone(),
+            bag: serde_json::Map::new(),
+            siblings: vec![],
+            loadouts: vec![],
+        });
+        run.scenario_name = Some("thiever".into());
+        for sustain in ["0", "1"] {
+            std::env::set_var("BOT_MEMORY_SUSTAIN", sustain);
+            let mut play = crate::run_with_io(
+                &crate::PlayOptions {
+                    host: "127.0.0.1".into(),
+                    transport: crate::Transport::Tcp,
+                    port: 43594,
+                    cache_dir: "/tmp".into(),
+                    lowmem: true,
+                    mainland: false,
+                },
+                vec![],
+                |_| (None, None),
+                |_, _, _| {},
+            );
+            let name = &run.names[0];
+            play.attach_arm(name, crate::SlotArm::new(1, false));
+            let hold = play.hold_script_starts("waiting for settings copy confirmation".into());
+            for _ in 0..3 {
+                run.start_script(&play, name).unwrap();
+                assert_eq!(
+                    play.script_state(name),
+                    script::RunState::Idle,
+                    "memory Start must remain held, sustain={sustain}"
+                );
+            }
+            drop(hold);
+            run.start_script(&play, name).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while play.script_state(name) != script::RunState::Running {
+                assert!(Instant::now() < deadline, "memory Start did not resume");
+                play.pump_script_lifecycle(name);
+                std::thread::yield_now();
+            }
+            assert_eq!(play.script_last_error(name), None);
         }
     }
 
