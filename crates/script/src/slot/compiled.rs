@@ -120,9 +120,97 @@ pub(super) struct Output {
     pub account: String,
 }
 
+fn status_text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
+    status.fields.iter().find_map(|field| {
+        (field.key == key)
+            .then_some(&field.value)
+            .and_then(|value| match value {
+                crate::native::StatusValue::Text(text) if !text.is_empty() => Some(text.as_ref()),
+                _ => None,
+            })
+    })
+}
+
+fn status_text_changed(previous: Option<&ScriptStatus>, status: &ScriptStatus, key: &str) -> bool {
+    let current = status_text(status, key);
+    match previous {
+        Some(previous) => status_text(previous, key) != current,
+        None => current.is_some(),
+    }
+}
+
+fn phase_label(phase: NativePhase) -> &'static str {
+    match phase {
+        NativePhase::Preparing => "preparing",
+        NativePhase::Working => "working",
+        NativePhase::Waiting => "waiting",
+        NativePhase::Blocked => "blocked",
+        NativePhase::Complete => "complete",
+    }
+}
+
+fn log_status_change(slot: &str, previous: Option<&ScriptStatus>, status: &ScriptStatus) {
+    let phase_changed = previous.is_none_or(|previous| previous.phase != status.phase);
+    let failure_changed = match previous.and_then(|previous| previous.failure.as_ref()) {
+        Some(previous) => status.failure.as_ref() != Some(previous),
+        None => status.failure.is_some(),
+    };
+    let waiting_for_changed = status_text_changed(previous, status, "waiting_for");
+    let action_state_changed = status_text_changed(previous, status, "action_state");
+    let gatherer = status.card.0 == "Gatherer";
+    let last_event_changed = gatherer && status_text_changed(previous, status, "last_event");
+    if !(phase_changed
+        || failure_changed
+        || waiting_for_changed
+        || action_state_changed
+        || last_event_changed)
+    {
+        return;
+    }
+
+    let level = if phase_changed || failure_changed {
+        api::hostlog::Level::Info
+    } else {
+        api::hostlog::Level::Debug
+    };
+    let failure = status.failure.as_ref();
+    let waiting_for = status_text(status, "waiting_for");
+    let action_state = status_text(status, "action_state");
+    if gatherer {
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            level,
+            slot = slot,
+            "native {} phase={} failure={} failure_message={:?} waiting_for={:?} action_state={:?} last_event={:?}",
+            status.card.0,
+            phase_label(status.phase),
+            failure.map_or("none", |failure| failure.code.as_ref()),
+            failure.map(|failure| failure.message.as_ref()),
+            waiting_for,
+            action_state,
+            status_text(status, "last_event"),
+        );
+    } else {
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            level,
+            slot = slot,
+            "native {} phase={} failure={} failure_message={:?} waiting_for={:?} action_state={:?}",
+            status.card.0,
+            phase_label(status.phase),
+            failure.map_or("none", |failure| failure.code.as_ref()),
+            failure.map(|failure| failure.message.as_ref()),
+            waiting_for,
+            action_state,
+        );
+    }
+}
+
 impl NativeOutput for Output {
     fn status(&mut self, status: ScriptStatus) {
-        if self.status.as_deref() != Some(&status) {
+        let previous = self.status.as_deref();
+        log_status_change(&self.account, previous, &status);
+        if previous != Some(&status) {
             self.status = Some(Arc::new(status));
         }
     }
