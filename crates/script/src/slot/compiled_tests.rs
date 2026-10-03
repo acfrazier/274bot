@@ -1174,14 +1174,17 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
         .unwrap();
     assert_eq!(yielded.value, crate::native::StatusValue::Integer(1));
     assert_eq!(
-        slot.retained
-            .as_ref()
-            .unwrap()
-            .lock()
-            .expect("retained memory")
-            .gather()
-            .yielded,
-        1
+        slot.state(),
+        RunState::Idle,
+        "depleted area blocks and stops"
+    );
+    assert!(
+        slot.retained.is_none(),
+        "normal Stop releases retained work"
+    );
+    assert_eq!(
+        status.failure.as_ref().unwrap().code.as_ref(),
+        "resource-unavailable"
     );
     slot.stop();
 }
@@ -1759,4 +1762,223 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
         vec![(1, 10), (2, 11), (3, 12)],
         "later observations and Pause-fence restoration must not refresh older walking decisions"
     );
+}
+
+struct StopWork {
+    _quiet: crate::native::QuietReadLease,
+    cancels: Arc<AtomicU64>,
+}
+
+impl crate::native::NativeMachine for StopWork {
+    type Args = Arc<AtomicU64>;
+    type Output = ();
+
+    fn begin(
+        cancels: Self::Args,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<Self, crate::native::ActionError> {
+        cx.emit(crate::shim::InteractReq::Held {
+            name: "Logs".into(),
+            action: "Drop".into(),
+            slot: Some(0),
+        })?;
+        Ok(Self {
+            _quiet: cx.begin_quiet_read(41)?,
+            cancels,
+        })
+    }
+
+    fn poll(
+        &mut self,
+        _: &mut ActionContext<'_>,
+    ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+        std::task::Poll::Pending
+    }
+
+    fn cancel(&mut self) {
+        self.cancels.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Exercise both terminal contracts, not just a card that returns Blocked.
+struct TerminalReporter {
+    phase: NativePhase,
+    flow_blocked: bool,
+    stops: Arc<AtomicU64>,
+    cancels: Arc<AtomicU64>,
+    work: Option<crate::native::ActionHandle<StopWork>>,
+}
+
+impl Script for TerminalReporter {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        if self.work.is_none() {
+            self.work = Some(
+                tick.actions
+                    .begin::<StopWork>(Arc::clone(&self.cancels), &mut tick.cx)
+                    .expect("queue pending native work and hold a quiet lease before termination"),
+            );
+        }
+        let failure = ScriptFailure {
+            code: "no-route".into(),
+            message: "no reachable bank under the walk permissions".into(),
+            retryable: true,
+        };
+        tick.output.status(ScriptStatus {
+            run: tick.cx.run(),
+            card: crate::CompiledId("test"),
+            phase: self.phase,
+            active_settings: 1,
+            pending_settings: None,
+            fields: Arc::from([crate::native::StatusField {
+                key: "destination",
+                label: "Destination",
+                value: crate::native::StatusValue::Text("bank".into()),
+            }]),
+            failure: (self.phase == NativePhase::Blocked).then(|| failure.clone()),
+        });
+        Ok(if self.flow_blocked {
+            ScriptFlow::Blocked(failure)
+        } else {
+            ScriptFlow::Continue
+        })
+    }
+
+    fn on_stop(&mut self, reason: StopReason) {
+        assert_eq!(reason, StopReason::Operator, "use the normal Stop path");
+        self.stops.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
+    for (phase, flow_blocked) in [(NativePhase::Working, true), (NativePhase::Blocked, false)] {
+        let stops = Arc::new(AtomicU64::new(0));
+        let cancels = Arc::new(AtomicU64::new(0));
+        let mut slot = SlotScript::new();
+        slot.start_test_script(
+            Box::new(TerminalReporter {
+                phase,
+                flow_blocked,
+                stops: Arc::clone(&stops),
+                cancels: Arc::clone(&cancels),
+                work: None,
+            }),
+            Some(selected()),
+        )
+        .unwrap();
+        slot.attach_source_identity("compiled:test");
+        let control_generation = slot.control_generation;
+        #[cfg(feature = "load")]
+        {
+            slot.clue_stop_owed = false;
+        }
+        let run = slot.native_run().unwrap();
+        tick(&mut slot);
+        assert_eq!(slot.state(), RunState::Idle);
+        assert!(!slot.want_run);
+        assert!(slot.native_run().is_none());
+        assert!(slot.compiled.is_none());
+        assert_eq!(slot.control_generation, control_generation + 1);
+        assert!(
+            slot.source_identity().is_none(),
+            "normal Stop clears identity"
+        );
+        #[cfg(feature = "load")]
+        assert!(slot.clue_stop_owed, "normal Stop owes fresh clue cleanup");
+        assert!(slot.retained.is_none(), "Stop releases retained work");
+        assert!(!slot.has_native_actions());
+        assert!(slot.native_quiet_read(Instant::now()).is_none());
+        assert_eq!(stops.load(Ordering::Relaxed), 1);
+        assert_eq!(cancels.load(Ordering::Relaxed), 1, "Stop cancels live work");
+        let status = slot
+            .native_status()
+            .expect("terminal diagnostic survives Stop");
+        assert_eq!(status.run, run);
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert_eq!(status.fields[0].key, "destination");
+        assert_eq!(
+            status.failure.as_ref().unwrap().message.as_ref(),
+            "no reachable bank under the walk permissions"
+        );
+        assert_eq!(
+            slot.lifecycle_receipt.as_ref().unwrap().state,
+            ScriptTerminalState::Failed
+        );
+        let now = Instant::now() + crate::watchdog::HARD_STALL;
+        assert_eq!(
+            slot.feed_watchdog(now, Some((0, 0, 0)), &[], false, true, &[]),
+            WatchdogAction::None
+        );
+        assert!(slot.restart_from_identity(now).is_err());
+        slot.resume();
+        slot.on_is_up(true);
+        slot.reconnect_session_work();
+        tick(&mut slot);
+        assert_eq!(slot.state(), RunState::Idle, "no automatic resurrection");
+        assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
+        assert_eq!(stops.load(Ordering::Relaxed), 1);
+        slot.start_test_script(
+            Box::new(TerminalReporter {
+                phase: NativePhase::Waiting,
+                flow_blocked: false,
+                stops: Arc::clone(&stops),
+                cancels: Arc::clone(&cancels),
+                work: None,
+            }),
+            Some(selected()),
+        )
+        .unwrap();
+        assert!(
+            slot.native_status().is_none(),
+            "explicit Start clears the old reason"
+        );
+        // The explicit Start is observed on a fresh server tick, not the
+        // already-spent emission budget of the blocked tick.
+        slot.on_game_tick(&mut ScriptCtx {
+            driver: &mut NullDriver::default(),
+            tick: 2,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: crate::CompiledTick::default(),
+        });
+        assert_eq!(slot.state(), RunState::Running);
+        assert!(slot.has_native_actions(), "the fixture really queues work");
+        assert!(slot.native_quiet_read(Instant::now()).is_some());
+        slot.stop();
+        assert_eq!(stops.load(Ordering::Relaxed), 2);
+        assert_eq!(cancels.load(Ordering::Relaxed), 2);
+    }
+}
+
+#[test]
+fn native_waiting_keeps_running_until_its_own_terminal_bound() {
+    let stops = Arc::new(AtomicU64::new(0));
+    let cancels = Arc::new(AtomicU64::new(0));
+    let mut slot = SlotScript::new();
+    slot.start_test_script(
+        Box::new(TerminalReporter {
+            phase: NativePhase::Waiting,
+            flow_blocked: false,
+            stops: Arc::clone(&stops),
+            cancels: Arc::clone(&cancels),
+            work: None,
+        }),
+        Some(selected()),
+    )
+    .unwrap();
+    let run = slot.native_run();
+    for _ in 0..3 {
+        tick(&mut slot);
+        assert_eq!(slot.state(), RunState::Running);
+        assert_eq!(slot.native_run(), run);
+        assert_eq!(slot.native_status().unwrap().phase, NativePhase::Waiting);
+    }
+    assert_eq!(stops.load(Ordering::Relaxed), 0);
+    assert_eq!(cancels.load(Ordering::Relaxed), 0);
+    slot.stop();
+    assert_eq!(cancels.load(Ordering::Relaxed), 1);
 }

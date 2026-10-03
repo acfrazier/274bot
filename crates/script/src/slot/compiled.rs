@@ -470,6 +470,7 @@ impl SlotScript {
         )?;
         self.control_generation = generation;
         self.preparing = Some(Box::new(job));
+        self.terminal_native_status = None;
         self.want_run = true;
         self.start_pending = true;
         self.start_outcome = None;
@@ -589,6 +590,7 @@ impl SlotScript {
         self.compiled = Some(Box::new(run));
         self.last_error = None;
         self.lifecycle_receipt = None;
+        self.terminal_native_status = None;
         self.ticks = 0;
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = 0;
@@ -631,7 +633,7 @@ impl SlotScript {
             .and_then(|run| run.output.status.clone());
         #[cfg(feature = "load")]
         let status = status.or_else(|| self.api_status());
-        status
+        status.or_else(|| self.terminal_native_status.clone())
     }
 
     pub fn native_settings_revision(&self) -> Option<u64> {

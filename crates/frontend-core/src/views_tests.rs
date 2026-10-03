@@ -783,6 +783,13 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
         .unwrap()
         .contains("Stop/Start"));
     assert_eq!(
+        script_status_label(RunState::Idle, Some(&status)),
+        "stopped (blocked)"
+    );
+    assert!(script_status_reason(&status)
+        .unwrap()
+        .contains("Stop/Start"));
+    assert_eq!(
         script_status_label(RunState::Paused, Some(&status)),
         "paused"
     );

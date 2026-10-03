@@ -335,6 +335,11 @@ fn a_blocked_tick_dispatches_no_native_walk() {
     rig.observe(1);
     assert_eq!(rig.shared.lock().begun, 1, "the tick began a walk");
     assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Idle,
+        "terminal Blocked uses Stop, not a running dispatch hold"
+    );
+    assert_eq!(
         rig.slot().lock().unwrap().native_status().unwrap().phase,
         script::native::NativePhase::Blocked
     );
@@ -355,6 +360,22 @@ fn blocking_mid_walk_stops_the_follow() {
     assert_eq!(rig.driver.walked, Some((4, 0)));
     rig.shared.lock().blocked = true;
     rig.observe(2);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    assert!(!rig.slot().lock().unwrap().want_run);
+    assert!(rig.slot().lock().unwrap().native_run().is_none());
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .native_status()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .message
+            .as_ref(),
+        "blocked by the card"
+    );
     rig.driver.walked = None;
     rig.step();
     assert_eq!(queued(&rig.navs), None, "Blocked revokes the follow");

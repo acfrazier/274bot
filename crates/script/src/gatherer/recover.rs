@@ -10,7 +10,10 @@ impl Gatherer {
     }
 
     pub(super) fn latch_recovery(&mut self, tick: &mut NativeTick<'_>) {
-        let exceeded = self.retained.deaths >= self.settings().max_deaths;
+        let exceeded = crate::native::death::death_cap_exceeded(
+            u16::from(self.retained.deaths),
+            self.settings().max_deaths,
+        );
         let repeated = self.retained.deaths > 0
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
@@ -42,7 +45,11 @@ impl Gatherer {
         } else if repeated {
             self.fail("died-again", "died before a recovered haul completed", true);
         } else if self.settings().death_policy.eq_ignore_ascii_case("Stop") {
-            self.fail("died", "death observed; Retry consents to recovery", true);
+            self.fail(
+                "died",
+                "death observed; Start again after reviewing recovery settings",
+                true,
+            );
         }
     }
 
