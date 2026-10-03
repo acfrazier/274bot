@@ -9,7 +9,8 @@ use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::{
-    parse_profile_args, BundledNavIdentity, NavOrigin, ProfileOptions, SharedClientTemplate,
+    parse_profile_args, BundledNavIdentity, LoginKey, NavOrigin, ProfileOptions, Servers,
+    SharedClientTemplate,
 };
 
 #[path = "support/upgrade_home.rs"]
@@ -49,6 +50,7 @@ impl Fixture {
     fn env(&self) -> ProfileEnvironment {
         ProfileEnvironment {
             home: Some(self.0.clone()),
+            engine_dir: Some(self.0.join("fixture-engine")),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..Default::default()
@@ -251,9 +253,7 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     assert!(selected
         .nav_flags()
         .ends_with(".274bot/289/274bot.navflags"));
-    assert!(selected
-        .content_dir()
-        .ends_with("experiments/lostcity-289/content"));
+    assert_eq!(selected.content_dir(), fixture.0.join("content"));
     assert!(selected.vault_path().ends_with(".274bot/vault-prod"));
 
     let (rs2b2t, _) = parse_profile_args(["--rs2b2t"]).unwrap();
@@ -314,6 +314,90 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
     assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
     assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
+}
+
+#[test]
+fn local_profile_requires_engine_and_new_builtin_file_omits_engine_paths() {
+    let fixture = Fixture::new();
+    let mut environment = fixture.env();
+    environment.engine_dir = None;
+    let (options, _) = parse_profile_args(["--profile", "local-289"]).unwrap();
+    let error = options.resolve_with_env(None, &environment).unwrap_err();
+    assert!(
+        error.contains("ENGINE_DIR")
+            && error.contains("servers.json")
+            && error.contains("--engine"),
+        "{error}"
+    );
+    assert!(
+        !error.contains(&fixture.0.display().to_string()),
+        "the diagnostic must not invent a path under HOME: {error}"
+    );
+
+    let servers_json = std::fs::read_to_string(fixture.0.join(".274bot/servers.json")).unwrap();
+    assert!(!servers_json.contains("engine_dir"), "{servers_json}");
+}
+
+#[test]
+fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
+    let fixture = Fixture::new();
+    let bot_dir = fixture.0.join(".274bot");
+    std::fs::create_dir_all(&bot_dir).unwrap();
+    let saved = fixture.0.join("saved-engine");
+    let mut servers = Servers::builtins();
+    let local_289 = servers
+        .servers
+        .iter_mut()
+        .find(|profile| profile.name == "local-289")
+        .unwrap();
+    local_289.login_key = LoginKey::EngineDir {
+        engine_dir: Some(saved.clone()),
+    };
+    let servers_path = bot_dir.join("servers.json");
+    let original_json = serde_json::to_vec_pretty(&servers).unwrap();
+    std::fs::write(&servers_path, &original_json).unwrap();
+
+    let mut environment = fixture.env();
+    let from_env = fixture.0.join("environment-engine");
+    environment.engine_dir = Some(from_env.clone());
+    environment.working_dir = Some(fixture.0.clone());
+    let cli_engine = fixture.0.join("cli-engine");
+    let (options, _) = parse_profile_args([
+        "--profile".to_owned(),
+        "local-289".to_owned(),
+        "--engine".to_owned(),
+        cli_engine.to_string_lossy().into_owned(),
+    ])
+    .unwrap();
+    assert_eq!(
+        options
+            .resolve_with_env(None, &environment)
+            .unwrap()
+            .engine_dir(),
+        fixture.0.join("cli-engine")
+    );
+
+    let without_cli = ProfileOptions {
+        engine_dir: None,
+        ..options.clone()
+    };
+    assert_eq!(
+        without_cli
+            .resolve_with_env(None, &environment)
+            .unwrap()
+            .engine_dir(),
+        from_env
+    );
+
+    environment.engine_dir = None;
+    assert_eq!(
+        without_cli
+            .resolve_with_env(None, &environment)
+            .unwrap()
+            .engine_dir(),
+        saved
+    );
+    assert_eq!(std::fs::read(&servers_path).unwrap(), original_json);
 }
 
 #[test]

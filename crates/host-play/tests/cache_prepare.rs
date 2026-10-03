@@ -100,6 +100,7 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
     };
     let environment = ProfileEnvironment {
         home: Some(root.0.clone()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()
@@ -347,6 +348,7 @@ fn wrong_revision_manifest_is_rejected_before_any_fetch() {
     };
     let environment = ProfileEnvironment {
         home: Some(root.0.clone()),
+        engine_dir: Some(root.join("engine")),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()

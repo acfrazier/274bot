@@ -46,18 +46,16 @@ existing override packs** after updating. A new executable does not rewrite
 an existing override pack on its own.
 
 The `nav_door` integration test uses hard-coded Direct local-274 options and
-the fixed `$HOME/experiments/Server/engine/data/pack/client` cache path.
-`BOT_SERVER_PROFILE` does not select that test's endpoint:
+the `ENGINE_DIR/data/pack/client` cache path. `BOT_SERVER_PROFILE` does not
+select that test's endpoint:
 
 ```sh
-BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+BOT_NAV_REVISION=274 ENGINE_DIR=/absolute/path/to/274-engine LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-Some existing integration-test helpers use the default
-`HOME/experiments/Server/engine/data/pack/client` layout. Check the
-relevant test's cache options when running it on another machine; setting
-`ENGINE_DIR` is not a universal override for those older helpers. Frontend
-harnesses use the configured engine/cache path from the resolved profile.
+Direct integration-test helpers that use engine cache data require
+`ENGINE_DIR`; frontend harnesses use the configured engine/cache path from
+the resolved profile.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
 

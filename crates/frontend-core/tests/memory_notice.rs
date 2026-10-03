@@ -121,7 +121,8 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     clean_logout.store(true, Ordering::Release);
     session.play().unwrap().wake("alice");
     wait_for(&mut session, |s| {
-        s.memory_status("alice").is_some_and(|n| !n.connected)
+        s.memory_status("alice")
+            .is_some_and(|n| !n.connected && n.login_applies_memory)
     });
     let clean = session.memory_status("alice").unwrap();
     release_tx.send(()).unwrap();
