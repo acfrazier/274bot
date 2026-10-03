@@ -9,7 +9,9 @@ use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
+use crate::script_runtime::{
+    finish_walk_guard, session_freezes_follow, step_bank_fetch_on_bot, tick_walk_guard, NavBot,
+};
 use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found
@@ -29,6 +31,8 @@ pub struct WalkArm {
     /// Changes when a route is installed or cancelled, fencing the prior owner.
     pub route_generation: u64,
     pub bank_fetch: Option<PendingBankFetch>,
+    /// Hold-mode protect driver for this followed route. Dropped with the route.
+    pub walk_guard: Option<script::combat::WalkGuard>,
 }
 
 impl WalkArm {
@@ -207,6 +211,7 @@ fn replace_walk_arm(
         arm.bank_fetch = bank_fetch;
         arm.route = Some(route.clone());
         arm.route_generation = crate::walk_map::next_map_route_generation();
+        arm.walk_guard = None;
         replaced
     };
     if let Some((destination, generation)) = replaced {
@@ -269,6 +274,14 @@ pub fn step_walk_arm_follow<D: Driver>(
     };
     let destination = walk_destination(arm).unwrap_or(route.dest);
     let walking_stand = bank_stand_route_active(arm);
+    let _ = tick_walk_guard(driver, snapshot, &mut arm.walk_guard, slot);
+    let skip_follow = arm
+        .walk_guard
+        .as_ref()
+        .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16));
+    if skip_follow {
+        return false;
+    }
     let mut options = TravelOptions {
         close_enough: 0,
         teleports: world.map(|world| world.graph.teleports.as_slice()),
@@ -301,6 +314,7 @@ pub fn step_walk_arm_follow<D: Driver>(
     if walking_stand {
         arm.bank_fetch = None;
     }
+    finish_walk_guard(driver, snapshot, &mut arm.walk_guard, slot);
     arm.route = None;
     true
 }
@@ -321,6 +335,7 @@ pub fn cancel_walk_arm(
     arm.route_generation = arm.route_generation.wrapping_add(1);
     arm.route = None;
     arm.bank_fetch = None;
+    arm.walk_guard = None;
     true
 }
 

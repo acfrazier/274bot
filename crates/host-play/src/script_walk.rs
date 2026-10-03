@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use api::interact::Driver;
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::interact::{ActionSpec, Driver, Interactions, OpTarget};
+use api::quest_progress::EvidenceStamp;
+use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
 use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
 use nav::router::{
     find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
@@ -11,6 +12,8 @@ use nav::router::{
 use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
+use script::combat::{GuardOp, GuardProtect};
+use script::native::WalkEnd;
 
 use super::play_status::lock_statuses;
 use super::{
@@ -66,6 +69,98 @@ pub(super) fn abort_walk_on_bot_with_end(bot: &mut NavBot, end: script::native::
     // Bank work and carried routes share the revoked walk's ownership.
     bot.bank_fetch = None;
     bot.carried_walk = None;
+    bot.walk_guard = None;
+}
+
+fn guard_view(snapshot: &GameSnapshot) -> SnapshotView<'_> {
+    SnapshotView::new(
+        Some(snapshot),
+        EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 0,
+                run: 0,
+                session: 0,
+            },
+            tick: u64::from(snapshot.tick()),
+            sequence: 0,
+        },
+    )
+}
+
+fn unprotectable_detail(protect: GuardProtect) -> Arc<str> {
+    Arc::from(match protect {
+        GuardProtect::Magic => "magic",
+        GuardProtect::Missiles => "missiles",
+        GuardProtect::Melee => "melee",
+    })
+}
+
+pub(crate) fn apply_guard_op<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    op: GuardOp,
+    account: Option<&str>,
+) {
+    let _ = account;
+    match op {
+        GuardOp::IfButton { component } if component > 0 => {
+            #[cfg(test)]
+            if let Some(account) = account {
+                crate::combat_proof::record_guard(account, snapshot, "if-button", Some(component));
+            }
+            let ctx = ReadContext::new(snapshot);
+            if let Some(widget) = ctx.component(component) {
+                let _ = Interactions::new(snapshot, driver).if_button(widget);
+            } else {
+                let _ = api::interact::press(driver, component);
+            }
+        }
+        GuardOp::Drink { name } => {
+            #[cfg(test)]
+            if let Some(account) = account {
+                crate::combat_proof::record_guard(account, snapshot, "drink", None);
+            }
+            if let Some(item) = snapshot.inventory().iter().find(|row| {
+                row.def
+                    .name
+                    .as_deref()
+                    .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
+            }) {
+                let _ = Interactions::new(snapshot, driver)
+                    .interact(OpTarget::Item(item), ActionSpec::Label("Drink".into()));
+            }
+        }
+        GuardOp::IfButton { .. } | GuardOp::Locked { .. } | GuardOp::Unprotectable { .. } => {}
+    }
+}
+
+pub(crate) fn finish_walk_guard<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    guard: &mut Option<script::combat::WalkGuard>,
+    account: Option<&str>,
+) {
+    if let Some(mut guard) = guard.take() {
+        guard.observe_prayer(&guard_view(snapshot));
+        apply_guard_op(driver, snapshot, guard.end(), account);
+    }
+}
+
+pub(crate) fn tick_walk_guard<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    guard: &mut Option<script::combat::WalkGuard>,
+    account: Option<&str>,
+) -> Option<GuardOp> {
+    let guard = guard.as_mut()?;
+    let op = guard.tick(&guard_view(snapshot))?;
+    match &op {
+        GuardOp::Unprotectable { .. } | GuardOp::Locked { .. } => Some(op),
+        _ => {
+            apply_guard_op(driver, snapshot, op.clone(), account);
+            Some(op)
+        }
+    }
 }
 
 /// The single takeover seam, called before frontend and script consumers.
@@ -579,6 +674,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         if bot.route.is_some() {
             // `requested_route == armed`: the arrival above is for this walk.
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
+                finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
@@ -590,26 +686,43 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
                         )
                     });
-                    let follow_outcome = {
-                        let mut options = TravelOptions {
-                            // Exact arrival matches the armed walk's destination.
-                            close_enough: 0,
-                            teleports: borrowed_world.map(|world| world.graph.teleports.as_slice()),
-                            edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
-                            quest_evidence: bot.route_quest_evidence.as_ref(),
-                            ..TravelOptions::default()
+                    if let Some(GuardOp::Unprotectable { protect }) =
+                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                    {
+                        abort_walk_on_bot_with_end(bot, WalkEnd::Unprotectable);
+                        bot.walk_outcome_detail = Some(unprotectable_detail(protect));
+                    }
+                    let skip_follow = bot.route.is_none()
+                        || bot
+                            .walk_guard
+                            .as_ref()
+                            .is_some_and(|guard| guard.blocks_follow(snapshot.tick() as u16));
+                    if !skip_follow {
+                        let follow_outcome = {
+                            let mut options = TravelOptions {
+                                // Exact arrival matches the armed walk's destination.
+                                close_enough: 0,
+                                teleports: borrowed_world
+                                    .map(|world| world.graph.teleports.as_slice()),
+                                edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
+                                quest_evidence: bot.route_quest_evidence.as_ref(),
+                                ..TravelOptions::default()
+                            };
+                            bot.traveller.follow(driver, snapshot, route, &mut options)
                         };
-                        bot.traveller.follow(driver, snapshot, route, &mut options)
-                    };
-                    let owned_estimated_end = defer_estimated_end
-                        && bot.requested_route == armed
-                        && bot.route_request_id == bot.walk_request_id
-                        && bot.bank_fetch.is_none();
-                    let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
-                        matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
-                    });
-                    if !owned_estimated_end || !reached_endpoint {
-                        apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
+                        let owned_estimated_end = defer_estimated_end
+                            && bot.requested_route == armed
+                            && bot.route_request_id == bot.walk_request_id
+                            && bot.bank_fetch.is_none();
+                        let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
+                            matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
+                        });
+                        if !owned_estimated_end || !reached_endpoint {
+                            apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
+                        }
+                    }
+                    if bot.route.is_none() {
+                        finish_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name));
                     }
                 }
             }

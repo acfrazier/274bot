@@ -71,6 +71,8 @@ impl Script for SettlementWalker {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                protect: false,
+                allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => self.handle = Some(handle),
