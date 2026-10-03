@@ -192,6 +192,8 @@ pub(super) fn scripted_door_edges(
                     open_loc_id: None,
                     skill_req: guild.skill.filter(|_| gated).into_iter().collect(),
                     item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: if gated { worn.clone() } else { vec![] },

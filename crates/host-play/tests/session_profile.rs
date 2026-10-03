@@ -957,6 +957,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],

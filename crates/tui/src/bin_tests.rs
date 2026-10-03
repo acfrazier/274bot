@@ -1747,6 +1747,8 @@ mod bank_fetch_fixtures {
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![knife_id],
@@ -2145,6 +2147,14 @@ fn follow_tick_pumps_bank_budget_step() {
     use std::collections::VecDeque;
 
     let mut c = bank_client();
+    c.set_iface_mut(
+        601,
+        client::config::IfTypeMut {
+            link_obj_type: Some(vec![3, 0]), // bank item ids are stored as id + 1
+            link_obj_number: Some(vec![1, 0]),
+            ..Default::default()
+        },
+    );
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&c);
     let world = Arc::new(knife_nav_world(2));
@@ -2159,11 +2169,7 @@ fn follow_tick_pumps_bank_budget_step() {
     };
     let mut arm = WalkArm {
         bank_fetch: Some(PendingBankFetch {
-            steps: VecDeque::from([
-                BankStep::DepositAll,
-                BankStep::Withdraw { id: 2, count: 1 },
-                BankStep::Close,
-            ]),
+            steps: VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
             dest: WorldTile {
                 x: 4,
                 z: 4,
@@ -2197,7 +2203,7 @@ fn follow_tick_pumps_bank_budget_step() {
     );
     assert!(
         c.out.pos > before,
-        "BankBudget pump must drive deposit on the Driver (pos {before} → {})",
+        "BankBudget pump must drive the shortage withdrawal on the Driver (pos {before} → {})",
         c.out.pos
     );
 }
@@ -2377,6 +2383,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -2386,7 +2394,9 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     };
     let aborted_route = Route {
         dest: destination,
-        legs: vec![Leg::Transport { edge }],
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
         ticks: 7.0,
     };
     let mut aborted = WalkArm {
