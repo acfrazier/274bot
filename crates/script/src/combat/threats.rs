@@ -3,7 +3,7 @@ use super::frame::Frame;
 use super::request::{ActorKind, ActorRef};
 use super::select;
 use super::tables::{CombatTables, StyleWhere};
-use api::snapshot::{ActorTargetView, HitmarkView, NpcView, PlayerView, ProjectileView};
+use api::snapshot::{ActorTargetView, HitmarkView, NpcView, PlayerView, ProjectileView, WorldTile};
 
 pub const THREAT_TTL: u16 = 10;
 pub const HITMARK_BLOCK: i32 = 0;
@@ -775,6 +775,64 @@ impl ThreatSet {
         }
     }
 
+    fn take_launcher(
+        &self,
+        frame: &Frame<'_>,
+        src: WorldTile,
+        max_distance: u32,
+    ) -> Result<Option<ActorRef>, ()> {
+        let mut source = None;
+        for npc in frame.npcs {
+            if npc_launch_distance(npc, src) > max_distance {
+                continue;
+            }
+            let Some(index) = u16::try_from(npc.index).ok() else {
+                continue;
+            };
+            let actor = ActorRef {
+                kind: ActorKind::Npc,
+                index,
+            };
+            let ident = npc
+                .r#type
+                .and_then(|id| i32::try_from(id).ok())
+                .unwrap_or(-1);
+            if !(faces_us(npc.target, frame.me()) || self.find_identity(actor, ident).is_some()) {
+                continue;
+            }
+            if source.replace(actor).is_some() {
+                return Err(());
+            }
+        }
+        for player in frame.players {
+            if tile_chebyshev(player.actor.tile, src) > max_distance {
+                continue;
+            }
+            let Some(index) = u16::try_from(player.index).ok() else {
+                continue;
+            };
+            let actor = ActorRef {
+                kind: ActorKind::Player,
+                index,
+            };
+            let ident = player
+                .actor
+                .name
+                .as_deref()
+                .map(select::ident::fnv1a)
+                .unwrap_or(0);
+            if !(faces_us(player.actor.target, frame.me())
+                || self.find_identity(actor, ident).is_some())
+            {
+                continue;
+            }
+            if source.replace(actor).is_some() {
+                return Err(());
+            }
+        }
+        Ok(source)
+    }
+
     fn observe_projectiles(&mut self, frame: &Frame<'_>, tables: &CombatTables, tick: u16) {
         let me = ActorTargetView {
             kind: ActorKind::Player,
@@ -808,62 +866,22 @@ impl ThreatSet {
                 .style_spotanim(projectile.spotanim)
                 .filter(|row| row.where_ == StyleWhere::Projectile)
                 .map_or(StyleObs::Unknown, |row| select::style_from_mask(row.style));
-            let mut source = None;
-            let mut ambiguous = false;
-            for npc in frame.npcs.iter().filter(|row| row.tile == projectile.src) {
-                let Some(index) = u16::try_from(npc.index).ok() else {
+            // Fine-pixel launch coords often decode one tile off the rendered
+            // NPC. Prefer an exact tile/network hit; if none, the unique
+            // adjacent facing actor.
+            let actor = match self.take_launcher(frame, projectile.src, 0) {
+                Ok(Some(actor)) => actor,
+                Err(()) => {
+                    self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
                     continue;
-                };
-                let actor = ActorRef {
-                    kind: ActorKind::Npc,
-                    index,
-                };
-                let ident = npc
-                    .r#type
-                    .and_then(|id| i32::try_from(id).ok())
-                    .unwrap_or(-1);
-                if (faces_us(npc.target, frame.me()) || self.find_identity(actor, ident).is_some())
-                    && source.replace(actor).is_some()
-                {
-                    ambiguous = true;
-                    break;
                 }
-            }
-            if !ambiguous {
-                for player in frame
-                    .players
-                    .iter()
-                    .filter(|row| row.actor.tile == projectile.src)
-                {
-                    let Some(index) = u16::try_from(player.index).ok() else {
+                Ok(None) => match self.take_launcher(frame, projectile.src, 1) {
+                    Ok(Some(actor)) => actor,
+                    Err(()) | Ok(None) => {
+                        self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
                         continue;
-                    };
-                    let actor = ActorRef {
-                        kind: ActorKind::Player,
-                        index,
-                    };
-                    let ident = player
-                        .actor
-                        .name
-                        .as_deref()
-                        .map(select::ident::fnv1a)
-                        .unwrap_or(0);
-                    if (faces_us(player.actor.target, frame.me())
-                        || self.find_identity(actor, ident).is_some())
-                        && source.replace(actor).is_some()
-                    {
-                        ambiguous = true;
-                        break;
                     }
-                }
-            }
-            if ambiguous {
-                self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
-                continue;
-            }
-            let Some(actor) = source else {
-                self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
-                continue;
+                },
             };
             let Some(index) = self.ensure_actor(actor, frame, tables, tick) else {
                 self.mark_projectile_unknown(projectile, tick, frame.loop_cycle);
@@ -1256,6 +1274,18 @@ fn faces_us(target: Option<ActorTargetView>, local_slot: usize) -> bool {
     target.is_some_and(|target| target.kind == ActorKind::Player && target.index == local_slot)
 }
 
+fn tile_chebyshev(a: WorldTile, b: WorldTile) -> u32 {
+    if a.level != b.level {
+        u32::MAX
+    } else {
+        a.x.abs_diff(b.x).max(a.z.abs_diff(b.z))
+    }
+}
+
+fn npc_launch_distance(npc: &NpcView, src: WorldTile) -> u32 {
+    tile_chebyshev(npc.tile, src).min(tile_chebyshev(npc.network, src))
+}
+
 fn npc_main_style(row: &api::game_data::NpcNameRow) -> StyleObs {
     match row.attack_kind {
         Some(api::game_data::NpcAttackKind::Ranged) => StyleObs::Ranged,
@@ -1356,8 +1386,11 @@ fn projectile_due_window(
 }
 
 fn cycle_recent(now: i32, then: i32) -> bool {
+    if then < 0 {
+        return false;
+    }
     let age = now.wrapping_sub(then);
-    then >= 0 && (0..=i32::from(THREAT_TTL) * 30).contains(&age)
+    (0..=i32::from(THREAT_TTL) * 30).contains(&age) || (0..=30).contains(&then.wrapping_sub(now))
 }
 
 fn cycle_to_tick(tick: u16, loop_cycle: i32, event_cycle: i32) -> u16 {
