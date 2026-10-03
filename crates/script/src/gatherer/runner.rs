@@ -1088,7 +1088,11 @@ impl Gatherer {
             Active::Gather(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Gather(handle),
                 Poll::Ready(Ok(result)) => {
-                    self.fence.seal();
+                    // These terminal observations emit no operation. Admit one
+                    // new target from this same frame instead of idling a tick.
+                    if !matches!(result.end, GatherEnd::Depleted | GatherEnd::TargetGone) {
+                        self.fence.seal();
+                    }
                     self.handle_gather(result, tick);
                 }
                 Poll::Ready(Err(error)) => {
@@ -1121,7 +1125,14 @@ impl Gatherer {
             Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Walk(handle),
                 Poll::Ready(Ok(result)) => {
-                    self.fence.seal();
+                    // Keep bank/recovery settlement fenced. A resource approach
+                    // can reselect immediately from its fresh arrival frame.
+                    if result.end != WalkEnd::Arrived
+                        || self.trip != TripStep::Idle
+                        || matches!(self.retained.recovery, RecoveryState::Pending { .. })
+                    {
+                        self.fence.seal();
+                    }
                     self.handle_walk(result, tick);
                 }
                 Poll::Ready(Err(error)) => {
@@ -1320,7 +1331,7 @@ impl Gatherer {
         true
     }
 
-    fn begin_idle(&mut self, tick: &mut NativeTick<'_>) {
+    fn begin_idle(&mut self, tick: &mut NativeTick<'_>, handoff: bool) {
         if self.fence.sealed {
             return;
         }
@@ -1399,6 +1410,12 @@ impl Gatherer {
             },
         );
         self.zone_gated = selected.zone_gated;
+        // Completion can precede its inventory/XP packet. Only an available
+        // target warrants a same-frame handoff; confirm terminal unavailability
+        // on the next observation so the last yield is accounted before blocking.
+        if handoff && selected.target.is_none() {
+            return;
+        }
         match selected.target {
             Some(target) => {
                 self.hazard_escape = None;
@@ -1726,7 +1743,11 @@ impl Script for Gatherer {
                 None => ScriptFlow::Continue,
             });
         }
-        if self.active_matches_none() {
+        let handoff = !self.active_matches_none();
+        if handoff {
+            self.poll_active(tick);
+        }
+        if self.active_matches_none() && !self.fence.sealed && self.failure.is_none() {
             let disposal_due = tick
                 .cx
                 .snapshot()
@@ -1736,28 +1757,9 @@ impl Script for Gatherer {
             if let Some(revision) = self.apply_pending(disposal_due) {
                 tick.output.settings_applied(revision);
             }
-        }
-        if self.active_matches_none() && self.needs_validate {
-            match self.validate(&mut tick.cx) {
-                Validation::Pending => {
-                    self.publish(tick);
-                    return Ok(ScriptFlow::Continue);
-                }
-                Validation::Wear(tool) => {
-                    self.tool = tool;
-                    self.begin_wear(tick);
-                    self.publish(tick);
-                    return Ok(ScriptFlow::Continue);
-                }
-                Validation::Ready => self.needs_validate = false,
-            }
-        }
-        if !self.active_matches_none() {
-            self.poll_active(tick);
-        } else {
             // Even at expiry, re-observe first: a freshly regrown resource
             // takes precedence over waiting or widening.
-            self.begin_idle(tick);
+            self.begin_idle(tick, handoff);
         }
         if self.retained.recoveries != recoveries {
             self.set_event(&format!("recovered after death {}", self.retained.deaths));
@@ -1856,6 +1858,10 @@ impl Gatherer {
         matches!(self.active, Active::None)
     }
 }
+
+#[cfg(test)]
+#[path = "runner_switch_tests.rs"]
+mod switch_tests;
 
 #[cfg(test)]
 mod tests {
