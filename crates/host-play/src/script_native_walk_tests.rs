@@ -290,45 +290,21 @@ fn zoned_open_world() -> NavWorld {
     world
 }
 fn catalog_open_world() -> NavWorld {
-    let mut world = open_world(40, 1);
+    let mut world = open_world(40, 10);
+    let tile = |x, z| WorldTile { x, z, level: 0 };
     let mut zones = vec![
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 2,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 3,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 4,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
+        nav::zones::Zone::npc(tile(2, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(30, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
     ];
     zones[0].group = 0;
-    zones[1].group = 1;
-    zones[2].group = 2;
+    for zone in &mut zones[1..5] {
+        zone.group = 1;
+    }
+    zones[5].group = 2;
     let kinds = vec![nav::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
@@ -354,25 +330,25 @@ fn catalog_open_world() -> NavWorld {
             "draynor-jail-guards",
             "Draynor jail guards",
             nav::router::AvoidRect {
-                min_x: 3,
-                max_x: 3,
-                min_z: 0,
-                max_z: 0,
+                min_x: 9,
+                max_x: 21,
+                min_z: 1,
+                max_z: 7,
                 level: Some(0),
             },
-            vec![1].into_boxed_slice(),
+            vec![1, 2, 3, 4].into_boxed_slice(),
         ),
         nav::zones::ZoneGroup::new(
             "death-plateau-throwers",
             "Death Plateau thrower trolls",
             nav::router::AvoidRect {
-                min_x: 4,
-                max_x: 4,
+                min_x: 30,
+                max_x: 30,
                 min_z: 0,
                 max_z: 0,
                 level: Some(0),
             },
-            vec![2].into_boxed_slice(),
+            vec![5].into_boxed_slice(),
         ),
     ];
     let table = nav::zones::ZoneTable::from_parts(
@@ -2000,32 +1976,57 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
 }
 
 #[test]
-fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
+fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
     let table = world.graph.zones.as_ref().expect("zone table");
-    let group_rect = |id: &str| {
+    let group = |id: &str| {
         table
             .groups()
             .iter()
             .find(|group| group.id.as_ref() == id)
             .expect("catalog group")
-            .rect
     };
-    let white_wolf_rect = group_rect("white-wolf-mountain");
-    let jail_rect = group_rect("draynor-jail-guards");
+    let white_wolf_rect = group("white-wolf-mountain").rect;
+    let jail_group = group("draynor-jail-guards");
+    let jail_rect = jail_group.rect;
+    let jail_member_rects: Vec<_> = jail_group
+        .members
+        .iter()
+        .map(|member| {
+            let zone = &table.zones()[usize::from(*member)];
+            nav::router::AvoidRect {
+                min_x: zone.min_x,
+                max_x: zone.max_x,
+                min_z: zone.min_z,
+                max_z: zone.max_z,
+                level: Some(i32::from(zone.level)),
+            }
+        })
+        .collect();
+    assert_eq!(jail_member_rects.len(), 4);
     let outside = WorldTile {
         x: 0,
         z: 0,
         level: 0,
     };
     let inside_jail = WorldTile {
-        x: jail_rect.min_x,
-        z: jail_rect.min_z,
-        level: jail_rect.level.expect("jail group plane"),
+        x: jail_member_rects[0].min_x,
+        z: jail_member_rects[0].min_z,
+        level: jail_member_rects[0].level.unwrap(),
     };
-    let resolve_avoid = |from, state: &WorldState, id: &str| {
+    let bbox_gap = WorldTile {
+        x: 15,
+        z: 4,
+        level: jail_rect.level.unwrap(),
+    };
+    assert!(jail_rect.contains(bbox_gap));
+    assert!(
+        !jail_member_rects.iter().any(|rect| rect.contains(bbox_gap)),
+        "the fixture gap is inside the group bounding box but outside every guard rectangle"
+    );
+    let resolve_avoid = |from, to, state: &WorldState, id: &str| {
         let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
         exclusions
             .avoid_wire
@@ -2034,27 +2035,45 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
             nav::router::FindOptions::default(),
             &world,
             from,
-            outside,
+            to,
             state,
             exclusions,
         )
     };
 
     let state = WorldState::empty();
-    let (_, white_wolf) = resolve_avoid(outside, &state, "white-wolf-mountain").unwrap();
+    let (_, white_wolf) = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
     assert_eq!(white_wolf.avoid, [white_wolf_rect]);
 
-    let (_, jail) = resolve_avoid(outside, &state, "draynor-jail-guards").unwrap();
-    assert_eq!(jail.avoid, [jail_rect]);
+    let (_, jail) = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(jail.avoid, jail_member_rects);
+    assert!(
+        !jail.avoid.iter().any(|rect| rect.contains(bbox_gap)),
+        "a tile inside the bounding box but outside every actual rectangle is not avoided"
+    );
+    let (_, gap_origin) = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(
+        gap_origin.avoid, jail_member_rects,
+        "an endpoint in the bounding-box gap does not exempt the jail"
+    );
+    let (_, gap_destination) =
+        resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(
+        gap_destination.avoid, jail_member_rects,
+        "a destination in the bounding-box gap does not exempt the jail"
+    );
 
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
     let (_, skipped_for_combat) =
-        resolve_avoid(outside, &high_combat, "draynor-jail-guards").unwrap();
+        resolve_avoid(outside, outside, &high_combat, "draynor-jail-guards").unwrap();
     assert!(skipped_for_combat.avoid.is_empty());
-    let (_, skipped_for_endpoint) =
-        resolve_avoid(inside_jail, &state, "draynor-jail-guards").unwrap();
-    assert!(skipped_for_endpoint.avoid.is_empty());
+    let (_, skipped_for_source_endpoint) =
+        resolve_avoid(inside_jail, outside, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_source_endpoint.avoid.is_empty());
+    let (_, skipped_for_destination_endpoint) =
+        resolve_avoid(outside, inside_jail, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_destination_endpoint.avoid.is_empty());
 }
 
 #[test]
@@ -2131,6 +2150,34 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         )
         .unwrap_err(),
         "crossZones: more than 8 zone names"
+    );
+}
+
+#[test]
+fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
+    use script::shim::InspectAvoidWire;
+
+    let world = zoned_open_world();
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
+    exclusions
+        .avoid_wire
+        .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &WorldState::empty(),
+            exclusions,
+        )
+        .unwrap_err(),
+        "avoidZones: catalog zone \"white-wolf-mountain\" has no baked group geometry"
     );
 }
 

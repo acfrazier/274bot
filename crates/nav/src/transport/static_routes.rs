@@ -481,10 +481,15 @@ pub(super) fn cart_fare(edge: &TransportEdge, id: i32, carried: i32) -> Option<i
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
-pub(super) fn cart_edges(graph: &mut TransportGraph, zombie_queen_name: Option<&str>) {
+pub(super) fn cart_edges(
+    graph: &mut TransportGraph,
+    zombie_queen_name: Option<&str>,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
     for r in CART_ROUTES {
         let quest_req = if r.requires_zombie_queen {
             let Some(name) = zombie_queen_name else {
+                bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
                 continue;
             };
             vec![name.to_string()]

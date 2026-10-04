@@ -3361,7 +3361,7 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
         'if (%crate_bananas = 0 & %crate_rum = 0) {',
         '    mes("The crate is completely empty.");',
         '}',
-        'if (%crate_bananas = 10) {',
+        'if (%crate_bananas = 7) {',
         '    mes("The crate is full of bananas.");',
         '}',
     ].join('\n'));
@@ -3371,9 +3371,9 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
         'if (testbit(%hunt_store_employed, ^hunt_not_started) = ^false) {',
         '    @multi2("Offer employment?", luthas_employment, "Other choice", other);',
         '}',
-        'if (%crate_bananas = 10) {',
-        '    mes("Luthas hands you 30 coins.");',
-        '    inv_add(inv, coins, 30);',
+        'if (%crate_bananas = 7) {',
+        '    mes("Luthas hands you 43 coins.");',
+        '    inv_add(inv, coins, 43);',
         '    @multi4("Another crate?", again, "Thanks!", thanks, "Delivery?", delivery, "Other?", other);',
         '}',
         '@multi4("Repeat?", repeat, "Not yet.", incomplete, "Delivery?", delivery, "Other?", other);',
@@ -3405,8 +3405,8 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
             { config: 'bananatreefull', x: 2884, z: 3141, plane: 0 },
             { config: 'bananatreeone', x: 2885, z: 3142, plane: 0 },
         ],
-        crate_capacity: 10,
-        coin_payout: 30,
+        crate_capacity: 7,
+        coin_payout: 43,
         dialogue: { employment: 'Offer employment?', paid: 'Thanks!', incomplete: 'Not yet.' },
     });
     assert(result.inputs.some((input) => input.path === 'maps/m45_49.jm2'), 'placement map is a family provenance input');
@@ -3415,10 +3415,10 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
         /expected one Luthas NPC placement, got 0/,
         'missing content placement refuses instead of guessing an anchor',
     );
-    write(luthasPath, luthasScript.replace('inv_add(inv, coins, 30);', 'inv_add(inv, coins, 31);'));
+    write(luthasPath, luthasScript.replace('inv_add(inv, coins, 43);', 'inv_add(inv, coins, 44);'));
     assert.throws(
         () => extractKaramjaFacts(content, npcNames, locNames, npcPlacements),
-        /Luthas coin message\/grant disagree \(30\/31\)/,
+        /Luthas coin message\/grant disagree \(43\/44\)/,
         'the full-crate payout is the amount the content actually grants',
     );
 }
