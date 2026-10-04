@@ -675,13 +675,18 @@ fn resolve_item_option_spec(
     ResolvedSettingOptions { values, labels }
 }
 
-/// The loadout a compat script's `loadout` setting names (trimmed,
-/// case-insensitive), else the first one. Its serialized shape
-/// (`{ name, worn, carry, unassigned? }`) is what the script reads.
+/// Exact case-sensitive loadout selection shared by compat and native consumers.
+pub(crate) fn select_loadout<'a>(
+    rows: impl IntoIterator<Item = &'a Loadout>,
+    wanted: &str,
+) -> Option<&'a Loadout> {
+    rows.into_iter().find(|row| row.name == wanted)
+}
+
+/// The exact loadout a compat script's `loadout` setting names.
+/// Its serialized shape (`{ name, worn, carry, unassigned? }`) is unchanged.
 pub fn selected_compat_loadout<'a>(rows: &'a [Loadout], wanted: &str) -> Option<&'a Loadout> {
-    rows.iter()
-        .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
-        .or_else(|| rows.first())
+    select_loadout(rows, wanted)
 }
 
 /// Hat-first worn names, then unassigned, after trim and empty filter.
@@ -1596,7 +1601,7 @@ mod tests {
 mod compatibility_tests {
     use super::*;
     #[test]
-    fn selected_loadout_matches_case_and_falls_back_to_first() {
+    fn selected_loadout_requires_an_exact_name() {
         let rows = vec![
             Loadout::new("First")
                 .with_carry("Coins", 1)
@@ -1604,8 +1609,10 @@ mod compatibility_tests {
             Loadout::new("Second").with_carry("Shark", 1),
         ];
         let pick = |wanted: &str| selected_compat_loadout(&rows, wanted).map(|r| r.name.as_str());
-        assert_eq!(pick(" SECOND "), Some("Second"));
-        assert_eq!(pick("missing"), Some("First"));
+        assert_eq!(pick("Second"), Some("Second"));
+        assert!(pick(" SECOND ").is_none());
+        assert!(pick("missing").is_none());
+        assert!(pick("").is_none());
         assert!(selected_compat_loadout(&[], "").is_none());
     }
 
