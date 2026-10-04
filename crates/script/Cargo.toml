@@ -17,11 +17,13 @@ test-hooks = []
 # this crate.
 default = ["load"]
 load = ["dep:rustyscript", "dep:v8", "dep:deno_core", "deno_ast/transpiling", "dep:flatbuffers", "dep:tiny-skia"]
+path-schema = ["dep:schemars", "api/path-schema"]
 
 [dependencies]
 ab_glyph = "=0.2.32"
 api = { path = "../api" }
 nav = { path = "../nav" }
+schemars = { version = "=1.2.2", optional = true }
 # TS parse for import scans (always, V8-free); `load` adds the TS -> JS
 # strip for the catalog shape. `transpiling` unifies with the features
 # rustyscript already enables, so no new build graph.
@@ -44,7 +46,7 @@ v8 = { version = "=137.2.1", default-features = false, optional = true }
 [dev-dependencies]
 allocation-counter = "=0.8.1"
 # Integration tests use isolate seams without exposing them in normal builds.
-script = { path = ".", features = ["test-hooks"] }
+script = { path = ".", features = ["test-hooks", "path-schema"] }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
 # never touches `client`.
 client = { workspace = true }

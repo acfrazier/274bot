@@ -6,12 +6,14 @@ publish = false
 
 [features]
 debug-catalog = []
+path-schema = ["dep:schemars"]
 
 [dependencies]
 client = { workspace = true }
 flate2 = "=1.1.9"
 parking_lot = "0.12"
 serde = { version = "=1.0.219", features = ["derive", "rc"] }
+schemars = { version = "=1.2.2", optional = true }
 serde_json = "=1.0.140"
 sha2 = "=0.10.9"
 smallvec = "=1.15.2"

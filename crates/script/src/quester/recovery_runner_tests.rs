@@ -291,7 +291,7 @@ fn recovery_r2_zero_hp_waits_for_death_chat_before_interrupting_dialogue() {
     let step = &mut document.roles[0].sequences[0].steps[0];
     step.kind = "talk".into();
     step.args = serde_json::json!({"npc": "cook"});
-    step.advances = true;
+    step.advances = Some(true);
     step.skip_if = crate::quester::path::PredicateDocument::Any(vec![]);
     step.settle = crate::quester::path::PredicateDocument::All(vec![]);
     let path =

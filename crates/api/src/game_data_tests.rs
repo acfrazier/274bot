@@ -1219,6 +1219,49 @@ fn gather_resources_decode_and_skill_lookup() {
 }
 
 #[test]
+fn generated_karamja_facts_join_selected_items_npcs_and_locs() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let facts = data.karamja().expect("generated Karamja facts");
+        assert!(facts.crate_capacity > 0);
+        assert!(facts.coin_payout > 0);
+        assert!(!facts.banana_tree_configs.is_empty());
+        assert!(!facts.banana_tree_spawns.is_empty());
+        assert!(facts
+            .banana_tree_spawns
+            .iter()
+            .all(|spawn| facts.banana_tree_configs.contains(&spawn.config)));
+        assert!(data.item_by_alias("coins").is_some());
+        assert!(data.item_by_alias("banana").is_some());
+
+        let luthas = data
+            .npc_by_config(&facts.luthas_spawn.config)
+            .expect("Luthas joins the selected NPC pack");
+        assert!(luthas
+            .display
+            .as_deref()
+            .is_some_and(|display| !display.is_empty()));
+        assert!(luthas
+            .ops
+            .iter()
+            .any(|op| op.eq_ignore_ascii_case("Talk-to")));
+        for config in facts
+            .banana_tree_configs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(facts.crate_spawn.config.as_str()))
+        {
+            assert!(data
+                .loc_by_config(config)
+                .is_some_and(|loc| !loc.ops.is_empty()));
+        }
+        assert!(!facts.dialogue.employment.is_empty());
+        assert!(!facts.dialogue.paid.is_empty());
+        assert!(!facts.dialogue.incomplete.is_empty());
+    }
+}
+
+#[test]
 fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).unwrap();
@@ -1247,6 +1290,64 @@ fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
             freshfish.methods.len(),
             2,
             "{revision:?} shared method group"
+        );
+    }
+}
+
+#[test]
+fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
+    let missing =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(missing.dialogue_ui().is_none());
+    let valid = serde_json::json!({
+        "scroll_root": 1136,
+        "book_root": 837,
+        "book_forward": 841,
+        "book_close": 10162,
+        "book_forward_marker": 842
+    });
+    let decode = |ids: &serde_json::Value| {
+        SelectedGameData::decode(
+            minimal_json(&format!(", \"dialogue_ui\": {ids}")).as_bytes(),
+            ClientRevision::R274,
+        )
+    };
+    let data = decode(&valid).unwrap();
+    assert_eq!(data.dialogue_ui().unwrap().book_forward, 841);
+    assert_eq!(data.dialogue_ui().unwrap().book_forward_marker, 842);
+    for field in [
+        "scroll_root",
+        "book_root",
+        "book_forward",
+        "book_close",
+        "book_forward_marker",
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = serde_json::json!(0);
+        assert!(decode(&invalid).unwrap().dialogue_ui().is_none(), "{field}");
+    }
+    let mut duplicate = valid.clone();
+    duplicate["book_forward"] = duplicate["book_close"].clone();
+    assert!(decode(&duplicate).unwrap().dialogue_ui().is_none());
+    let mut unknown = valid;
+    unknown["debug_catalog"] = serde_json::json!(true);
+    assert!(decode(&unknown).is_err());
+}
+
+#[test]
+fn generated_dialogue_ui_roles_match_both_pinned_sources() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        assert_eq!(
+            data.dialogue_ui(),
+            Some(&DialogueUiIds {
+                scroll_root: 1136,
+                book_root: 837,
+                book_forward: 841,
+                book_close: 10162,
+                book_forward_marker: 842,
+            }),
+            "{revision:?} forward is the handler, not the visibility marker"
         );
     }
 }

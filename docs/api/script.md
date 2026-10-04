@@ -214,6 +214,8 @@ Path loadout headers use selected item aliases, such as `rune_scimitar` and
 `4doseprayerrestore`. Compilation resolves each worn and carried item once into
 the display-name rows consumed by Loadouts; operator overrides remain ordinary
 display-name Loadouts rows.
+Certificate aliases in either header section are rejected before that conversion;
+the shared display name must not erase a certificate's distinct item identity.
 
 Acquisition recipes can call other recipes with `acquire` steps. The compiler
 binds dependencies first and compiles each recipe once, independent of its
@@ -271,6 +273,14 @@ chat-history ring line is not page progress. The host computes the shared native
 fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
+
+Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
+identities. Book forwarding resolves the script's forward handler separately
+from its last-page visibility marker; generic component names in revision 274
+are not guessed from their numeric ids. These facts are part of the pinned
+main asset and its source provenance, not the opt-in `DebugCatalog`.
+Message and object-box `mesbox` pages are chat surfaces and keep the ordinary
+chat continuation path.
 
 ### Quester expected combat handoff
 

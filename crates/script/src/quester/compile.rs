@@ -1,6 +1,9 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
-use super::path::{PathDocument, QuestItemDocument, QuestRequirementDocument, StepDocument};
+use super::path::{
+    PathDocument, QuestItemDocument, QuestRequirementDocument, QuestRequirementKindDocument,
+    StepDocument,
+};
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
@@ -10,7 +13,10 @@ use api::gather_methods::GatherCatalog;
 use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
-use api::selected::{ClientRevision, FactKey, SourceSpan, Truth};
+use api::selected::{
+    ClientRevision, FactKey, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
+    Truth,
+};
 use sha2::{Digest, Sha256};
 use std::{
     any::Any,
@@ -26,7 +32,7 @@ pub struct CompileContext<'a> {
     pub quests: &'a QuestCatalog,
     pub gathering: Option<&'a GatherCatalog>,
     pub areas: &'a HashMap<String, Vec<[i32; 5]>>,
-    pub recipes: &'a HashMap<String, Vec<CompiledAcquireStep>>,
+    pub recipes: &'a HashMap<String, Arc<[CompiledAcquireStep]>>,
     /// `None` uses the shared eligible-bank cost selector at step start.
     pub bank: Option<NamedBank>,
     pub bank_required: bool,
@@ -61,11 +67,62 @@ impl CompileError {
         self
     }
 
-    pub fn with_detail(mut self, detail: &'static str) -> Self {
-        self.detail = Some(Arc::from(detail));
+    pub fn with_detail(mut self, detail: impl Into<Arc<str>>) -> Self {
+        self.detail = Some(detail.into());
         self
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdvanceClass {
+    Explicit,
+    Default,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgressRead {
+    None,
+    Colour,
+    Journal,
+}
+
+pub fn decode_args<A: serde::de::DeserializeOwned>(
+    value: &serde_json::Value,
+) -> Result<A, CompileError> {
+    serde_json::from_value(value.clone())
+        .map_err(|error| CompileError::code("invalid-args").with_detail(error.to_string()))
+}
+
+#[macro_export]
+macro_rules! step {
+    ($kind:literal, $version:literal, $advance:ident, $args:ty, $compile:path) => {{
+        $crate::quester::compile::StepHandler {
+            kind: $kind,
+            version: $version,
+            advance: $crate::quester::compile::AdvanceClass::$advance,
+            args_schema: $crate::quester::schema::args_schema::<$args>(),
+            compile: |value, cx| {
+                $compile($crate::quester::compile::decode_args::<$args>(value)?, cx)
+            },
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! fact {
+    ($kind:literal, $version:literal, $progress:path, $args:ty, $compile:path) => {{
+        $crate::quester::compile::PredicateHandler {
+            kind: $kind,
+            version: $version,
+            progress: $progress,
+            args_schema: $crate::quester::schema::args_schema::<$args>(),
+            compile: |value, cx| {
+                $compile($crate::quester::compile::decode_args::<$args>(value)?, cx)
+            },
+        }
+    }};
+}
+
+pub(crate) use crate::{fact, step};
 
 pub struct CompiledPath {
     pub id: FactKey,
@@ -99,9 +156,16 @@ pub struct CompiledQuestItem {
     pub acquire: Option<Arc<str>>,
 }
 
+pub struct CompiledRequirement {
+    pub id: FactKey,
+    pub at_start: bool,
+    pub source: Arc<str>,
+    pub kind: RequirementKind,
+}
+
 pub struct CompiledEligibility {
     pub members: bool,
-    pub requirements: Arc<[QuestRequirementDocument]>,
+    pub requirements: Arc<[CompiledRequirement]>,
     pub items: Arc<[CompiledQuestItem]>,
 }
 
@@ -219,11 +283,15 @@ pub struct StepHandler {
     pub kind: &'static str,
     pub version: u16,
     pub compile: CompileStep,
+    pub advance: AdvanceClass,
+    pub args_schema: super::schema::ArgsSchema,
 }
 pub struct PredicateHandler {
     pub kind: &'static str,
     pub version: u16,
     pub compile: CompilePredicate,
+    pub progress: ProgressRead,
+    pub args_schema: super::schema::ArgsSchema,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -238,16 +306,20 @@ struct CacheKey {
 static CACHE: std::sync::LazyLock<Mutex<HashMap<CacheKey, Weak<CompiledPath>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+pub fn step_handlers() -> impl Iterator<Item = &'static StepHandler> {
+    families::handlers().iter().chain(super::handlers::steps())
+}
+pub fn predicate_handlers() -> impl Iterator<Item = &'static PredicateHandler> {
+    families::predicate_handlers()
+        .iter()
+        .chain(super::handlers::predicates())
+}
+
 pub fn abi_set() -> u64 {
     let mut hasher = Sha256::new();
-    let mut rows: Vec<_> = families::handlers()
-        .iter()
-        .map(|h| ("step", h.kind, h.version))
-        .chain(
-            families::predicate_handlers()
-                .iter()
-                .map(|h| ("predicate", h.kind, h.version)),
-        )
+    let mut rows: Vec<_> = step_handlers()
+        .map(|handler| ("step", handler.kind, handler.version))
+        .chain(predicate_handlers().map(|handler| ("predicate", handler.kind, handler.version)))
         .collect();
     rows.sort_unstable();
     for (class, kind, version) in rows {
@@ -314,13 +386,81 @@ pub fn compile_uncached_for_test(
     compile_uncached(document, digest_bytes(b"test"), selected, quests).map(Arc::new)
 }
 
+fn compile_requirement(
+    selected: &SelectedGameData,
+    requirement: &QuestRequirementDocument,
+) -> Result<CompiledRequirement, CompileError> {
+    let kind = match &requirement.kind {
+        QuestRequirementKindDocument::QuestPoints(points) => RequirementKind::QuestPoints(*points),
+        QuestRequirementKindDocument::Skill { skill, level } => {
+            let skill_id = skill_index(skill)
+                .ok_or_else(|| CompileError::code("unknown-skill").with_detail(skill.as_str()))?;
+            RequirementKind::Skill(SkillMinimum {
+                skill: skill_id,
+                level: *level,
+            })
+        }
+        QuestRequirementKindDocument::Quest(quest) => {
+            RequirementKind::Quest(QuestGate::Complete(FactKey::new(quest)))
+        }
+        QuestRequirementKindDocument::Item { obj, qty } => {
+            let item = selected
+                .item_by_alias(obj)
+                .ok_or_else(|| CompileError::code("unresolved-item").with_detail(obj.as_str()))?;
+            RequirementKind::Item(ItemAmount {
+                item: item.id,
+                count: *qty,
+            })
+        }
+        QuestRequirementKindDocument::MembersWorld => RequirementKind::MembersWorld,
+    };
+    Ok(CompiledRequirement {
+        id: requirement.id.clone(),
+        at_start: requirement.at.eq_ignore_ascii_case("start"),
+        source: Arc::from(requirement.source.as_str()),
+        kind,
+    })
+}
+
+fn skill_index(name: &str) -> Option<u8> {
+    const SKILLS: [&str; 23] = [
+        "attack",
+        "defence",
+        "strength",
+        "hitpoints",
+        "ranged",
+        "prayer",
+        "magic",
+        "cooking",
+        "woodcutting",
+        "fletching",
+        "fishing",
+        "firemaking",
+        "crafting",
+        "smithing",
+        "mining",
+        "herblore",
+        "agility",
+        "thieving",
+        "slayer",
+        "farming",
+        "runecraft",
+        "hunter",
+        "construction",
+    ];
+    SKILLS
+        .iter()
+        .position(|skill| skill.eq_ignore_ascii_case(name.trim()))
+        .and_then(|id| u8::try_from(id).ok())
+}
+
 fn compile_uncached(
     document: &PathDocument,
     digest: [u8; 32],
     selected: &SelectedGameData,
     quests: &QuestCatalog,
 ) -> Result<CompiledPath, CompileError> {
-    if document.schema != 2 {
+    if document.schema != super::path::PATH_SCHEMA {
         return Err(CompileError::code("unsupported-schema").with_path(document.id.clone()));
     }
     let header = document
@@ -361,10 +501,13 @@ fn compile_uncached(
     // Path headers use config aliases; the shared Loadouts consumer uses
     // display names. Resolve each kit row once, without an intermediate copy.
     let loadout_item_name = |alias: &str| -> Result<&str, CompileError> {
-        selected
+        let item = selected
             .item_by_alias(alias)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))?
-            .name
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))?;
+        if item.is_certificate() {
+            return Err(CompileError::code("certificate-loadout-item"));
+        }
+        item.name
             .as_deref()
             .ok_or_else(|| CompileError::code("unresolved-obj-name"))
     };
@@ -464,9 +607,15 @@ fn compile_uncached(
     }
     let base_spillover_keep = Arc::from(base_spillover_keep);
     let keep_ids = Arc::from(keep_ids);
+    let requirements = header
+        .requirements
+        .iter()
+        .map(|requirement| compile_requirement(selected, requirement))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.with_path(document.id.clone()))?;
     let eligibility = CompiledEligibility {
         members: header.members,
-        requirements: Arc::from(header.requirements.clone()),
+        requirements: Arc::from(requirements),
         items: Arc::clone(&compiled_items),
     };
     let mut recipe_ctx = CompileContext {
@@ -549,7 +698,7 @@ fn compile_uncached(
     }
     for plan in recipes
         .values()
-        .flatten()
+        .flat_map(|steps| steps.iter())
         .map(|step| &step.plan)
         .chain(prelude.iter().map(|step| &step.plan))
         .chain(
@@ -578,7 +727,7 @@ fn compile_uncached(
         base_spillover_keep,
         recipes: recipes
             .into_iter()
-            .map(|(name, steps)| (Arc::from(name.as_str()), Arc::from(steps)))
+            .map(|(name, steps)| (Arc::from(name.as_str()), steps))
             .collect(),
         memo_ids: Arc::from(bank_items),
     };
@@ -643,10 +792,9 @@ fn compile_quest_item(
     selected: &SelectedGameData,
     item: &QuestItemDocument,
 ) -> Result<CompiledQuestItem, CompileError> {
-    let kind = match item.kind.as_str() {
-        "mustHave" | "must_have" => CompiledItemKind::MustHave,
-        "acquirable" => CompiledItemKind::Acquirable,
-        _ => return Err(CompileError::code("invalid-item-kind")),
+    let kind = match item.kind {
+        super::path::QuestItemKindDocument::MustHave => CompiledItemKind::MustHave,
+        super::path::QuestItemKindDocument::Acquirable => CompiledItemKind::Acquirable,
     };
     i32::try_from(item.qty).map_err(|_| CompileError::code("invalid-quantity"))?;
     let resolved = resolve_bank_item(selected, &item.obj)?;
@@ -662,7 +810,7 @@ fn compile_quest_item(
 fn resolve_bank_item(selected: &SelectedGameData, name: &str) -> Result<BankItem, CompileError> {
     let item = selected
         .resolve_item_name(name)
-        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(name))?;
     let display = item
         .name
         .as_deref()
@@ -701,8 +849,7 @@ fn compile_steps(
                 source: None,
             });
         }
-        let handler = families::handlers()
-            .iter()
+        let handler = step_handlers()
             .find(|handler| handler.kind == step.kind && handler.version == step.version)
             .ok_or_else(|| CompileError {
                 path: document.id.clone(),
@@ -712,18 +859,31 @@ fn compile_steps(
                 detail: None,
                 source: None,
             })?;
-        let plan = if step.kind == "acquire" {
-            compile_acquire_step(&step.args, cx, document)?
-        } else {
-            (handler.compile)(&step.args, cx).map_err(|err| CompileError {
-                path: document.id.clone(),
-                role: None,
-                step: Some(step.id.clone()),
-                code: err.code,
-                detail: err.detail,
-                source: None,
-            })?
-        };
+        if handler.advance == AdvanceClass::Explicit && step.advances.is_none() {
+            let mut error =
+                CompileError::code("advances-undeclared").with_path(document.id.clone());
+            error.step = Some(step.id.clone());
+            return Err(error);
+        }
+        if step.advances != Some(true) {
+            if let Some(fact) = direct_progress_fact(&step.settle) {
+                let mut error = CompileError::code("settle-needs-advance")
+                    .with_path(document.id.clone())
+                    .with_detail(format!(
+                        "settle contains direct progress fact `{fact}`; set advances: true"
+                    ));
+                error.step = Some(step.id.clone());
+                return Err(error);
+            }
+        }
+        let plan = (handler.compile)(&step.args, cx).map_err(|err| CompileError {
+            path: document.id.clone(),
+            role: None,
+            step: Some(step.id.clone()),
+            code: err.code,
+            detail: err.detail,
+            source: None,
+        })?;
         let skip_if =
             families::compile_predicate(&step.skip_if, cx).map_err(|err| CompileError {
                 path: document.id.clone(),
@@ -769,7 +929,7 @@ fn compile_steps(
                         .map(Arc::from)
                 })
                 .flatten(),
-            advances: step.advances,
+            advances: step.advances.unwrap_or(false),
             skip_if,
             settle,
             plan,
@@ -777,27 +937,17 @@ fn compile_steps(
     }
     Ok(out)
 }
-
-fn compile_acquire_step(
-    args: &serde_json::Value,
-    cx: &CompileContext<'_>,
-    document: &PathDocument,
-) -> Result<Arc<dyn StepPlan>, CompileError> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct AcquireArgs {
-        recipe: String,
+fn direct_progress_fact(predicate: &super::path::PredicateDocument) -> Option<&str> {
+    match predicate {
+        super::path::PredicateDocument::All(items) | super::path::PredicateDocument::Any(items) => {
+            items.iter().find_map(direct_progress_fact)
+        }
+        super::path::PredicateDocument::Not(inner) => direct_progress_fact(inner),
+        super::path::PredicateDocument::Fact { kind, version, .. } => predicate_handlers()
+            .find(|handler| handler.kind == kind && handler.version == *version)
+            .filter(|handler| handler.progress != ProgressRead::None)
+            .map(|_| kind.as_str()),
     }
-    let arg: AcquireArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
-    let steps =
-        cx.recipes.get(&arg.recipe).cloned().ok_or_else(|| {
-            CompileError::code("unresolved-recipe").with_path(document.id.clone())
-        })?;
-    Ok(Arc::new(families::AcquirePlan {
-        recipe: Arc::from(arg.recipe),
-        steps,
-    }))
 }
 
 const MAX_RECIPE_NESTING_DEPTH: usize = 32;
@@ -819,7 +969,7 @@ fn compile_recipe<'a>(
     name: &'a str,
     document: &'a PathDocument,
     base: &CompileContext<'_>,
-    recipes: &mut HashMap<String, Vec<CompiledAcquireStep>>,
+    recipes: &mut HashMap<String, Arc<[CompiledAcquireStep]>>,
     bindings: &mut HashMap<&'a str, RecipeBinding>,
     active: &mut Vec<&'a str>,
 ) -> Result<usize, CompileError> {
@@ -898,7 +1048,7 @@ fn validate_header(
     let obj = |alias: &str| {
         selected
             .item_by_alias(alias)
-            .ok_or_else(|| CompileError::code("unresolved-obj"))
+            .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))
     };
     for item in &header.items {
         obj(&item.obj)?;
@@ -917,10 +1067,7 @@ fn validate_header(
             .ok_or_else(|| CompileError::code("invalid-tool"))?)?;
     }
     match &header.bank {
-        super::path::QuestBankDocument::Nearest(name) if name == "nearest" => {}
-        super::path::QuestBankDocument::Nearest(_) => {
-            return Err(CompileError::code("invalid-bank"))
-        }
+        super::path::QuestBankDocument::Nearest(_) => {}
         super::path::QuestBankDocument::Tile { tile, source, .. } => {
             families::validate_tile(*tile, source)?;
         }
@@ -1160,7 +1307,7 @@ mod tests {
             version: 1,
             args: serde_json::json!({"recipe": recipe}),
             comment: None,
-            advances: false,
+            advances: Some(false),
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
         }
@@ -1266,6 +1413,92 @@ mod tests {
     }
 
     #[test]
+    fn schema_three_accepts_schema_reference_and_rejects_schema_two() {
+        let _home = crate::IsolatedEnv::enter("quester-schema-three");
+        let document = decode_cook().unwrap();
+        assert_eq!(document.schema, super::super::path::PATH_SCHEMA);
+        assert_eq!(document.schema_url.as_deref(), Some("../path.schema.json"));
+
+        let err = compile_err(|document| document.schema = 2);
+        assert_eq!(err.code.as_ref(), "unsupported-schema");
+    }
+
+    #[test]
+    fn explicit_steps_require_advances_and_progress_settles_require_true() {
+        let _home = crate::IsolatedEnv::enter("quester-schema-explicit-advances");
+        let missing = compile_err(|document| {
+            let step = document
+                .roles
+                .iter_mut()
+                .flat_map(|role| &mut role.sequences)
+                .flat_map(|sequence| &mut sequence.steps)
+                .find(|step| step.kind == "talk")
+                .expect("Cook has an explicit talk step");
+            step.advances = None;
+        });
+        assert_eq!(missing.code.as_ref(), "advances-undeclared");
+
+        let contradiction = compile_err(|document| {
+            let step = document
+                .roles
+                .iter_mut()
+                .flat_map(|role| &mut role.sequences)
+                .flat_map(|sequence| &mut sequence.steps)
+                .find(|step| step.kind == "talk")
+                .expect("Cook has an explicit talk step");
+            step.advances = Some(false);
+            step.settle = PredicateDocument::All(vec![PredicateDocument::Not(Box::new(
+                PredicateDocument::Fact {
+                    kind: "quest_colour".into(),
+                    version: 1,
+                    args: serde_json::json!({}),
+                },
+            ))]);
+        });
+        assert_eq!(contradiction.code.as_ref(), "settle-needs-advance");
+    }
+
+    #[test]
+    fn default_steps_allow_omitted_advances_and_dynamic_quantity_settles() {
+        let _home = crate::IsolatedEnv::enter("quester-schema-default-advances");
+        let mut document = decode_cook().unwrap();
+        let walk = StepDocument {
+            id: FactKey::new("schema-default-walk"),
+            kind: "walk".into(),
+            version: 1,
+            args: serde_json::json!({
+                "tile": [3209, 3215, 0],
+                "source": "PATH-SCHEMA-1 test"
+            }),
+            comment: None,
+            advances: None,
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: PredicateDocument::Any(vec![]),
+        };
+        document.roles[0].prelude = vec![walk];
+        let data = selected();
+        let quest_catalog = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quest_catalog).unwrap();
+        assert!(!compiled.prelude[0].advances);
+
+        document.roles[0].prelude[0].advances = Some(true);
+        let compiled = compile_uncached_for_test(&document, &data, &quest_catalog).unwrap();
+        assert!(compiled.prelude[0].advances);
+
+        let sheep: PathDocument = serde_json::from_str(SHEEP_JSON).unwrap();
+        let compiled = compile_uncached_for_test(&sheep, &data, &quest_catalog).unwrap();
+        for id in ["shear", "spin"] {
+            let step = compiled
+                .sequences
+                .iter()
+                .flat_map(|sequence| &sequence.steps)
+                .find(|step| step.id.0.as_ref() == id)
+                .expect("compiled Sheep step");
+            assert!(!step.advances);
+        }
+    }
+
+    #[test]
     fn path_walk_crossing_and_protection_compile_independently() {
         let data = selected();
         let quests = quests(&data);
@@ -1340,42 +1573,38 @@ mod tests {
 
     #[test]
     fn unresolved_npc_obj_loc_and_area_are_rejected() {
-        assert_eq!(
-            compile_err(|document| {
-                document.roles[0].sequences[0].steps[0].args["npc"] =
-                    serde_json::json!("no_such_npc");
-            })
-            .code
-            .as_ref(),
-            "unresolved-npc"
-        );
-        assert_eq!(
-            compile_err(|document| {
-                document.roles[0].sequences[1].steps[0].skip_if = PredicateDocument::Fact {
-                    kind: "has_item".into(),
-                    version: 1,
-                    args: serde_json::json!({"obj": "no_such_obj"}),
-                };
-            })
-            .code
-            .as_ref(),
-            "unresolved-obj"
-        );
-        assert_eq!(
-            compile_err(|document| {
-                document
-                    .quest
-                    .as_mut()
-                    .unwrap()
-                    .acquire
-                    .get_mut("acquire:flour")
-                    .unwrap()[3]
-                    .args["target"]["loc"] = serde_json::json!("no_such_loc");
-            })
-            .code
-            .as_ref(),
-            "unresolved-loc"
-        );
+        let _home = crate::IsolatedEnv::enter("quester-unresolved-alias-details");
+        let npc = compile_err(|document| {
+            document.roles[0].sequences[0].steps[0].args["npc"] = serde_json::json!("no_such_npc");
+        });
+        assert_eq!(npc.code.as_ref(), "unresolved-npc");
+        assert_eq!(npc.detail.as_deref(), Some("no_such_npc"));
+        assert_eq!(npc.step, Some(FactKey::new("start")));
+
+        let obj = compile_err(|document| {
+            document.roles[0].sequences[1].steps[0].skip_if = PredicateDocument::Fact {
+                kind: "has_item".into(),
+                version: 1,
+                args: serde_json::json!({"obj": "no_such_obj"}),
+            };
+        });
+        assert_eq!(obj.code.as_ref(), "unresolved-obj");
+        assert_eq!(obj.detail.as_deref(), Some("no_such_obj"));
+        assert!(obj.step.is_some());
+
+        let loc = compile_err(|document| {
+            document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .get_mut("acquire:flour")
+                .unwrap()[3]
+                .args["target"]["loc"] = serde_json::json!("no_such_loc");
+        });
+        assert_eq!(loc.code.as_ref(), "unresolved-loc");
+        assert_eq!(loc.detail.as_deref(), Some("no_such_loc"));
+        assert!(loc.step.is_some());
         assert_eq!(
             compile_err(|document| {
                 document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
@@ -1467,10 +1696,12 @@ mod tests {
         ] {
             compile_err(edit);
         }
-        assert_eq!(
-            compile_err(|d| d.schema = 1).code.as_ref(),
-            "unsupported-schema"
-        );
+        for schema in [1, 2] {
+            assert_eq!(
+                compile_err(|d| d.schema = schema).code.as_ref(),
+                "unsupported-schema"
+            );
+        }
     }
 
     #[test]
@@ -1686,6 +1917,52 @@ mod tests {
                 panic!("valid alias loadout could not begin application: {error:?}");
             }
         });
+    }
+
+    #[test]
+    fn certificate_worn_header_loadout_is_rejected() {
+        let _home = crate::IsolatedEnv::enter("quester-cert-worn-header");
+        let data = selected();
+        let certificate = data.item_by_alias("cert_rune_scimitar").unwrap();
+        assert!(certificate.is_certificate());
+        assert_eq!(
+            certificate.name.as_deref(),
+            data.item_by_alias("rune_scimitar").unwrap().name.as_deref()
+        );
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().loadouts = serde_json::from_value(serde_json::json!({
+                "probe": {
+                    "worn": { "righthand": "cert_rune_scimitar" },
+                    "carry": []
+                }
+            }))
+            .unwrap();
+        });
+        assert_eq!(error.code.as_ref(), "certificate-loadout-item");
+        assert_eq!(error.path, FactKey::new("cook"));
+    }
+
+    #[test]
+    fn certificate_carry_header_loadout_is_rejected() {
+        let _home = crate::IsolatedEnv::enter("quester-cert-carry-header");
+        let data = selected();
+        let certificate = data.item_by_alias("cert_lobster").unwrap();
+        assert!(certificate.is_certificate());
+        assert_eq!(
+            certificate.name.as_deref(),
+            data.item_by_alias("lobster").unwrap().name.as_deref()
+        );
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().loadouts = serde_json::from_value(serde_json::json!({
+                "probe": {
+                    "worn": {},
+                    "carry": [{ "item": "cert_lobster", "qty": 6 }]
+                }
+            }))
+            .unwrap();
+        });
+        assert_eq!(error.code.as_ref(), "certificate-loadout-item");
+        assert_eq!(error.path, FactKey::new("cook"));
     }
 
     #[test]
