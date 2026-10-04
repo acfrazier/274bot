@@ -17,6 +17,11 @@ import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
+/** Pinned-tree roots are the generator's required GAME_DATA_*_CONTENT variables, never literals. */
+function pinContentRoot(revision: 274 | 289): string {
+    return revisions.find((spec) => spec.revision === revision)!.content;
+}
+
 const rows = parseRows(`
 // repeated aliases and typed tuples
 [food]
@@ -1436,8 +1441,8 @@ assert.deepEqual(withExtras.coverage, []);
 assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
 
-const pinQuest274 = extractQuestIdentityFacts('/Users/acfrazier/experiments/Server/content', 274);
-const pinQuest289 = extractQuestIdentityFacts('/Users/acfrazier/experiments/lostcity-289/content', 289);
+const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
+const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
 assertQuestRows(pinQuest274);
 assertQuestRows(pinQuest289);
 assert.equal(pinQuest289.rows.length, 69);
@@ -1765,8 +1770,8 @@ assert.equal(droppedCasketFixture.rows.length, trailFacts.rows.length - 1);
 assert.equal(droppedCasketFixture.rows.some((row) => row.alias === 'trail_clue_hard_riddle004_casket'), false);
 assert.throws(() => assertTrailPins(droppedCasketFixture, 274), /missing trail_clue_hard_riddle004_casket/);
 
-const pinTrail274Root = '/Users/acfrazier/experiments/Server/content';
-const pinTrail289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+const pinTrail274Root = pinContentRoot(274);
+const pinTrail289Root = pinContentRoot(289);
 function pinDecodedItems(revision: number) {
     const payload = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8')) as { items: any[] };
     return payload.items.filter((item: any) => item.alias !== null).map((item: any) => ({ id: item.id, debugname: item.alias, name: item.name, cost: item.cost, stackable: item.stackable, members: item.members, certlink: item.certificate_link, certtemplate: item.certificate_template, wearpos: item.wear_position, wearpos2: item.wear_position_2, wearpos3: item.wear_position_3 })) as any;
@@ -2175,8 +2180,8 @@ fs.rmSync(path.join(truncatedTalkKeyConfigs, 'scripts/areas/area_lumbridge/confi
 assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), /lumbridge\.npc: tracked \.npc file missing from the content tree/);
 
 // both pins: 289 is the selected source, 274 corroborates identity and spawn
-const pinTalkKey274Root = '/Users/acfrazier/experiments/Server/content';
-const pinTalkKey289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+const pinTalkKey274Root = pinContentRoot(274);
+const pinTalkKey289Root = pinContentRoot(289);
 const pinTalkKey274 = extractTalkKeyFacts(pinTalkKey274Root, pinDecodedItems(274));
 const pinTalkKey289 = extractTalkKeyFacts(pinTalkKey289Root, pinDecodedItems(289));
 assert.deepEqual(pinTalkKey274.facts, pinTalkKey289.facts, '274 must corroborate the selected 289 identities and spawns');
@@ -2358,8 +2363,8 @@ fs.rmSync(path.join(truncatedTrioGiverMaps, 'maps/m12_22.jm2'));
 assert.throws(() => extractTrioGiversFacts(truncatedTrioGiverMaps), /maps\/m12_22\.jm2: tracked map missing/);
 
 // both pins: 289 is the selected source, 274 corroborates identity, name, and tile
-const pinTrioGiver274Root = '/Users/acfrazier/experiments/Server/content';
-const pinTrioGiver289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+const pinTrioGiver274Root = pinContentRoot(274);
+const pinTrioGiver289Root = pinContentRoot(289);
 const pinTrioGiver274 = extractTrioGiversFacts(pinTrioGiver274Root);
 const pinTrioGiver289 = extractTrioGiversFacts(pinTrioGiver289Root);
 assert.deepEqual(pinTrioGiver274.facts, pinTrioGiver289.facts, '274 must corroborate the selected 289 giver identities and tiles');
@@ -2392,8 +2397,8 @@ for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD
 // ---- gathering family (M-306 / M-215): real pinned content, plus real-script fixtures with one drifted construct ----
 
 const gatheringPins = [
-    { revision: 274, root: '/Users/acfrazier/experiments/Server/content' },
-    { revision: 289, root: '/Users/acfrazier/experiments/lostcity-289/content' },
+    { revision: 274, root: pinContentRoot(274) },
+    { revision: 289, root: pinContentRoot(289) },
 ];
 
 function gatherView(family: GatheringFamily) {

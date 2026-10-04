@@ -132,9 +132,13 @@ inherit built-in facts. Local supported facts additionally verify their selected
 source inputs. Unknown client content remains unavailable/rejected, never guessed.
 
 The `tools/game-data` generator and verifier are offline `tsx` tools. Build
-`cargo build -p nav --bin cache-content-id` first; set `GAME_DATA_IDENTITY_BIN`
-(or `CARGO_TARGET_DIR`) and `GAME_DATA_274_SNAPSHOTS` /
-`GAME_DATA_289_SNAPSHOTS` when overriding their defaults. The Rust codec verifies
+`cargo build -p nav --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
+`GAME_DATA_274_CONTENT`, `GAME_DATA_289_ENGINE`, `GAME_DATA_289_CONTENT`,
+`RS2B0T`, `GAME_DATA_274_SNAPSHOTS` and `GAME_DATA_289_SNAPSHOTS` are all
+required and name explicit roots — an unset variable fails closed and names
+itself, with no machine default. `GAME_DATA_IDENTITY_BIN` (or
+`CARGO_TARGET_DIR`) still selects a non-default `cache-content-id` binary.
+The Rust codec verifies
 actual pinned assets before generation. This does not relax e2e exact resume
 provenance. Neither build nor runtime accepts a persistent decoded-identity
 sidecar solely because input sizes match.
