@@ -654,14 +654,11 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     panic!("guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent}");
 }
 
-/// Maze square (`[random_event_maze_zones]` 0_45_71).
-fn in_maze(snapshot: &GameSnapshot) -> bool {
-    snapshot
-        .tile()
-        .is_some_and(|(x, z, level)| level == 0 && x >> 6 == 45 && z >> 6 == 71)
-}
-
 fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
+    let in_maze = |tile: Option<(i32, i32, i32)>| {
+        tile.and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
+            == Some(api::random::RandomKind::Maze)
+    };
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -685,7 +682,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
         &mut pump,
         Duration::from_secs(30),
         "maze-entered",
-        in_maze,
+        |snapshot| in_maze(snapshot.tile()),
     );
     let spawn = snapshot.tile();
     let settings = ProfileSettings {
@@ -712,7 +709,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
                 json!({"phase": "maze-tick", "tick": last_tick, "tile": snapshot.tile(), "hold": status.hold, "ours": status.ours, "kind": format!("{:?}", status.kind), "chat": snapshot.chat_lines().first().map(|line| line.text.to_string())})
             );
         }
-        if saw_hold && !in_maze(&snapshot) && snapshot.scene_state() == 2 {
+        if saw_hold && !in_maze(snapshot.tile()) && snapshot.scene_state() == 2 {
             println!(
                 "PASS: guardian_maze: {}",
                 json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold})
@@ -722,7 +719,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
             }
             return;
         }
-        if saw_hold && in_maze(&snapshot) && !status.hold && !status.ours {
+        if saw_hold && in_maze(snapshot.tile()) && !status.hold && !status.ours {
             released_in_maze = true;
             println!(
                 "RELEASED: guardian_maze: {}",
