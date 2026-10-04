@@ -311,9 +311,8 @@ mes(\"The door is locked from the inside.\");
 
 /// Openers the evaluator cannot prove never cross: talk before the door, an
 /// NPC lookup, a key taken, a varp written, a `switch`, a movement after
-/// the crossing, a wrong `$entering` constant, an in-progress window
-/// (`>= a & < complete`: Hazeel Cult's wall, `quest_hazeelcult.rs2:72-78`),
-/// and two worn items at once (Guidor's door, `quest_biohazard.rs2:1-15`).
+/// the crossing, a wrong `$entering` constant, and an in-progress window
+/// (`>= a & < complete`: Hazeel Cult's wall, `quest_hazeelcult.rs2:72-78`).
 /// A plain unconditional opener in the same content does cross.
 #[test]
 fn stage_door_refuses_openers_it_cannot_prove() {
@@ -328,7 +327,6 @@ fn stage_door_refuses_openers_it_cannot_prove() {
         "~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\np_teleport(0_44_53_0_0);",
         "~open_and_close_door(loc_1535, true, false);\n~open_and_close_door(loc_1535, false, false);",
         "if (%heroquest >= ^hero_phoenix_talked_charlie & %heroquest < ^hero_complete) {\n    ~open_and_close_door2(loc_1535, ~check_axis(coord, loc_coord, loc_angle), door_open);\n}",
-        "if (inv_total(worn, priest_gown) > 0 & inv_total(worn, priest_robe) > 0) {\n    ~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n}",
     ];
     let mut pack = String::from("1535=loc_1535\n900=plain_door\n");
     let mut script = String::from(
@@ -362,6 +360,134 @@ fn stage_door_refuses_openers_it_cannot_prove() {
         assert!(
             got.is_empty(),
             "refused_{k} must not cross:\n{body}\n{got:?}"
+        );
+    }
+}
+
+/// A disguise is a conjunction, never an alternative blade list. The
+/// fortress's exact slot comparisons and Guidor's inventory-count checks
+/// derive the same strict worn gate from their content, with a free exit.
+#[test]
+fn content_disguises_require_every_piece_currently_worn() {
+    for disguise in [
+        "((inv_getobj(worn, ^wearpos_hat) ! bronze_med_helm) | (inv_getobj(worn, ^wearpos_torso) ! iron_chainbody))",
+        "(inv_total(worn, bronze_med_helm) < 1 | inv_total(worn, iron_chainbody) < 1)",
+    ] {
+        let fx = Fixture::new();
+        write_stage_engine(&fx);
+        fx.write("pack/loc.pack", "900=disguise_door\n1535=loc_1535\n");
+        fx.write("pack/obj.pack", "1139=bronze_med_helm\n1101=iron_chainbody\n");
+        fx.write("scripts/player/configs/equip.constant", "^wearpos_hat = 0\n^wearpos_torso = 4\n");
+        fx.write("scripts/combat/configs/disguise.obj", "[bronze_med_helm]\nwearpos=hat\n[iron_chainbody]\nwearpos=torso\n");
+        fx.write(
+            "scripts/quests/quest_fixture/scripts/disguise.rs2",
+            &format!(
+                "[oploc1,disguise_door]\ndef_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);\nif ($entering = true & {disguise}) {{\n    mes(\"You are not wearing the uniform.\");\n    return;\n}}\n~open_and_close_door(loc_1535, $entering, false);\n"
+            ),
+        );
+        write_barrier_square(&fx, &[46], "0 4 46: 900 0 2\n");
+        let (graph, wc) = derive_stage(&fx, &[900]);
+        let ingress = graph.edges.iter().find(|e| e.loc_id == 900 && e.dir == Some(DoorDir::E)).expect("content-derived ingress");
+        assert_eq!(ingress.worn_all_req, [1101, 1139]);
+        assert!(ingress.worn_req.is_empty(), "not an ANY-of gate");
+        let (outside, inside) = (tile(2818, 3438), tile(2824, 3438));
+        for worn in [HashSet::new(), HashSet::from([1139]), HashSet::from([1101])] {
+            let state = WorldState {
+                worn,
+                inv: HashMap::from([(1139, 1), (1101, 1)]),
+                ..WorldState::empty()
+            };
+            assert_eq!(crosses(&graph, &wc, outside, inside, &state, 900), Err(RouteError::NoPath));
+            assert_eq!(crosses(&graph, &wc, inside, outside, &state, 900), Ok(true), "exit remains free");
+        }
+        let state = WorldState {
+            worn: HashSet::from([1139, 1101]),
+            ..WorldState::empty()
+        };
+        assert_eq!(crosses(&graph, &wc, outside, inside, &state, 900), Ok(true));
+    }
+}
+
+#[test]
+fn exact_worn_slot_gate_refuses_unknown_or_incompatible_slots() {
+    for (slot, declaration) in [
+        ("^wearpos_torso", "wearpos=hat"),
+        ("^unknown_slot", "wearpos=hat"),
+        ("^wearpos_hat", ""),
+        ("^wearpos_hat", "wearpos=hat\nwearpos=torso"),
+    ] {
+        let fx = plain_opener_fixture(&format!(
+            "[oploc1,plain_door]\nif (inv_getobj(worn, {slot}) = bronze_med_helm) {{\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n}}\n"
+        ));
+        fx.write("pack/obj.pack", "1139=bronze_med_helm\n");
+        fx.write(
+            "scripts/player/configs/equip.constant",
+            "^wearpos_hat = 0\n^wearpos_torso = 4\n",
+        );
+        fx.write(
+            "scripts/combat/configs/disguise.obj",
+            &format!("[bronze_med_helm]\n{declaration}\n"),
+        );
+        let (graph, _) = derive_stage(&fx, &[900]);
+        assert!(
+            door_crossings(&graph, 900).is_empty(),
+            "{slot}: {declaration}"
+        );
+    }
+}
+
+#[test]
+fn exact_worn_hand_slots_use_content_enum_spellings() {
+    for (config_slot, script_slot, slot_id) in [("righthand", "rhand", 3), ("lefthand", "lhand", 5)]
+    {
+        let fx = plain_opener_fixture(&format!(
+            "[oploc1,plain_door]\nif (inv_getobj(worn, ^wearpos_{script_slot}) = gate_item) {{\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n}}\n"
+        ));
+        fx.write("pack/obj.pack", "1=gate_item\n");
+        fx.write(
+            "scripts/player/configs/equip.constant",
+            &format!("^wearpos_{script_slot} = {slot_id}\n"),
+        );
+        fx.write(
+            "scripts/combat/configs/gate_item.obj",
+            &format!("[gate_item]\nwearpos={config_slot}\n"),
+        );
+        let (graph, _) = derive_stage(&fx, &[900]);
+        assert_eq!(door_crossings(&graph, 900).len(), 2, "{config_slot}");
+        for edge in graph.edges.iter().filter(|edge| edge.loc_id == 900) {
+            assert_eq!(edge.worn_all_req, [1]);
+            assert!(!WorldState::empty().allows(edge));
+            assert!(WorldState {
+                worn: HashSet::from([1]),
+                ..WorldState::empty()
+            }
+            .allows(edge));
+        }
+    }
+}
+
+/// Push-wall is an op label, not a geometry class. Its verified door proc
+/// proves both crossings even when the loc config does not say `Open`.
+#[test]
+fn secret_push_wall_uses_the_verified_content_crossing() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "900=secret_wall\n1535=loc_1535\n");
+    fx.write(
+        "scripts/quests/quest_fixture/configs/wall.loc",
+        "[secret_wall]\nop1=Push\nparam=next_loc_stage,loc_1535\n",
+    );
+    fx.write("scripts/quests/quest_fixture/scripts/wall.rs2", "[oploc1,secret_wall]\nmes(\"You push against the wall. You find a secret passage.\");\n~open_and_close_door2(loc_param(next_loc_stage), ~check_axis_locactive(coord), coffin_open);\n");
+    write_barrier_square(&fx, &[46], "0 5 46: 900 0 2\n");
+    let (graph, wc) = derive_stage(&fx, &[900]);
+    assert_eq!(door_crossings(&graph, 900).len(), 2);
+    for (from, to) in [
+        (tile(2818, 3438), tile(2824, 3438)),
+        (tile(2824, 3438), tile(2818, 3438)),
+    ] {
+        assert_eq!(
+            crosses(&graph, &wc, from, to, &WorldState::empty(), 900),
+            Ok(true)
         );
     }
 }
@@ -1035,4 +1161,378 @@ fn melzars_maze_ladder_uses_the_content_coordinate_as_a_player_delta() {
         })
     );
     assert_eq!(edge.to, tile(2821, 3432 + CELLAR_SHIFT));
+}
+
+fn write_forced_fixture(fx: &Fixture, handler: &str) {
+    write_stage_engine(fx);
+    fx.write(
+        "scripts/skill_agility/scripts/agility.rs2",
+        include_str!("engine_forced_procs.rs2"),
+    );
+    fx.write("pack/loc.pack", "6000=obstacle\n6001=cleared_obstacle\n");
+    fx.write(
+        "scripts/obstacle.loc",
+        "[obstacle]\nop2=Mine\nparam=level,5\n",
+    );
+    fx.write("scripts/obstacle.rs2", handler);
+    // A two-wide obstacle straddles the solid column: neither side can walk
+    // around it, but both sides can operate its actual footprint.
+    write_barrier_square(fx, &[], "0 3 46: 6000 10 0\n");
+}
+
+fn derive_forced(fx: &Fixture) -> (TransportGraph, WorldCollision) {
+    let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
+    let collision = bake_collision(fx, &defs, &HashSet::new());
+    (derive_transports(fx.path(), &defs, &collision), collision)
+}
+
+fn write_tool_selector(fx: &Fixture) {
+    fx.write("pack/obj.pack", "1001=bronze_tool\n1002=high_tool\n");
+    fx.write("scripts/tools.constant", "^wearpos_rhand = 3\n");
+    fx.write(
+        "scripts/tools.obj",
+        "\
+[bronze_tool]
+wearpos=righthand
+param=levelrequire,0
+[high_tool]
+wearpos=righthand
+param=levelrequire,61
+",
+    );
+    fx.write("scripts/tool_checker.rs2", "\
+[proc,choose_tool]()(obj)
+def_int $level = stat(mining);
+def_obj $worn = inv_getobj(worn, ^wearpos_rhand);
+if ($level >= oc_param(high_tool, levelrequire) & ($worn = high_tool | inv_total(inv, high_tool) > 0)) {
+    return(high_tool);
+}
+if ($level >= oc_param(bronze_tool, levelrequire) & ($worn = bronze_tool | inv_total(inv, bronze_tool) > 0)) {
+    return(bronze_tool);
+}
+return(null);
+");
+}
+
+const TOOL_OBSTACLE: &str = "\
+[oploc2,obstacle] ~clear_obstacle;
+[proc,clear_obstacle]
+def_obj $tool = ~choose_tool;
+if ($tool = null) { mes(\"Need a usable tool.\"); return; }
+if (stat(mining) < 50) { mes(\"Need Mining 50.\"); return; }
+anim(oc_param($tool, mining_animation), 0);
+loc_change(cleared_obstacle, 3);
+p_delay(1);
+p_delay(1);
+if (coordx(coord) > coordx(loc_coord)) {
+    ~forcemove(movecoord(coord, -2, 0, 0));
+    ~forcemove(movecoord(coord, -1, 0, 1));
+} else {
+    ~forcemove(movecoord(coord, 2, 0, 0));
+    ~forcemove(movecoord(coord, 1, 0, -1));
+}
+";
+
+#[test]
+fn content_tool_gated_forcemoves_cross_the_whole_sequence_only_when_usable() {
+    let fx = Fixture::new();
+    write_forced_fixture(&fx, TOOL_OBSTACLE);
+    write_tool_selector(&fx);
+    let (graph, collision) = derive_forced(&fx);
+    let from = tile(2818, 3439);
+    let to = tile(2821, 3438);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 6000)
+        .collect();
+    assert!(!edges.is_empty());
+    for edge in &edges {
+        assert_eq!(edge.kind, TransportKind::AgilityShortcut);
+        assert_eq!(edge.option, 2);
+        assert_eq!(edge.at, tile(2819, 3438));
+        assert!(edge.takeoff.is_some());
+        assert_eq!(edge.player_delta, None);
+        assert_eq!(
+            edge.open_loc_id, None,
+            "a temporary replacement is not an open-door token"
+        );
+        assert!(
+            edge.worn_req.is_empty(),
+            "strict tool gates never auto-equip"
+        );
+        assert_eq!(
+            edge.ticks, 8,
+            "both delays and both force-walk steps are priced"
+        );
+        assert!(edge
+            .skill_req
+            .iter()
+            .any(|&(skill, level)| skill == 14 && level >= 50));
+        let start = edge.takeoff.unwrap();
+        assert_eq!(
+            edge.to.x - start.x,
+            if start.x > edge.at.x { -3 } else { 3 }
+        );
+        assert_eq!(
+            edge.to.z - start.z,
+            if start.x > edge.at.x { 1 } else { -1 }
+        );
+    }
+    let mut legal = WorldState::empty();
+    legal.stats.insert(14, 50);
+    legal.inv.insert(1001, 1);
+    assert!(crosses(&graph, &collision, from, to, &legal, 6000).unwrap());
+    let mut worn = legal.clone();
+    worn.inv.clear();
+    worn.worn.insert(1001);
+    assert!(crosses(&graph, &collision, from, to, &worn, 6000).unwrap());
+    for (label, mut state) in [
+        ("missing tool", WorldState::empty()),
+        ("unknown Mining", {
+            let mut state = legal.clone();
+            state.stats.clear();
+            state
+        }),
+        ("Mining 49", {
+            let mut state = legal.clone();
+            state.stats.insert(14, 49);
+            state
+        }),
+        ("unusable high tool", {
+            let mut state = legal.clone();
+            state.inv.clear();
+            state.inv.insert(1002, 1);
+            state
+        }),
+    ] {
+        if label == "missing tool" {
+            state.stats.insert(14, 50);
+        }
+        assert!(!edges.iter().any(|edge| state.allows(edge)), "{label}");
+        assert!(
+            matches!(
+                crosses(&graph, &collision, from, to, &state, 6000),
+                Err(RouteError::NoPath)
+            ),
+            "{label}"
+        );
+    }
+    let mut high = WorldState::empty();
+    high.stats.insert(14, 61);
+    high.inv.insert(1002, 1);
+    assert!(crosses(&graph, &collision, from, to, &high, 6000).unwrap());
+}
+
+#[test]
+fn forced_move_conditions_use_the_updated_player_coord_and_checked_arithmetic() {
+    let fx = Fixture::new();
+    write_forced_fixture(
+        &fx,
+        "\
+[oploc2,obstacle]
+if(stat(agility) < 5) return;
+if(coordx(coord) ! 2818) return;
+~forcemove(movecoord(coord, calc(1 + 2 * 1), 0, 0));
+if(coordx(coord) = 2821) {
+    ~forcemove(movecoord(coord, calc(8 / 2 - 3), 0, -1));
+} else {
+    ~forcemove(movecoord(coord, -8, 0, 0));
+}
+",
+    );
+    let (graph, _) = derive_forced(&fx);
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 6000 && edge.takeoff == Some(tile(2818, 3439)))
+        .unwrap();
+    assert_eq!(
+        edge.to,
+        tile(2822, 3438),
+        "the second branch reads the first move's endpoint"
+    );
+    assert_eq!(edge.ticks, 5);
+}
+
+#[test]
+fn category_exactmoves_read_content_params_and_retain_actual_op_and_takeoff() {
+    let fx = Fixture::new();
+    write_forced_fixture(
+        &fx,
+        "\
+[oploc5,_crossing]
+if(stat(agility) < loc_param(level)) return;
+if(coordx(coord) ! 2818) return;
+~agility_exactmove(jump_anim, 0, 2, coord, movecoord(coord, calc(7 - 4), 0, 0), 0, 76, 1, false);
+",
+    );
+    fx.write(
+        "scripts/obstacle.loc",
+        "[obstacle]\ncategory=crossing\nop5=Cross\nparam=level,5\n",
+    );
+    let (graph, _) = derive_forced(&fx);
+    let edges: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 6000)
+        .collect();
+    assert!(!edges.is_empty());
+    for edge in edges {
+        assert_eq!(edge.option, 5);
+        assert_eq!(edge.skill_req, [(16, 5)]);
+        assert_eq!(edge.takeoff.unwrap().x, 2818);
+        assert_eq!(edge.to.x, 2821);
+        assert_eq!(edge.ticks, 4);
+    }
+}
+
+#[test]
+fn forced_move_unknown_gates_writes_randomness_and_bad_motion_fail_closed() {
+    for (label, body) in [
+        ("no requirement", "~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("hidden quest window", "if(%plain_flag = 2) ~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("unknown gate", "if(stat(agility) < 5) return; if(%missing_flag < 1) return; ~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("random fail", "if(stat(agility) < 5) return; if(stat_random(agility, 90, 250) = false) return; ~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("random destination", "if(stat(agility) < 5) return; ~forcemove(movecoord(coord, random(4), 0, 0));"),
+        ("overflow", "if(stat(agility) < 5) return; ~forcemove(movecoord(coord, calc(2147483647 + 1), 0, 0));"),
+        ("divide zero", "if(stat(agility) < 5) return; ~forcemove(movecoord(coord, calc(3 / 0), 0, 0));"),
+        ("pre-write", "if(stat(agility) < 5) return; %heroquest = 15; ~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("post-write", "if(stat(agility) < 5) return; ~forcemove(movecoord(coord, 3, 0, 0)); %heroquest = 15;"),
+        ("loop", "if(stat(agility) < 5) return; while(true) { ~forcemove(movecoord(coord, 3, 0, 0)); }"),
+        ("unknown proc", "if(stat(agility) < 5) return; ~unknown_proc; ~forcemove(movecoord(coord, 3, 0, 0));"),
+        ("returned move", "if(stat(agility) < 5) return; ~forcemove(movecoord(coord, 3, 0, 0)); return(~unmodelled_move);"),
+        ("wrong exact start", "if(stat(agility) < 5) return; p_exactmove(movecoord(coord, 1, 0, 0), movecoord(coord, 3, 0, 0), 0, 76, 1);"),
+        ("exact plane change", "if(stat(agility) < 5) return; p_exactmove(coord, movecoord(coord, 3, 1, 0), 0, 76, 1);"),
+        ("negative delay", "if(stat(agility) < 5) return; p_delay(-1); ~forcemove(movecoord(coord, 3, 0, 0));"),
+    ] {
+        let fx = Fixture::new();
+        write_forced_fixture(&fx, &format!("[oploc2,obstacle]\n{body}\n"));
+        let (graph, _) = derive_forced(&fx);
+        assert!(!graph.edges.iter().any(|edge| edge.loc_id == 6000), "{label}");
+    }
+}
+
+#[test]
+fn tool_priority_identity_and_movement_proc_drift_are_not_guessed() {
+    for label in [
+        "tool identity",
+        "primitive drift",
+        "conflicting tool level",
+        "unused selector",
+    ] {
+        let fx = Fixture::new();
+        write_forced_fixture(&fx, TOOL_OBSTACLE);
+        write_tool_selector(&fx);
+        match label {
+            "unused selector" => fx.write("scripts/obstacle.rs2", "[oploc2,obstacle]\ndef_obj $tool = ~choose_tool;\n~forcemove(movecoord(coord, 3, 0, 0));\n"),
+            "tool identity" => fx.write(
+                "scripts/obstacle.rs2",
+                "\
+[oploc2,obstacle]
+def_obj $tool = ~choose_tool;
+if(stat(mining) < 50) return;
+if($tool = bronze_tool) { ~forcemove(movecoord(coord, 3, 0, 0)); }
+else { ~forcemove(movecoord(coord, -3, 0, 0)); }
+",
+            ),
+            "primitive drift" => fx.write(
+                "scripts/skill_agility/scripts/agility.rs2",
+                &include_str!("engine_forced_procs.rs2").replace(
+                    "~agility_walk($change_x, $change_z, false);",
+                    "p_teleport($dest_coord);",
+                ),
+            ),
+            _ => fx.write(
+                "scripts/tool_conflict.obj",
+                "[bronze_tool]\nparam=levelrequire,99\n[high_tool]\nparam=levelrequire,99\n",
+            ),
+        }
+        let (graph, _) = derive_forced(&fx);
+        assert!(
+            !graph.edges.iter().any(|edge| edge.loc_id == 6000),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn directional_membership_paths_are_source_proved_and_bound_to_the_final_edge() {
+    let fx = Fixture::new();
+    write_stage_engine(&fx);
+    fx.write("pack/loc.pack", "900=sanctum_door\n1535=loc_1535\n");
+    fx.write("pack/obj.pack", "1001=gown\n1002=robe\n");
+    fx.write(
+        "scripts/sanctum.rs2",
+        "\
+[oploc1,sanctum_door]
+def_boolean $entering = ~check_axis(coord, loc_coord, loc_angle);
+if($entering = false) {
+    ~open_and_close_door(loc_1535, $entering, false);
+    return;
+}
+if(map_members = ^false) { mes(\"Members only.\"); return; }
+if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
+    ~open_and_close_door(loc_1535, $entering, false);
+    return;
+}
+",
+    );
+    write_barrier_square(&fx, &[46], "0 4 46: 900 0 2\n");
+    let defs = loc_defs(&[(900, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::from([900]));
+    // Exercise the actual source producer, not unrelated static ship/NPC
+    // fixtures that this deliberately small content tree does not declare.
+    let mut graph = TransportGraph::default();
+    let mut audit = VarpGateAudit::default();
+    stage_door_edges(
+        fx.path(),
+        &loc_ids_by_name(fx.path()),
+        &loc_positions(fx.path()),
+        &defs,
+        &mut graph,
+        &collision,
+        &mut HashMap::new(),
+        &ObservableGates::from_content(fx.path()),
+        &mut audit,
+    );
+    assert_eq!(
+        graph.edges.len(),
+        2,
+        "both source-derived directional paths"
+    );
+    require_members_guards(fx.path(), &graph, &audit)
+        .expect("renamed source arms need no hand table");
+    let ingress = graph
+        .edges
+        .iter()
+        .position(|edge| edge.loc_id == 900 && edge.dir == Some(DoorDir::E))
+        .unwrap();
+    assert!(graph.edges[ingress].members_req);
+    assert_eq!(graph.edges[ingress].worn_all_req, [1001, 1002]);
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.loc_id == 900 && !edge.members_req && edge.worn_all_req.is_empty()),
+        "the other direction remains free even on F2P"
+    );
+    let original = graph.edges[ingress].clone();
+    graph.edges[ingress].members_req = false;
+    assert!(
+        require_members_guards(fx.path(), &graph, &audit).is_err(),
+        "missing membership cannot reuse a witness"
+    );
+    graph.edges[ingress] = original.clone();
+    graph.edges[ingress].worn_all_req.clear();
+    assert!(
+        require_members_guards(fx.path(), &graph, &audit).is_err(),
+        "changed disguise cannot reuse a witness"
+    );
+    graph.edges[ingress] = original;
+    graph.edges[ingress].ticks += 1;
+    assert!(
+        require_members_guards(fx.path(), &graph, &audit).is_err(),
+        "witnesses bind every edge field"
+    );
 }

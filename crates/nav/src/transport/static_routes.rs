@@ -91,6 +91,8 @@ const UNGUARDED_BOARD_PLANKS: &[BoardPlank] = &[
 /// anchor.
 fn gangplank_edge(loc_id: i32, at: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
         kind: TransportKind::Ladder,
         player_delta: Some(WorldTile {
             x: (to.x - at.x).signum() * 3,
@@ -357,6 +359,8 @@ pub(super) fn boat_edges(
         gates.admit_edge(
             graph,
             TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
                 kind: TransportKind::Boat,
                 player_delta: None,
                 at: r.at,
@@ -497,6 +501,8 @@ pub(super) fn cart_edges(
             Vec::new()
         };
         graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
             kind: TransportKind::Npc,
             player_delta: None,
             at: r.at,

@@ -1162,6 +1162,7 @@ fn test_route() -> nav::router::Route {
             },
             Leg::Transport {
                 edge: Box::new(TransportEdge {
+                    takeoff: None,
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: wt(3, 0),
@@ -1178,6 +1179,7 @@ fn test_route() -> nav::router::Route {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    worn_all_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
