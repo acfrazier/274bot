@@ -32,6 +32,7 @@ impl RaisedPrayers {
         self.0 |= other.0;
     }
 
+    /// Mark an accepted raise as owned. Ownership rules live in the callers.
     pub(crate) fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
         let Some(bit) = Self::bit(varp) else {
             return;
@@ -41,6 +42,16 @@ impl RaisedPrayers {
         } else {
             self.0 &= !bit;
         }
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn from_test_varps(varps: &[i32]) -> Self {
+        let mut raised = Self::empty();
+        for &varp in varps {
+            raised.accepted(varp, true, 0);
+        }
+        raised
     }
 
     pub fn contains(self, varp: i32) -> bool {
