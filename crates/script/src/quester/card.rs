@@ -37,6 +37,8 @@ struct QuesterSettings {
     partner_account: Option<String>,
     #[serde(default)]
     gang: Option<String>,
+    #[serde(default = "crate::native::death::default_max_deaths")]
+    max_deaths: u8,
 }
 
 static RELEASE_INDEX: LazyLock<ReleaseIndex> =
@@ -44,6 +46,18 @@ static RELEASE_INDEX: LazyLock<ReleaseIndex> =
 
 fn settings_schema() -> &'static [SettingDef] {
     static SETTINGS: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
+        let mut max_deaths = setting(
+            "max_deaths",
+            "number",
+            "2",
+            "Maximum deaths",
+            "Block on a death after this many deaths across the queue.",
+            &[],
+        );
+        max_deaths.min = Some("0".into());
+        max_deaths.max = Some("255".into());
+        max_deaths.step = Some("1".into());
+
         vec![
             setting(
                 "quests",
@@ -85,6 +99,7 @@ fn settings_schema() -> &'static [SettingDef] {
                 "Explicit partner-quest gang for this account.",
                 &["phoenix", "blackarm"],
             ),
+            max_deaths,
         ]
     });
     &SETTINGS
@@ -178,6 +193,7 @@ struct Prepared {
     quests: Arc<QuestCatalog>,
     banks: Arc<api::named_banks::NamedBankFacts>,
     queue: Queue<'static>,
+    max_deaths: u8,
 }
 
 fn prepare(
@@ -252,6 +268,7 @@ fn prepare(
         quests: Arc::new(quests),
         banks: Arc::clone(&cx.banks),
         queue,
+        max_deaths: settings.max_deaths,
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -270,12 +287,13 @@ fn create(
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    Ok(Box::new(QueuedQuester::new(
+    Ok(Box::new(QueuedQuester::new_with_max_deaths(
         run,
         Arc::clone(&prepared.selected),
         Arc::clone(&prepared.quests),
         Arc::clone(&prepared.banks),
         prepared.queue.clone(),
+        prepared.max_deaths,
     )))
 }
 
@@ -349,7 +367,8 @@ mod tests {
                 "order_override",
                 "skip",
                 "partner_account",
-                "gang"
+                "gang",
+                "max_deaths",
             ]
         );
         assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
@@ -363,5 +382,46 @@ mod tests {
             settings.is_err(),
             "obsolete single-quest setting must be rejected"
         );
+    }
+    #[test]
+    fn max_deaths_defaults_to_two_and_matches_the_gatherer_bounds() {
+        let empty = SettingsBag::new();
+        let defaults = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+            empty.iter().map(|(key, value)| (key.as_str(), value)),
+        ))
+        .unwrap();
+        assert_eq!(defaults.max_deaths, 2);
+        assert_eq!(CARD.schema_version, 3);
+
+        let max_deaths = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "max_deaths")
+            .unwrap();
+        assert_eq!(max_deaths.ty, "number");
+        assert_eq!(max_deaths.default.as_deref(), Some("2"));
+        assert_eq!(max_deaths.min.as_deref(), Some("0"));
+        assert_eq!(max_deaths.max.as_deref(), Some("255"));
+        assert_eq!(max_deaths.step.as_deref(), Some("1"));
+
+        for cap in [0, 255] {
+            let mut bag = SettingsBag::new();
+            bag.insert("max_deaths".into(), serde_json::json!(cap));
+            let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+                bag.iter().map(|(key, value)| (key.as_str(), value)),
+            ))
+            .unwrap();
+            assert_eq!(settings.max_deaths, cap);
+        }
+        for cap in [-1, 256] {
+            let mut bag = SettingsBag::new();
+            bag.insert("max_deaths".into(), serde_json::json!(cap));
+            assert!(
+                QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+                    bag.iter().map(|(key, value)| (key.as_str(), value)),
+                ))
+                .is_err(),
+                "out-of-range max_deaths {cap} must be rejected"
+            );
+        }
     }
 }
