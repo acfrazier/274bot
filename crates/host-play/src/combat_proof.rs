@@ -121,6 +121,7 @@ pub(crate) fn record_observation(
     host_tick: u64,
     snapshot: &GameSnapshot,
     exclusive: bool,
+    tick_edge: bool,
 ) {
     if let Some(capture) = capture_for(account) {
         capture
@@ -132,6 +133,10 @@ pub(crate) fn record_observation(
                 "host_tick": host_tick,
                 "snapshot_tick": snapshot.tick(),
                 "exclusive": exclusive,
+                "native_tick_edge": tick_edge,
+                "equipment": snapshot.equipment().iter().map(|item| item.def.id).collect::<Vec<_>>(),
+                "combat_root_id": snapshot.side_tabs().iter()
+                    .find(|tab| tab.index == 0).map(|tab| tab.root_component_id),
             }));
     }
 }

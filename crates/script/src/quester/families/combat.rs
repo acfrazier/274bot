@@ -175,9 +175,11 @@ pub(super) fn compile(
     if args.tactic.kind != "open" {
         return Err(CompileError::code("unsupported-combat-tactic"));
     }
-    if args.tactic.style != "melee" {
-        return Err(CompileError::code("unsupported-combat-style"));
-    }
+    let style = match args.tactic.style.as_str() {
+        "melee" => Style::Melee,
+        "ranged" => Style::Ranged,
+        _ => return Err(CompileError::code("unsupported-combat-style")),
+    };
     if args.tactic.engage_radius == 0 || args.lost_radius == 0 {
         return Err(CompileError::code("invalid-combat-radius"));
     }
@@ -214,7 +216,7 @@ pub(super) fn compile(
     let request = CombatRequest {
         target,
         tactic: Tactic::Open,
-        style: Style::Melee,
+        style,
         melee_mode: args.melee_mode,
         ranged_style: Default::default(),
         kit,

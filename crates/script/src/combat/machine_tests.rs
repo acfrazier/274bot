@@ -3488,8 +3488,9 @@ fn case_31_ranged_launch_advances_cycle_but_impact_does_not() {
                 kind: ActorKind::Npc,
                 index: 7,
             }),
-            t1: 0,
-            t2: 10,
+            // The packet arrives now; bow flight starts 41 client cycles later.
+            t1: 41,
+            t2: 51,
         }]);
     assert!(harness.pending(&scene, 3).is_none());
     assert_eq!(harness.machine.counters.swings, 1);
@@ -3497,6 +3498,7 @@ fn case_31_ranged_launch_advances_cycle_but_impact_does_not() {
     assert_eq!(harness.machine.schedule.cycle.deadline, 6);
     assert_eq!(scene.equipment[1].count, 149);
     scene.npcs[0].health -= 1;
+    scene.local.player.actor.tile.x += 1;
     scene.refresh();
     scene.combat_tab(root);
     assert!(harness.pending(&scene, 6).is_none());

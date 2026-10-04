@@ -45,8 +45,9 @@ pub fn range(base: u8, mode: RangedMode) -> u8 {
         .min(10)
 }
 
-/// Consume the launch, never a later hit-bar mask. The projectile is identified
-/// by its absolute launch cycle and aimed at this engagement, not by animation.
+/// Consume the published launch, never a later hit-bar mask. `t1` identifies the
+/// projectile but marks flight start (41 cycles after a bow launch, 32 thrown).
+/// Waiting for `t1` would lose launches whose shooter moves before flight starts.
 pub fn onset(frame: &Frame<'_>, engaged: Option<ActorRef>, seen: &mut i32) -> bool {
     let launch = frame
         .projectiles
@@ -58,7 +59,7 @@ pub fn onset(frame: &Frame<'_>, engaged: Option<ActorRef>, seen: &mut i32) -> bo
                         .target
                         .is_some_and(|target| actor.matches(target))
                 })
-                && projectile.t1 <= frame.loop_cycle
+                && projectile.t1.saturating_sub(frame.loop_cycle) <= 41
                 && frame.loop_cycle.saturating_sub(projectile.t1) <= 60
                 && (*seen < 0 || projectile.t1.wrapping_sub(*seen) > 0)
         })
