@@ -1,5 +1,7 @@
 //! Fixed, owned decisions; request strings are constructed only at admission.
+
 use super::frame::Frame;
+use super::policy;
 use super::tables::{CombatTables, PotionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,28 +82,15 @@ pub(crate) fn food_by(
     gate: Option<i32>,
     eligible: impl Fn(&super::tables::FoodFact) -> bool,
 ) -> Option<i32> {
-    let (hp, max) = stat(frame, 3);
-    let mut fitting: Option<(i32, i32)> = None;
-    let mut smallest: Option<(i32, i32)> = None;
-    for row in frame.inventory {
-        let Some(food) = tables.food(row.def.id) else {
-            continue;
-        };
-        let heal = food.heal;
-        if row.count <= 0
-            || !eligible(food)
-            || gate.is_some_and(|gate| hp.saturating_add(heal).min(max) <= gate)
-        {
-            continue;
-        }
-        if smallest.is_none_or(|(_, current)| heal < current) {
-            smallest = Some((row.def.id, heal));
-        }
-        if hp.saturating_add(heal) <= max && fitting.is_none_or(|(_, current)| heal > current) {
-            fitting = Some((row.def.id, heal));
-        }
-    }
-    fitting.or(smallest).map(|(id, _)| id)
+    let (hp, hp_max) = stat(frame, 3);
+    policy::food_by(
+        hp,
+        hp_max,
+        frame.inventory.iter().map(|row| (row.def.id, row.count)),
+        tables,
+        gate,
+        eligible,
+    )
 }
 pub(crate) fn stat(frame: &Frame<'_>, index: i32) -> (i32, i32) {
     frame

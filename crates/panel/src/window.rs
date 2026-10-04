@@ -1428,7 +1428,7 @@ fn align_up(n: u32, align: u32) -> u32 {
 
 /// Subset of 3270 Nerd Font Regular: panel text, rail controls and Nerd
 /// Fonts' Font Awesome icons. Recreate the asset with this exact command:
-/// `python3 -m fontTools.subset /Volumes/dev-scratch/274bot-evidence/PANEL-FONT-3270-1/nf-3270NerdFont-Regular.ttf --output-file=/Volumes/dev-scratch/274bot-worktrees/panel-font-3270/crates/panel/assets/3270NerdFont-Regular-subset.ttf '--unicodes=U+0020-007E,U+00A0-00FF,U+2013-2014,U+2026,U+2192,U+2194,U+2212,U+2264,U+2265,U+2582-2585,U+2605,U+2715,U+2717,U+F005,U+F006,U+F015,U+F019,U+F054,U+F07B,U+F108,U+F15B,U+F15C' --no-ignore-missing-unicodes`
+/// `python3 -m fontTools.subset /path/to/nf-3270NerdFont-Regular.ttf --output-file=crates/panel/assets/3270NerdFont-Regular-subset.ttf '--unicodes=U+0020-007E,U+00A0-00FF,U+2013-2014,U+2026,U+2192,U+2194,U+2212,U+2264,U+2265,U+2582-2585,U+2605,U+2715,U+2717,U+F005,U+F006,U+F015,U+F019,U+F054,U+F07B,U+F108,U+F15B,U+F15C' --no-ignore-missing-unicodes`
 const PANEL_FONT_BYTES: &[u8] = include_bytes!("../assets/3270NerdFont-Regular-subset.ttf");
 
 /// Non-ASCII codepoints the panel renders as text (status is drawn geometry).

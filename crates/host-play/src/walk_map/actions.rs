@@ -134,6 +134,28 @@ impl ActionError {
 }
 impl std::error::Error for ActionError {}
 
+pub(crate) fn route_supply_shortfall_detail(
+    world: &NavWorld,
+    state: &WorldState,
+    requirements: impl IntoIterator<Item = (i32, i32)>,
+) -> Option<String> {
+    let shortfalls: Vec<_> = requirements
+        .into_iter()
+        .filter_map(|(id, count)| {
+            let carried = state.inv.get(&id).copied().unwrap_or(0);
+            let short = count.saturating_sub(carried);
+            (short > 0).then(|| {
+                let name = world
+                    .transport_item_name(id)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("item #{id}"));
+                format!("{short} more {name} (need {count}, carrying {carried})")
+            })
+        })
+        .collect();
+    (!shortfalls.is_empty()).then(|| shortfalls.join("; "))
+}
+
 /// One operator WalkTo request, including refusals before a command can be
 /// built. Frontends and group dispatch use this boundary once per requested
 /// slot, never from availability checks or the traveller's frame pump.
@@ -997,27 +1019,16 @@ impl MapCommand {
                 self.options,
                 state,
             ) {
-                let shortfalls: Vec<_> = missing
-                    .into_iter()
-                    .filter_map(|req| {
-                        let nav::router::MissingReq::Carry { id, count } = req else {
-                            return None;
-                        };
-                        let carried = state.inv.get(&id).copied().unwrap_or(0);
-                        let short = count.saturating_sub(carried);
-                        (short > 0).then(|| {
-                            let name = world
-                                .transport_item_name(id)
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| format!("item #{id}"));
-                            format!("{short} more {name} (need {count}, carrying {carried})")
-                        })
-                    })
-                    .collect();
-                if !shortfalls.is_empty() {
-                    return Err(ActionError::InsufficientItems {
-                        detail: shortfalls.join("; "),
-                    });
+                let shortfalls = route_supply_shortfall_detail(
+                    world,
+                    state,
+                    missing.into_iter().filter_map(|req| match req {
+                        nav::router::MissingReq::Carry { id, count } => Some((id, count)),
+                        nav::router::MissingReq::WearAny { .. } => None,
+                    }),
+                );
+                if let Some(detail) = shortfalls {
+                    return Err(ActionError::InsufficientItems { detail });
                 }
             }
             if let Some(keys) = blocking_zones_for_walk(

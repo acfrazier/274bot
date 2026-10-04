@@ -282,7 +282,7 @@ impl ScriptStartHandle {
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
         slot.stop();
-        reset_script_nav(&self.navs, name);
+        reset_script_nav(&self.navs, name, None);
         drop(slot);
         clear_script_paint_status(&self.statuses, name);
         Ok(())
@@ -513,25 +513,11 @@ impl Play {
             return false;
         }
         slot.stop();
-        reset_script_nav(&self.navs, name);
+        reset_script_nav(&self.navs, name, None);
         drop(slot);
         self.clear_script_paint_status(name);
         self.wake(name);
         true
-    }
-
-    pub fn script_native_retry(
-        &self,
-        name: &str,
-        target: api::selected::RunKey,
-    ) -> Result<(), String> {
-        let slot = script_slot(&self.scripts, name).ok_or("stale native run")?;
-        let mut slot = slot.lock().map_err(|_| "script slot retiring")?;
-        slot.retry_compiled(target)
-            .map_err(|failure| failure.message.to_string())?;
-        drop(slot);
-        self.wake(name);
-        Ok(())
     }
 
     pub fn script_native_read_journal(
@@ -638,7 +624,7 @@ impl Play {
             slot.stop();
         }
         // A stopped script's route and reconnect carry belong to that run.
-        reset_script_nav(&self.navs, name);
+        reset_script_nav(&self.navs, name, None);
         drop(guard);
         self.clear_script_paint_status(name);
         self.wake(name);
@@ -664,7 +650,7 @@ impl Play {
                 return false;
             }
             slot.stop();
-            reset_script_nav(&self.navs, name);
+            reset_script_nav(&self.navs, name, None);
         }
         self.clear_script_paint_status(name);
         self.wake(name);

@@ -28,7 +28,11 @@ use vault::{Profile, ProfileSettings};
 use super::combat_proof::{self, CaptureRegistration, CombatCapture};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const EVIDENCE_DIR: &str = "/Volumes/dev-scratch/274bot-evidence/COMBAT-S3A-3";
+fn evidence_dir() -> Result<PathBuf, String> {
+    std::env::var_os("LIVE_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| "combat live proof requires LIVE_EVIDENCE_DIR".to_owned())
+}
 const IMP_START: WorldTile = WorldTile {
     x: 2632,
     z: 3222,
@@ -239,7 +243,7 @@ impl ThrowawayHome {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
-        let path = PathBuf::from(EVIDENCE_DIR)
+        let path = evidence_dir()?
             .join("homes")
             .join(format!("{label}-{}-{id}", std::process::id()));
         std::fs::create_dir_all(&path)
@@ -2944,7 +2948,11 @@ fn run_case(case: Case) {
         case.key()
     );
     let _cpu = CpuRendererEnv::enable();
-    std::fs::create_dir_all(EVIDENCE_DIR).expect("create assigned combat evidence directory");
+    let evidence = match evidence_dir() {
+        Ok(dir) => dir,
+        Err(error) => panic!("{} live prerequisites: {error}", case.key()),
+    };
+    std::fs::create_dir_all(&evidence).expect("create assigned combat evidence directory");
     let home = ThrowawayHome::enter(case.key()).expect("create isolated HOME");
     let options = match profile_options(&home.path) {
         Ok(options) => options,
@@ -3001,7 +3009,7 @@ fn run_case(case: Case) {
     let mut writer = EvidenceWriter {
         case,
         account: account.clone(),
-        path: PathBuf::from(EVIDENCE_DIR),
+        path: evidence,
         capture: Arc::clone(&capture),
         frame: FrameBuf::new(),
         scenario_status: "Preparing".to_owned(),

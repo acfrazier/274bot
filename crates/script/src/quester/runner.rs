@@ -10,7 +10,7 @@ use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
 use crate::combat::ClearPrayers;
-use crate::native::death::DeathLatch;
+use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
     ScriptFailure, ScriptFlow, ScriptStatus, StatusField, StatusValue, StopReason,
@@ -42,6 +42,7 @@ const JOURNAL_RETRY_LIMIT_OWNERSHIP_LOST: &str =
 enum QuesterFailureKind {
     Other,
     ManualMovement,
+    MaxDeaths,
 }
 
 pub struct Quester {
@@ -87,6 +88,7 @@ pub struct Quester {
     waiting: Option<(&'static str, Arc<str>)>,
     deaths: u8,
     prior_deaths: u16,
+    max_deaths: u8,
     attempts: u8,
     fail_streak: u8,
     parked: bool,
@@ -387,6 +389,7 @@ impl Quester {
             last_error_kind: QuesterFailureKind::Other,
             waiting: None,
             deaths: 0,
+            max_deaths: default_max_deaths(),
             prior_deaths: 0,
             attempts: 0,
             fail_streak: 0,
@@ -509,13 +512,13 @@ impl Quester {
         ScriptFailure {
             code: Arc::from(match self.last_error_kind {
                 QuesterFailureKind::ManualMovement => "manual-movement",
+                QuesterFailureKind::MaxDeaths => "max-deaths",
                 QuesterFailureKind::Other => "parked",
             }),
             message: self
                 .last_error
                 .clone()
                 .unwrap_or_else(|| Arc::from(self.park_reason)),
-            retryable: true,
         }
     }
 
@@ -593,8 +596,10 @@ impl Quester {
         let phase = if !self.queue_fields.is_empty()
             && (phase == NativePhase::Complete
                 || (phase == NativePhase::Blocked
-                    && self.last_error_kind != QuesterFailureKind::ManualMovement))
-        {
+                    && !matches!(
+                        self.last_error_kind,
+                        QuesterFailureKind::ManualMovement | QuesterFailureKind::MaxDeaths
+                    ))) {
             NativePhase::Working
         } else {
             phase
@@ -1221,6 +1226,10 @@ impl Script for Quester {
             self.dirty = true;
         }
         if self.death.observe(tick.cx.snapshot()) {
+            let exceeded = death_cap_exceeded(
+                self.prior_deaths.saturating_add(u16::from(self.deaths)),
+                self.max_deaths,
+            );
             self.cancel_step(tick);
             self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
@@ -1230,6 +1239,15 @@ impl Script for Quester {
             self.needs_read = true;
             self.progress = None;
             self.dirty = true;
+            if exceeded {
+                self.parked = true;
+                self.set_last_error(
+                    QuesterFailureKind::MaxDeaths,
+                    Arc::from("maximum deaths exceeded; Stop/Start required"),
+                );
+                self.emit_status(tick.output, NativePhase::Blocked);
+                return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+            }
         }
         if let Some(result) = self
             .clear_prayers
@@ -1679,39 +1697,7 @@ impl Script for Quester {
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
-        if self.parked {
-            self.retry()?;
-        }
         self.read_requested = true;
-        self.dirty = true;
-        Ok(())
-    }
-
-    fn retry(&mut self) -> Result<(), ScriptFailure> {
-        self.parked = false;
-        self.needs_read = true;
-        self.step = None;
-        self.provisioner.cancel();
-        self.clear_prayers = None;
-        self.prayer_cleanup_pending = true;
-        self.last_outcome = None;
-        self.last_combat = None;
-        self.journal = None;
-        self.progress = None;
-        self.settling = false;
-        self.selection_since = None;
-        self.fail_streak = 0;
-        self.attempts = 0;
-        self.watchdog = Watchdog::default();
-        self.empty_reads = 0;
-        self.unreadable_reads = 0;
-        self.unreadable_since = None;
-        self.journal_attempts = 0;
-        self.journal_retry_pending = false;
-        self.journal_quiet_since = None;
-        self.clear_last_error();
-        self.waiting = None;
-        self.park_reason = "no progress";
         self.dirty = true;
         Ok(())
     }
@@ -1730,6 +1716,7 @@ pub struct QueuedQuester {
     preparing: Option<std::thread::JoinHandle<Result<Arc<CompiledPath>, Arc<str>>>>,
     completed: u16,
     deaths: u16,
+    max_deaths: u8,
     retreats: u16,
     last_retreat: Option<Arc<str>>,
     fields: Arc<[StatusField]>,
@@ -1746,6 +1733,17 @@ impl QueuedQuester {
         banks: Arc<api::named_banks::NamedBankFacts>,
         queue: super::queue::Queue<'static>,
     ) -> Self {
+        Self::new_with_max_deaths(run, selected, quests, banks, queue, default_max_deaths())
+    }
+
+    pub(super) fn new_with_max_deaths(
+        run: RunKey,
+        selected: Arc<SelectedGameData>,
+        quests: Arc<QuestCatalog>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        queue: super::queue::Queue<'static>,
+        max_deaths: u8,
+    ) -> Self {
         let mut this = Self {
             run,
             selected,
@@ -1757,6 +1755,7 @@ impl QueuedQuester {
             preparing: None,
             completed: 0,
             deaths: 0,
+            max_deaths,
             retreats: 0,
             last_retreat: None,
             fields: Arc::from([]),
@@ -1877,7 +1876,6 @@ impl QueuedQuester {
                 message: Arc::from(
                     "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester",
                 ),
-                retryable: true,
             };
         }
         if !self
@@ -1891,7 +1889,6 @@ impl QueuedQuester {
                 message: Arc::from(
                     "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then Stop/Start Quester",
                 ),
-                retryable: true,
             };
         }
         let (reason, status) = self
@@ -1912,7 +1909,6 @@ impl QueuedQuester {
         ScriptFailure {
             code: Arc::from("queue-blocked"),
             message: format!("{reason}; {recovery}").into(),
-            retryable: true,
         }
     }
 
@@ -1948,6 +1944,7 @@ impl QueuedQuester {
                     Arc::clone(&self.banks),
                 );
                 active.prior_deaths = self.deaths;
+                active.max_deaths = self.max_deaths;
                 active.required_vs_live = skill_status_fields(&result.skill_gates);
                 active.tested_stats_warning = match active.path.tested_stats.as_deref() {
                     None => Arc::from("No qualified stats recorded"),
@@ -2001,7 +1998,9 @@ impl Script for QueuedQuester {
             let flow = active.tick(tick)?;
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
-                ScriptFlow::Blocked(failure) if failure.code.as_ref() == "manual-movement" => {
+                ScriptFlow::Blocked(failure)
+                    if matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
+                {
                     return Ok(flow);
                 }
                 ScriptFlow::Complete | ScriptFlow::Blocked(_) => {
@@ -2139,16 +2138,6 @@ impl Script for QueuedQuester {
             .map_or(RandomClaim::Host, |active| active.on_random(event))
     }
 
-    fn retry(&mut self) -> Result<(), ScriptFailure> {
-        self.queue.retry();
-        self.quest_status_since = None;
-        if let Some(active) = self.active.as_mut() {
-            active.retry()?;
-        }
-        self.refresh_fields();
-        Ok(())
-    }
-
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
         if let Some(active) = self.active.as_mut() {
             active.read_journal()
@@ -2156,7 +2145,6 @@ impl Script for QueuedQuester {
             Err(ScriptFailure {
                 code: Arc::from("no-active-quest"),
                 message: Arc::from("No active quest to read"),
-                retryable: true,
             })
         }
     }
@@ -2958,104 +2946,6 @@ mod tests {
     }
 
     #[test]
-    fn retry_clears_attempt_and_watchdog_exhaustion() {
-        let (mut script, s) = fixture();
-        script.attempts = 5;
-        script.parked = true;
-        for _ in 0..9 {
-            script.watchdog.observe(None, None, &[], &[], 0);
-        }
-        script.retry().unwrap();
-        assert_eq!(script.attempts, 0);
-        super::super::families::tests::with_tick(&s, &mut None, 1, |t| script.on_step_boundary(t));
-        assert!(!script.parked);
-    }
-
-    #[test]
-    fn failed_walk_parks_owner_until_explicit_retry() {
-        use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
-        use crate::native::{HostEffect, WalkEnd};
-        use api::snapshot::{GameSnapshot, QuestStatusView};
-
-        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
-        let mut document = super::super::compile::decode_cook().unwrap();
-        document.quest.as_mut().unwrap().owns_inventory = true;
-        let step = &mut document.roles[0].sequences[0].steps[0];
-        step.kind = "walk".into();
-        step.args = serde_json::json!({
-            "tile": [3103, 3163, 2], "source": "test fixture", "radius": 6
-        });
-        step.advances = true;
-        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
-        step.settle = super::super::path::PredicateDocument::All(vec![]);
-        let path =
-            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
-        let mut script = Quester::new(
-            RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            path,
-            data,
-            quests,
-            Arc::new(api::named_banks::NamedBankFacts::empty()),
-        );
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
-        snapshot.seed_quest_statuses(
-            vec![QuestStatusView {
-                name: "Cook's Assistant".into(),
-                component_id: 0,
-                colour: 0xf80000,
-            }],
-            true,
-        );
-        let mut ledger = None;
-        let mut queued_at = None;
-        for tick in 1..=8 {
-            with_tick(&snapshot, &mut ledger, tick, |native| {
-                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
-            });
-            if ledger.as_ref().is_some_and(|ledger| {
-                ledger
-                    .outbox
-                    .iter()
-                    .any(|action| matches!(action.effect, HostEffect::Walk(_)))
-            }) {
-                queued_at = Some(tick);
-                break;
-            }
-        }
-        let poll_tick = queued_at.expect("authored walk queued") + 1;
-        let cursor = (script.seq_index, script.step_index);
-        let request_id = post_user_input_walk_receipt(&mut ledger, poll_tick);
-        ledger.as_mut().unwrap().walk.as_mut().unwrap().end = WalkEnd::Failed;
-        for tick in poll_tick..=poll_tick + 52 {
-            assert!(matches!(
-                with_tick(&snapshot, &mut ledger, tick, |native| script.tick(native).unwrap()),
-                ScriptFlow::Blocked(failure) if failure.retryable
-            ));
-            assert_eq!((script.seq_index, script.step_index), cursor);
-        }
-        let outbox = &ledger.as_ref().unwrap().outbox;
-        assert_eq!(
-            outbox.len(),
-            1,
-            "neither retry nor interaction while parked"
-        );
-        assert_eq!(outbox[0].request_id.get(), request_id);
-        assert!(script.parked && !script.needs_read && !script.settling);
-
-        script.retry().unwrap();
-        assert!(
-            !script.parked && script.needs_read,
-            "Retry resumes with fresh quest evidence"
-        );
-    }
-
-    #[test]
     fn unprotectable_walk_publishes_its_cause_and_keeps_working() {
         use super::super::families::tests::{with_tick, with_tick_output};
         use crate::native::{HostEffect, WalkEvent, WalkEventKind};
@@ -3157,7 +3047,7 @@ mod tests {
     }
 
     #[test]
-    fn user_input_walk_parks_without_attempts_or_repeated_work() {
+    fn user_input_walk_blocks_without_attempts_or_repeated_work() {
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};
 
@@ -3223,8 +3113,7 @@ mod tests {
                 with_tick(&snapshot, &mut ledger, tick, |native| {
                     script.tick(native).unwrap()
                 }),
-                ScriptFlow::Blocked(failure)
-                    if failure.code.as_ref() == "manual-movement" && failure.retryable
+                ScriptFlow::Blocked(_)
             ));
             assert_eq!((script.seq_index, script.step_index), cursor);
             assert_eq!(script.attempts, 4);
@@ -3234,42 +3123,6 @@ mod tests {
             }
         }
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
-
-        script.retry().unwrap();
-        assert!(!script.parked, "only explicit Retry resumes the step");
-        // Generic owner revocation is not manual movement. After Retry starts
-        // another real walk, its revoked handle follows normal failure policy.
-        let mut revoked_at = None;
-        for tick in poll_tick + 3..=poll_tick + 14 {
-            with_tick(&snapshot, &mut ledger, tick, |native| {
-                assert!(matches!(script.tick(native).unwrap(), ScriptFlow::Continue));
-            });
-            if ledger.as_ref().is_some_and(|ledger| {
-                ledger
-                    .outbox
-                    .iter()
-                    .any(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
-            }) {
-                ledger.as_mut().unwrap().revoke();
-                revoked_at = Some(tick);
-                break;
-            }
-        }
-        let revoked_at = revoked_at.expect("Retry starts the current walk again");
-        assert!(matches!(
-            with_tick(&snapshot, &mut ledger, revoked_at + 1, |native| {
-                script.tick(native).unwrap()
-            }),
-            ScriptFlow::Continue
-        ));
-        assert!(
-            !script.parked,
-            "generic cancellation must not report manual-movement"
-        );
-        assert_eq!(
-            script.fail_streak, 1,
-            "generic cancellation keeps ordinary failure policy"
-        );
     }
 }
 
