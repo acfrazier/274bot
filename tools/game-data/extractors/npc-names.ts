@@ -48,8 +48,9 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
     return parseCombatInt(raw, label);
 }
 
-function parseNpcFiles(content: string) {
+function parseNpcFiles(content: string, revision: 274 | 289) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const defaultMaxrange = revision === 274 ? 7 : -1;
     const defaultParam = (name: string) => {
         const definition = definitions.get(name);
         if (definition?.type !== undefined && definition.type !== 'int') {
@@ -80,8 +81,8 @@ function parseNpcFiles(content: string) {
                     display: null,
                     ops: [],
                     size: 1,
-                    wanderrange: 0,
-                    maxrange: 0,
+                    wanderrange: 5,
+                    maxrange: defaultMaxrange,
                     attackrange: 0,
                     huntrange: 0,
                     vislevel: 0,
@@ -108,8 +109,8 @@ function parseNpcFiles(content: string) {
             if (key === 'name') current.display = value;
             else if (/^op[1-5]$/.test(key) && value) current.ops.push(value);
             else if (key === 'size') current.size = parseIntField(value, key, 1);
-            else if (key === 'wanderrange') current.wanderrange = parseIntField(value, key, 0);
-            else if (key === 'maxrange') current.maxrange = parseIntField(value, key, 0);
+            else if (key === 'wanderrange') current.wanderrange = parseIntField(value, key, 5);
+            else if (key === 'maxrange') current.maxrange = parseIntField(value, key, defaultMaxrange);
             else if (key === 'attackrange') current.attackrange = parseIntField(value, key, 0);
             else if (key === 'huntrange') current.huntrange = parseIntField(value, key, 0);
             else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : parseIntField(value, key, 0);
@@ -139,15 +140,23 @@ function parseNpcFiles(content: string) {
     return { blocks, files };
 }
 
-export function extractNpcNamesFacts(content: string, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
+export function extractNpcNamesFacts(content: string, revision: number, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
+    if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
-    const { blocks, files } = parseNpcFiles(content);
+    const { blocks, files } = parseNpcFiles(content, revision);
     const combatNpcs: CombatNpcSource[] = [];
     const rows = [...pack.entries()]
         .sort((a, b) => a[1] - b[1])
         .map(([config, id]) => {
             const block = blocks.get(config);
+            // Pinned NpcType.ts: 274 defaults at 102-103; 289 defaults/postDecode at 101-102,118-125.
+            const wanderrange = block?.wanderrange ?? 5;
+            let maxrange = block?.maxrange ?? (revision === 274 ? 7 : -1);
+            if (revision === 289) {
+                if (maxrange === -1) maxrange = wanderrange + 2;
+                maxrange = Math.max(maxrange, wanderrange);
+            }
             const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
             combatNpcs.push({
                 config,
@@ -162,8 +171,8 @@ export function extractNpcNamesFacts(content: string, scripts: CombatScripts = p
                 display: block?.display ?? null,
                 ops: block?.ops ?? [],
                 size: block?.size ?? 1,
-                wanderrange: block?.wanderrange ?? 0,
-                maxrange: block?.maxrange ?? 0,
+                wanderrange,
+                maxrange,
                 attackrange: block?.attackrange ?? 0,
                 huntrange: block?.huntrange ?? 0,
                 vislevel: block?.vislevel ?? 0,

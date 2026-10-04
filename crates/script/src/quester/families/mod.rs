@@ -14,7 +14,7 @@ use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions, WalkReceipt};
 use crate::shim::InteractReq;
 use api::selected::Truth;
 use api::snapshot::{ChatLineView, QuestListStatus};
@@ -234,6 +234,11 @@ pub fn predicate_handlers() -> &'static [super::compile::PredicateHandler] {
             kind: "loadout_ready",
             version: 1,
             compile: s2::compile_loadout_ready,
+        },
+        super::compile::PredicateHandler {
+            kind: "equipment_only",
+            version: 1,
+            compile: s2::compile_equipment_only,
         },
     ]
 }
@@ -976,12 +981,32 @@ struct WalkArgs {
     cross: Vec<String>,
     #[serde(default)]
     guard: Option<String>,
+    #[serde(default)]
+    allow_teleports: Option<bool>,
+    #[serde(default)]
+    allow_wilderness: Option<bool>,
+    #[serde(default)]
+    allow_danger_zones: Option<bool>,
+}
+
+impl WalkArgs {
+    fn options(&self) -> WalkOptions {
+        WalkOptions {
+            allow_teleports: self.allow_teleports.into(),
+            allow_wilderness: self.allow_wilderness.into(),
+            allow_danger_zones: self.allow_danger_zones.into(),
+        }
+    }
 }
 
 fn compile_walk(
     args: &serde_json::Value,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
+    Ok(Arc::new(parse_walk_plan(args)?))
+}
+
+fn parse_walk_plan(args: &serde_json::Value) -> Result<WalkPlan, CompileError> {
     let arg: WalkArgs =
         serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let protect = match arg.guard.as_deref() {
@@ -993,31 +1018,31 @@ fn compile_walk(
             );
         }
     };
-    if !arg.cross.is_empty() && !protect {
-        return Err(CompileError::code("invalid-args")
-            .with_detail("walk: cross needs protected walk (combat slice)"));
-    }
     validate_tile(arg.tile, &arg.source)?;
-    Ok(Arc::new(WalkPlan {
+    let options = arg.options();
+    let cross = arg
+        .cross
+        .into_iter()
+        .map(Arc::from)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Ok(WalkPlan {
         tile: WorldTile {
             x: arg.tile[0],
             z: arg.tile[1],
             level: arg.tile[2],
         },
         radius: arg.radius.max(1),
-        cross: arg
-            .cross
-            .into_iter()
-            .map(Arc::from)
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
+        options,
+        cross,
         protect,
-    }))
+    })
 }
 
 struct WalkPlan {
     tile: WorldTile,
     radius: u16,
+    options: WalkOptions,
     cross: Box<[Arc<str>]>,
     protect: bool,
 }
@@ -1025,6 +1050,7 @@ impl StepPlan for WalkPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
         request.cross = self.cross.clone();
+        request.options = self.options;
         request.protect = self.protect;
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         Ok(Box::new(WalkRun {
@@ -1087,6 +1113,26 @@ struct TalkArgs {
     prefer: Vec<String>,
     #[serde(default)]
     choose: Option<i32>,
+    #[serde(default)]
+    expect_combat: Option<ExpectedCombatArgs>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpectedCombatArgs {
+    npc: String,
+}
+
+/// A dialogue deliberately ceded control to its authored combat opponent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalkReceipt {
+    HandedToCombat { npc_type: i32, npc_index: usize },
+}
+
+impl super::compile::FamilyReceipt for TalkReceipt {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 fn compile_talk(
@@ -1103,6 +1149,11 @@ fn compile_talk(
         .ok_or_else(|| CompileError::code("unresolved-npc"))?;
     let tile = anchor_tile(arg.anchor.as_ref())?;
     offered(&cx.selected.npc_by_config(&arg.npc).unwrap().ops, "Talk-to")?;
+    let expect_combat = arg
+        .expect_combat
+        .as_ref()
+        .map(|expected| resolve_npc(cx, &expected.npc))
+        .transpose()?;
     Ok(Arc::new(TalkPlan {
         id,
         npc: Arc::from(display),
@@ -1110,6 +1161,7 @@ fn compile_talk(
         leash: arg.leash.max(1),
         prefer: arg.prefer.into_iter().map(Arc::from).collect(),
         choose: arg.choose,
+        expect_combat,
     }))
 }
 
@@ -1120,6 +1172,7 @@ struct TalkPlan {
     leash: u16,
     prefer: Arc<[Arc<str>]>,
     choose: Option<i32>,
+    expect_combat: Option<i32>,
 }
 impl StepPlan for TalkPlan {
     fn begin(&self, _cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
@@ -1130,6 +1183,7 @@ impl StepPlan for TalkPlan {
             leash: self.leash,
             prefer: Arc::clone(&self.prefer),
             choose: self.choose,
+            expect_combat: self.expect_combat,
             walk: None,
             dialogue: None,
             started: false,
@@ -1144,6 +1198,7 @@ struct TalkRun {
     leash: u16,
     prefer: Arc<[Arc<str>]>,
     choose: Option<i32>,
+    expect_combat: Option<i32>,
     walk: Option<ActionHandle<Walk>>,
     dialogue: Option<ActionHandle<dialogue::Dialogue>>,
     started: bool,
@@ -1192,6 +1247,19 @@ impl StepRun for TalkRun {
                     Poll::Ready(Err(ActionError::Failed(Arc::from("dialogue failed"))))
                 }
                 Poll::Ready(Ok(DialogueOutcome::CombatInterrupted)) => {
+                    if let Some((npc_type, npc_index)) = self
+                        .expect_combat
+                        .and_then(|npc_type| expected_combat_target(&cx.tick.cx, npc_type))
+                    {
+                        return Poll::Ready(Ok(StepOutcome {
+                            progress: None,
+                            evidence: cx.tick.cx.evidence(),
+                            receipt: Some(Arc::new(TalkReceipt::HandedToCombat {
+                                npc_type,
+                                npc_index,
+                            })),
+                        }));
+                    }
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("dialogue interrupted by combat"));
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&REASON))))
@@ -1215,6 +1283,29 @@ impl StepRun for TalkRun {
         self.walk = None;
         self.dialogue = None;
     }
+}
+
+fn expected_combat_target(
+    cx: &crate::native::ActionContext<'_>,
+    npc_type: i32,
+) -> Option<(i32, usize)> {
+    let snapshot = cx.snapshot();
+    let local = snapshot.local_player()?.value;
+    let combat = snapshot.in_combat()?.value;
+    let target = combat.target?;
+    if !combat.in_combat || target.kind != api::snapshot::ActorKind::Npc {
+        return None;
+    }
+    snapshot.npcs()?.value.iter().find_map(|npc| {
+        (npc.index == target.index
+            && npc.r#type == Some(npc_type as usize)
+            && npc.target
+                == Some(api::snapshot::ActorTargetView {
+                    kind: api::snapshot::ActorKind::Player,
+                    index: local.player.index,
+                }))
+        .then_some((npc_type, npc.index))
+    })
 }
 
 #[derive(Deserialize)]
@@ -1764,11 +1855,10 @@ impl StepRun for UseOnRun {
                         chat.value.root >= 0 && chat.value.continue_component_id >= 0
                     })
                 {
-                    self.interaction = Some(
-                        cx.tick
-                            .actions
-                            .begin::<UseOnAction>(InteractReq::ContinueDialog, &mut cx.tick.cx)?,
-                    );
+                    self.interaction = Some(cx.tick.actions.begin::<UseOnAction>(
+                        InteractReq::ContinueDialog { component_id: None },
+                        &mut cx.tick.cx,
+                    )?);
                     return Poll::Pending;
                 }
                 self.deadline

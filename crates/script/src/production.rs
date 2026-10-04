@@ -386,7 +386,7 @@ mod compat {
             return Begin::Done(false);
         }
         let before = probe.chat_modal_id;
-        cx.emit(InteractReq::ContinueDialog);
+        cx.emit(InteractReq::ContinueDialog { component_id: None });
         run(Phase::WaitChoice { before }, MODAL_WAIT_MS, cx)
     }
 

@@ -457,6 +457,7 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
                 required_after,
                 bank: &script.bank,
                 banks: &script.banks,
+                choices: &script.choices,
             };
             let run = super::super::families::combat::tests::policy_s2_run_for_runner(&mut cx);
             if wraps_recipe {
@@ -1344,7 +1345,9 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog)
+            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+                component_id: None
+            })
         ));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);

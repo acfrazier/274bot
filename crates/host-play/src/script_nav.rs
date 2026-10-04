@@ -96,6 +96,12 @@ impl ScriptRouteExclusions {
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
+    /// Shared session globals, attached before a production slot starts.
+    pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
+    pub(crate) walk_globals_store: Option<Arc<std::path::PathBuf>>,
+    /// The compiled instance's effective Start/config revision, never a draft.
+    /// `None` identifies isolate walks, which keep their existing option wiring.
+    pub(crate) native_permissions: Option<script::native::WalkPermissions>,
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
     pub(crate) route_worker: Option<Arc<()>>,
@@ -435,12 +441,7 @@ impl ScriptWalkArm {
             request.target.x,
             request.target.z,
             request.target.level,
-            FindOptions {
-                allow_teleports: request.options.allow_teleports,
-                allow_wilderness: request.options.allow_wilderness,
-                allow_bank_fetch: request.options.allow_bank_fetch,
-                ..FindOptions::default()
-            },
+            super::walk_permissions::native_options(&self.navs, &self.name, request.options),
             i32::from(request.radius),
             true,
             authority.request_id().get(),
@@ -610,6 +611,7 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
     ) -> bool {
+        let opts = super::walk_permissions::compiled_options(&self.navs, &self.name, opts);
         self.queue_route_impl(
             x,
             z,
@@ -1332,6 +1334,11 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) completion: RouteCompletion,
 }
+
+// Refusal hints must not fan out into a separate full-world diagnosis for
+// every Area goal. Routing still searches the complete goal set; only these
+// optional bank-fetch attribution probes have a fixed candidate budget.
+const BANK_ZONE_DIAGNOSTIC_TARGETS: usize = 8;
 impl ScriptRouteRequest {
     fn targets(&self) -> Vec<WorldTile> {
         if self.radius <= 0 {
@@ -1403,7 +1410,9 @@ impl ScriptRouteRequest {
             allow_bank_fetch: false,
             ..self.opts
         };
-        for &target in bank_targets {
+        for &target in bank_targets.iter().take(BANK_ZONE_DIAGNOSTIC_TARGETS) {
+            #[cfg(test)]
+            diagnostic_tests::BANK_TARGET_PROBES.with(|count| count.set(count.get() + 1));
             let Some(missing) = find_missing_item_reqs_with_avoid(
                 &self.world.collision,
                 &self.world.graph,
@@ -2374,4 +2383,79 @@ fn end_route_follow(nav: &mut NavBot) {
     nav.route_quest_evidence = None;
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    thread_local! {
+        pub(super) static BANK_TARGET_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn large_area_bank_zone_diagnosis_has_a_fixed_probe_bound() {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let world = NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: 209,
+                height: 209,
+                walk: vec![0; 209 * 209],
+                blocked: vec![0; (209usize * 209).div_ceil(64)],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        );
+        let mut request = ScriptRouteRequest {
+            generation: 1,
+            request_id: 1,
+            world: Arc::new(world),
+            from: origin,
+            to: WorldTile {
+                x: 104,
+                z: 104,
+                ..origin
+            },
+            radius: 104,
+            loc_id: None,
+            arrival: ArrivalKind::Area,
+            opts: FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            state: None,
+            bank: Vec::new(),
+            live_candidates: None,
+            exclusions: None,
+            completion: Default::default(),
+        };
+        let targets = request.targets();
+        assert_eq!(targets.len(), 209 * 209, "routing keeps every Area goal");
+        // Sixteen actual near goals expose the old per-goal fanout without
+        // exhausting tens of thousands of searches on the pre-fix code.
+        let targets = &targets[..16];
+        BANK_TARGET_PROBES.with(|count| count.set(0));
+        assert!(request
+            .blocking_zones(&RouteOutcome::NoPath, targets)
+            .is_none());
+        BANK_TARGET_PROBES.with(|count| {
+            assert!(
+                count.get() > 0 && count.get() <= 8,
+                "optional diagnosis must probe at most eight goals, not {}",
+                count.get()
+            );
+        });
+        request.opts.allow_bank_fetch = false;
+        BANK_TARGET_PROBES.with(|count| count.set(0));
+        assert!(request
+            .blocking_zones(&RouteOutcome::NoPath, targets)
+            .is_none());
+        BANK_TARGET_PROBES.with(|count| assert_eq!(count.get(), 0));
+    }
 }

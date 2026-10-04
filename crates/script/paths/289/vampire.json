@@ -1,0 +1,1170 @@
+{
+  "schema": 2,
+  "id": "vampire",
+  "display_name": "Vampire Slayer",
+  "required": [],
+  "tested_stats": [
+    {
+      "skill": 0,
+      "level": 40
+    },
+    {
+      "skill": 1,
+      "level": 40
+    },
+    {
+      "skill": 2,
+      "level": 40
+    },
+    {
+      "skill": 3,
+      "level": 40
+    },
+    {
+      "skill": 4,
+      "level": 40
+    },
+    {
+      "skill": 5,
+      "level": 43
+    },
+    {
+      "skill": 6,
+      "level": 40
+    }
+  ],
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [],
+    "items": [],
+    "acquire": {
+      "acquire:garlic": [
+        {
+          "id": "withdraw-garlic",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "garlic",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "garlic"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "walk-morgan-upstairs",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3098,
+              3268,
+              1
+            ],
+            "source": "C maps/m48_51.jm2:6349; A exec/garlic.ts MORGAN_STAIRS_TOP",
+            "radius": 1
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "morgan_upper"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "morgan_upper"
+              }
+            }
+          }
+        },
+        {
+          "id": "open-garlic-cupboard",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "garliccupboardshut"
+            },
+            "op": "Open",
+            "anchor": {
+              "tile": [
+                3096,
+                3268,
+                1
+              ],
+              "source": "C general_use/scripts/cupboards.rs2:34; maps/m48_51.jm2:6349"
+            },
+            "radius": 4,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "garliccupboardopen"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loc_present",
+              "version": 1,
+              "args": {
+                "loc": "garliccupboardopen"
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "take-cupboard-garlic",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "garliccupboardopen"
+            },
+            "op": "Search",
+            "anchor": {
+              "tile": [
+                3096,
+                3268,
+                1
+              ],
+              "source": "C general_use/scripts/cupboards.rs2:69-79"
+            },
+            "radius": 4,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "garlic"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "garlic"
+              }
+            }
+          },
+          "advances": false
+        },
+        {
+          "id": "leave-morgan-upstairs",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3098,
+              3268,
+              0
+            ],
+            "source": "C maps/m48_51.jm2:6513 (Morgan); A defs/vampireslayer.ts:211-228",
+            "radius": 2
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "in_area",
+                "version": 1,
+                "args": {
+                  "area": "morgan_upper"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3098,
+                  3268,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        }
+      ],
+      "acquire:stake": [
+        {
+          "id": "withdraw-stake",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "stake",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stake"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "stake"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "withdraw-beer",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "beer",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "beer"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "beer"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "buy-harlow-beer",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "jollyboar_bartender",
+            "anchor": {
+              "tile": [
+                3277,
+                3488,
+                0
+              ],
+              "source": "C maps/m51_54.jm2:7744; areas/area_varrock/scripts/bartender.rs2:1-18"
+            },
+            "leash": 6,
+            "prefer": [
+              "I'll have a beer please."
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stake"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "beer"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stake"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "beer"
+                  }
+                }
+              }
+            ]
+          },
+          "advances": false
+        },
+        {
+          "id": "receive-harlow-stake",
+          "kind": "talk",
+          "version": 1,
+          "args": {
+            "npc": "dr_harlow",
+            "anchor": {
+              "tile": [
+                3277,
+                3492,
+                0
+              ],
+              "source": "C maps/m51_54.jm2:7745; areas/area_varrock/scripts/harlow.rs2:24-54"
+            },
+            "leash": 6,
+            "prefer": [
+              "Ok mate.",
+              "Morgan needs your help"
+            ]
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "stake"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "stake"
+              }
+            }
+          },
+          "advances": false
+        }
+      ],
+      "acquire:hammer": [
+        {
+          "id": "withdraw-hammer",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "hammer",
+                "qty": 1
+              }
+            ],
+            "partial_ok": true
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "hammer"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "hammer"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "buy-hammer",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper2",
+              "anchor": {
+                "tile": [
+                  3218,
+                  3414,
+                  0
+                ],
+                "source": "A defs/vampireslayer.ts:73; C areas/area_varrock/configs/varrock.inv:36"
+              }
+            },
+            "obj": "hammer",
+            "qty": 1,
+            "est_gp": 100
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "hammer"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "hammer"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 200,
+    "loadouts": {
+      "melee": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "rune_scimitar"
+        },
+        "carry": [
+          {
+            "item": "4dose2attack",
+            "qty": 1
+          },
+          {
+            "item": "4dose2strength",
+            "qty": 1
+          },
+          {
+            "item": "4doseprayerrestore",
+            "qty": 2
+          },
+          {
+            "item": "lobster",
+            "qty": 6
+          }
+        ]
+      }
+    },
+    "areas": {
+      "morgan_upper": {
+        "boxes": [
+          [
+            3095,
+            3266,
+            3100,
+            3272,
+            1
+          ]
+        ],
+        "source": "C maps/m48_51.jm2:6349; general_use/scripts/cupboards.rs2:34"
+      },
+      "crypt": {
+        "boxes": [
+          [
+            3073,
+            9764,
+            3083,
+            9781,
+            0
+          ]
+        ],
+        "source": "C maps/m48_152.jm2:4390-4395; quest_vampire/scripts/quest_vampire.rs2:18,27"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:garlic",
+      "obj:stake",
+      "obj:hammer",
+      "obj:beer"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:vampire",
+      "progress": {
+        "colour": {
+          "not_started": "vampire:0",
+          "in_progress": "vampire:1",
+          "complete": "vampire:3"
+        },
+        "rules": [
+          {
+            "stage": "vampire:3",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": 3
+          },
+          {
+            "stage": "vampire:2",
+            "all": [
+              "i have spoken to dr harlow"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "vampire:1",
+            "all": [
+              "i need to speak to dr harlow"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "vampire:0",
+            "all": [
+              "i can start this quest"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [
+        {
+          "id": "vampire-combat-kit",
+          "kind": "loadout",
+          "version": 1,
+          "args": {
+            "loadout": "melee",
+            "at": "nearest"
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "vampire",
+                    "any": [
+                      "vampire:3"
+                    ]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "melee"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loadout_ready",
+              "version": 1,
+              "args": {
+                "loadout": "melee"
+              }
+            }
+          }
+        },
+        {
+          "id": "vampire-coin-float",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 200
+              }
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "vampire",
+                    "any": [
+                      "vampire:3"
+                    ]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "coins",
+                    "qty": 10
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "coins",
+                "qty": 10
+              }
+            }
+          }
+        }
+      ],
+      "sequences": [
+        {
+          "stage": "vampire:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-morgan",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "morgan",
+                "anchor": {
+                  "tile": [
+                    3098,
+                    3268,
+                    0
+                  ],
+                  "source": "C maps/m48_51.jm2:6513; areas/area_draynor/scripts/morgan.rs2:16-25"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Ok, I'm up for an adventure."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "vampire",
+                    "any": [
+                      "vampire:1"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "vampire:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "garlic-before-harlow",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:garlic"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              }
+            },
+            {
+              "id": "harlow-advice",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "dr_harlow",
+                "anchor": {
+                  "tile": [
+                    3277,
+                    3492,
+                    0
+                  ],
+                  "source": "C maps/m51_54.jm2:7745; areas/area_varrock/scripts/harlow.rs2:9-22"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Morgan needs your help"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "vampire",
+                    "any": [
+                      "vampire:2"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "vampire:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "garlic",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:garlic"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "garlic"
+                  }
+                }
+              }
+            },
+            {
+              "id": "stake",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:stake"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stake"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "stake"
+                  }
+                }
+              }
+            },
+            {
+              "id": "hammer",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:hammer"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "hammer"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "hammer"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-count-crypt",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3077,
+                  9771,
+                  0
+                ],
+                "source": "A defs/vampireslayer.ts:75-78; C maps/m48_152.jm2:4390,4395",
+                "radius": 2
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "crypt"
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-count-coffin",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "loc_2614"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3077,
+                    9775,
+                    0
+                  ],
+                  "source": "C maps/m48_152.jm2:4395; quest_vampire/scripts/quest_vampire.rs2:9-31"
+                },
+                "radius": 6,
+                "wait_if_missing": true,
+                "settle_ms": 10000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "count_draynor"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "count_draynor"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "kill-count-draynor",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "count_draynor",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "stand": {
+                  "tile": [
+                    3077,
+                    9771,
+                    0
+                  ],
+                  "source": "A defs/vampireslayer.ts:75-78; C quest_vampire/scripts/quest_vampire.rs2:27"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 300,
+                "loadout": "melee",
+                "win": {
+                  "Fact": {
+                    "kind": "quest_colour",
+                    "version": 1,
+                    "args": {
+                      "quest": "vampire",
+                      "is": "complete"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "vampire",
+                    "is": "complete"
+                  }
+                }
+              },
+              "advances": true,
+              "comment": "The content automatically hammers the held stake at lethal damage. Garlic and hammer remain carried; no quest-specific fight loop or finishing op is needed."
+            }
+          ]
+        },
+        {
+          "stage": "vampire:3",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "leave-count-crypt",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3115,
+                  3357,
+                  0
+                ],
+                "source": "C maps/m48_52.jm2:7295; A defs/vampireslayer.ts:395",
+                "radius": 2
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "crypt"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3115,
+                      3357,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

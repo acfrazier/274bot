@@ -1027,15 +1027,14 @@ fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
         .is_some_and(|((first, _), (second, _))| {
             let start = &capture.actions[first + 1..second];
             let hand_in = &capture.actions[second + 1..];
-            start
+            start.iter().any(|row| {
+                chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default())
+            }) && start
                 .iter()
-                .any(|row| row["request"]["debug"] == "ContinueDialog")
-                && start
-                    .iter()
-                    .any(|row| row["request"]["debug"] == "Answer { option: 1 }")
-                && hand_in
-                    .iter()
-                    .any(|row| row["request"]["debug"] == "ContinueDialog")
+                .any(|row| row["request"]["debug"] == "Answer { option: 1 }")
+                && hand_in.iter().any(|row| {
+                    chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default())
+                })
         });
     dialogue
         && native_interactions_wire_valid(capture)
@@ -1777,6 +1776,14 @@ fn legacy_caller_opcode(request: &Value) -> Option<i64> {
     }
 }
 
+fn chat_continue_debug(debug: &str) -> bool {
+    // Frozen receipts used the unit variant before explicit pause targets existed.
+    matches!(
+        debug,
+        "ContinueDialog" | "ContinueDialog { component_id: None }"
+    )
+}
+
 fn action_wire_valid(action: &Value) -> bool {
     use client::io::{ClientProt, ClientProt289};
     if !accepted(action) || action["wire_decoded"] != json!(true) {
@@ -1848,7 +1855,13 @@ fn action_wire_valid(action: &Value) -> bool {
             let debug = action["request"]["debug"].as_str().unwrap_or_default();
             // api/interact.rs:636-648,771-798: exact accepted dialogue
             // operations; unknown Debug rows still fail closed.
-            if debug == "ContinueDialog" {
+            if chat_continue_debug(debug)
+                || debug
+                    .strip_prefix("ContinueDialog { component_id: Some(")
+                    .and_then(|value| value.strip_suffix(") }"))
+                    .and_then(|value| value.parse::<i32>().ok())
+                    .is_some_and(|component_id| component_id >= 0)
+            {
                 actual == [opcode(ClientProt289::RESUME_PAUSEBUTTON)]
             } else if debug
                 .strip_prefix("Answer { option: ")

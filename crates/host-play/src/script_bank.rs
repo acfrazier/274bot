@@ -554,7 +554,6 @@ pub(super) fn queue_native_bank_pick(
 ) {
     let from = request.from;
     let preferences = request.preferences;
-    let allow_wilderness = request.allow_wilderness;
     let request_id = authority.request_id().get();
     queue_bank(
         navs,
@@ -562,10 +561,14 @@ pub(super) fn queue_native_bank_pick(
         world,
         state,
         from,
-        FindOptions {
-            allow_wilderness,
-            ..FindOptions::default()
-        },
+        super::walk_permissions::native_options(
+            navs,
+            name,
+            script::native::WalkOptions {
+                allow_teleports: script::native::WalkBit::Forbid,
+                ..request.options
+            },
+        ),
         request_id,
         preferences,
         None,
@@ -1309,7 +1312,7 @@ fn open_npc_bank_at_here<D: Driver>(
             );
         }
         if snapshot.chat_continue_component_id() >= 0 {
-            return matches!(ix.continue_dialog(), SendResult::Sent { .. });
+            return matches!(ix.continue_dialog(None), SendResult::Sent { .. });
         }
     }
     let wanted = name.trim();

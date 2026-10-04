@@ -1430,7 +1430,7 @@ impl ScenarioRunner {
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
                 if self.snapshot.chat_continue_component_id() != -1 {
-                    match ix.continue_dialog() {
+                    match ix.continue_dialog(None) {
                         SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
                     }
                 } else if !self.snapshot.chat_options().is_empty() {
