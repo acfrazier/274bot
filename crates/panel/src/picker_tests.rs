@@ -1082,7 +1082,7 @@ fn test_route() -> nav::router::Route {
                 tiles: vec![wt(0, 0), wt(1, 0), wt(2, 0)],
             },
             Leg::Transport {
-                edge: TransportEdge {
+                edge: Box::new(TransportEdge {
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: wt(3, 0),
@@ -1094,13 +1094,15 @@ fn test_route() -> nav::router::Route {
                     open_loc_id: None,
                     skill_req: vec![],
                     item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
-                },
+                }),
             },
             Leg::Walk {
                 tiles: vec![wt(4, 0), wt(5, 0)],

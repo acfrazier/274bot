@@ -262,7 +262,6 @@ impl Script for Sherlock {
                     let failure = ScriptFailure {
                         code: Arc::from("combat-failed"),
                         message: Arc::from("prayer hygiene failed"),
-                        retryable: true,
                     };
                     self.blocked = Some(failure.clone());
                     self.publish(tick.output);
@@ -313,11 +312,6 @@ impl Script for Sherlock {
         }
         self.dirty = true;
         Ok(SettingsApply::Applied)
-    }
-
-    fn retry(&mut self) -> Result<(), ScriptFailure> {
-        self.blocked = None;
-        Ok(())
     }
 
     fn interrupt(&mut self, event: Interrupt) {
@@ -468,7 +462,6 @@ impl Sherlock {
             self.blocked = Some(ScriptFailure {
                 code: Arc::from("manual-movement"),
                 message: Arc::from("manual movement"),
-                retryable: true,
             });
         }
     }
@@ -543,7 +536,6 @@ impl Sherlock {
                         self.blocked = Some(ScriptFailure {
                             code: Arc::from(reason),
                             message: Arc::from(reason),
-                            retryable: true,
                         });
                     }
                     return;
@@ -998,7 +990,6 @@ fn hygiene_failure(error: ActionError) -> ScriptFailure {
     ScriptFailure {
         code: Arc::from("combat-failed"),
         message,
-        retryable: true,
     }
 }
 

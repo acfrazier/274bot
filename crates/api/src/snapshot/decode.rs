@@ -208,9 +208,19 @@ impl GameSnapshot {
             None
         };
         self.projectiles.clear();
-        if client.ingame {
+        if client.ingame && client.self_slot >= 0 {
             let base = (client.map_build_base_x, client.map_build_base_z);
+            let local_slot = client.self_slot as usize;
             client.projectiles.for_each(|projectile| {
+                if self.projectiles.len() >= MAX_PROJECTILES_PER_SNAPSHOT {
+                    return;
+                }
+                let target = decode_projectile_target(projectile.target);
+                if !target.is_some_and(|target| {
+                    target.kind == ActorKind::Player && target.index == local_slot
+                }) {
+                    return;
+                }
                 self.projectiles.push(ProjectileView {
                     spotanim: projectile.spotanim,
                     level: projectile.level,
@@ -220,7 +230,7 @@ impl GameSnapshot {
                         projectile.level,
                         base,
                     ),
-                    target: decode_projectile_target(projectile.target),
+                    target,
                     t1: projectile.t1,
                     t2: projectile.t2,
                 });

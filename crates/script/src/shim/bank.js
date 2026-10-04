@@ -99,18 +99,10 @@ export const Bank = new Proxy(
         withdraw(name, amount) {
             return bankOp({ kind: 'withdraw', name: String(name), amount });
         },
+        // Rust owns the note intent for the open bank session; a closed
+        // bank is a no-op, as frozen. Frozen returns Promise<void>.
         async setNoteMode(on) {
-            if (!Bank.isOpen()) {
-                throw notImpl('Bank.setNoteMode');
-            }
-            const wantOn = !!on;
-            const btnId = wantOn ? snap().bank_note_on ?? -1 : snap().bank_note_off ?? -1;
-            if (typeof btnId !== 'number' || btnId < 0) {
-                throw notImpl('Bank.setNoteMode');
-            }
-            queue({ op: 'set-note-mode', on: wantOn });
-            await Execution.delayTicks(1);
-            return true;
+            await runMachine('bank_note_mode', { on: !!on });
         },
         async close() {
             if (!Bank.isOpen()) {

@@ -12,14 +12,14 @@ use nav::WorldState;
 
 /// A latched BankBudget session: remaining [`BankStep`]s plus the dest
 /// the arm re-finds after the session lands. Follow freezes only for
-/// Open / Deposit / Withdraw / Wear / Close; [`BankStep::Walk`] follows
-/// the access-tile sub-route. Wear-from-inv and bank-trip deposit/withdraw
-/// both pump through the same path. `final_route` is the post-session
-/// route (status row + follow once steps clear); a Walk-to-access may
-/// temporarily replace `WalkArm::route` / `NavBot::route`. The front
-/// step's [`StepProgress`] lives here too, so the script pump (`NavBot`)
-/// and the panel/TUI pump (`WalkArm`) share one budget and one in-flight
-/// latch across pumps.
+/// Open / Withdraw / Withdraw-X / Wear / Close; [`BankStep::Walk`] follows
+/// the access-tile sub-route. Wear-from-inventory and bank-trip withdrawals
+/// pump through the same path. `final_route` is the post-session route
+/// (status row + follow once steps clear); a Walk-to-access may temporarily
+/// replace `WalkArm::route` / `NavBot::route`. The front step's
+/// [`StepProgress`] lives here too, so the script pump (`NavBot`) and the
+/// panel/TUI pump (`WalkArm`) share one budget and one in-flight latch
+/// across pumps.
 #[derive(Debug, Clone)]
 pub struct PendingBankFetch {
     pub steps: VecDeque<BankStep>,
@@ -67,9 +67,7 @@ pub(crate) struct BankFetchFlight {
 pub(crate) enum FlightTarget {
     /// Open / Close: the bank session alone.
     Bank,
-    /// DepositAll: every backpack row `(obj id, count)`.
-    Backpack(Vec<(i32, i32)>),
-    /// Withdraw / Wear: the obj's backpack total and whether it is worn.
+    /// Withdraw / Withdraw-X / Wear: the obj's backpack total and whether it is worn.
     Obj { id: i32, carried: i32, worn: bool },
 }
 

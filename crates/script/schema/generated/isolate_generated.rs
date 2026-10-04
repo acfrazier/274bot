@@ -4248,7 +4248,6 @@ impl<'a> ApiGatherOutcome<'a> {
   pub const VT_END: ::flatbuffers::VOffsetT = 6;
   pub const VT_CODE: ::flatbuffers::VOffsetT = 8;
   pub const VT_MESSAGE: ::flatbuffers::VOffsetT = 10;
-  pub const VT_RETRYABLE: ::flatbuffers::VOffsetT = 12;
   pub const VT_YIELDED: ::flatbuffers::VOffsetT = 14;
   pub const VT_DROPPED: ::flatbuffers::VOffsetT = 16;
   pub const VT_DEPOSITED: ::flatbuffers::VOffsetT = 18;
@@ -4273,7 +4272,6 @@ impl<'a> ApiGatherOutcome<'a> {
     builder.add_yielded(args.yielded);
     if let Some(x) = args.message { builder.add_message(x); }
     if let Some(x) = args.code { builder.add_code(x); }
-    builder.add_retryable(args.retryable);
     builder.add_end(args.end);
     builder.finish()
   }
@@ -4306,13 +4304,6 @@ impl<'a> ApiGatherOutcome<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiGatherOutcome::VT_MESSAGE, None)}
-  }
-  #[inline]
-  pub fn retryable(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(ApiGatherOutcome::VT_RETRYABLE, Some(false)).unwrap()}
   }
   #[inline]
   pub fn yielded(&self) -> u32 {
@@ -4361,7 +4352,6 @@ impl ::flatbuffers::Verifiable for ApiGatherOutcome<'_> {
      .visit_field::<u8>("end", Self::VT_END, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("code", Self::VT_CODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("message", Self::VT_MESSAGE, false)?
-     .visit_field::<bool>("retryable", Self::VT_RETRYABLE, false)?
      .visit_field::<u32>("yielded", Self::VT_YIELDED, false)?
      .visit_field::<u32>("dropped", Self::VT_DROPPED, false)?
      .visit_field::<u32>("deposited", Self::VT_DEPOSITED, false)?
@@ -4376,7 +4366,6 @@ pub struct ApiGatherOutcomeArgs<'a> {
     pub end: u8,
     pub code: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub message: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub retryable: bool,
     pub yielded: u32,
     pub dropped: u32,
     pub deposited: u32,
@@ -4391,7 +4380,6 @@ impl<'a> Default for ApiGatherOutcomeArgs<'a> {
       end: 0,
       code: None,
       message: None,
-      retryable: false,
       yielded: 0,
       dropped: 0,
       deposited: 0,
@@ -4421,10 +4409,6 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiGatherOutcomeBuilder<'a, '
   #[inline]
   pub fn add_message(&mut self, message: ::flatbuffers::WIPOffset<&'b  str>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiGatherOutcome::VT_MESSAGE, message);
-  }
-  #[inline]
-  pub fn add_retryable(&mut self, retryable: bool) {
-    self.fbb_.push_slot::<bool>(ApiGatherOutcome::VT_RETRYABLE, retryable, false);
   }
   #[inline]
   pub fn add_yielded(&mut self, yielded: u32) {
@@ -4468,7 +4452,6 @@ impl ::core::fmt::Debug for ApiGatherOutcome<'_> {
       ds.field("end", &self.end());
       ds.field("code", &self.code());
       ds.field("message", &self.message());
-      ds.field("retryable", &self.retryable());
       ds.field("yielded", &self.yielded());
       ds.field("dropped", &self.dropped());
       ds.field("deposited", &self.deposited());
@@ -5105,6 +5088,119 @@ impl ::core::fmt::Debug for ApiProgress<'_> {
       ds.finish()
   }
 }
+pub enum CombatProjectileOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct CombatProjectile<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for CombatProjectile<'a> {
+  type Inner = CombatProjectile<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> CombatProjectile<'a> {
+  pub const VT_SPOTANIM: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TARGET_PLAYER_INDEX: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    CombatProjectile { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args CombatProjectileArgs
+  ) -> ::flatbuffers::WIPOffset<CombatProjectile<'bldr>> {
+    let mut builder = CombatProjectileBuilder::new(_fbb);
+    if let Some(x) = args.target_player_index { builder.add_target_player_index(x); }
+    builder.add_spotanim(args.spotanim);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn spotanim(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(CombatProjectile::VT_SPOTANIM, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn target_player_index(&self) -> Option<i32> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(CombatProjectile::VT_TARGET_PLAYER_INDEX, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for CombatProjectile<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<i32>("spotanim", Self::VT_SPOTANIM, false)?
+     .visit_field::<i32>("target_player_index", Self::VT_TARGET_PLAYER_INDEX, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct CombatProjectileArgs {
+    pub spotanim: i32,
+    pub target_player_index: Option<i32>,
+}
+impl<'a> Default for CombatProjectileArgs {
+  #[inline]
+  fn default() -> Self {
+    CombatProjectileArgs {
+      spotanim: 0,
+      target_player_index: None,
+    }
+  }
+}
+
+pub struct CombatProjectileBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CombatProjectileBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_spotanim(&mut self, spotanim: i32) {
+    self.fbb_.push_slot::<i32>(CombatProjectile::VT_SPOTANIM, spotanim, 0);
+  }
+  #[inline]
+  pub fn add_target_player_index(&mut self, target_player_index: i32) {
+    self.fbb_.push_slot_always::<i32>(CombatProjectile::VT_TARGET_PLAYER_INDEX, target_player_index);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CombatProjectileBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    CombatProjectileBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<CombatProjectile<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for CombatProjectile<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("CombatProjectile");
+      ds.field("spotanim", &self.spotanim());
+      ds.field("target_player_index", &self.target_player_index());
+      ds.finish()
+  }
+}
 pub enum SnapshotOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -5259,6 +5355,9 @@ impl<'a> Snapshot<'a> {
   pub const VT_API_PROGRESS: ::flatbuffers::VOffsetT = 274;
   pub const VT_USER_MOVE_INTENT_SEQ: ::flatbuffers::VOffsetT = 276;
   pub const VT_WALK_OUTCOME_CANCEL_REASON: ::flatbuffers::VOffsetT = 278;
+  pub const VT_PROJECTILES: ::flatbuffers::VOffsetT = 280;
+  pub const VT_CHAT_PAGE_FINGERPRINT: ::flatbuffers::VOffsetT = 282;
+  pub const VT_SIDE_MODAL_ID: ::flatbuffers::VOffsetT = 284;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5270,6 +5369,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
     builder.add_bank_snapshot_generation(args.bank_snapshot_generation);
     builder.add_bank_selection_generation(args.bank_selection_generation);
@@ -5300,6 +5400,8 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    builder.add_side_modal_id(args.side_modal_id);
+    if let Some(x) = args.projectiles { builder.add_projectiles(x); }
     if let Some(x) = args.api_progress { builder.add_api_progress(x); }
     if let Some(x) = args.api_gather_outcome { builder.add_api_gather_outcome(x); }
     if let Some(x) = args.api_gather { builder.add_api_gather(x); }
@@ -6379,6 +6481,27 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<WalkCancelReason>(Snapshot::VT_WALK_OUTCOME_CANCEL_REASON, Some(WalkCancelReason::None)).unwrap()}
   }
+  #[inline]
+  pub fn projectiles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>(Snapshot::VT_PROJECTILES, None)}
+  }
+  #[inline]
+  pub fn chat_page_fingerprint(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn side_modal_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(Snapshot::VT_SIDE_MODAL_ID, Some(-1)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6525,6 +6648,9 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<ApiProgress>>("api_progress", Self::VT_API_PROGRESS, false)?
      .visit_field::<u64>("user_move_intent_seq", Self::VT_USER_MOVE_INTENT_SEQ, false)?
      .visit_field::<WalkCancelReason>("walk_outcome_cancel_reason", Self::VT_WALK_OUTCOME_CANCEL_REASON, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>("projectiles", Self::VT_PROJECTILES, false)?
+     .visit_field::<u64>("chat_page_fingerprint", Self::VT_CHAT_PAGE_FINGERPRINT, false)?
+     .visit_field::<i32>("side_modal_id", Self::VT_SIDE_MODAL_ID, false)?
      .finish();
     Ok(())
   }
@@ -6668,6 +6794,9 @@ pub struct SnapshotArgs<'a> {
     pub api_progress: Option<::flatbuffers::WIPOffset<ApiProgress<'a>>>,
     pub user_move_intent_seq: u64,
     pub walk_outcome_cancel_reason: WalkCancelReason,
+    pub projectiles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>>>,
+    pub chat_page_fingerprint: u64,
+    pub side_modal_id: i32,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6811,6 +6940,9 @@ impl<'a> Default for SnapshotArgs<'a> {
       api_progress: None,
       user_move_intent_seq: 0,
       walk_outcome_cancel_reason: WalkCancelReason::None,
+      projectiles: None,
+      chat_page_fingerprint: 0,
+      side_modal_id: -1,
     }
   }
 }
@@ -7373,6 +7505,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<WalkCancelReason>(Snapshot::VT_WALK_OUTCOME_CANCEL_REASON, walk_outcome_cancel_reason, WalkCancelReason::None);
   }
   #[inline]
+  pub fn add_projectiles(&mut self, projectiles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<CombatProjectile<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Snapshot::VT_PROJECTILES, projectiles);
+  }
+  #[inline]
+  pub fn add_chat_page_fingerprint(&mut self, chat_page_fingerprint: u64) {
+    self.fbb_.push_slot::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, chat_page_fingerprint, 0);
+  }
+  #[inline]
+  pub fn add_side_modal_id(&mut self, side_modal_id: i32) {
+    self.fbb_.push_slot::<i32>(Snapshot::VT_SIDE_MODAL_ID, side_modal_id, -1);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7528,6 +7672,9 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("api_progress", &self.api_progress());
       ds.field("user_move_intent_seq", &self.user_move_intent_seq());
       ds.field("walk_outcome_cancel_reason", &self.walk_outcome_cancel_reason());
+      ds.field("projectiles", &self.projectiles());
+      ds.field("chat_page_fingerprint", &self.chat_page_fingerprint());
+      ds.field("side_modal_id", &self.side_modal_id());
       ds.finish()
   }
 }

@@ -86,6 +86,8 @@ pub(super) fn magicguild_door_edges(
                         vec![]
                     },
                     item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],

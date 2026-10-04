@@ -1019,12 +1019,19 @@ pub const fn run_state_label(state: RunState) -> &'static str {
     }
 }
 
-/// Native work can be parked while its lifecycle still owns a running instance.
-/// Both front ends must show that phase rather than a silent "running".
+/// Terminal native failures remain visible after the lifecycle stops.
+/// Waiting is a live phase; it does not retire the run.
 pub fn script_status_label(
     state: RunState,
     status: Option<&script::native::ScriptStatus>,
 ) -> &'static str {
+    if state == RunState::Idle
+        && status.is_some_and(|status| {
+            status.phase == script::native::NativePhase::Blocked && status.failure.is_some()
+        })
+    {
+        return "stopped (blocked)";
+    }
     if state != RunState::Running {
         return run_state_label(state);
     }

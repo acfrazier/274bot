@@ -615,42 +615,6 @@ fn ready_ok_lands_as_the_next_combat_page() {
 }
 
 #[test]
-fn no_food_blocks_and_retry_clears_it() {
-    let mut world = World::new(0);
-    world.inventory.truncate(5);
-    world.stats[3].effective = 9;
-    world.refresh();
-    let mut script = script(&world, false);
-    let mut ledger = None;
-    let begun = until_combat(&mut script, &mut world, &mut ledger, 1);
-    accept_outbox(&mut ledger, begun);
-    world.local.player.actor.in_combat = true;
-    world.npcs[0].in_combat = true;
-    world.npcs[0].target = Some(api::snapshot::ActorTargetView {
-        kind: ActorKind::Player,
-        index: 1,
-    });
-    world.refresh();
-    let mut blocked = false;
-    for tick in begun + 1..begun + 16 {
-        let (flow, _) = drive(&mut script, &world, &mut ledger, tick);
-        accept_outbox(&mut ledger, tick);
-        match flow {
-            Ok(ScriptFlow::Blocked(failure)) => {
-                assert!(failure.code.as_ref().contains("combat"), "{}", failure.code);
-                blocked = true;
-                break;
-            }
-            Ok(_) => {}
-            Err(failure) => panic!("unexpected failure {failure:?}"),
-        }
-    }
-    assert!(blocked, "Aborted(NoFood) must end Blocked");
-    script.retry().expect("retry");
-    assert!(script.blocked.is_none());
-}
-
-#[test]
 fn pause_with_a_prayer_bit_runs_hygiene_before_the_cancelled_report() {
     let mut world = World::new(0);
     let mut script = script(&world, false);

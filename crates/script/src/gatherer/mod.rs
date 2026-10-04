@@ -214,7 +214,7 @@ pub(crate) fn test_full_pack_fixture(
 use api::snapshot::WorldTile;
 
 /// Recovery is retained now so the slot cell has a stable shape for later
-/// stages. G1 only ever uses `Idle`; a latched death is a non-retryable block.
+/// stages. G1 only ever uses `Idle`; a latched death is a terminal block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecoveryState {
     #[default]

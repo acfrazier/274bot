@@ -11,12 +11,20 @@ use serde::Serialize;
 mod views;
 pub use views::*;
 mod native;
-pub use native::{ChatLines, ChatModalView, CombatView, JournalModalView, Observed, SnapshotView};
+pub use native::{
+    chat_page_fingerprint, ChatLines, ChatModalView, CombatView, JournalModalView, Observed,
+    SnapshotView,
+};
 mod decode;
 pub use decode::{attacked_by_player, cache_held_ops, tab_inv_component, PLAYER_FACE_BASE};
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
 mod context;
 pub use context::ReadContext;
+
+/// Side root an open [`GameSnapshot::seed_bank_observation`] fixture raises.
+const FIXTURE_BANK_SIDE_ROOT: i32 = 1;
+/// Maximum number of local-target projectiles retained in a snapshot.
+pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
@@ -269,7 +277,7 @@ impl Default for GameSnapshot {
             thieving_stun_stamp: None,
             players: Vec::new(),
             players_available: false,
-            projectiles: Vec::new(),
+            projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
             hitmarks: None,
             stats: Vec::new(),
             runenergy: 0,
@@ -407,6 +415,9 @@ impl GameSnapshot {
 
     /// Offline fixture observation of a bank modal and its two containers.
     /// `None` means the bank table is unread, not loaded empty stock.
+    /// An open fixture bank raises a side root as the real opening does
+    /// (one main+side packet after the side inventory), so `side` reads as
+    /// posted; [`Self::seed_side_modal`] models a side root still down.
     pub fn seed_bank_observation(
         &mut self,
         component_id: i32,
@@ -427,6 +438,18 @@ impl GameSnapshot {
         self.bank_last_inv_generation = generation;
         self.bank = rows.unwrap_or_default();
         self.bank_side = side;
+        self.modals.side = if component_id < 0 {
+            -1
+        } else if self.modals.side < 0 {
+            FIXTURE_BANK_SIDE_ROOT
+        } else {
+            self.modals.side
+        };
+    }
+
+    /// Offline fixture seed for the side modal root alone (`-1` none).
+    pub fn seed_side_modal(&mut self, root: i32) {
+        self.modals.side = root;
     }
 
     pub fn seed_equipment(&mut self, rows: Vec<ItemView>) {

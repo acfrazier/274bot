@@ -9,6 +9,12 @@ and no foreign JS policy runtime in-tree.
 
 WalkTo is **host nav** (panel picker / TUI map), not a script card.
 `native::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
+While the host guardian holds a trapped random (Maze, Mime, Strange box) the
+native run is frozen. The guardian gives one Maze visit 1,000 game ticks (twice
+the content's 500-tick reward clock); after that, and for the Maze or Mime
+square with random events off, the square is inert and an unheld native run
+standing on it fails with `random-trapped` and takes the terminal Blocked Stop
+described below instead of staying `Working` there.
 Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
@@ -38,6 +44,20 @@ status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain
 scalar. A slot that has never attempted a native Start allocates no native
 instance, preparation or retained cell; a rejected Start may retain its cell.
+
+A native `ScriptFlow::Blocked` is terminal. So is a published
+`NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
+Quester, Gatherer and Sherlock take the same slot-level Stop path as operator
+Stop: cancel actions and walks, release quiet leases, and discharge an owned
+WalkGuard's owed off-click. For each `Failed`, `Stopped`, or `Completed`
+lifecycle receipt, host observation resets the navigation session exactly
+once, including routes, route inspect, bank picks, carried walks, and duel
+offers. A blocked instance is dropped and the slot is Idle, not Running. Its
+terminal blocked status and reason remain available to panel and TUI through
+frontend-core and to the change-only status log. They carry no run/control
+authority. Watchdog, reconnect and fleet polling cannot restart that run; the
+operator must explicitly Start again.
+`Waiting` remains live until the card's own bound produces a terminal failure.
 
 The typed action-machine facility is a separate cutover: begins/polls still
 refuse with `ActionError::Unavailable`; this registration implementation does
@@ -121,6 +141,12 @@ In the panel, edit these settings in **Script prefs**; in the TUI, use **Params*
 For Cook's Assistant alone, set `quests` to `cook` while stopped, then Start.
 The other released IDs are `sheep`, `runemysteries`, `romeojuliet`, and `imp`.
 
+`max_deaths` defaults to **2**, using the Gatherer's `maxDeaths` limit policy:
+two deaths can recover, and the third stops Quester as blocked with a
+maximum-deaths reason. The count spans the queued Paths in one run.
+The additive setting keeps schema version 3; saved records without it receive
+the default. An explicit Start begins a new death allowance.
+
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
 already consumed them. An unread bank is unknown, not an empty bank.
@@ -144,6 +170,26 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Native Quester and Gatherer bank selection chooses the eligible, routable bank
+with the lowest walking-route cost in ticks; teleport grants and held runes do
+not change that ranking. A bank must have usable packed or declared access.
+For a packed booth, selection routes to every usable access tile of the chosen
+stand in one multi-goal search and returns its cheapest reachable approach.
+The catalog tile need not be one of those access tiles. An unreachable staff-side
+tile cannot displace a reachable public approach.
+Standing near a bank across a wall is not proof of reachability. A selection
+timeout may offer an air-nearest candidate, but the subsequent walk must still
+route successfully and fails closed otherwise. Compatibility `SelectBank` and
+`WalkNearestBank` retain their frozen four-tile shortcut, 500,000-expansion
+budget, five-second timeout and air fallback.
+
+An authored Path bank tile is not an exclusive destination by default:
+`{"tile": [3092, 3242, 0], "source": "author reference"}` still selects the
+cheapest routable bank. Add `"required": true` only when that particular bank
+is necessary. Required tiles must resolve to an eligible named bank with access
+and a successful route; an unmatched or unreachable required bank refuses
+rather than substituting another bank. `"bank": "nearest"` is unchanged.
+
 The native status producer exposes active quest progress under `quest`, its
 name under `display`, queue states, requirement and provisioning details, and
 step/session counters. `required_vs_live` counts skill gates; `required_<skill>`
@@ -162,6 +208,16 @@ on change; unchanged polls do not allocate or republish it. These intermediate
 status fields do not complete the step or replace the final outcome used by
 Path predicates.
 
+### Dialogue page acknowledgements
+
+Native and compatibility dialogue acknowledge Continue and answers only when
+the chat root, Continue visibility, or modal-page content changes. Modal content
+includes every body text line and each option's component id and text; a new
+chat-history ring line is not page progress. The host computes the shared native
+fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
+copying modal text into JavaScript. An unchanged page times out without repeating
+the action.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
@@ -171,7 +227,7 @@ or a combat baseline. The flag stays set for about 8 s after any hitsplat
 (`client.rs:9211` sets it to `loop_cycle + 400`; `decode.rs:1288` reads it).
 Thus a talk step that starts or ends within that window after unrelated combat
 parks as **Blocked**, even if the dialogue itself was not hit. This is
-fail-closed and requires an explicit operator retry. Poison hits count too:
+fail-closed and requires an explicit operator Start. Poison hits count too:
 poison closes interfaces before applying its damage hitsplat, which sets the
 same flag. A closed chat while the flag is set produces an explicit
 combat-interruption outcome, including during dialogue opening or page
@@ -186,7 +242,8 @@ A logical progress read allows at most three journal transactions, each with
 at most one quest-row click; adopting an already-open matching page also
 consumes a transaction but does not click. Exhaustion parks and reports
 `journal read retry limit reached` alongside the transient failure reason.
-Successful reads and explicit Retry reset this budget. A chat modal at read
+Successful reads reset this budget; an explicit Start begins a fresh budget.
+A chat modal at read
 start waits within the existing bounded read window; if it remains occupied,
 the parked status names the chat root and text. Modal ownership, quiet leases
 and Stop/Pause revocation still govern all captures and closes.
@@ -212,7 +269,7 @@ inventory, equipment and the work area before dispatch; foreign events do not ho
 Incidental uncut gems are power-dropped along with mining products. Tools,
 fishing bait and other non-products are kept. If protected items fill the pack
 and no selected product can be dropped, the card stops with `inventory-blocked`
-rather than gathering against a full inventory. Clear space and use **Retry**.
+rather than gathering against a full inventory. Clear space and **Start** again.
 
 Fishing requires the selected method's tool and bait before gathering; missing
 bait stops with `supply-missing`. Moving fishing spots are re-acquired by NPC
@@ -232,12 +289,12 @@ XP totals remain intact across the retry.
 Auto searches outward in sliced 32-tile rings, up to 128 tiles from the Start
 anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
-`resource-unavailable`. Retry resets the search only for these search failures;
-other retryable failures keep the current area and temporarily skipped groups.
+`resource-unavailable`. These terminal search failures stop the run;
+an explicit Start begins a fresh search at the current position.
 Gas, ents and whirlpools are identified by generated IDs and trigger reselection
 or a walk away, not another gathering click on the hazard. Pause/Resume preserves
 an unfinished escape walk. A temporary hold defers actions and resumes on release
-without requiring Retry.
+without requiring a new Start.
 
 Level-up chat pages are continued individually. An observed change of chat
 root completes only the previous page; the new page requires its own Continue.
@@ -247,19 +304,21 @@ The compiled Gatherer card schema is version 4. `disposition` defaults to
 `Bank`; `Power` drops selected gathering products, while `Bank` returns to the
 selected bank and deposits them. Bank mode also makes a trip when no inventory
 slot is free; Power mode can still take a supply-only trip. `bank` defaults to
-`Nearest` and also offers named banks present in the selected cache;
-`useMageBank` and `useZanarisBank` add those special banks to the preference.
-The unsupported `Closest` mode is not offered.
+`Nearest`. A named bank chosen by the user is required: always use that bank,
+and refuse if it is unavailable or unroutable instead of substituting another.
+`useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
+preferences. The unsupported `Closest` mode is not offered.
 Ordinary banks use packed stand access. Declared teller banks use the same
 live NPC/dialogue opener as `Bank.openNpcAccess`, including multi-page chat;
 an open modal without a loaded item table is not a successful native open.
 A bank without packed stand or declared NPC access fails closed with its name.
 Native counted withdrawals use the same session-fenced host amount-dialog
 continuation as compatibility scripts; dispatch alone never confirms a transfer.
-Named bank deposits use one content `Deposit All` operation for all held copies
-of that item, rather than sending an operation for each occupied slot. Other
-item types and configured keep items are untouched; observed inventory changes,
-not accepted dispatch alone, still settle the transfer.
+Named bank deposits press one content `Deposit All` operation on that exact
+bank-side row (id, slot and component), never a same-named noted or unnoted
+copy, rather than sending an operation for each occupied slot. Other item ids
+and configured keep items are untouched; observed inventory changes, not
+accepted dispatch alone, still settle the transfer.
 
 Supply targets are upper bounds, not a requirement that the bank contain the
 entire refill. Each withdrawal targets the lesser of the configured count and
@@ -290,9 +349,9 @@ cannot pay for one cast; once due, the whole selected rune-cost batch is
 planned to the configured cast count. Stocking those runes does not enable
 teleport walking: `allowTeleports` remains a separate opt-in. Unread bank
 contents are pending, not empty; missing stock is reported only after a loaded
-bank observation. `deathPolicy` defaults to `Recover`; `Stop` blocks retryably
-on death, with **Retry** explicitly consenting to recovery. `maxDeaths` defaults
-to 2; exceeding it requires Stop/Start.
+bank observation. `deathPolicy` defaults to `Recover`; `Stop` ends the run
+as blocked on death. Review the recovery setting before starting again.
+`maxDeaths` defaults to 2; the third death stops the run as blocked.
 
 Recovery observes restored HP in the Lumbridge respawn square (no region change
 is required), waits three ticks, re-observes kept supplies, uses the existing
@@ -300,8 +359,9 @@ bank trip if needed, verifies equipment and requires an arrived return walk.
 Only a fresh product **and** XP gain increments `recoveries`. `recovery_step`
 reports 1–5 for the pending sequence, 6 while proving yield and 0 when idle.
 A second death before recovery and a completed disposal blocks with `died-again`.
-Retry retains the failed step, including a refused return. Watchdog recreation
-and reconnect retain both the step and chat watermark, so old deaths cannot
+A blocked recovery stops the run, including a refused return. Watchdog recreation
+and reconnect retain both the step and chat watermark only while recovery is
+live, so old deaths cannot
 re-latch and gap deaths are still detected. No-stock failures remain
 `supply-missing`; missing respawn evidence is `respawn-not-observed`.
 Shop provisioning and self-defence are not offered.
@@ -357,6 +417,17 @@ unchanged.
   the isolate is terminated. Extra RSS (OS thread, deno/rustyscript, code
   space) sits on top of JS heap and is **unmeasured** at the 50-slot wall —
   `rss_ladder` is Null/draw-off clients, not Started JS.
+
+Hunt Fight and Hold use the same native protection picker and Prayer
+level/points gates as Combat. Each mode handles its outstanding reply before
+inserting a protect click; that click's acknowledgement resumes the saved mode
+effect, not its previous request. An unobserved toggle is retried after three
+game ticks, without re-clicking while pending. Dragonfire inputs use the worn
+selected Dragonfire shield and a confirmed antifire sip (fresh consume chat
+plus a selected-dose decrease), expiring after 600 game ticks. Combat tables
+are cached for the isolate's selected content; a build failure logs an
+actionable protection error and fails the awaited Hunt run rather than silently
+disabling protection.
 
 ### Persistence
 
@@ -499,6 +570,10 @@ Inventory, bank and quest observations carry readiness and an `EvidenceStamp`;
 unavailable is not an observed empty list. A closed main modal is an observed
 root of `-1` only on an ingame frame. Snapshot views do not clone the world or
 grant a send-side driver.
+A bank-side backpack is posted only while the bank's side modal root is up
+(`modals().side`, sent to compatibility scripts as `side_modal_id`): an open
+main bank whose side root is still down has no side observation, even with an
+empty list, while a raised root with no rows is a posted empty pack.
 
 ## Nav vs scripts
 
@@ -556,9 +631,9 @@ door, recovery and follow-up phases, so those phases stop too. The interrupted
 walking composer's next sustain/log callback or stored completion cannot run
 ahead of the takeover check.
 
-When the script remains running, Gatherer parks retryably with code
-`manual-movement`; Quester parks its current step without advancing it or
-charging an attempt or failure streak. Compat walking calls settle false without
+Gatherer and Quester publish `manual-movement` as blocked and stop their runs;
+Quester does not advance its current step or charge an attempt or failure streak.
+Compat walking calls settle false without
 internal retries, hunt callers do not re-walk, and ReturnToAnchor settles its void
 call without starting an approach leg. Pause → manual movement → Resume and
 reconnect hold → manual movement → relog both preserve the carried compat walk:

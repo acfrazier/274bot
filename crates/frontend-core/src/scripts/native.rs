@@ -21,7 +21,6 @@ pub enum NativeCommand {
     Pause,
     Resume,
     Stop,
-    Retry,
 }
 #[derive(Debug, Clone)]
 pub struct NativeTarget {
@@ -226,15 +225,21 @@ impl Scripts {
         profile: &str,
     ) -> Option<NativeDetail> {
         let play = core.play()?;
-        if !play
-            .script_source_identity(profile)?
-            .starts_with("compiled:")
-        {
+        let status = play.script_native_status(profile);
+        let lifecycle = play.script_state(profile);
+        let compiled = play
+            .script_source_identity(profile)
+            .is_some_and(|identity| identity.starts_with("compiled:"));
+        let blocked_stop = lifecycle == RunState::Idle
+            && status.as_ref().is_some_and(|status| {
+                status.phase == script::native::NativePhase::Blocked && status.failure.is_some()
+            });
+        if !compiled && !blocked_stop {
             return None;
         }
         Some(NativeDetail {
-            lifecycle: play.script_state(profile),
-            status: play.script_native_status(profile),
+            lifecycle,
+            status,
             paint: play.script_paint(profile),
             terminal: play.script_lifecycle_receipt(profile),
         })
@@ -251,7 +256,6 @@ impl Scripts {
             NativeCommand::Pause => play.script_native_pause(&target.profile, target.run, true),
             NativeCommand::Resume => play.script_native_pause(&target.profile, target.run, false),
             NativeCommand::Stop => play.script_native_stop(&target.profile, target.run),
-            NativeCommand::Retry => return play.script_native_retry(&target.profile, target.run),
         };
         if accepted {
             Ok(())

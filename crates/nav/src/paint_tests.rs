@@ -43,6 +43,8 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> Trans
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
@@ -76,7 +78,12 @@ fn remaining_path_includes_transport_at_to() {
             tiles: vec![tile(0, 0, 0), tile(1, 0, 0)],
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(2, 0, 0),
+                tile(3, 0, 0),
+                1530,
+            )),
         },
     ]);
     let tiles = remaining_path_tiles(&r, Some(tile(0, 0, 0)));
@@ -103,10 +110,20 @@ fn hop_captions_label_at_only_and_skip_teleports() {
             tiles: vec![tile(0, 0, 0), tile(1, 0, 0)],
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(2, 0, 0),
+                tile(3, 0, 0),
+                1530,
+            )),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Teleport, tile(3, 0, 0), tile(80, 80, 0), 1),
+            edge: Box::new(edge(
+                TransportKind::Teleport,
+                tile(3, 0, 0),
+                tile(80, 80, 0),
+                1,
+            )),
         },
     ]);
     let caps = hop_captions(&r, Some(tile(0, 0, 0)));
@@ -122,7 +139,12 @@ fn remaining_path_tiles_skips_done_legs_and_trims_here() {
             tiles: vec![tile(0, 0, 0), tile(1, 0, 0), tile(2, 0, 0)],
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(3, 0, 0), tile(4, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(3, 0, 0),
+                tile(4, 0, 0),
+                1530,
+            )),
         },
         Leg::Walk {
             tiles: vec![tile(4, 0, 0), tile(5, 0, 0)],
@@ -268,7 +290,12 @@ fn remaining_trail_keeps_mid_path_but_clears_arrived_dest() {
 fn hull_skips_teleport_and_missing_loc() {
     // A teleport hop has no loc scenery.
     let r = route(vec![Leg::Transport {
-        edge: edge(TransportKind::Teleport, tile(0, 0, 0), tile(1, 0, 0), 0),
+        edge: Box::new(edge(
+            TransportKind::Teleport,
+            tile(0, 0, 0),
+            tile(1, 0, 0),
+            0,
+        )),
     }]);
     assert!(
         hull_targets(&r, None, 12).is_empty(),
@@ -276,7 +303,7 @@ fn hull_skips_teleport_and_missing_loc() {
     );
     // NPC hops (boat/glider) have no loc either.
     let r = route(vec![Leg::Transport {
-        edge: edge(TransportKind::Boat, tile(0, 0, 0), tile(1, 0, 0), 0),
+        edge: Box::new(edge(TransportKind::Boat, tile(0, 0, 0), tile(1, 0, 0), 0)),
     }]);
     assert!(
         hull_targets(&r, None, 12).is_empty(),
@@ -284,7 +311,12 @@ fn hull_skips_teleport_and_missing_loc() {
     );
     // A door with a loc id resolves to one target.
     let r = route(vec![Leg::Transport {
-        edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+        edge: Box::new(edge(
+            TransportKind::Door,
+            tile(2, 0, 0),
+            tile(3, 0, 0),
+            1530,
+        )),
     }]);
     assert_eq!(
         hull_targets(&r, None, 12),
@@ -304,13 +336,23 @@ fn hull_targets_keeps_window_hops_and_always_the_next() {
             tiles: (0..50).map(|x| tile(x, 0, 0)).collect(),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Ladder, tile(50, 0, 0), tile(51, 0, 0), 1111),
+            edge: Box::new(edge(
+                TransportKind::Ladder,
+                tile(50, 0, 0),
+                tile(51, 0, 0),
+                1111,
+            )),
         },
         Leg::Walk {
             tiles: (51..101).map(|x| tile(x, 0, 0)).collect(),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(101, 0, 0), tile(102, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(101, 0, 0),
+                tile(102, 0, 0),
+                1530,
+            )),
         },
     ]);
     assert_eq!(
@@ -330,13 +372,23 @@ fn hull_targets_keeps_in_window_hops() {
             tiles: vec![tile(0, 0, 0), tile(1, 0, 0)],
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(2, 0, 0),
+                tile(3, 0, 0),
+                1530,
+            )),
         },
         Leg::Walk {
             tiles: vec![tile(3, 0, 0), tile(4, 0, 0)],
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(5, 0, 0), tile(6, 0, 0), 1531),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(5, 0, 0),
+                tile(6, 0, 0),
+                1531,
+            )),
         },
     ]);
     assert_eq!(
@@ -366,13 +418,23 @@ fn hull_targets_window_counts_from_the_trimmed_start() {
             tiles: (0..5).map(|x| tile(x, 0, 0)).collect(),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(5, 0, 0), tile(6, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(5, 0, 0),
+                tile(6, 0, 0),
+                1530,
+            )),
         },
         Leg::Walk {
             tiles: (6..12).map(|x| tile(x, 0, 0)).collect(),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(12, 0, 0), tile(13, 0, 0), 1531),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(12, 0, 0),
+                tile(13, 0, 0),
+                1531,
+            )),
         },
     ]);
     assert_eq!(
@@ -396,10 +458,20 @@ fn hull_targets_collapses_duplicate_door_targets() {
     // A door placement contributes two directed edges sharing one `at`.
     let r = route(vec![
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(2, 0, 0), tile(3, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(2, 0, 0),
+                tile(3, 0, 0),
+                1530,
+            )),
         },
         Leg::Transport {
-            edge: edge(TransportKind::Door, tile(2, 0, 0), tile(1, 0, 0), 1530),
+            edge: Box::new(edge(
+                TransportKind::Door,
+                tile(2, 0, 0),
+                tile(1, 0, 0),
+                1530,
+            )),
         },
     ]);
     assert_eq!(
