@@ -348,71 +348,65 @@ pub(super) fn proc_bitfield_varp(
     Some((*varps.get(varp)?, *constants.get(lo)?, *constants.get(hi)?))
 }
 
-/// Every `[proc,<name>](…)(…)` body in a script text. [`script_blocks`]
-/// cannot see these headers — a proc header carries its argument list and
-/// return type after the closing bracket — so the body is delimited here,
-/// from the header line to the next `[` line.
+/// Every `[proc,<name>](…)(…)` body in a script text. All transport
+/// block readers share the same line-boundary and body accumulation path.
 pub(super) fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = false;
-    let mut body = String::new();
-    for raw in script_text.lines() {
+    super::script_text::collect_script_blocks(script_text, |raw| {
         let line = raw.trim();
-        if let Some(rest) = line.strip_prefix("[proc,") {
-            if cur {
-                out.push(std::mem::take(&mut body));
-            }
-            cur = rest.split_once(']').is_some_and(|(n, _)| n.trim() == name);
-        } else if cur && line.starts_with('[') {
-            out.push(std::mem::take(&mut body));
-            cur = false;
-        } else if cur {
-            body.push_str(line);
-            body.push('\n');
+        if line.starts_with("[proc,") {
+            let Some(header) = super::script_text::split_script_header(line) else {
+                return super::script_text::ScriptBlockLine::Boundary;
+            };
+            return super::script_text::ScriptBlockLine::Header {
+                value: (),
+                inline_body: None,
+                inline_body_newline: true,
+                keep: header.kind == "proc" && header.name.trim() == name,
+            };
         }
-    }
-    if cur {
-        out.push(body);
-    }
-    out
+        if line.starts_with('[') {
+            super::script_text::ScriptBlockLine::Boundary
+        } else {
+            super::script_text::ScriptBlockLine::Body(line)
+        }
+    })
+    .into_iter()
+    .map(|(_, body)| body)
+    .collect()
 }
 
 /// `[<a>,<b>]` blocks in a script text → `(a, b, body)`, including inline
-/// bodies. Every header ends the preceding block; parameterized proc/label
-/// headers are left to their dedicated parsers, never appended to an op.
+/// bodies. Parameterized proc/label headers remain separate blocks.
 pub(super) fn script_blocks(text: &str) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String)> = None;
-    let mut body = String::new();
-    for raw in text.lines() {
+    super::script_text::collect_script_blocks(text, |raw| {
         let line = raw.trim();
-        let header_line = match line.find("//") {
-            Some(i) => line[..i].trim(),
-            None => line,
-        };
+        let header_line = line
+            .split_once("//")
+            .map_or(line, |(before, _)| before.trim());
         if header_line.starts_with('[') {
-            if let Some(prev) = cur.take() {
-                out.push((prev.0, prev.1, std::mem::take(&mut body)));
+            let Some(header) = super::script_text::parse_script_header(
+                header_line,
+                super::script_text::ScriptHeaderStyle::Exact,
+            ) else {
+                return super::script_text::ScriptBlockLine::Boundary;
+            };
+            let inline = header.tail.trim();
+            if inline.starts_with('(') {
+                return super::script_text::ScriptBlockLine::Boundary;
             }
-            if let Some(end) = header_line.find(']') {
-                if let Some((a, b)) = script_header(&header_line[..=end]) {
-                    let rest = header_line[end + 1..].trim();
-                    if !rest.starts_with('(') {
-                        cur = Some((a.to_string(), b.to_string()));
-                        body.push_str(rest);
-                        body.push('\n');
-                    }
-                }
+            super::script_text::ScriptBlockLine::Header {
+                value: (header.kind.to_string(), header.name.to_string()),
+                inline_body: Some(inline),
+                inline_body_newline: true,
+                keep: true,
             }
-        } else if cur.is_some() {
-            body.push_str(line);
-            body.push('\n');
+        } else {
+            super::script_text::ScriptBlockLine::Body(line)
         }
-    }
-    if let Some((a, b)) = cur.take() {
-        out.push((a, b, body));
-    }
-    out
+    })
+    .into_iter()
+    .map(|((kind, name), body)| (kind, name, body))
+    .collect()
 }
 
 /// The `(varp name, min value)` gates a door's open script declares: a
@@ -669,11 +663,9 @@ fn label_block(script_text: &str, name: &str) -> Option<String> {
 
 /// `[a,b]` where both parts are identifiers.
 pub(super) fn script_header(line: &str) -> Option<(&str, &str)> {
-    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
-    let (a, b) = inner.split_once(',')?;
-    let word = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
-    if !word(a) || !word(b) {
-        return None;
-    }
-    Some((a, b))
+    let header = super::script_text::parse_script_header(
+        line,
+        super::script_text::ScriptHeaderStyle::Exact,
+    )?;
+    header.tail.is_empty().then_some((header.kind, header.name))
 }

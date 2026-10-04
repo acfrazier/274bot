@@ -379,7 +379,8 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
         },
         &nav::transport::TransportGraph::default(),
         &[],
-    );
+    )
+    .unwrap();
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut manifest =

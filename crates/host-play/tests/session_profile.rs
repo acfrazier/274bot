@@ -966,7 +966,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         wildy_cap: None,
         quest_gates: None,
     });
-    let bytes = nav::pack::encode(&collision, &graph, &[]);
+    let bytes = nav::pack::encode(&collision, &graph, &[]).unwrap();
     let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
     let pack = fixture.0.join("selected.navpack");
     let flags_path = fixture.0.join("selected.navflags");
@@ -1088,6 +1088,7 @@ fn tiny_v8_pack() -> Vec<u8> {
         &TransportGraph::default(),
         &[],
     )
+    .unwrap()
 }
 
 fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
@@ -1530,12 +1531,12 @@ fn external_real_v10_pack_degrades_to_unavailable_without_deleting_user_file() {
 }
 
 /// Upgrading from 0.1.9.x: the stale v10 pack at the default home path never
-/// shadows the packaged v11 bundle, which binds, decodes once and is the one
+/// shadows the packaged v15 bundle, which binds, decodes once and is the one
 /// world every template shares; the user's file is left exactly as it was.
 /// Pointing `--nav-pack` / `NAV_PACK` at that old file is honoured over the
 /// bundle, and binds with navigation unavailable and a rebake diagnostic.
 #[test]
-fn packaged_v11_bundle_supersedes_a_stale_v10_home_pack() {
+fn packaged_v15_bundle_supersedes_a_stale_v10_home_pack() {
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
     assert!(
