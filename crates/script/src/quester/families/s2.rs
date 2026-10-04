@@ -1,8 +1,8 @@
 //! Bank, shop, production, equipment and loadout compiled families.
-use super::{reach, walk_step_evidence};
+use super::{reach, walk_step_evidence, NoArgs};
 use crate::bank::{BankStandAccess, Open, OpenArgs, PickKind, Select, SelectArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankItem, BankMachine, BankReceipt, BankRequest};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
@@ -29,7 +29,7 @@ fn item(cx: &CompileContext<'_>, alias: &str) -> Result<BankItem, CompileError> 
     let item = cx
         .selected
         .item_by_alias(alias)
-        .ok_or_else(|| CompileError::code("unresolved-obj"))?;
+        .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(alias))?;
     let name = item
         .name
         .as_deref()
@@ -40,25 +40,72 @@ fn item(cx: &CompileContext<'_>, alias: &str) -> Result<BankItem, CompileError> 
     })
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "path-schema", serde(untagged))]
 pub(super) enum QuantityDocument {
-    Fixed(i32),
+    /// Fixed item quantity; values below 1 are rejected by the compiler.
+    Fixed(#[cfg_attr(feature = "path-schema", schemars(range(min = 1)))] i32),
+    /// Count of a declared journal flag, optionally reduced by held items.
     Progress(ProgressQuantityDocument),
 }
 
+impl<'de> serde::Deserialize<'de> for QuantityDocument {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct QuantityVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for QuantityVisitor {
+            type Value = QuantityDocument;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an integer quantity or a progress quantity object")
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(QuantityDocument::Fixed)
+                    .map_err(E::custom)
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                i32::try_from(value)
+                    .map(QuantityDocument::Fixed)
+                    .map_err(E::custom)
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> Result<Self::Value, M::Error> {
+                ProgressQuantityDocument::deserialize(serde::de::value::MapAccessDeserializer::new(
+                    map,
+                ))
+                .map(QuantityDocument::Progress)
+            }
+        }
+
+        deserializer.deserialize_any(QuantityVisitor)
+    }
+}
+
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProgressQuantityDocument {
+    /// Journal flag which supplies the current item count.
     progress: ProgressCountDocument,
+    /// Optional held item subtracted from the journal count.
     #[serde(default)]
     minus_item: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ProgressCountDocument {
+    /// Symbolic quest key whose journal is read.
     quest: String,
+    /// Declared counted flag in that journal.
     flag: String,
 }
 
@@ -169,34 +216,18 @@ pub(super) fn compile_quantity(
 }
 
 fn named_item(cx: &CompileContext<'_>, name: &str) -> Result<BankItem, CompileError> {
-    if let Ok(item) = item(cx, name) {
-        return Ok(item);
-    }
     let item = cx
         .selected
-        .items()
-        .iter()
-        .find(|item| {
-            item.name
-                .as_deref()
-                .is_some_and(|known| known.eq_ignore_ascii_case(name))
-        })
+        .resolve_item_name(name)
+        .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
+    let display = item
+        .name
+        .as_deref()
         .ok_or_else(|| CompileError::code("unresolved-loadout-item"))?;
     Ok(BankItem {
         id: item.id,
-        name: Arc::from(item.name.as_deref().unwrap_or(name)),
+        name: Arc::from(display),
     })
-}
-
-fn metal_family_rank(name: &str) -> Option<(usize, &str)> {
-    const METALS: [&str; 8] = [
-        "bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon",
-    ];
-    let (metal, suffix) = name.trim().split_once(' ')?;
-    METALS
-        .iter()
-        .position(|known| metal.eq_ignore_ascii_case(known))
-        .map(|rank| (rank, suffix))
 }
 
 fn anchor(tile: [i32; 3]) -> WorldTile {
@@ -207,18 +238,23 @@ fn anchor(tile: [i32; 3]) -> WorldTile {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ItemQty {
+    /// Symbolic item config name.
     obj: String,
+    /// Requested quantity; omitted uses 1 and values below 1 are rejected.
     #[serde(default = "one")]
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
 }
 fn one() -> i32 {
     1
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 enum BankOp {
     Scan,
@@ -227,28 +263,33 @@ enum BankOp {
     DepositAll,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct BankArgs {
+pub(super) struct BankArgs {
+    /// Bank action to perform.
     op: BankOp,
+    /// Bank selector: `quest_bank` or `nearest`; omitted uses the Path bank.
     #[serde(default)]
     at: Option<String>,
+    /// Item quantities for withdraw/deposit operations.
     #[serde(default)]
     items: Vec<ItemQty>,
+    /// Symbolic items to retain on `deposit_all`.
     #[serde(default)]
     keep: Vec<String>,
+    /// Raw item ids to retain on `deposit_all`.
     #[serde(default)]
     keep_ids: Vec<i32>,
+    /// Allow a partial result when requested bank operations cannot complete.
     #[serde(default)]
     partial_ok: bool,
 }
 
-pub fn compile_bank(
-    args: &serde_json::Value,
+pub(super) fn compile_bank(
+    args: BankArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: BankArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args
         .at
         .as_deref()
@@ -284,9 +325,17 @@ pub fn compile_bank(
             }
         }
         BankOp::DepositAll => {
-            let mut keep = args.keep_ids;
+            let mut keep = cx.keep_ids.to_vec();
+            for id in args.keep_ids {
+                if !keep.contains(&id) {
+                    keep.push(id);
+                }
+            }
             for alias in args.keep {
-                keep.push(item(cx, &alias)?.id);
+                let id = item(cx, &alias)?.id;
+                if !keep.contains(&id) {
+                    keep.push(id);
+                }
             }
             actions.push(BankAction::DepositAll {
                 keep: Arc::from(keep),
@@ -453,7 +502,7 @@ impl StepRun for BankRun {
                         facts: Arc::clone(cx.banks),
                         from: from.value,
                         preferences: api::named_banks::BankPreferences::default(),
-                        allow_wilderness: false,
+                        options: WalkOptions::default(),
                         explicit: self.explicit.clone(),
                     },
                     &mut cx.tick.cx,
@@ -561,44 +610,45 @@ impl StepRun for BankRun {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct ShopArg {
+    /// Symbolic shopkeeper NPC config name.
     npc: String,
-    anchor: Anchor,
+    /// Authored shop approach anchor and its source citation.
+    anchor: super::AnchorArg,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct Anchor {
-    tile: [i32; 3],
-    #[serde(default)]
-    source: String,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BuyArgs {
+pub(super) struct BuyArgs {
+    /// Shopkeeper and approach location.
     shop: ShopArg,
+    /// Symbolic item config name to buy.
     obj: String,
+    /// Number of items to buy; must be at least 1.
+    #[cfg_attr(feature = "path-schema", schemars(range(min = 1)))]
     qty: i32,
+    /// Estimated coin budget; currently informational.
     #[serde(default)]
     est_gp: u32,
+    /// Optional shop menu choice; currently informational.
     #[serde(default)]
     option: Option<String>,
 }
 
-pub fn compile_buy(
-    args: &serde_json::Value,
+pub(super) fn compile_buy(
+    args: BuyArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: BuyArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     if args.qty < 1 || args.shop.anchor.source.trim().is_empty() {
         return Err(CompileError::code("invalid-buy"));
     }
     let npc = cx
         .selected
         .npc_by_config(&args.shop.npc)
-        .ok_or_else(|| CompileError::code("unresolved-npc"))?;
+        .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(args.shop.npc.as_str()))?;
     let item = item(cx, &args.obj)?;
     let _ = (args.est_gp, args.option);
     Ok(Arc::new(BuyPlan {
@@ -684,36 +734,47 @@ impl StepRun for BuyRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MakeLoc {
+    /// Symbolic location config name.
     name: String,
+    /// Location operation used to start production.
     op: String,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct MakeMenu {
+    /// Symbolic item config name shown in the production menu.
     obj: String,
+    /// Source citation for the menu option.
     source: String,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct MakeArgs {
+pub(super) struct MakeArgs {
+    /// Location action used to start production.
     loc: MakeLoc,
-    anchor: Anchor,
+    /// Authored approach anchor with a source citation.
+    anchor: super::AnchorArg,
+    /// Symbolic product item config name.
     product: String,
+    /// Optional production menu choice.
     #[serde(default)]
     menu: Option<MakeMenu>,
+    /// Fixed or journal-count-backed production quantity.
     qty: QuantityDocument,
+    /// Use the game's make-X option when available.
     #[serde(default)]
     make_x: bool,
 }
-pub fn compile_make(
-    args: &serde_json::Value,
+pub(super) fn compile_make(
+    args: MakeArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: MakeArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let qty = compile_quantity(args.qty, cx)?;
     if qty.fixed().is_some_and(|qty| qty < 1) || args.anchor.source.trim().is_empty() {
         return Err(CompileError::code("invalid-make"));
@@ -721,7 +782,7 @@ pub fn compile_make(
     let loc = cx
         .selected
         .loc_by_config(&args.loc.name)
-        .ok_or_else(|| CompileError::code("unresolved-loc"))?;
+        .ok_or_else(|| CompileError::code("unresolved-loc").with_detail(args.loc.name.as_str()))?;
     if !loc
         .ops
         .iter()
@@ -872,35 +933,38 @@ impl StepRun for MakeRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct EquipArgs {
+pub(super) struct EquipArgs {
+    /// Symbolic item config name; omitted only when stripping all equipment.
     #[serde(default)]
     obj: Option<String>,
+    /// Strip all worn items when `obj` is omitted.
     #[serde(default)]
     all: bool,
 }
-pub fn compile_equip(
-    args: &serde_json::Value,
+pub(super) fn compile_equip(
+    args: EquipArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     compile_equipment(args, cx, true)
 }
-pub fn compile_unequip(
-    args: &serde_json::Value,
+pub(super) fn compile_unequip(
+    args: EquipArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
     compile_equipment(args, cx, false)
 }
 fn compile_equipment(
-    args: &serde_json::Value,
+    args: EquipArgs,
     cx: &CompileContext<'_>,
     wear: bool,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: EquipArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     let request = if !wear && args.all && args.obj.is_none() {
-        EquipmentRequest::Strip
+        EquipmentRequest::Strip {
+            keep: Arc::from(cx.keep_ids),
+        }
     } else {
         let obj = args.obj.ok_or_else(|| CompileError::code("missing-obj"))?;
         let item = item(cx, &obj)?;
@@ -945,23 +1009,32 @@ impl StepRun for EquipmentRun {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct LoadoutArgs {
+pub(super) struct LoadoutArgs {
+    /// Name or Path-qualified name of the loadout to apply.
     loadout: String,
+    /// Bank selector: `quest_bank` or `nearest`.
     #[serde(default)]
     at: Option<String>,
+    /// Allow lower-tier alternatives when resolving the loadout.
     #[serde(default)]
     allow_lower_tier: bool,
+    /// Remove worn equipment that is not in the loadout.
     #[serde(default)]
     strip: bool,
+    /// Require exactly the listed worn items; remove other worn items into inventory.
+    #[serde(default)]
+    exclusive: bool,
 }
 
-pub fn compile_loadout(
-    args: &serde_json::Value,
+pub(super) fn compile_loadout(
+    args: LoadoutArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
-    let args: LoadoutArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if args.exclusive && (args.strip || args.allow_lower_tier) {
+        return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
+    }
     if args
         .at
         .as_deref()
@@ -979,33 +1052,52 @@ pub fn compile_loadout(
         .resolve(&qualified)
         .ok_or_else(|| CompileError::code("unknown-loadout"))?
         .row();
-    for carry in &row.carry {
-        let _ = named_item(cx, &carry.item)?;
+    let mut resolved_row = row.clone();
+    let mut carry_ids = Vec::with_capacity(resolved_row.carry.len());
+    for carry in &mut resolved_row.carry {
+        let item = named_item(cx, &carry.item)?;
+        if carry.item.as_str() != item.name.as_ref() {
+            carry.item = item.name.to_string();
+        }
+        carry_ids.push(item.id);
     }
-    for name in row.worn.values() {
-        let _ = named_item(cx, name)?;
+    let mut worn_items = Vec::with_capacity(row.worn.len());
+    for (slot, wanted) in &row.worn {
+        let item = named_item(cx, wanted)?;
+        if wanted != item.name.as_ref() {
+            resolved_row
+                .worn
+                .insert(slot.clone(), item.name.to_string());
+        }
+        worn_items.push((slot.clone(), item));
     }
+    let melee_family: Arc<[api::game_data::EquipmentNameEntry]> = Arc::from(
+        cx.selected
+            .equipment_names()
+            .map(|facts| facts.melee_weapons.clone())
+            .unwrap_or_default(),
+    );
     let mut resolved = Vec::new();
     for candidate in cx.selected.items() {
         let Some(name) = candidate.name.as_deref() else {
             continue;
         };
-        let relevant = row
-            .carry
-            .iter()
-            .any(|entry| entry.item.eq_ignore_ascii_case(name))
-            || row.worn.values().any(|wanted| {
-                wanted.eq_ignore_ascii_case(name)
-                    || (wanted.eq_ignore_ascii_case("dragon longsword")
-                        && name.eq_ignore_ascii_case("rune sword"))
-                    || (wanted.eq_ignore_ascii_case("rune platebody")
-                        && name.eq_ignore_ascii_case("rune chainbody"))
-                    || metal_family_rank(wanted).is_some_and(|(wanted_rank, wanted_suffix)| {
-                        metal_family_rank(name).is_some_and(|(rank, suffix)| {
-                            rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix)
-                        })
-                    })
-            });
+        let canonical = cx
+            .selected
+            .resolve_item_name(name)
+            .is_some_and(|item| item.id == candidate.id);
+        let relevant = canonical
+            && (carry_ids.contains(&candidate.id)
+                || worn_items.iter().any(|(slot, wanted)| {
+                    wanted.id == candidate.id
+                        || (wanted.name.eq_ignore_ascii_case("dragon longsword")
+                            && name.eq_ignore_ascii_case("rune sword"))
+                        || (wanted.name.eq_ignore_ascii_case("rune platebody")
+                            && name.eq_ignore_ascii_case("rune chainbody"))
+                        || crate::melee_weapons::same_or_lower_metal_item(name, &wanted.name)
+                        || (slot.eq_ignore_ascii_case("righthand")
+                            && crate::melee_weapons::same_or_lower_melee_weapon(name, &wanted.name))
+                }));
         if relevant {
             resolved.push(BankItem {
                 id: candidate.id,
@@ -1017,10 +1109,13 @@ pub fn compile_loadout(
         bank: cx.bank,
         bank_required: cx.bank_required,
         memo_ids: Arc::from(cx.bank_items),
-        row: row.clone(),
+        row: resolved_row,
         resolved: Arc::from(resolved),
+        melee_family,
+        keep_ids: Arc::from(cx.keep_ids),
         allow_lower_tier: args.allow_lower_tier,
         strip: args.strip,
+        exclusive: args.exclusive,
     }))
 }
 
@@ -1030,9 +1125,13 @@ struct LoadoutPlan {
     memo_ids: Arc<[i32]>,
     row: crate::loadouts_store::Loadout,
     resolved: Arc<[BankItem]>,
+    melee_family: Arc<[api::game_data::EquipmentNameEntry]>,
+    keep_ids: Arc<[i32]>,
     allow_lower_tier: bool,
     strip: bool,
+    exclusive: bool,
 }
+
 impl StepPlan for LoadoutPlan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
         let snapshot = cx.tick.cx.snapshot();
@@ -1077,14 +1176,29 @@ impl StepPlan for LoadoutPlan {
         let mut worn = Vec::new();
         if !self.strip {
             for carry in &self.row.carry {
-                bank_actions.push(BankAction::Withdraw {
-                    item: resolve(&carry.item)?,
-                    qty: i32::try_from(carry.qty).unwrap_or(i32::MAX),
-                });
+                let item = resolve(&carry.item)?;
+                let qty = i32::try_from(carry.qty).unwrap_or(i32::MAX);
+                if !snapshot.inventory().is_some_and(|inventory| {
+                    inventory
+                        .value
+                        .iter()
+                        .filter(|row| row.def.id == item.id)
+                        .map(|row| i64::from(row.count.max(0)))
+                        .sum::<i64>()
+                        >= i64::from(qty)
+                }) {
+                    bank_actions.push(BankAction::Withdraw { item, qty });
+                }
             }
             for (slot, name) in &self.row.worn {
                 let names = if self.allow_lower_tier {
-                    crate::quester::loadouts::tier_candidates(slot, name, &available, facts)
+                    crate::quester::loadouts::tier_candidates(
+                        slot,
+                        name,
+                        &available,
+                        facts,
+                        &self.melee_family,
+                    )
                 } else {
                     vec![name.clone()]
                 };
@@ -1102,7 +1216,17 @@ impl StepPlan for LoadoutPlan {
                         items: Arc::from(items.clone()),
                         qty: 1,
                     });
-                } else {
+                } else if !snapshot.equipment().is_some_and(|equipment| {
+                    equipment
+                        .value
+                        .iter()
+                        .any(|row| row.count > 0 && row.def.id == items[0].id)
+                }) && !snapshot.inventory().is_some_and(|inventory| {
+                    inventory
+                        .value
+                        .iter()
+                        .any(|row| row.count > 0 && row.def.id == items[0].id)
+                }) {
                     bank_actions.push(BankAction::Withdraw {
                         item: items[0].clone(),
                         qty: 1,
@@ -1110,7 +1234,9 @@ impl StepPlan for LoadoutPlan {
                 }
                 worn.push(Arc::from(items));
             }
-            bank_actions.push(BankAction::Close);
+            if !bank_actions.is_empty() {
+                bank_actions.push(BankAction::Close);
+            }
         }
         Ok(Box::new(LoadoutRun {
             bank: if bank_actions.is_empty() {
@@ -1125,10 +1251,13 @@ impl StepPlan for LoadoutPlan {
                 })
             },
             worn: Arc::from(worn),
+            keep_ids: Arc::clone(&self.keep_ids),
             worn_index: 0,
             equipment: None,
             strip: self.strip,
             stripped: false,
+            exclusive: self.exclusive,
+            removing: false,
             receipt: None,
         }))
     }
@@ -1139,12 +1268,87 @@ struct LoadoutRun {
     worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
+    keep_ids: Arc<[i32]>,
     strip: bool,
     stripped: bool,
+    exclusive: bool,
+    removing: bool,
     receipt: Option<Arc<dyn FamilyReceipt>>,
 }
 impl StepRun for LoadoutRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        if let Some(handle) = &self.equipment {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.equipment = None;
+                    if self.removing {
+                        self.removing = false;
+                    } else if self.strip {
+                        self.stripped = true;
+                    } else {
+                        self.worn_index += 1;
+                    }
+                }
+            }
+        }
+        if self.exclusive {
+            let snapshot = cx.tick.cx.snapshot();
+            let Some(equipment) = snapshot.equipment() else {
+                return Poll::Pending;
+            };
+            if let Some(extra) = equipment.value.iter().find(|row| {
+                row.count > 0
+                    && !self
+                        .worn
+                        .iter()
+                        .any(|items| items.iter().any(|wanted| wanted.id == row.def.id))
+            }) {
+                let (Some(inventory), Some(capacity)) =
+                    (snapshot.inventory(), snapshot.inventory_capacity())
+                else {
+                    return Poll::Pending;
+                };
+                let held_stack = inventory
+                    .value
+                    .iter()
+                    .find(|row| row.count > 0 && row.def.id == extra.def.id);
+                let space = if extra.def.stackable {
+                    held_stack.map_or_else(
+                        || {
+                            inventory.value.iter().filter(|row| row.count > 0).count()
+                                < usize::from(capacity.value)
+                        },
+                        |held| {
+                            i64::from(held.count) + i64::from(extra.count) <= i64::from(i32::MAX)
+                        },
+                    )
+                } else {
+                    inventory.value.iter().filter(|row| row.count > 0).count()
+                        < usize::from(capacity.value)
+                };
+                if !space {
+                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
+                        "exclusive loadout: inventory space required to remove worn items",
+                    ))));
+                }
+                let Some(name) = extra.def.name.as_deref() else {
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                        "exclusive loadout: worn item name unavailable",
+                    ))));
+                };
+                self.equipment = Some(cx.tick.actions.begin::<EquipmentMachine>(
+                    EquipmentRequest::Unequip {
+                        id: extra.def.id,
+                        name: Arc::from(name),
+                    },
+                    &mut cx.tick.cx,
+                )?);
+                self.removing = true;
+                return Poll::Pending;
+            }
+        }
         if let Some(bank) = &mut self.bank {
             match bank.poll(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -1155,23 +1359,11 @@ impl StepRun for LoadoutRun {
                 }
             }
         }
-        if let Some(handle) = &self.equipment {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(_)) => {
-                    self.equipment = None;
-                    if self.strip {
-                        self.stripped = true;
-                    } else {
-                        self.worn_index += 1;
-                    }
-                }
-            }
-        }
         let request = loop {
             if self.strip && !self.stripped {
-                break Some(EquipmentRequest::Strip);
+                break Some(EquipmentRequest::Strip {
+                    keep: Arc::clone(&self.keep_ids),
+                });
             }
             let Some(items) = self.worn.get(self.worn_index) else {
                 break None;
@@ -1225,13 +1417,10 @@ impl StepRun for LoadoutRun {
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
-pub fn compile_bank_known(
-    args: &serde_json::Value,
+pub(super) fn compile_bank_known(
+    _args: NoArgs,
     _cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    if !args.as_object().is_some_and(serde_json::Map::is_empty) {
-        return Err(CompileError::code("invalid-args"));
-    }
     Ok(Arc::new(BankKnown))
 }
 
@@ -1246,20 +1435,21 @@ impl PredicatePlan for BankKnown {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-struct BankHasArgs {
+pub(super) struct BankHasArgs {
+    /// Symbolic item config name.
     obj: String,
+    /// Minimum count; omitted or below 1 uses 1.
     #[serde(default = "one")]
     qty: i32,
 }
 
-pub fn compile_bank_has(
-    args: &serde_json::Value,
+pub(super) fn compile_bank_has(
+    args: BankHasArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: BankHasArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
     Ok(Arc::new(BankHas {
         id: item(cx, &args.obj)?.id,
         qty: args.qty.max(1),
@@ -1285,12 +1475,13 @@ impl PredicatePlan for BankHas {
     }
 }
 
-pub fn compile_loadout_ready(
-    args: &serde_json::Value,
+pub(super) fn compile_loadout_ready(
+    args: LoadoutArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn PredicatePlan>, CompileError> {
-    let args: LoadoutArgs =
-        serde_json::from_value(args.clone()).map_err(|_| CompileError::code("invalid-args"))?;
+    if args.exclusive && (args.strip || args.allow_lower_tier) {
+        return Err(CompileError::code("exclusive-loadout-requires-exact-items"));
+    }
     let qualified = if args.loadout.contains('/') {
         args.loadout
     } else {
@@ -1313,29 +1504,30 @@ pub fn compile_loadout_ready(
         .collect::<Result<Vec<_>, CompileError>>()?;
     let worn = row
         .worn
-        .values()
-        .map(|wanted| {
+        .iter()
+        .map(|(slot, wanted)| {
             let wanted_item = named_item(cx, wanted)?;
-            let wanted_family = metal_family_rank(wanted);
             let mut ids = vec![wanted_item.id];
             if args.allow_lower_tier {
                 ids.extend(cx.selected.items().iter().filter_map(|candidate| {
                     let name = candidate.name.as_deref()?;
-                    let (wanted_rank, wanted_suffix) = wanted_family?;
-                    let (rank, suffix) = metal_family_rank(name)?;
-                    (rank <= wanted_rank && suffix.eq_ignore_ascii_case(wanted_suffix))
-                        .then_some(candidate.id)
+                    let canonical = cx
+                        .selected
+                        .resolve_item_name(name)
+                        .is_some_and(|item| item.id == candidate.id);
+                    let same_tier =
+                        crate::melee_weapons::same_or_lower_metal_item(name, &wanted_item.name)
+                            || (slot.eq_ignore_ascii_case("righthand")
+                                && crate::melee_weapons::same_or_lower_melee_weapon(
+                                    name,
+                                    &wanted_item.name,
+                                ));
+                    let special = (wanted_item.name.eq_ignore_ascii_case("dragon longsword")
+                        && name.eq_ignore_ascii_case("rune sword"))
+                        || (wanted_item.name.eq_ignore_ascii_case("rune platebody")
+                            && name.eq_ignore_ascii_case("rune chainbody"));
+                    (canonical && (same_tier || special)).then_some(candidate.id)
                 }));
-                if wanted.eq_ignore_ascii_case("dragon longsword") {
-                    if let Ok(item) = named_item(cx, "Rune sword") {
-                        ids.push(item.id);
-                    }
-                }
-                if wanted.eq_ignore_ascii_case("rune platebody") {
-                    if let Ok(item) = named_item(cx, "Rune chainbody") {
-                        ids.push(item.id);
-                    }
-                }
                 ids.sort_unstable();
                 ids.dedup();
             }
@@ -1345,7 +1537,9 @@ pub fn compile_loadout_ready(
     Ok(Arc::new(LoadoutReady {
         carry: Arc::from(carry),
         worn: Arc::from(worn),
+        keep_ids: Arc::from(cx.keep_ids),
         strip: args.strip,
+        exclusive: args.exclusive,
     }))
 }
 
@@ -1353,6 +1547,8 @@ struct LoadoutReady {
     carry: Arc<[(i32, i32)]>,
     worn: Arc<[Arc<[i32]>]>,
     strip: bool,
+    keep_ids: Arc<[i32]>,
+    exclusive: bool,
 }
 impl PredicatePlan for LoadoutReady {
     fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
@@ -1373,16 +1569,74 @@ impl PredicatePlan for LoadoutReady {
                 >= *qty
         });
         let worn_ready = if self.strip {
-            equipment.value.is_empty()
+            equipment
+                .value
+                .iter()
+                .all(|row| row.count <= 0 || self.keep_ids.contains(&row.def.id))
         } else {
             self.worn.iter().all(|ids| {
                 equipment
                     .value
                     .iter()
-                    .any(|item| ids.contains(&item.def.id))
+                    .any(|item| item.count > 0 && ids.contains(&item.def.id))
             })
         };
-        if carry_ready && worn_ready {
+        let no_extra_equipment = !self.exclusive
+            || equipment.value.iter().all(|item| {
+                item.count <= 0 || self.worn.iter().any(|ids| ids.contains(&item.def.id))
+            });
+        if carry_ready && worn_ready && no_extra_equipment {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(super) struct EquipmentOnlyArgs {
+    /// Exact set of object aliases that must be worn; an empty list requires no equipment.
+    objs: Vec<String>,
+}
+
+pub(super) fn compile_equipment_only(
+    args: EquipmentOnlyArgs,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<dyn PredicatePlan>, CompileError> {
+    let mut ids = args
+        .objs
+        .iter()
+        .map(|alias| item(cx, alias).map(|item| item.id))
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(Arc::new(EquipmentOnly {
+        ids: Arc::from(ids),
+    }))
+}
+
+struct EquipmentOnly {
+    ids: Arc<[i32]>,
+}
+
+impl PredicatePlan for EquipmentOnly {
+    fn evaluate(&self, cx: &PredicateContext<'_, '_>) -> Truth {
+        let Some(equipment) = cx.cx.snapshot().equipment() else {
+            return Truth::Unknown;
+        };
+        let exact = equipment
+            .value
+            .iter()
+            .all(|item| item.count <= 0 || self.ids.contains(&item.def.id))
+            && self.ids.iter().all(|id| {
+                equipment
+                    .value
+                    .iter()
+                    .any(|item| item.count > 0 && item.def.id == *id)
+            });
+        if exact {
             Truth::True
         } else {
             Truth::False

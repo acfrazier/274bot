@@ -24,6 +24,7 @@ struct Walker {
     later_target: Option<WorldTile>,
     radius: u16,
     arrival: nav::arrival::ArrivalKind,
+    options: script::native::WalkOptions,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
     events: Vec<WalkEvent>,
@@ -80,7 +81,7 @@ impl Script for WalkerScript {
                 radius: shared.radius,
                 arrival: shared.arrival,
                 loc_id: None,
-                options: script::FindOptions::default(),
+                options: shared.options,
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: cross.into_boxed_slice(),
@@ -289,33 +290,21 @@ fn zoned_open_world() -> NavWorld {
     world
 }
 fn catalog_open_world() -> NavWorld {
-    let mut world = open_world(40, 1);
+    let mut world = open_world(40, 10);
+    let tile = |x, z| WorldTile { x, z, level: 0 };
     let mut zones = vec![
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 2,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
-        nav::zones::Zone::npc(
-            WorldTile {
-                x: 3,
-                z: 0,
-                level: 0,
-            },
-            0,
-            nav::zones::ZoneClass::Always,
-            u16::MAX,
-            0,
-        ),
+        nav::zones::Zone::npc(tile(2, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(10, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(20, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav::zones::Zone::npc(tile(30, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
     ];
     zones[0].group = 0;
-    zones[1].group = 1;
+    for zone in &mut zones[1..5] {
+        zone.group = 1;
+    }
+    zones[5].group = 2;
     let kinds = vec![nav::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
@@ -341,13 +330,25 @@ fn catalog_open_world() -> NavWorld {
             "draynor-jail-guards",
             "Draynor jail guards",
             nav::router::AvoidRect {
-                min_x: 3,
-                max_x: 3,
+                min_x: 9,
+                max_x: 21,
+                min_z: 1,
+                max_z: 7,
+                level: Some(0),
+            },
+            vec![1, 2, 3, 4].into_boxed_slice(),
+        ),
+        nav::zones::ZoneGroup::new(
+            "death-plateau-throwers",
+            "Death Plateau thrower trolls",
+            nav::router::AvoidRect {
+                min_x: 30,
+                max_x: 30,
                 min_z: 0,
                 max_z: 0,
                 level: Some(0),
             },
-            vec![1].into_boxed_slice(),
+            vec![5].into_boxed_slice(),
         ),
     ];
     let table = nav::zones::ZoneTable::from_parts(
@@ -1755,21 +1756,277 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 }
 
 #[test]
-fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
+fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+    use script::native::WalkBit;
+    for (global, bit, permitted) in [
+        (false, WalkBit::Inherit, false),
+        (false, WalkBit::Allow, true),
+        (false, WalkBit::Forbid, false),
+        (true, WalkBit::Inherit, true),
+        (true, WalkBit::Allow, true),
+        (true, WalkBit::Forbid, false),
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let globals = Arc::new(Mutex::new(WalkGlobals {
+            allow_danger_zones: global,
+            allow_bank_fetch: true,
+            ..Default::default()
+        }));
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(globals);
+        rig.shared.lock().options.allow_danger_zones = bit;
+        assert!(
+            !crate::walk_permissions::native_options(
+                &rig.navs,
+                "alice",
+                rig.shared.lock().options,
+            )
+            .allow_bank_fetch,
+            "global fetch stays manual-only at the native admission"
+        );
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        {
+            let all = rig.navs.lock().unwrap();
+            let bot = &all["alice"];
+            assert_eq!(
+                bot.route.is_some(),
+                permitted,
+                "global={global}, walk={bit:?}"
+            );
+            assert!(
+                bot.bank_fetch.is_none(),
+                "native walks never use BankBudget"
+            );
+            if permitted {
+                assert!(!bot.requested_route.unwrap().4);
+            } else {
+                assert!(bot.native_walk_failure.is_some());
+                assert!(
+                    bot.requested_route.is_none(),
+                    "a failed admission retires its route request"
+                );
+            }
+            assert!(
+                bot.walk_guard.is_none(),
+                "danger crossing does not start protection"
+            );
+        }
+        if !permitted {
+            rig.observe(2);
+            assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        }
+    }
+}
+
+#[test]
+fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
+    use script::native::WalkBit;
+    for bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
+        let mut rig = open_rig(false);
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        rig.shared.lock().options = script::native::WalkOptions {
+            allow_teleports: bit,
+            allow_wilderness: bit,
+            ..Default::default()
+        };
+        rig.observe(1);
+        rig.wait_routed();
+        let all = rig.navs.lock().unwrap();
+        let request = all["alice"].requested_route.unwrap();
+        assert_eq!(request.2, bit != WalkBit::Forbid);
+        assert_eq!(request.3, bit != WalkBit::Forbid);
+        assert!(!request.4);
+    }
+}
+
+#[test]
+fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+    {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().protect = true;
+        seed_prayer(&mut rig.snapshot, 43);
+        rig.observe(1);
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk_failure.is_some())
+        }));
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+    }
+    for names in [
+        vec![Arc::from("unknown-danger-zone")],
+        vec![Arc::from("test-barrier@2,0,0"); 9],
+    ] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.shared.lock().cross_first = names;
+        rig.observe(1);
+        rig.observe(2);
+        assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard.is_none());
+    }
+}
+
+#[test]
+fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(84);
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "allow_teleports": true,
+                "allow_wilderness": true,
+                "allow_danger_zones": true,
+            }))
+            .unwrap(),
+        ),
+        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert!(wait_until(5_000, || {
+        slot.observe_lifecycle();
+        slot.state() == script::RunState::Running
+    }));
+    let permissions = slot.native_walk_permissions().unwrap();
+    for compiled in [true, false] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let mut all = rig.navs.lock().unwrap();
+        let bot = all.entry("alice".into()).or_default();
+        bot.native_permissions = compiled.then_some(permissions);
+        bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_bank_fetch: true,
+            ..Default::default()
+        })));
+        drop(all);
+        let options = crate::walk_permissions::compiled_options(
+            &rig.navs,
+            "alice",
+            nav::router::FindOptions::default(),
+        );
+        assert_eq!(options.allow_teleports, compiled);
+        assert_eq!(options.allow_wilderness, compiled);
+        assert!(!options.allow_bank_fetch);
+        assert_eq!(options.zones.is_all(), compiled);
+        assert!(dispatch_script_interact(
+            &mut rig.client,
+            &rig.snapshot,
+            None,
+            Some((0, 0, 0)),
+            &rig.navs,
+            &rig.world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Walk {
+                x: 4,
+                z: 0,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 1,
+                avoid: vec![],
+                cross: vec![],
+            }],
+        ));
+        assert!(wait_until(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.route_worker.is_none())
+        }));
+        let all = rig.navs.lock().unwrap();
+        let bot = &all["alice"];
+        assert_eq!(bot.route.is_some(), compiled);
+        if compiled {
+            let request = bot.requested_route.unwrap();
+            assert!(request.2 && request.3 && request.5.is_all());
+            assert!(!request.4);
+        } else {
+            assert!(bot.requested_route.is_none());
+            assert!(bot.walk_outcome_failed);
+        }
+    }
+}
+
+#[test]
+fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
+    let table = world.graph.zones.as_ref().expect("zone table");
+    let group = |id: &str| {
+        table
+            .groups()
+            .iter()
+            .find(|group| group.id.as_ref() == id)
+            .expect("catalog group")
+    };
+    let white_wolf_rect = group("white-wolf-mountain").rect;
+    let jail_group = group("draynor-jail-guards");
+    let jail_rect = jail_group.rect;
+    let jail_member_rects: Vec<_> = jail_group
+        .members
+        .iter()
+        .map(|member| {
+            let zone = &table.zones()[usize::from(*member)];
+            nav::router::AvoidRect {
+                min_x: zone.min_x,
+                max_x: zone.max_x,
+                min_z: zone.min_z,
+                max_z: zone.max_z,
+                level: Some(i32::from(zone.level)),
+            }
+        })
+        .collect();
+    assert_eq!(jail_member_rects.len(), 4);
     let outside = WorldTile {
         x: 0,
         z: 0,
         level: 0,
     };
     let inside_jail = WorldTile {
-        x: 3_100,
-        z: 3_230,
-        level: 0,
+        x: jail_member_rects[0].min_x,
+        z: jail_member_rects[0].min_z,
+        level: jail_member_rects[0].level.unwrap(),
     };
-    let resolve_avoid = |from, state: &WorldState, id: &str| {
+    let bbox_gap = WorldTile {
+        x: 15,
+        z: 4,
+        level: jail_rect.level.unwrap(),
+    };
+    assert!(jail_rect.contains(bbox_gap));
+    assert!(
+        !jail_member_rects.iter().any(|rect| rect.contains(bbox_gap)),
+        "the fixture gap is inside the group bounding box but outside every guard rectangle"
+    );
+    let resolve_avoid = |from, to, state: &WorldState, id: &str| {
         let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
         exclusions
             .avoid_wire
@@ -1778,40 +2035,49 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
             nav::router::FindOptions::default(),
             &world,
             from,
-            outside,
+            to,
             state,
             exclusions,
         )
     };
 
     let state = WorldState::empty();
-    let (_, white_wolf) = resolve_avoid(outside, &state, "white-wolf-mountain").unwrap();
-    assert_eq!(white_wolf.avoid.len(), 1);
+    let (_, white_wolf) = resolve_avoid(outside, outside, &state, "white-wolf-mountain").unwrap();
+    assert_eq!(white_wolf.avoid, [white_wolf_rect]);
+
+    let (_, jail) = resolve_avoid(outside, outside, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(jail.avoid, jail_member_rects);
+    assert!(
+        !jail.avoid.iter().any(|rect| rect.contains(bbox_gap)),
+        "a tile inside the bounding box but outside every actual rectangle is not avoided"
+    );
+    let (_, gap_origin) = resolve_avoid(bbox_gap, outside, &state, "draynor-jail-guards").unwrap();
     assert_eq!(
-        (
-            white_wolf.avoid[0].min_x,
-            white_wolf.avoid[0].max_x,
-            white_wolf.avoid[0].min_z,
-            white_wolf.avoid[0].max_z,
-            white_wolf.avoid[0].level,
-        ),
-        (2828, 2878, 3468, 3538, None)
+        gap_origin.avoid, jail_member_rects,
+        "an endpoint in the bounding-box gap does not exempt the jail"
+    );
+    let (_, gap_destination) =
+        resolve_avoid(outside, bbox_gap, &state, "draynor-jail-guards").unwrap();
+    assert_eq!(
+        gap_destination.avoid, jail_member_rects,
+        "a destination in the bounding-box gap does not exempt the jail"
     );
 
-    let (_, jail) = resolve_avoid(outside, &state, "draynor-jail-guards").unwrap();
-    assert_eq!(jail.avoid.len(), 4);
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
     let (_, skipped_for_combat) =
-        resolve_avoid(outside, &high_combat, "draynor-jail-guards").unwrap();
+        resolve_avoid(outside, outside, &high_combat, "draynor-jail-guards").unwrap();
     assert!(skipped_for_combat.avoid.is_empty());
-    let (_, skipped_for_endpoint) =
-        resolve_avoid(inside_jail, &state, "draynor-jail-guards").unwrap();
-    assert!(skipped_for_endpoint.avoid.is_empty());
+    let (_, skipped_for_source_endpoint) =
+        resolve_avoid(inside_jail, outside, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_source_endpoint.avoid.is_empty());
+    let (_, skipped_for_destination_endpoint) =
+        resolve_avoid(outside, inside_jail, &state, "draynor-jail-guards").unwrap();
+    assert!(skipped_for_destination_endpoint.avoid.is_empty());
 }
 
 #[test]
-fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
+fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
@@ -1836,6 +2102,22 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "avoidZones: unknown zone \"no-such-zone\""
+    );
+    let mut nonfrozen = crate::script_runtime::ScriptRouteExclusions::default();
+    nonfrozen.avoid_wire.push(InspectAvoidWire::Catalog(
+        "death-plateau-throwers".to_string(),
+    ));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            nonfrozen,
+        )
+        .unwrap_err(),
+        "avoidZones: unknown zone \"death-plateau-throwers\""
     );
 
     let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
@@ -1868,6 +2150,34 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "crossZones: more than 8 zone names"
+    );
+}
+
+#[test]
+fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
+    use script::shim::InspectAvoidWire;
+
+    let world = zoned_open_world();
+    let from = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
+    exclusions
+        .avoid_wire
+        .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &WorldState::empty(),
+            exclusions,
+        )
+        .unwrap_err(),
+        "avoidZones: catalog zone \"white-wolf-mountain\" has no baked group geometry"
     );
 }
 

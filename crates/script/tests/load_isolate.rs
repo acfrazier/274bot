@@ -6003,7 +6003,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog],
+        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
         "ChatDialog.continue queues the continue interact op"
     );
     iso.join();
@@ -7200,7 +7200,7 @@ export default class T extends TaskBot {
     let _ = iso.probe("__rs_bot");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog],
+        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
         "awaited execute() queues ContinueDialog.continue"
     );
     iso.join();

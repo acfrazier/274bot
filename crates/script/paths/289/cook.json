@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "cook",
   "display_name": "Cook's Assistant",
   "required": [],
@@ -20,6 +21,7 @@
           "id": "take-egg",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "ground": "egg" },
             "op": "Take",
@@ -36,6 +38,7 @@
           "id": "take-bucket",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "ground": "bucket_empty" },
             "op": "Take",
@@ -55,6 +58,7 @@
           "id": "milk-cow",
           "kind": "use_on",
           "version": 1,
+          "advances": false,
           "args": {
             "item": "bucket_empty",
             "target": { "npc": "cow" },
@@ -71,6 +75,7 @@
           "id": "take-pot",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "ground": "pot_empty" },
             "op": "Take",
@@ -90,6 +95,7 @@
           "id": "pick-wheat",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "loc": "wheat" },
             "op": "Pick",
@@ -129,6 +135,7 @@
           "id": "fill-hopper",
           "kind": "use_on",
           "version": 1,
+          "advances": false,
           "args": {
             "item": "grain",
             "target": { "loc": "hopper_lumbridge" },
@@ -160,6 +167,7 @@
           "id": "operate-controls",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "name": "Hopper controls" },
             "op": "Operate",
@@ -205,6 +213,7 @@
           "id": "empty-bin",
           "kind": "interact",
           "version": 1,
+          "advances": false,
           "args": {
             "target": { "name": "Flour bin" },
             "op": "Empty",

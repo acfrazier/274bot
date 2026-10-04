@@ -227,11 +227,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                         },
                         radius: 1,
                         arrival: nav::arrival::ArrivalKind::Reach,
-                        options: FindOptions {
-                            allow_teleports: false,
-                            allow_wilderness: false,
-                            allow_bank_fetch: false,
-                        },
+                        options: crate::native::WalkOptions::default(),
                         required_after: tick.cx.evidence(),
                         evidence: None,
                         cross: Vec::new().into_boxed_slice(),

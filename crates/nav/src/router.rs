@@ -583,6 +583,60 @@ fn goal_zone_key(
     key
 }
 
+/// Bound the goal-side proof, not the safe route. Deep zone goals usually
+/// close after the goal and its eight neighbours, avoiding a world exhaust.
+/// An open proof always leaves the full forward-search budget intact.
+const ZONE_GOAL_PROOF_STEPS: usize = 64;
+
+#[allow(clippy::too_many_arguments)]
+fn zone_goal_proof(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    relax: Relax,
+    zones: &ZoneFilter<'_>,
+) -> ReverseReport {
+    if targets.is_empty()
+        || targets
+            .iter()
+            .any(|&goal| !zones.destination_only_at(&graph.wilderness, goal))
+    {
+        return ReverseReport::default();
+    }
+    let gates = ProofGates {
+        collision,
+        graph,
+        state,
+        essence: opts.essence.as_ref(),
+        from,
+        use_teleports: opts.allow_teleports,
+        allow_wilderness: opts.allow_wilderness,
+        relax,
+        inventory_can_grow: graph
+            .edges
+            .iter()
+            .chain(graph.teleports.iter().filter(|_| opts.allow_teleports))
+            .any(|edge| !edge.item_returns.is_empty() && edge_allowed(state, edge, relax)),
+    };
+    let mut closure = ReverseClosure::new(gates);
+    closure.zones = Some(zones);
+    closure.targets = targets;
+    for &goal in targets {
+        if let Some(proof) = closure.admit(goal) {
+            return closure.report(proof);
+        }
+    }
+    for _ in 0..ZONE_GOAL_PROOF_STEPS {
+        if let Some(proof) = closure.step() {
+            return closure.report(proof);
+        }
+    }
+    closure.report(ReverseProof::Open)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn first_search(
     collision: &WorldCollision,
@@ -597,8 +651,30 @@ fn first_search(
     budget: usize,
     reachable_budget: usize,
 ) -> FirstRouteSearch {
-    // The all-exempt/legacy bypass precedes classification and allocation.
-    let Some(filter) = zone_filter(graph, state, &[from], &opts.zones) else {
+    if targets.is_empty() && !fallback.is_empty() {
+        let mut result = first_search(
+            collision,
+            graph,
+            from,
+            fallback,
+            &[],
+            opts,
+            state,
+            relax,
+            avoid,
+            budget,
+            reachable_budget,
+        );
+        result.fallback = Some(
+            match std::mem::replace(&mut result.route, Err(RouteError::NoPath)) {
+                Ok(route) => FallbackRoute::Routed(route),
+                Err(error) => FallbackRoute::Failed(error),
+            },
+        );
+        return result;
+    }
+    // Grants are fallback permissions, never permission to skip safe routing.
+    let Some(filter) = zone_filter(graph, state, &[from], &ZoneExempt::NONE) else {
         return first_search_core(
             collision,
             graph,
@@ -630,7 +706,6 @@ fn first_search(
             Some(&filter),
         );
     }
-    let table = graph.zones.as_ref().expect("a filter has a table");
     let mut partitions =
         std::collections::BTreeMap::<Vec<u16>, (Vec<WorldTile>, Vec<WorldTile>)>::new();
     for (goal, preferred) in targets
@@ -639,7 +714,7 @@ fn first_search(
         .chain(fallback.iter().map(|&goal| (goal, false)))
     {
         let key = goal_zone_key(&filter, &graph.wilderness, goal);
-        if !key.is_empty() {
+        if !key.is_empty() || opts.zones != ZoneExempt::NONE {
             let partition = partitions.entry(key).or_default();
             if preferred {
                 partition.0.push(goal);
@@ -664,7 +739,7 @@ fn first_search(
             Some(&filter),
         );
     }
-    let run = |preferred: &[WorldTile], fallbacks: &[WorldTile], zones: &ZoneFilter<'_>| {
+    let run = |preferred: &[WorldTile], fallbacks: &[WorldTile], zones: Option<&ZoneFilter<'_>>| {
         if preferred.is_empty() {
             let pass = first_search_core(
                 collision,
@@ -678,7 +753,7 @@ fn first_search(
                 avoid,
                 budget,
                 reachable_budget,
-                Some(zones),
+                zones,
             );
             FirstRouteSearch {
                 route: Err(RouteError::NoPath),
@@ -704,34 +779,52 @@ fn first_search(
                 avoid,
                 budget,
                 reachable_budget,
-                Some(zones),
+                zones,
             )
         }
     };
-    let mut merged = run(targets, fallback, &filter);
-    if !matches!(merged.route, Err(RouteError::NoPath)) {
+    let mut merged = run(targets, fallback, Some(&filter));
+    // Safety outranks target preference: a safe fallback is a valid arrival.
+    if matches!(merged.fallback.as_ref(), Some(FallbackRoute::Routed(_)))
+        || !matches!(
+            merged.route,
+            Err(RouteError::NoPath | RouteError::BudgetExhausted)
+        )
+    {
         return merged;
     }
-    for (_, (preferred, fallbacks)) in partitions {
-        let endpoint = preferred
-            .first()
-            .or_else(|| fallbacks.first())
-            .expect("a completion partition is nonempty");
-        let completion =
-            ZoneFilter::new(table, state.combat_level, &[from, *endpoint], &opts.zones);
-        merged.completion_partitions += 1;
-        let mut result = run(&preferred, &fallbacks, &completion);
-        // The shared mask remains live while this completion runs.
-        result.capacities.zone_mask_words += filter.mask_words();
-        merged.settled += result.settled;
-        merged.capacities.include(result.capacities);
-        choose_route(&mut merged.route, result.route);
-        if let Some(answer) = result.fallback {
-            merge_fallback(&mut merged.fallback, answer);
+    for exemptions in [ZoneExempt::NONE, opts.zones]
+        .into_iter()
+        .take(1 + usize::from(opts.zones != ZoneExempt::NONE))
+    {
+        for (key, (preferred, fallbacks)) in &partitions {
+            if key.is_empty() && exemptions == ZoneExempt::NONE {
+                continue;
+            }
+            let endpoint = preferred
+                .first()
+                .or_else(|| fallbacks.first())
+                .expect("a completion partition is nonempty");
+            let completion = zone_filter(graph, state, &[from, *endpoint], &exemptions);
+            merged.completion_partitions += 1;
+            let mut result = run(preferred, fallbacks, completion.as_ref());
+            // The shared mask remains live while this completion runs.
+            result.capacities.zone_mask_words += filter.mask_words();
+            merged.settled += result.settled;
+            merged.capacities.include(result.capacities);
+            choose_route(&mut merged.route, result.route);
+            if let Some(answer) = result.fallback {
+                merge_fallback(&mut merged.fallback, answer);
+            }
         }
-    }
-    if merged.route.is_ok() {
-        merged.fallback = None;
+        // Goal entry never requires granting unrelated danger-zone transit.
+        if merged.route.is_ok() {
+            merged.fallback = None;
+            break;
+        }
+        if matches!(merged.fallback.as_ref(), Some(FallbackRoute::Routed(_))) {
+            break;
+        }
     }
     merged
 }
@@ -825,6 +918,29 @@ fn first_search_core(
         };
     }
 
+    let mut goal_proof_capacity = SearchCapacities::default();
+    if fallback.is_empty() {
+        if let Some(zones) = zones {
+            let proof = zone_goal_proof(collision, graph, from, targets, opts, state, relax, zones);
+            goal_proof_capacity = SearchCapacities {
+                reverse: proof.seen,
+                reverse_queue: proof.queue,
+                zone_mask_words: zones.mask_words(),
+                ..SearchCapacities::default()
+            };
+            if proof.proof == ReverseProof::Unreachable {
+                return FirstRouteSearch {
+                    route: Err(RouteError::NoPath),
+                    fallback: None,
+                    settled: 0,
+                    capacities: goal_proof_capacity,
+                    proof: proof.proof,
+                    completion_partitions: 0,
+                };
+            }
+        }
+    }
+
     let gates = ProofGates {
         collision,
         graph,
@@ -891,11 +1007,13 @@ fn first_search_core(
             (None, None) => FallbackRoute::Undecided,
         })
     };
+    let mut capacities = search.capacities;
+    capacities.include(goal_proof_capacity);
     FirstRouteSearch {
         route,
         fallback: fallback_route,
         settled: search.settled,
-        capacities: search.capacities,
+        capacities,
         proof: search.proof,
         completion_partitions: 0,
     }
@@ -947,6 +1065,7 @@ impl RoutesToTargets<'_> {
         let tree = self
             .completions
             .iter()
+            .rev()
             .find(|(indices, _)| indices.contains(&target_index))
             .map_or(&self.came_from, |(_, tree)| tree);
         let (legs, ticks) = reconstruct(
@@ -1014,16 +1133,15 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     budget: usize,
     deadline: Option<Instant>,
 ) -> RoutesToTargets<'a> {
-    let Some(filter) = zone_filter(graph, state, &[from], &opts.zones) else {
+    let Some(filter) = zone_filter(graph, state, &[from], &ZoneExempt::NONE) else {
         return many_search(
             collision, graph, from, targets, opts, state, avoid, budget, deadline, None,
         );
     };
-    let table = graph.zones.as_ref().expect("a filter has a table");
     let mut partitions = std::collections::BTreeMap::<Vec<u16>, Vec<usize>>::new();
     for (index, &target) in targets.iter().enumerate() {
         let key = goal_zone_key(&filter, &graph.wilderness, target);
-        if !key.is_empty() {
+        if !key.is_empty() || opts.zones != ZoneExempt::NONE {
             partitions.entry(key).or_default().push(index);
         }
     }
@@ -1064,44 +1182,58 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     };
     let mut retained_capacity = shared_tree.capacity();
     let mut completions = Vec::with_capacity(partitions.len());
-    for (_, indices) in partitions {
-        let indices: Vec<_> = indices
-            .into_iter()
-            .filter(|&index| results[index] == Err(TargetError::NoPath))
-            .collect();
-        if indices.is_empty() {
-            continue;
+    for exemptions in [ZoneExempt::NONE, opts.zones]
+        .into_iter()
+        .take(1 + usize::from(opts.zones != ZoneExempt::NONE))
+    {
+        for (key, partition) in &partitions {
+            if key.is_empty() && exemptions == ZoneExempt::NONE {
+                continue;
+            }
+            let indices: Vec<_> = partition
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    matches!(
+                        results[index],
+                        Err(TargetError::NoPath | TargetError::BudgetExhausted)
+                    )
+                })
+                .collect();
+            if indices.is_empty() {
+                continue;
+            }
+            let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
+            let completion = zone_filter(graph, state, &[from, goals[0]], &exemptions);
+            let pass = many_search(
+                collision,
+                graph,
+                from,
+                &goals,
+                opts,
+                state,
+                avoid,
+                budget,
+                deadline,
+                completion.as_ref(),
+            );
+            for (&index, &result) in indices.iter().zip(&pass.results) {
+                results[index] = result;
+            }
+            settled += pass.settled;
+            complete &= pass.complete;
+            let mut peak = pass.capacities;
+            peak.predecessors += retained_capacity;
+            peak.zone_mask_words += filter.mask_words();
+            capacities.include(peak);
+            let tree = if pass.results.iter().any(Result::is_ok) {
+                retained_capacity += pass.came_from.capacity();
+                pass.came_from
+            } else {
+                Predecessors::empty()
+            };
+            completions.push((indices, tree));
         }
-        let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
-        let completion = ZoneFilter::new(table, state.combat_level, &[from, goals[0]], &opts.zones);
-        let pass = many_search(
-            collision,
-            graph,
-            from,
-            &goals,
-            opts,
-            state,
-            avoid,
-            budget,
-            deadline,
-            Some(&completion),
-        );
-        for (&index, &result) in indices.iter().zip(&pass.results) {
-            results[index] = result;
-        }
-        settled += pass.settled;
-        complete &= pass.complete;
-        let mut peak = pass.capacities;
-        peak.predecessors += retained_capacity;
-        peak.zone_mask_words += filter.mask_words();
-        capacities.include(peak);
-        let tree = if pass.results.iter().any(Result::is_ok) {
-            retained_capacity += pass.came_from.capacity();
-            pass.came_from
-        } else {
-            Predecessors::empty()
-        };
-        completions.push((indices, tree));
     }
     RoutesToTargets {
         targets,
@@ -1132,6 +1264,7 @@ fn many_search<'a>(
     let mut unique = HashMap::with_capacity(targets.len());
     let mut input_indices = Vec::with_capacity(targets.len());
     let mut costs = Vec::new();
+    let mut proof_capacity = SearchCapacities::default();
     for &target in targets {
         let index = *unique.entry(target).or_insert_with(|| {
             costs.push(if target == from {
@@ -1139,6 +1272,24 @@ fn many_search<'a>(
                     ticks: 0.0,
                     settled_at: 0,
                 })
+            } else if let Some(zones) = zones {
+                let proof = zone_goal_proof(
+                    collision,
+                    graph,
+                    from,
+                    &[target],
+                    opts,
+                    state,
+                    Relax::Strict,
+                    zones,
+                );
+                proof_capacity.reverse = proof_capacity.reverse.max(proof.seen);
+                proof_capacity.reverse_queue = proof_capacity.reverse_queue.max(proof.queue);
+                if proof.proof == ReverseProof::Unreachable {
+                    Err(TargetError::NoPath)
+                } else {
+                    Err(TargetError::NotSettled)
+                }
             } else {
                 Err(TargetError::NotSettled)
             });
@@ -1146,13 +1297,16 @@ fn many_search<'a>(
         });
         input_indices.push(index);
     }
-    let remaining = costs.iter().filter(|result| result.is_err()).count();
+    let remaining = costs
+        .iter()
+        .filter(|&&result| result == Err(TargetError::NotSettled))
+        .count();
     let mut goals = Goals::Many {
         unique: &unique,
         costs: &mut costs,
         remaining,
     };
-    let search = if remaining == 0 {
+    let mut search = if remaining == 0 {
         SearchOutcome::empty()
     } else {
         search_kernel(
@@ -1172,13 +1326,15 @@ fn many_search<'a>(
             deadline,
         )
     };
+    proof_capacity.zone_mask_words = zones.map_or(0, ZoneFilter::mask_words);
+    search.capacities.include(proof_capacity);
     let error = match search.stop {
         SearchStop::Exhausted => TargetError::NoPath,
         SearchStop::Budget => TargetError::BudgetExhausted,
         SearchStop::Deadline | SearchStop::Completed => TargetError::NotSettled,
     };
     for result in &mut costs {
-        if result.is_err() {
+        if *result == Err(TargetError::NotSettled) {
             *result = Err(error);
         }
     }
@@ -1798,7 +1954,7 @@ impl Goals<'_> {
                 remaining,
             } => {
                 if let Some(&index) = unique.get(&tile) {
-                    if costs[index].is_err() {
+                    if costs[index] == Err(TargetError::NotSettled) {
                         costs[index] = Ok(cost);
                         *remaining -= 1;
                     }
@@ -2244,6 +2400,8 @@ struct ReverseClosure<'a> {
     allow_wilderness: bool,
     relax: Relax,
     inventory_can_grow: bool,
+    zones: Option<&'a ZoneFilter<'a>>,
+    targets: &'a [WorldTile],
     /// Landings of the gated teleports usable from `from` itself.
     landings: HashSet<WorldTile>,
     seen: HashSet<WorldTile>,
@@ -2288,6 +2446,8 @@ impl<'a> ReverseClosure<'a> {
             allow_wilderness,
             relax,
             inventory_can_grow,
+            zones: None,
+            targets: &[],
             landings,
             seen: HashSet::new(),
             queue: VecDeque::new(),
@@ -2302,6 +2462,17 @@ impl<'a> ReverseClosure<'a> {
         }
     }
 
+    fn zone_step_ok(&self, from: WorldTile, to: WorldTile) -> bool {
+        self.zones.is_none_or(|zones| {
+            zones
+                .blocking_transition_at(&self.graph.wilderness, from, to, &|| {
+                    self.targets.contains(&to)
+                })
+                .next()
+                .is_none()
+        })
+    }
+
     /// Admit a predecessor. `Some` ends the proof: the origin (or a teleport
     /// landing it can reach directly) precedes the goals, or the closure
     /// outgrew [`REVERSE_PROOF_BUDGET`].
@@ -2309,7 +2480,11 @@ impl<'a> ReverseClosure<'a> {
         if !self.seen.insert(tile) {
             return None;
         }
-        if tile == self.from || (!self.landings.is_empty() && self.landings.contains(&tile)) {
+        if tile == self.from
+            || (!self.landings.is_empty()
+                && self.landings.contains(&tile)
+                && self.zone_step_ok(self.from, tile))
+        {
             return Some(ReverseProof::Reachable);
         }
         if self.seen.len() > REVERSE_PROOF_BUDGET {
@@ -2333,6 +2508,7 @@ impl<'a> ReverseClosure<'a> {
             };
             if step_ok(self.collision, before, d)
                 && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
+                && self.zone_step_ok(before, tile)
             {
                 if let Some(proof) = self.admit(before) {
                     return Some(proof);
@@ -2400,6 +2576,7 @@ impl<'a> ReverseClosure<'a> {
                 };
                 if (edge.player_delta.is_some() && !self.seen.contains(&to))
                     || !wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                    || !self.zone_step_ok(takeoff, to)
                 {
                     continue;
                 }
@@ -2423,6 +2600,7 @@ impl<'a> ReverseClosure<'a> {
                 };
                 if self.collision.standable(takeoff)
                     && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                    && self.zone_step_ok(takeoff, to)
                 {
                     if let Some(proof) = self.admit(takeoff) {
                         return Some(proof);
@@ -2466,7 +2644,7 @@ fn find_bounded_impl(
         });
     }
 
-    let mut zones = zone_filter(graph, state, &[from], &exemptions);
+    let zones = zone_filter(graph, state, &[from], &ZoneExempt::NONE);
     let run = |zones: Option<&ZoneFilter<'_>>| {
         let mut goals = Goals::Single { to, cost: None };
         let search = search_kernel(
@@ -2501,15 +2679,54 @@ fn find_bounded_impl(
             _ => Err(RouteError::NoPath),
         }
     };
-    let result = run(zones.as_ref());
-    if matches!(result, Err(RouteError::NoPath)) {
-        if let Some(filter) = zones.as_mut().filter(|filter| {
-            filter
-                .blocking_at(&graph.wilderness, to)
-                .any(|index| !filter.origin_active(&graph.wilderness, index))
-        }) {
-            filter.select_destination(Some(to));
-            return run(Some(filter));
+    let safe_impossible = zones.as_ref().is_some_and(|filter| {
+        zone_goal_proof(
+            collision,
+            graph,
+            from,
+            &[to],
+            FindOptions {
+                allow_teleports: use_teleports,
+                allow_wilderness,
+                essence: essence.copied(),
+                ..FindOptions::default()
+            },
+            state,
+            Relax::Strict,
+            filter,
+        )
+        .proof
+            == ReverseProof::Unreachable
+    });
+    let mut result = if safe_impossible {
+        Err(RouteError::NoPath)
+    } else {
+        run(zones.as_ref())
+    };
+    if let Some(filter) = zones.as_ref().filter(|_| {
+        matches!(
+            result,
+            Err(RouteError::NoPath | RouteError::BudgetExhausted)
+        )
+    }) {
+        let goal_completion = filter
+            .blocking_at(&graph.wilderness, to)
+            .any(|index| !filter.origin_active(&graph.wilderness, index));
+        for granted in [ZoneExempt::NONE, exemptions]
+            .into_iter()
+            .take(1 + usize::from(exemptions != ZoneExempt::NONE))
+        {
+            if granted == ZoneExempt::NONE && !goal_completion {
+                continue;
+            }
+            let completion = zone_filter(graph, state, &[from, to], &granted);
+            result = run(completion.as_ref());
+            if !matches!(
+                result,
+                Err(RouteError::NoPath | RouteError::BudgetExhausted)
+            ) {
+                break;
+            }
         }
     }
     result
@@ -2713,12 +2930,10 @@ fn search_kernel_budget<B: Budget>(
                     continue;
                 }
                 if let Some(filter) = zones {
-                    let mut blocked = filter.blocking_transition_at(
-                        &graph.wilderness,
-                        cur,
-                        nb,
-                        goals.is_target(nb),
-                    );
+                    let mut blocked =
+                        filter.blocking_transition_at(&graph.wilderness, cur, nb, &|| {
+                            goals.is_target(nb)
+                        });
                     if let Some(first) = blocked.next() {
                         goals.record_blockers(std::iter::once(first).chain(blocked));
                         continue;
@@ -2773,12 +2988,10 @@ fn search_kernel_budget<B: Budget>(
                             continue;
                         }
                         if let Some(filter) = zones {
-                            let mut blocked = filter.blocking_transition_at(
-                                &graph.wilderness,
-                                cur,
-                                to,
-                                goals.is_target(to),
-                            );
+                            let mut blocked =
+                                filter.blocking_transition_at(&graph.wilderness, cur, to, &|| {
+                                    goals.is_target(to)
+                                });
                             if let Some(first) = blocked.next() {
                                 if goals.is_frontier() {
                                     match resources.cross(n.tile, edge, state, relax) {
@@ -2842,7 +3055,7 @@ fn search_kernel_budget<B: Budget>(
                             &graph.wilderness,
                             cur,
                             session.return_tile,
-                            goals.is_target(session.return_tile),
+                            &|| goals.is_target(session.return_tile),
                         );
                         if let Some(first) = blocked.next() {
                             goals.record_blockers(std::iter::once(first).chain(blocked));
@@ -2888,12 +3101,10 @@ fn search_kernel_budget<B: Budget>(
                     continue;
                 }
                 if let Some(filter) = zones {
-                    let mut blocked = filter.blocking_transition_at(
-                        &graph.wilderness,
-                        cur,
-                        edge.to,
-                        goals.is_target(edge.to),
-                    );
+                    let mut blocked =
+                        filter.blocking_transition_at(&graph.wilderness, cur, edge.to, &|| {
+                            goals.is_target(edge.to)
+                        });
                     if let Some(first) = blocked.next() {
                         if goals.is_frontier() {
                             match resources.cross(n.tile, edge, state, relax) {

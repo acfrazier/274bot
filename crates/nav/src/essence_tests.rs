@@ -135,3 +135,44 @@ fn mine_enclosure_covers_the_landings_and_portals() {
         level: 1
     }));
 }
+
+#[test]
+#[ignore = "requires pinned 289 content in BOT_NAV_CONTENT_DIR"]
+fn blankrunestone_exit_portal_content_placements_match_mine_portals() {
+    let revision = std::env::var("BOT_NAV_REVISION").expect("BOT_NAV_REVISION=289");
+    assert_eq!(
+        revision, "289",
+        "this content proof is pinned to revision 289"
+    );
+    let content = std::path::PathBuf::from(
+        std::env::var("BOT_NAV_CONTENT_DIR")
+            .expect("BOT_NAV_CONTENT_DIR points at pinned 289 content"),
+    );
+    let loc_ids = crate::transport::loc_ids_by_name(&content);
+    let portal_id = *loc_ids
+        .get("blankrunestone_exit_portal")
+        .expect("selected 289 loc pack contains blankrunestone_exit_portal");
+    assert_eq!(portal_id, ESSENCE_MINE_PORTAL_LOC_ID);
+
+    let positions = crate::transport::loc_positions(&content);
+    let mut actual: Vec<_> = positions
+        .get(&portal_id)
+        .expect("selected 289 maps place the essence exit portal")
+        .iter()
+        .map(|placement| WorldTile {
+            x: placement.x,
+            z: placement.z,
+            level: placement.level,
+        })
+        .collect();
+    let mut expected = ESSENCE_MINE_PORTALS.to_vec();
+    let sort = |tiles: &mut Vec<WorldTile>| {
+        tiles.sort_unstable_by_key(|tile| (tile.level, tile.x, tile.z));
+    };
+    sort(&mut actual);
+    sort(&mut expected);
+    assert_eq!(
+        actual, expected,
+        "all and only selected loc placements match the baked portal set"
+    );
+}

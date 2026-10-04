@@ -492,6 +492,10 @@ export const SETTINGS = {
         Some("loadouts"),
         "quoted optionsFrom on the inlined const"
     );
+    assert_eq!(
+        loadout.help.as_deref(),
+        Some("Use an exact name first. Otherwise, match one loadout name after trimming both names and ignoring ASCII case. A blank setting selects the first loadout. The host refuses unknown or ambiguous names.")
+    );
     assert_eq!(cards[0].settings_schema[2].id, "eatAt");
 }
 

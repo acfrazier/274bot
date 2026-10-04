@@ -1891,7 +1891,7 @@ export default class T extends TaskBot {
     tick(&iso, 5);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
+        vec![InteractReq::ContinueDialog { component_id: None }],
         "a posted continue is continued before the Talk-to"
     );
 
@@ -2112,7 +2112,7 @@ export default class T extends TaskBot {
     tick(&iso, 5);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::ContinueDialog],
+        vec![InteractReq::ContinueDialog { component_id: None }],
         "the posted continue is the landed continue step"
     );
 

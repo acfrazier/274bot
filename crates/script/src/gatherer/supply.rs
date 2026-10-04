@@ -95,27 +95,29 @@ fn resolve_food(
     settings: &mut GathererSettings,
     selected: &SelectedGameData,
 ) -> Result<Option<SupplyItemFact>, ConfigError> {
-    let requested = settings.food.trim();
+    let requested = settings.food.as_str();
     if requested.is_empty() {
-        settings.food.clear();
         return Ok(None);
     }
-    let hit = selected
-        .search_named_items(requested, usize::MAX)
-        .into_iter()
-        .filter(|item| item.name.eq_ignore_ascii_case(requested))
-        .min_by_key(|item| item.id)
+    let item = selected
+        .resolve_item_name(requested)
+        .filter(|item| {
+            item.name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+        })
         .ok_or_else(|| {
             ConfigError::new(
                 "food",
                 "unknown-item",
-                format!("food {requested:?} is not a selected object name"),
+                format!("food {requested:?} is not a selected item alias or name"),
             )
         })?;
-    settings.food.clone_from(&hit.name);
+    let name = item.name.as_deref().expect("resolved named item");
+    settings.food = name.to_string();
     Ok(Some(SupplyItemFact {
-        id: hit.id,
-        name: Arc::from(hit.name),
+        id: item.id,
+        name: Arc::from(name),
     }))
 }
 
@@ -1005,6 +1007,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(bait.id, 5)]
         );
+    }
+
+    #[test]
+    fn food_setting_resolves_alias_or_case_insensitive_name() {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let (item_id, alias, name) = selected
+            .items()
+            .iter()
+            .find_map(|item| {
+                let alias = item.alias.as_deref()?;
+                let name = item.name.as_deref()?;
+                (!alias.eq_ignore_ascii_case(name))
+                    .then(|| (item.id, alias.to_string(), name.to_string()))
+            })
+            .unwrap();
+        let mut settings = GathererSettings {
+            food: alias,
+            ..GathererSettings::default()
+        };
+
+        let fact = resolve_food(&mut settings, &selected).unwrap().unwrap();
+
+        assert_eq!(fact.id, item_id);
+        assert_eq!(fact.name.as_ref(), name);
+        assert_eq!(settings.food, name);
+
+        let mut display_settings = GathererSettings {
+            food: name.to_ascii_uppercase(),
+            ..GathererSettings::default()
+        };
+        let by_display = resolve_food(&mut display_settings, &selected)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_display.id, item_id);
+        assert_eq!(by_display.name.as_ref(), name);
+        assert_eq!(display_settings.food, name);
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             component: i32_field(step, "component")?,
             generation: step.get("generation").and_then(Value::as_u64)?,
         }),
-        "continue" => Some(InteractReq::ContinueDialog),
+        "continue" => Some(InteractReq::ContinueDialog { component_id: None }),
         "answer" => Some(InteractReq::Answer {
             option: i32_field(step, "option")?,
         }),

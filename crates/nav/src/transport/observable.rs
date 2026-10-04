@@ -183,6 +183,14 @@ impl ObservableGates {
             journal: JournalLinks::from_content(content_root),
         }
     }
+    pub(super) fn completed_quest_name(
+        &self,
+        varp: &str,
+        completion_constant: &str,
+    ) -> Option<&str> {
+        let completion = self.journal.constant(completion_constant)?;
+        self.journal.completed_name(varp, completion)
+    }
 
     pub(super) fn admit_edge(
         &self,

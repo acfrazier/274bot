@@ -76,7 +76,7 @@ fn fixture_compile_context<'a>(
     progress: &'a CompiledProgress,
     areas: &'a HashMap<String, Vec<[i32; 5]>>,
     loadouts: &'a LoadoutOverlay,
-    recipes: &'a HashMap<String, Vec<crate::quester::families::CompiledAcquireStep>>,
+    recipes: &'a HashMap<String, Arc<[crate::quester::families::CompiledAcquireStep]>>,
     path: &'a FactKey,
 ) -> CompileContext<'a> {
     CompileContext {
@@ -88,6 +88,7 @@ fn fixture_compile_context<'a>(
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids: &[],
         areas,
         loadouts,
         recipes,
@@ -158,8 +159,11 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
     let cx = fixture_compile_context(
         &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
     );
-    let predicate =
-        compile_end_predicate(&serde_json::json!({ "end": "aborted_unattackable" }), &cx).unwrap();
+    let args = serde_json::from_value::<CombatEndArgs>(
+        serde_json::json!({ "end": "aborted_unattackable" }),
+    )
+    .unwrap();
+    let predicate = compile_end_predicate(args, &cx).unwrap();
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;

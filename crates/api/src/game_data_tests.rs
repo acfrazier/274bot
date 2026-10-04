@@ -316,16 +316,20 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
 
     let spell: SpellFact = serde_json::from_str(
         r#"{
-            "name":"Fire Strike","ssb":0,"level":13,
-            "continue_by_autocast":true,"spellcom":"fire_strike",
-            "maxhit":8,"members":false,"wornrequired":"staff_of_fire","runes":[]
+            "name":"Fire Strike","source_row":"magic_spell_fire_strike","ssb":3,
+            "component_id":1158,"autocast_selectable":true,"level":13,
+            "continue_by_autocast":true,"spellcom":"magic:fire_strike",
+            "maxhit":8,"members":false,"wornrequired":"staff_of_fire","impact_spotanim":101,"runes":[]
         }"#,
     )
     .unwrap();
-    assert_eq!(spell.spellcom, "fire_strike");
+    assert_eq!(spell.spellcom, "magic:fire_strike");
     assert_eq!(spell.maxhit, 8);
     assert!(!spell.members);
     assert_eq!(spell.wornrequired.as_deref(), Some("staff_of_fire"));
+    assert_eq!(spell.source_row, "magic_spell_fire_strike");
+    assert_eq!(spell.component_id, 1158);
+    assert!(spell.autocast_selectable);
 
     let npc: NpcNameRow = serde_json::from_str(
         r#"{
@@ -386,6 +390,53 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
         ),
         (1, 2, 1, 9012),
     );
+}
+
+#[test]
+fn autocast_grid_admits_chooser_spells_and_refuses_manual_only_spells() {
+    let tail = r#", "spells": [
+        {"name":"Wind Strike","source_row":"magic_spell_wind_strike","ssb":0,"component_id":1152,"autocast_selectable":true,"level":1,"continue_by_autocast":true,"spellcom":"magic:wind_strike","maxhit":2,"members":false,"runes":[],"impact_spotanim":92},
+        {"name":"Crumble undead","source_row":"magic_spell_crumble_undead","ssb":-1,"component_id":1171,"autocast_selectable":false,"level":39,"continue_by_autocast":true,"spellcom":"magic:crumble_undead","maxhit":8,"members":false,"runes":[],"impact_spotanim":147},
+        {"name":"Iban blast","source_row":"magic_spell_iban_blast","ssb":-1,"component_id":1539,"autocast_selectable":false,"level":50,"continue_by_autocast":true,"spellcom":"magic:iban_blast","maxhit":25,"members":true,"wornrequired":"ibanstaff","worn_reqmessage":"You must wield Iban's staff to cast this spell.","runes":[],"impact_spotanim":89}
+    ], "failed_spell_impact": 85, "autocast": {"staff_tab_root":328,"spell_panel_root":1829,"choose_com":353,"toggle_com":349,"spell_grid_base":1830,"magic_varp":108,"selected_value":2,"armed_value":3}"#;
+    let data =
+        SelectedGameData::decode(minimal_json(tail).as_bytes(), ClientRevision::R274).unwrap();
+    // Name lookup stays case-insensitive and covers manual-only spells.
+    assert_eq!(
+        data.spell("wind strike").unwrap().source_row,
+        "magic_spell_wind_strike"
+    );
+    assert_eq!(data.spell("CRUMBLE UNDEAD").unwrap().component_id, 1171);
+    // The chooser spell resolves through the staff grid base ...
+    assert_eq!(data.spell_button_com("Wind Strike"), 1830);
+    // ... while manual-only spells keep their own widget component and are refused.
+    let crumble = data.spell("Crumble undead").unwrap();
+    assert!(!crumble.autocast_selectable);
+    assert_eq!(crumble.ssb, -1);
+    assert_eq!(crumble.component_id, 1171);
+    assert_eq!(crumble.impact_spotanim, 147);
+    assert_eq!(data.spell_button_com("Crumble undead"), -1);
+    // Refusal text is exact selected content, not a broad fallback.
+    let iban = data.spell("iban blast").unwrap();
+    assert_eq!(iban.wornrequired.as_deref(), Some("ibanstaff"));
+    assert_eq!(
+        iban.worn_reqmessage.as_deref(),
+        Some("You must wield Iban's staff to cast this spell.")
+    );
+    assert_eq!(data.spell_button_com("Iban blast"), -1);
+    // The shared miss splash is one selected scalar, excluded from per-spell impacts.
+    assert_eq!(data.failed_spell_impact(), Some(85));
+    assert!(data
+        .spells()
+        .iter()
+        .all(|spell| spell.impact_spotanim != 85));
+    // Unknown names stay refused.
+    assert!(data.spell("No Such Spell").is_none());
+    assert_eq!(data.spell_button_com("No Such Spell"), -1);
+    // A core without the scalar still decodes, with no splash published.
+    let legacy =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert_eq!(legacy.failed_spell_impact(), None);
 }
 
 #[test]
@@ -1168,6 +1219,49 @@ fn gather_resources_decode_and_skill_lookup() {
 }
 
 #[test]
+fn generated_karamja_facts_join_selected_items_npcs_and_locs() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected game data");
+        let facts = data.karamja().expect("generated Karamja facts");
+        assert!(facts.crate_capacity > 0);
+        assert!(facts.coin_payout > 0);
+        assert!(!facts.banana_tree_configs.is_empty());
+        assert!(!facts.banana_tree_spawns.is_empty());
+        assert!(facts
+            .banana_tree_spawns
+            .iter()
+            .all(|spawn| facts.banana_tree_configs.contains(&spawn.config)));
+        assert!(data.item_by_alias("coins").is_some());
+        assert!(data.item_by_alias("banana").is_some());
+
+        let luthas = data
+            .npc_by_config(&facts.luthas_spawn.config)
+            .expect("Luthas joins the selected NPC pack");
+        assert!(luthas
+            .display
+            .as_deref()
+            .is_some_and(|display| !display.is_empty()));
+        assert!(luthas
+            .ops
+            .iter()
+            .any(|op| op.eq_ignore_ascii_case("Talk-to")));
+        for config in facts
+            .banana_tree_configs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(facts.crate_spawn.config.as_str()))
+        {
+            assert!(data
+                .loc_by_config(config)
+                .is_some_and(|loc| !loc.ops.is_empty()));
+        }
+        assert!(!facts.dialogue.employment.is_empty());
+        assert!(!facts.dialogue.paid.is_empty());
+        assert!(!facts.dialogue.incomplete.is_empty());
+    }
+}
+
+#[test]
 fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).unwrap();
@@ -1198,4 +1292,118 @@ fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
             "{revision:?} shared method group"
         );
     }
+}
+
+#[test]
+fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
+    let missing =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(missing.dialogue_ui().is_none());
+    let valid = serde_json::json!({
+        "scroll_root": 1136,
+        "book_root": 837,
+        "book_forward": 841,
+        "book_close": 10162,
+        "book_forward_marker": 842
+    });
+    let decode = |ids: &serde_json::Value| {
+        SelectedGameData::decode(
+            minimal_json(&format!(", \"dialogue_ui\": {ids}")).as_bytes(),
+            ClientRevision::R274,
+        )
+    };
+    let data = decode(&valid).unwrap();
+    assert_eq!(data.dialogue_ui().unwrap().book_forward, 841);
+    assert_eq!(data.dialogue_ui().unwrap().book_forward_marker, 842);
+    for field in [
+        "scroll_root",
+        "book_root",
+        "book_forward",
+        "book_close",
+        "book_forward_marker",
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = serde_json::json!(0);
+        assert!(decode(&invalid).unwrap().dialogue_ui().is_none(), "{field}");
+    }
+    let mut duplicate = valid.clone();
+    duplicate["book_forward"] = duplicate["book_close"].clone();
+    assert!(decode(&duplicate).unwrap().dialogue_ui().is_none());
+    let mut unknown = valid;
+    unknown["debug_catalog"] = serde_json::json!(true);
+    assert!(decode(&unknown).is_err());
+}
+
+#[test]
+fn generated_dialogue_ui_roles_match_both_pinned_sources() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        assert_eq!(
+            data.dialogue_ui(),
+            Some(&DialogueUiIds {
+                scroll_root: 1136,
+                book_root: 837,
+                book_forward: 841,
+                book_close: 10162,
+                book_forward_marker: 842,
+            }),
+            "{revision:?} forward is the handler, not the visibility marker"
+        );
+    }
+}
+
+#[test]
+fn operator_item_names_use_the_native_alias_then_case_insensitive_name_rule() {
+    let data = for_revision(crate::selected::ClientRevision::R289).unwrap();
+    let item = data
+        .items()
+        .iter()
+        .find(|item| item.alias.is_some() && item.name.is_some())
+        .unwrap();
+    let alias = item.alias.as_deref().unwrap();
+    let display = item.name.as_deref().unwrap();
+
+    assert!(std::ptr::eq(data.resolve_item_name(alias).unwrap(), item));
+    assert_eq!(
+        data.resolve_item_name(&display.to_ascii_uppercase())
+            .map(|resolved| resolved.id),
+        Some(item.id)
+    );
+    assert!(data.resolve_item_name(&format!(" {display} ")).is_none());
+    assert!(data.resolve_item_name("").is_none());
+}
+
+#[test]
+fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
+    fn item(alias: &str, id: i32, name: &str) -> GameItem {
+        GameItem {
+            alias: Some(alias.to_string()),
+            id,
+            name: Some(name.to_string()),
+            cost: 0,
+            stackable: false,
+            members: false,
+            certificate_link: 0,
+            certificate_template: 0,
+            wear_position: 0,
+            wear_position_2: 0,
+            wear_position_3: 0,
+            tradeable: true,
+            stack_variant: false,
+        }
+    }
+    let mut data =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    std::sync::Arc::get_mut(&mut data)
+        .expect("freshly decoded data is uniquely owned")
+        .items = vec![
+        item("high", 20, "Duplicate"),
+        item("low", 10, "Duplicate"),
+        item("Collision", 30, "Alias winner"),
+        item("other", 1, "Collision"),
+    ];
+
+    assert_eq!(data.resolve_item_name("DUPLICATE").unwrap().id, 20);
+    assert_eq!(data.resolve_item_name("Collision").unwrap().id, 30);
+    assert_eq!(data.resolve_item_name("collision").unwrap().id, 1);
 }

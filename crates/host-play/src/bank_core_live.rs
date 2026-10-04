@@ -330,7 +330,7 @@ impl Script for WithdrawCell {
                             use_mage_bank: false,
                             use_zanaris_bank: false,
                         },
-                        allow_wilderness: false,
+                        options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::clone(&self.bank_name)),
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {

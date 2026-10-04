@@ -671,7 +671,7 @@ impl FollowRun {
             }
             let mut ix = Interactions::new(snapshot, d);
             if snapshot.chat_continue_component_id() != -1 {
-                match ix.continue_dialog() {
+                match ix.continue_dialog(None) {
                     SendResult::Sent { .. } => {
                         api::host_log!(
                             Category::NavEvent,
