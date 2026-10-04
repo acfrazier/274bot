@@ -1,8 +1,8 @@
 //! Resource labels are shared by walk nodes and change only at paid hops.
 //! Generous inventories keep the original tile-only search after a conservative
 //! proof that no simple path can exhaust a stack.
-//! Hash a complete search identity in one write, retaining the original scalar
-//! bytes so larger policy dispatch does not stream each field on the hot path.
+//! World tiles hash their scalar identity in one write. Metered labels include
+//! the balance in the same write, retaining the original scalar bytes.
 use super::*;
 use std::hash::{Hash, Hasher};
 
@@ -15,36 +15,12 @@ pub(super) trait SearchKey: Copy + Eq + Hash {
     fn tie(self) -> u32;
 }
 
-#[inline]
-fn hash_key<H: Hasher>(tile: WorldTile, balance: Option<u32>, state: &mut H) {
-    let mut bytes = [0; 16];
-    bytes[..4].copy_from_slice(&tile.x.to_ne_bytes());
-    bytes[4..8].copy_from_slice(&tile.z.to_ne_bytes());
-    bytes[8..12].copy_from_slice(&tile.level.to_ne_bytes());
-    if let Some(balance) = balance {
-        bytes[12..].copy_from_slice(&balance.to_ne_bytes());
-        state.write(&bytes);
-    } else {
-        state.write(&bytes[..12]);
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub(super) struct TileKey(WorldTile);
-
-impl Hash for TileKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        hash_key(self.0, None, state);
-    }
-}
-
-impl SearchKey for TileKey {
+impl SearchKey for WorldTile {
     fn tile(self) -> WorldTile {
-        self.0
+        self
     }
     fn at(self, tile: WorldTile) -> Self {
-        Self(tile)
+        tile
     }
     fn tie(self) -> u32 {
         0
@@ -58,8 +34,14 @@ pub(super) struct ResourceKey {
 }
 
 impl Hash for ResourceKey {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        hash_key(self.tile, Some(self.balance), state);
+        let mut bytes = [0; 16];
+        bytes[..4].copy_from_slice(&self.tile.x.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&self.tile.z.to_ne_bytes());
+        bytes[8..12].copy_from_slice(&self.tile.level.to_ne_bytes());
+        bytes[12..].copy_from_slice(&self.balance.to_ne_bytes());
+        state.write(&bytes);
     }
 }
 
@@ -96,9 +78,9 @@ pub(super) trait Budget {
 
 pub(super) struct Unmetered;
 impl Budget for Unmetered {
-    type Key = TileKey;
-    fn start(&self, tile: WorldTile) -> TileKey {
-        TileKey(tile)
+    type Key = WorldTile;
+    fn start(&self, tile: WorldTile) -> WorldTile {
+        tile
     }
     const METERED: bool = false;
     fn allowed(&self, state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool {
@@ -106,17 +88,17 @@ impl Budget for Unmetered {
     }
     fn cross(
         &mut self,
-        key: TileKey,
+        key: WorldTile,
         _: &TransportEdge,
         _: &WorldState,
         _: Relax,
-    ) -> Result<Option<TileKey>, ()> {
+    ) -> Result<Option<WorldTile>, ()> {
         Ok(Some(key))
     }
     fn finish(
         self,
-        tree: HashMap<TileKey, Back<TileKey>>,
-        _: HashMap<WorldTile, TileKey>,
+        tree: HashMap<WorldTile, Back<WorldTile>>,
+        _: HashMap<WorldTile, WorldTile>,
     ) -> Predecessors {
         Predecessors::Tiles(tree)
     }
@@ -318,7 +300,7 @@ impl Budget for ResourceBudget {
 }
 
 pub(super) enum Predecessors {
-    Tiles(HashMap<TileKey, Back<TileKey>>),
+    Tiles(HashMap<WorldTile, Back<WorldTile>>),
     Resources {
         tree: HashMap<ResourceKey, Back<ResourceKey>>,
         reached: HashMap<WorldTile, ResourceKey>,
@@ -343,7 +325,7 @@ impl Predecessors {
         essence: Option<&EssenceSession>,
     ) -> (Vec<Leg>, f64) {
         match self {
-            Self::Tiles(tree) => reconstruct_key(TileKey(to), tree, graph, model, essence),
+            Self::Tiles(tree) => reconstruct_key(to, tree, graph, model, essence),
             Self::Resources { tree, reached } => {
                 reconstruct_key(reached[&to], tree, graph, model, essence)
             }
@@ -378,27 +360,6 @@ mod hash_tests {
         let mut state = std::collections::hash_map::DefaultHasher::new();
         value.hash(&mut state);
         state.finish()
-    }
-
-    #[test]
-    fn unmetered_key_hashes_the_full_signed_tile_in_one_write() {
-        let tile = WorldTile {
-            x: i32::MIN,
-            z: i32::MAX,
-            level: -1,
-        };
-        let key = Unmetered.start(tile);
-        let mut writes = Writes::default();
-        key.hash(&mut writes);
-        assert_eq!((writes.count, writes.len), (1, 12));
-        let mut original = Writes::default();
-        tile.hash(&mut original);
-        assert_eq!(writes.bytes, original.bytes);
-        assert_eq!(sip_hash(&key), sip_hash(&tile));
-        assert_eq!(
-            std::mem::size_of_val(&key),
-            std::mem::size_of::<WorldTile>()
-        );
     }
 
     #[test]
