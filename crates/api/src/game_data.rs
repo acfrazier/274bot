@@ -944,6 +944,41 @@ pub struct NpcPlacementRow {
 pub struct NpcPlacementFacts {
     pub rows: Vec<NpcPlacementRow>,
 }
+/// Selected-content facts used by the Karamja banana-plantation recovery.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaSpawn {
+    pub config: String,
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaDialogue {
+    pub employment: String,
+    pub paid: String,
+    pub incomplete: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaFacts {
+    pub luthas_spawn: KaramjaSpawn,
+    pub crate_spawn: KaramjaSpawn,
+    pub banana_tree_configs: Vec<String>,
+    pub banana_tree_spawns: Vec<KaramjaSpawn>,
+    pub crate_capacity: i32,
+    pub coin_payout: i32,
+    pub dialogue: KaramjaDialogue,
+}
+
+impl KaramjaSpawn {
+    fn valid(&self) -> bool {
+        !self.config.is_empty() && self.x >= 0 && self.z >= 0 && (0..4).contains(&self.plane)
+    }
+}
 
 /// Revision coverage. Not an identity row and not a copied id.
 #[derive(Debug, Deserialize, Clone)]
@@ -1258,6 +1293,8 @@ pub struct SelectedGameData {
     #[serde(default)]
     npc_placements: Option<NpcPlacementFacts>,
     #[serde(default)]
+    karamja: Option<KaramjaFacts>,
+    #[serde(default)]
     trails: Option<TrailFacts>,
     #[serde(default)]
     talk_key: Option<TalkKeyFacts>,
@@ -1407,6 +1444,42 @@ impl SelectedGameData {
                 "generated game data schema mismatch: expected {SCHEMA_VERSION}, got {}",
                 data.schema_version
             ));
+        }
+        if let Some(facts) = &data.karamja {
+            let npc = data.npc_by_config(&facts.luthas_spawn.config);
+            let crate_loc = data.loc_by_config(&facts.crate_spawn.config);
+            if !facts.luthas_spawn.valid()
+                || !facts.crate_spawn.valid()
+                || facts.crate_capacity <= 0
+                || facts.coin_payout <= 0
+                || facts.banana_tree_configs.is_empty()
+                || facts.banana_tree_configs.iter().any(|config| {
+                    config.is_empty()
+                        || data
+                            .loc_by_config(config)
+                            .is_none_or(|loc| loc.ops.is_empty())
+                })
+                || facts.banana_tree_spawns.is_empty()
+                || facts.banana_tree_spawns.iter().any(|spawn| {
+                    !spawn.valid()
+                        || !facts.banana_tree_configs.contains(&spawn.config)
+                        || data
+                            .loc_by_config(&spawn.config)
+                            .is_none_or(|loc| loc.ops.is_empty())
+                })
+                || facts.dialogue.employment.trim().is_empty()
+                || facts.dialogue.paid.trim().is_empty()
+                || facts.dialogue.incomplete.trim().is_empty()
+                || npc.is_none_or(|row| {
+                    row.display.as_deref().is_none_or(str::is_empty)
+                        || !row.ops.iter().any(|op| op.eq_ignore_ascii_case("Talk-to"))
+                })
+                || crate_loc.is_none_or(|loc| loc.ops.is_empty())
+            {
+                return Err(
+                    "karamja facts are incomplete or do not join selected content".to_string(),
+                );
+            }
         }
         if let Some(facts) = &data.bank_placements {
             if facts
@@ -1890,6 +1963,9 @@ impl SelectedGameData {
             .rows
             .iter()
             .find(|row| row.config == config)
+    }
+    pub fn karamja(&self) -> Option<&KaramjaFacts> {
+        self.karamja.as_ref()
     }
 
     /// Trail inventory and challenge answers. `None` is family absence, not an empty extract.

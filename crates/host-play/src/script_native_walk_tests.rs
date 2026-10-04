@@ -313,9 +313,21 @@ fn catalog_open_world() -> NavWorld {
             u16::MAX,
             0,
         ),
+        nav::zones::Zone::npc(
+            WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            0,
+            nav::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
     ];
     zones[0].group = 0;
     zones[1].group = 1;
+    zones[2].group = 2;
     let kinds = vec![nav::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
@@ -348,6 +360,18 @@ fn catalog_open_world() -> NavWorld {
                 level: Some(0),
             },
             vec![1].into_boxed_slice(),
+        ),
+        nav::zones::ZoneGroup::new(
+            "death-plateau-throwers",
+            "Death Plateau thrower trolls",
+            nav::router::AvoidRect {
+                min_x: 4,
+                max_x: 4,
+                min_z: 0,
+                max_z: 0,
+                level: Some(0),
+            },
+            vec![2].into_boxed_slice(),
         ),
     ];
     let table = nav::zones::ZoneTable::from_parts(
@@ -1542,19 +1566,30 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 }
 
 #[test]
-fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
+fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
+    let table = world.graph.zones.as_ref().expect("zone table");
+    let group_rect = |id: &str| {
+        table
+            .groups()
+            .iter()
+            .find(|group| group.id.as_ref() == id)
+            .expect("catalog group")
+            .rect
+    };
+    let white_wolf_rect = group_rect("white-wolf-mountain");
+    let jail_rect = group_rect("draynor-jail-guards");
     let outside = WorldTile {
         x: 0,
         z: 0,
         level: 0,
     };
     let inside_jail = WorldTile {
-        x: 3_100,
-        z: 3_230,
-        level: 0,
+        x: jail_rect.min_x,
+        z: jail_rect.min_z,
+        level: jail_rect.level.expect("jail group plane"),
     };
     let resolve_avoid = |from, state: &WorldState, id: &str| {
         let mut exclusions = crate::script_runtime::ScriptRouteExclusions::default();
@@ -1573,20 +1608,11 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
 
     let state = WorldState::empty();
     let (_, white_wolf) = resolve_avoid(outside, &state, "white-wolf-mountain").unwrap();
-    assert_eq!(white_wolf.avoid.len(), 1);
-    assert_eq!(
-        (
-            white_wolf.avoid[0].min_x,
-            white_wolf.avoid[0].max_x,
-            white_wolf.avoid[0].min_z,
-            white_wolf.avoid[0].max_z,
-            white_wolf.avoid[0].level,
-        ),
-        (2828, 2878, 3468, 3538, None)
-    );
+    assert_eq!(white_wolf.avoid, [white_wolf_rect]);
 
     let (_, jail) = resolve_avoid(outside, &state, "draynor-jail-guards").unwrap();
-    assert_eq!(jail.avoid.len(), 4);
+    assert_eq!(jail.avoid, [jail_rect]);
+
     let mut high_combat = WorldState::empty();
     high_combat.combat_level = Some(51);
     let (_, skipped_for_combat) =
@@ -1598,7 +1624,7 @@ fn compat_catalog_exclusions_use_frozen_geometry_and_rules() {
 }
 
 #[test]
-fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
+fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     use script::shim::InspectAvoidWire;
 
     let world = catalog_open_world();
@@ -1623,6 +1649,22 @@ fn compat_named_exclusions_reject_unknown_and_over_limit_names() {
         )
         .unwrap_err(),
         "avoidZones: unknown zone \"no-such-zone\""
+    );
+    let mut nonfrozen = crate::script_runtime::ScriptRouteExclusions::default();
+    nonfrozen.avoid_wire.push(InspectAvoidWire::Catalog(
+        "death-plateau-throwers".to_string(),
+    ));
+    assert_eq!(
+        crate::script_runtime::resolve_route_exclusions(
+            nav::router::FindOptions::default(),
+            &world,
+            from,
+            from,
+            &state,
+            nonfrozen,
+        )
+        .unwrap_err(),
+        "avoidZones: unknown zone \"death-plateau-throwers\""
     );
 
     let mut unknown_cross = crate::script_runtime::ScriptRouteExclusions::default();
