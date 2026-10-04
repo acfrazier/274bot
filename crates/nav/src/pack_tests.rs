@@ -1563,7 +1563,6 @@ fn decode_grid_rejects_oversized_grid() {
     assert!(matches!(decode_grid(&bytes), Err(PackError::BadLength(_))));
 }
 
-
 #[test]
 fn decode_grid_rejects_zero_grid() {
     assert!(matches!(
