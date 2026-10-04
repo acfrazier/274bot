@@ -43,35 +43,33 @@ fn entry_edges_are_the_wizard_npc_hops_only() {
         level: 0,
     };
     assert!(is_essence_entry_edge(&entry));
-    let cart = TransportEdge {
-        kind: TransportKind::Npc,
-        player_delta: None,
-        at: WorldTile {
-            x: 2834,
-            z: 2954,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2776,
-            z: 3214,
-            level: 0,
-        },
-        loc_id: 511,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    };
+    let cart = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+    player_delta: None,
+    at: WorldTile {
+        x: 2834,
+        z: 2954,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 2776,
+        z: 3214,
+        level: 0,
+    },
+    loc_id: 511,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, };
     assert!(
         !is_essence_entry_edge(&cart),
         "a cart driver is not an entry hop"

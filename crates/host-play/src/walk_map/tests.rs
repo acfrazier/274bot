@@ -179,27 +179,25 @@ fn context() -> MapContext {
     }
 }
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge {
-        kind,
-        player_delta: None,
-        at,
-        to,
-        loc_id: 100,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { worn_all_req: Vec::new(), kind,
+    player_delta: None,
+    at,
+    to,
+    loc_id: 100,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 fn offline_play(world: NavWorld) -> crate::Play {
@@ -622,27 +620,25 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
     let from = wt(0, 0, 0);
     let to = wt(0, 0, 1);
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge {
-        kind: TransportKind::Boat,
-        player_delta: None,
-        at: from,
-        to,
-        loc_id: 657,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: true,
-        wildy_cap: None,
-        quest_gates: None,
-    });
+    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Boat,
+    player_delta: None,
+    at: from,
+    to,
+    loc_id: 657,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: true,
+    wildy_cap: None,
+    quest_gates: None, });
     graph.at.insert(from, vec![0]);
     let nav = NavWorld::from_parts(base.collision, graph, vec![]);
     let mut context = context();

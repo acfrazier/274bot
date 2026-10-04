@@ -1,11 +1,9 @@
 use super::*;
 
 fn npc_route(kind: TransportKind) -> Route {
-    let edge = TransportEdge {
-        kind,
-        player_delta: None,
-        ..cart_edge()
-    };
+    let edge = TransportEdge { kind,
+    player_delta: None,
+    ..cart_edge() };
     Route {
         dest: edge.to,
         legs: vec![Leg::Transport {
@@ -398,12 +396,10 @@ fn sailor_crandor_variant_answers_the_normal_fare_not_crandor() {
         ..Default::default()
     };
     let mut traveller = Traveller::new();
-    let edge = TransportEdge {
-        kind: TransportKind::Boat,
-        player_delta: None,
-        loc_id: 378,
-        ..cart_edge()
-    };
+    let edge = TransportEdge { kind: TransportKind::Boat,
+    player_delta: None,
+    loc_id: 378,
+    ..cart_edge() };
     let route = Route {
         dest: edge.to,
         legs: vec![Leg::Transport {

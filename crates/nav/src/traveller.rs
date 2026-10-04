@@ -606,7 +606,7 @@ impl FollowRun {
                     fire_leg(options, &leg, LegPhase::Start);
                     let here = here(snapshot);
                     if let Some(outcome) =
-                        self.check_transport_gate(edge, here, options.quest_evidence)
+                        self.check_transport_gate(edge, here, snapshot, options.quest_evidence)
                     {
                         fire_leg(options, &leg, LegPhase::Failed);
                         return Some(outcome);
@@ -970,14 +970,32 @@ impl FollowRun {
         }
     }
 
-    /// Recheck a gated transport leg's evidence before its interaction is
-    /// sent. Only `True` continues; the terminal names what would open it.
+    /// Recheck worn-all equipment and quest-stage evidence before a
+    /// transport interaction is sent. A missing equipment prerequisite
+    /// blocks without attempting to wear or fetch it.
     fn check_transport_gate(
         &self,
         edge: &TransportEdge,
         at: WorldTile,
+        snapshot: &GameSnapshot,
         evidence: Option<&crate::quest_gates::QuestEvidence>,
     ) -> Option<TravelOutcome> {
+        if let Some(missing) = edge.worn_all_req.iter().find(|&&id| {
+            !snapshot
+                .equipment()
+                .iter()
+                .any(|item| item.count > 0 && item.def.id == id)
+        }) {
+            return Some(TravelOutcome::Blocked {
+                at,
+                leg: self.leg_index,
+                detail: format!(
+                    "transport {} {} requires worn_all_req item {missing}",
+                    target_word(edge),
+                    edge.loc_id,
+                ),
+            });
+        }
         use api::selected::Truth;
         let gates = edge.quest_gates.as_ref()?;
         let verdict = gates.test(evidence);

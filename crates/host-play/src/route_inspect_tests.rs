@@ -32,27 +32,25 @@ fn edge(
     loc_id: i32,
     consumed_req: Vec<(i32, i32)>,
 ) -> TransportEdge {
-    TransportEdge {
-        kind,
-        player_delta: None,
-        at,
-        to,
-        loc_id,
-        option: 1,
-        ticks: 2,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req,
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { worn_all_req: Vec::new(), kind,
+    player_delta: None,
+    at,
+    to,
+    loc_id,
+    option: 1,
+    ticks: 2,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req,
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![],
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 fn world_with(graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
@@ -288,18 +286,16 @@ fn glider_and_boats_use_npc_table() {
     assert_eq!(plank.kind, "ladder");
     assert_eq!(plank.loc_name, "Gangplank");
     let jewellery = project_hop(
-        &TransportEdge {
-            option: 4,
-            loc_id: 1712,
-            kind: TransportKind::Teleport,
-            ..edge(
-                TransportKind::Teleport,
-                tile(0, 0, 0),
-                tile(1, 1, 0),
-                1712,
-                vec![],
-            )
-        },
+        &TransportEdge { option: 4,
+        loc_id: 1712,
+        kind: TransportKind::Teleport,
+        ..edge(
+            TransportKind::Teleport,
+            tile(0, 0, 0),
+            tile(1, 1, 0),
+            1712,
+            vec![],
+        ) },
         Some(cache.as_ref()),
         Some(names.as_ref()),
     );

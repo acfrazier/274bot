@@ -1344,8 +1344,9 @@ fn blocking_zone_keys(table: &ZoneTable, blockers: HashSet<u16>) -> Option<Vec<Z
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
 /// supply before a strict [`find_with`] can route: an `item_req` stack
 /// count the state cannot prove, or a `worn_req` list (any-of) with no
-/// worn alternative. [`missing_item_reqs`] names them for a route;
-/// [`find`]/[`find_with`] never relax an edge.
+/// worn alternative. A missing `worn_all_req` is not fetchable and remains
+/// strict in every diagnostic search. [`missing_item_reqs`] names only the
+/// carryable facts; [`find`]/[`find_with`] never relax an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
     /// The edge needs `count` of obj `id` carried (`item_req`).
@@ -1357,22 +1358,23 @@ pub enum MissingReq {
 
 /// Diagnose a strict [`find_with`] `NoPath`: run the same search with
 /// only the `item_req`/`worn_req` gates ignored, and collect every such
-/// fact on the relaxed route that `state` could not prove. When that
-/// search fails too, a crossing may need a fetched item *and* a quest-stage
-/// gate the evidence leaves `Unknown`: the search runs once more also
-/// crossing `Unknown` gates, and names only the carry/wear facts on that
-/// route ([`find_unresolved_quest_gates`] names its gates), so neither
-/// diagnosis hides behind the other's gate. Returns `None` when no relaxed
-/// search routes, or the one that does needs no item — a
-/// skill/quest/varp gate, a `False` stage gate or a plain hole in the graph
-/// blocks, or only a journal read can help, and no fetch-and-wear session
-/// can. This is the BankBudget session's diagnosis arm
-/// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
-/// themselves never ignore an item gate — missing facts still fail
-/// closed. The relaxed search carries the backward [`ReverseProof`], so an
-/// unreachable diagnosis target (a solid tile no transport lands on, a
-/// sealed pocket) costs about its own backward region instead of a relaxed
-/// flood of everything reachable from `from`.
+/// fact on the relaxed route that `state` could not prove. `worn_all_req`
+/// stays strict: an inventory or bank alternative cannot satisfy a
+/// conjunctive equipment prerequisite. When that search fails too, a
+/// crossing may need a fetched item *and* a quest-stage gate the evidence
+/// leaves `Unknown`: the search runs once more also crossing `Unknown`
+/// gates, and names only the carry/wear facts on that route
+/// ([`find_unresolved_quest_gates`] names its gates), so neither diagnosis
+/// hides behind the other's gate. Returns `None` when no relaxed search
+/// routes, or the one that does needs no item — a skill/quest/varp gate, a
+/// `False` stage gate or a plain hole in the graph blocks, or only a journal
+/// read can help, and no fetch-and-wear session can. This is the BankBudget
+/// session's diagnosis arm ([`crate::bank_fetch::plan_bank_fetch`]);
+/// [`find`] and [`find_with`] themselves never ignore an item gate — missing
+/// facts still fail closed. The relaxed search carries the backward
+/// [`ReverseProof`], so an unreachable diagnosis target (a solid tile no
+/// transport lands on, a sealed pocket) costs about its own backward region
+/// instead of a relaxed flood of everything reachable from `from`.
 pub fn find_missing_item_reqs(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2071,15 +2073,15 @@ enum Relax {
     /// Every requirement holds, quest-stage gates only when `True`.
     Strict,
     /// The BankBudget diagnosis ([`find_missing_item_reqs`]): only the
-    /// `item_req`/`worn_req` gates are ignored.
+    /// `item_req`/`worn_req` gates are ignored; `worn_all_req` stays strict.
     CarryWorn,
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
-    /// Both diagnosis arms' fallback: carry/wear gates are ignored and
-    /// `Unknown` stage gates crossed, so a crossing that needs a fetched item
-    /// and a journal read together is visible to each arm. Each arm still
-    /// reports only its own kind of gate from the route.
+    /// Both diagnosis arms' fallback: `item_req`/`worn_req` gates are ignored
+    /// and `Unknown` stage gates crossed, so a crossing that needs a fetched
+    /// item and a journal read together is visible to each arm. Every other
+    /// requirement, including `worn_all_req`, stays strict.
     CarryWornUnknownQuest,
 }
 
@@ -2092,7 +2094,9 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
         }
         Relax::CarryWornUnknownQuest => {
-            state.fixed_reqs_allow(edge) && state.quest_gates(edge) != Truth::False
+            state.fixed_reqs_allow(edge)
+                && state.worn_all_req_allows(edge)
+                && state.quest_gates(edge) != Truth::False
         }
     }
 }

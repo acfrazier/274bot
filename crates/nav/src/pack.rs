@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 15, the quest-family
+//! Pack format (274V): magic `b"274V"`, version `u8` 16, the quest-family
 //! binding (`u8` `0` = the bake consumed no quest family, `1` = bound, then
 //! the family artifact's 32-byte `quest_facts_sha256` and its
 //! `quest_extractor_schema` as a nonzero u16le), collision origin
@@ -26,6 +26,7 @@
 //! caps, and quest-stage gates. Version 15 appends count-prefixed
 //! `(id, count)` `consumed_req` and `item_returns` vectors after reusable
 //! `item_req`; resource counts must be positive and returns require consumption.
+//! Version 16 appends count-prefixed `worn_all_req` i32 ids after `worn_req`.
 //! Version 13 appends one approach-geometry tag per edge after its quest gates
 //! (`0` absent, `1` + footprint width, length, and blocked-side mask). Version
 //! 14 reserves bit 7 of the existing kind byte for a player-relative
@@ -43,14 +44,14 @@
 //! (zone index u16, north extent u8, and u64 row-major cell bits; shaped NPC
 //! rows store the east extent in `r`). Decode rebuilds the validated
 //! 8×8 zone index and recomputes Wilderness overlap; neither is on the wire.
-//! Every decoded v15 stream has `Some(ZoneTable)`, even when every row count
+//! Every decoded v16 stream has `Some(ZoneTable)`, even when every row count
 //! is zero; legacy grids and synthetic in-memory graphs use `zones: None`.
 //! Zone counts/indices are bounded to the packed namespaces; malformed rows
-//! return [`PackError::BadLength`]. A v14 or older whole-world stream is
+//! return [`PackError::BadLength`]. A v15 or older whole-world stream is
 //! [`PackError::BadVersion`], never compat-loaded. The raw flags, paint-reach
 //! bitset, and canlight bitset remain sidecars: flags use magic `b"274F"`,
 //! reach `b"274R"`, and canlight `b"274L"`. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v15.
+//! old `.navpack` files; `nav-pack` now writes v16.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -110,13 +111,14 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// content-derived zone table after Wilderness. v13 appends per-edge
 /// approach geometry after quest gates. v14 flags player-relative landings in
 /// the kind byte. v15 appends per-edge consumed-resource and replacement-item
-/// vectors after held `item_req`. [`decode`] accepts version 15 only.
-pub const VERSION: u8 = 15;
+/// vectors after held `item_req`. v16 appends the conjunctive `worn_all_req`
+/// list after the any-of `worn_req`. [`decode`] accepts version 16 only.
+pub const VERSION: u8 = 16;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V15";
+pub const FORMAT_ID: &str = "274V16";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// High bit of a ladder/stairs kind byte: `to - at` is a player displacement.
@@ -425,7 +427,7 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
 }
 
 /// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v15 pack byte format. The graph's `at` index is not
+/// zone tables to the v16 pack byte format. The graph's `at` index is not
 /// stored; [`decode`] rebuilds it from the edges and collision. Teleports
 /// (kind-4 edges) are written after ordinary edges and always carry absent
 /// approach geometry. The raw flags are not on the wire (see the flags
@@ -490,6 +492,7 @@ pub fn encode(
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
+        write_req_ids(&mut out, &e.worn_all_req);
         out.push(if e.members_req { 1 } else { 0 });
         let cap = e.wildy_cap.unwrap_or(-1);
         out.extend_from_slice(&cap.to_le_bytes());
@@ -614,6 +617,11 @@ fn encoded_size(
         }
         size_strings(&mut edge_size, &edge.quest_req, "quest requirements")?;
         size_ids(&mut edge_size, edge.worn_req.len(), "worn requirements")?;
+        size_ids(
+            &mut edge_size,
+            edge.worn_all_req.len(),
+            "conjunctive worn requirements",
+        )?;
         size_quest_gates(&mut edge_size, edge.quest_gates.as_ref())?;
         if approach.is_some() {
             edge_size = add_encoded_size(edge_size, 3, "approach geometry")?;
@@ -800,7 +808,7 @@ fn kind_to_u8(k: TransportKind) -> Result<u8, PackError> {
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
-/// Version 15 is the only accepted wire; older streams are rejected rather
+/// Version 16 is the only accepted wire; older streams are rejected rather
 /// than compat-loaded. Quest-stage gates bind to the header's quest family;
 /// malformed resource requirements, gates, or approach geometry are rejected.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
@@ -854,9 +862,9 @@ fn decode_pack_body<R: PackRead>(
     // themselves still fail with Truncated past the real end.
     let remaining = r.remaining();
     let mut graph = TransportGraph {
-        // A v15 edge is at least 80 bytes, including its empty vectors and trailer.
-        edges: Vec::with_capacity(n_edges.min(remaining / 80)),
-        approaches: Vec::with_capacity(n_edges.min(remaining / 80)),
+        // A v16 edge is at least 84 bytes, including its empty vectors and trailer.
+        edges: Vec::with_capacity(n_edges.min(remaining / 84)),
+        approaches: Vec::with_capacity(n_edges.min(remaining / 84)),
         quest_family,
         ..Default::default()
     };
@@ -901,6 +909,7 @@ fn decode_pack_body<R: PackRead>(
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
             worn_req: read_req_ids(&mut r)?,
+            worn_all_req: read_req_ids(&mut r)?,
             members_req: match read_u8(&mut r)? {
                 0 => false,
                 1 => true,
@@ -1058,7 +1067,7 @@ fn read_req_strings<R: PackRead>(r: &mut R) -> Result<Vec<String>, PackError> {
     Ok(out)
 }
 
-/// A worn-item requirement vector as i32le ids, count-prefixed.
+/// A worn-item requirement vector as count-prefixed i32le ids.
 fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
     out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
     for id in reqs {
@@ -1066,7 +1075,7 @@ fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
     }
 }
 
-/// Read a count-prefixed i32le id vector (the `worn_req` list).
+/// Read a count-prefixed i32le id vector.
 fn read_req_ids<R: PackRead>(r: &mut R) -> Result<Vec<i32>, PackError> {
     let n = read_u32(r)? as usize;
     let remaining = r.remaining();

@@ -70,31 +70,29 @@ pub(super) fn magicguild_door_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::Door,
-                    player_delta: None,
-                    at,
-                    to,
-                    loc_id: id,
-                    option: 1,
-                    ticks: 1,
-                    dir: Some(dir),
-                    open_loc_id: Some(open),
-                    skill_req: if dir == angle_dir {
-                        vec![(SKILL_MAGIC, level)]
-                    } else {
-                        vec![]
-                    },
-                    item_req: vec![],
-                    consumed_req: vec![],
-                    item_returns: vec![],
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: vec![],
-                    members_req: false,
-                    wildy_cap: None,
-                    quest_gates: None,
-                });
+                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                player_delta: None,
+                at,
+                to,
+                loc_id: id,
+                option: 1,
+                ticks: 1,
+                dir: Some(dir),
+                open_loc_id: Some(open),
+                skill_req: if dir == angle_dir {
+                    vec![(SKILL_MAGIC, level)]
+                } else {
+                    vec![]
+                },
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None, });
             }
         }
         if graph.edges.len() == edge_start {

@@ -36,6 +36,9 @@ pub struct WorldState {
     pub inv: HashMap<i32, i32>,
     /// obj ids currently worn (the snapshot's `equipment` family).
     pub worn: HashSet<i32>,
+    /// Items a bank-fetch probe may assume it can wear; never observed
+    /// equipment. Only the legacy any-of `worn_req` gate may use these.
+    pub fetchable_worn: HashSet<i32>,
     /// skill id → effective level (the snapshot's `stats` family).
     pub stats: HashMap<i32, i32>,
     /// Base-stat combat level; absent until all seven combat rows are ready.
@@ -117,6 +120,7 @@ impl WorldState {
             combat_level,
             varps,
             quests,
+            fetchable_worn: HashSet::new(),
             map_members: false,
             quest_evidence: None,
         }
@@ -140,13 +144,13 @@ impl WorldState {
 
     /// Whether the edge's requirements are all satisfied: every
     /// `skill_req` level met, every held `item_req` and per-hop
-    /// `consumed_req` count carried, every
-    /// `quest_req` completed, every `varp_req` value reached, **any**
-    /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
-    /// one-id list; a slash-weapon web lists every slash blade), a
-    /// `members_req` edge only when [`Self::map_members`] is true, and every
-    /// quest-stage gate `True` under [`Self::quest_evidence`]. Any
-    /// requirement the state cannot prove fails the edge.
+    /// `consumed_req` count carried, every `quest_req` completed, every
+    /// `varp_req` value reached, **any** `worn_req` alternative equipped (or
+    /// available to the BankBudget probe), every `worn_all_req` item equipped
+    /// in the observed state, a `members_req` edge only when
+    /// [`Self::map_members`] is true, and every quest-stage gate `True` under
+    /// [`Self::quest_evidence`]. Any requirement the state cannot prove fails
+    /// the edge.
     pub fn allows(&self, e: &TransportEdge) -> bool {
         self.snapshot_allows(e) && self.quest_gates(e) == Truth::True
     }
@@ -172,17 +176,34 @@ impl WorldState {
                 let carried = self.inv.get(&id).copied().unwrap_or(0);
                 carried >= e.consumption_count(id, packed_count, carried)
             })
-            && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
+            && self.worn_req_allows(e)
+            && self.worn_all_req_allows(e)
+    }
+
+    /// The legacy any-of gate also accepts items explicitly made available
+    /// to a BankBudget route probe. `worn_all_req` deliberately does not.
+    pub(crate) fn worn_req_allows(&self, e: &TransportEdge) -> bool {
+        e.worn_req.is_empty()
+            || e.worn_req
+                .iter()
+                .any(|id| self.worn.contains(id) || self.fetchable_worn.contains(id))
+    }
+
+    /// Every item in the conjunctive equipment gate must be currently worn.
+    pub(crate) fn worn_all_req_allows(&self, e: &TransportEdge) -> bool {
+        e.worn_all_req.iter().all(|id| self.worn.contains(id))
     }
 
     /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`
-    /// gates: every other requirement, quest-stage gates included, still
-    /// fails closed. This is the BankBudget diagnosis arm only
-    /// ([`crate::router::find_missing_item_reqs`]
+    /// gates: every other requirement, including `worn_all_req` and
+    /// quest-stage gates, still fails closed. This is the BankBudget
+    /// diagnosis arm only ([`crate::router::find_missing_item_reqs`]
     /// feeds it the search's relaxed gate) — [`find`] and [`find_with`]
     /// never skip a carry/wear gate.
     pub fn allows_without_carry_worn(&self, e: &TransportEdge) -> bool {
-        self.fixed_reqs_allow(e) && self.quest_gates(e) == Truth::True
+        self.fixed_reqs_allow(e)
+            && self.worn_all_req_allows(e)
+            && self.quest_gates(e) == Truth::True
     }
 
     /// The requirements neither a bank trip nor a journal read can supply:

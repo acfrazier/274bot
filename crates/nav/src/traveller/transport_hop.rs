@@ -302,7 +302,9 @@ impl FollowRun {
         // poll. Once sent, the crossing is not rechecked; aborting it would
         // report a physically completed crossing as unproven.
         if let (Some(_), Leg::Transport { edge }) = (&hop.approach, &hop.leg) {
-            if let Some(outcome) = self.check_transport_gate(edge, here, options.quest_evidence) {
+            if let Some(outcome) =
+                self.check_transport_gate(edge, here, snapshot, options.quest_evidence)
+            {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 return Poll::Terminal(outcome);
             }

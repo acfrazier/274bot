@@ -180,27 +180,25 @@ pub(super) fn scripted_door_edges(
                     continue;
                 };
                 let gated = guild.skill.is_some() && dir == gated_dir;
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::Door,
-                    player_delta: None,
-                    at,
-                    to,
-                    loc_id,
-                    option: 1,
-                    ticks: 1,
-                    dir: Some(dir),
-                    open_loc_id: None,
-                    skill_req: guild.skill.filter(|_| gated).into_iter().collect(),
-                    item_req: vec![],
-                    consumed_req: vec![],
-                    item_returns: vec![],
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: if gated { worn.clone() } else { vec![] },
-                    members_req: false,
-                    wildy_cap: None,
-                    quest_gates: None,
-                });
+                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                player_delta: None,
+                at,
+                to,
+                loc_id,
+                option: 1,
+                ticks: 1,
+                dir: Some(dir),
+                open_loc_id: None,
+                skill_req: guild.skill.filter(|_| gated).into_iter().collect(),
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: if gated { worn.clone() } else { vec![] },
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: None, });
             }
         }
     }
