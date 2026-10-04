@@ -1490,14 +1490,17 @@ mod tests {
         let junk_inventory = item_view(42, "Junk", 1, ItemContainer::Inventory);
         let tool_inventory = item_view(7, "Tool", 1, ItemContainer::Inventory);
         let mut snapshot = ready_snapshot(vec![junk_inventory.clone(), tool_inventory.clone()]);
+        let side_row = |id, name, slot| ItemView {
+            slot,
+            component_id: 2006,
+            actions: vec![Some("Deposit-1".to_owned()), Some("Deposit-All".to_owned())],
+            ..item_view(id, name, 1, ItemContainer::BankSide)
+        };
         snapshot.seed_bank_observation(
             1,
             1,
             Some(Vec::new()),
-            vec![
-                item_view(42, "Junk", 1, ItemContainer::BankSide),
-                item_view(7, "Tool", 1, ItemContainer::BankSide),
-            ],
+            vec![side_row(42, "Junk", 0), side_row(7, "Tool", 1)],
         );
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
@@ -1551,8 +1554,13 @@ mod tests {
             ledger.outbox.iter().any(|action| {
                 matches!(
                     &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::Deposit { name })
-                        if name == "Junk"
+                    HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                        id: 42,
+                        slot: 0,
+                        component: 2006,
+                        operation: 2,
+                        ..
+                    })
                 )
             })
         }));
@@ -1562,7 +1570,7 @@ mod tests {
             1,
             2,
             Some(vec![item_view(42, "Junk", 1, ItemContainer::Bank)]),
-            vec![item_view(7, "Tool", 1, ItemContainer::BankSide)],
+            vec![side_row(7, "Tool", 1)],
         );
         assert!(matches!(
             poll_once(

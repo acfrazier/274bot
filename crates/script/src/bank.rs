@@ -4,6 +4,7 @@
 //! transfer core; selection is delegated to the host's bounded bank-pick worker.
 
 pub(crate) mod npc;
+pub mod ops;
 
 pub use crate::native_bank::{
     AccessKind, BankPickReceipt, BankPickRequest, BankStandAccess, Close, Deposit, DepositArgs,

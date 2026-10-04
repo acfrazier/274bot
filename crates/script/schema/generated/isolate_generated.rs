@@ -5374,6 +5374,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_WALK_OUTCOME_CANCEL_REASON: ::flatbuffers::VOffsetT = 278;
   pub const VT_PROJECTILES: ::flatbuffers::VOffsetT = 280;
   pub const VT_CHAT_PAGE_FINGERPRINT: ::flatbuffers::VOffsetT = 282;
+  pub const VT_SIDE_MODAL_ID: ::flatbuffers::VOffsetT = 284;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5416,6 +5417,7 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    builder.add_side_modal_id(args.side_modal_id);
     if let Some(x) = args.projectiles { builder.add_projectiles(x); }
     if let Some(x) = args.api_progress { builder.add_api_progress(x); }
     if let Some(x) = args.api_gather_outcome { builder.add_api_gather_outcome(x); }
@@ -6510,6 +6512,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn side_modal_id(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(Snapshot::VT_SIDE_MODAL_ID, Some(-1)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -6658,6 +6667,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<WalkCancelReason>("walk_outcome_cancel_reason", Self::VT_WALK_OUTCOME_CANCEL_REASON, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CombatProjectile>>>>("projectiles", Self::VT_PROJECTILES, false)?
      .visit_field::<u64>("chat_page_fingerprint", Self::VT_CHAT_PAGE_FINGERPRINT, false)?
+     .visit_field::<i32>("side_modal_id", Self::VT_SIDE_MODAL_ID, false)?
      .finish();
     Ok(())
   }
@@ -6803,6 +6813,7 @@ pub struct SnapshotArgs<'a> {
     pub walk_outcome_cancel_reason: WalkCancelReason,
     pub projectiles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CombatProjectile<'a>>>>>,
     pub chat_page_fingerprint: u64,
+    pub side_modal_id: i32,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -6948,6 +6959,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       walk_outcome_cancel_reason: WalkCancelReason::None,
       projectiles: None,
       chat_page_fingerprint: 0,
+      side_modal_id: -1,
     }
   }
 }
@@ -7518,6 +7530,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(Snapshot::VT_CHAT_PAGE_FINGERPRINT, chat_page_fingerprint, 0);
   }
   #[inline]
+  pub fn add_side_modal_id(&mut self, side_modal_id: i32) {
+    self.fbb_.push_slot::<i32>(Snapshot::VT_SIDE_MODAL_ID, side_modal_id, -1);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -7675,6 +7691,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("walk_outcome_cancel_reason", &self.walk_outcome_cancel_reason());
       ds.field("projectiles", &self.projectiles());
       ds.field("chat_page_fingerprint", &self.chat_page_fingerprint());
+      ds.field("side_modal_id", &self.side_modal_id());
       ds.finish()
   }
 }

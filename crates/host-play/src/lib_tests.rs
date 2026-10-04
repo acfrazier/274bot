@@ -7102,6 +7102,209 @@ fn bank_client() -> Client {
     c
 }
 
+/// One R289 server frame, applied the way the slot drain applies it.
+fn dispatch_289(c: &mut Client, opcode: i32, bytes: Vec<u8>) {
+    c.psize = bytes.len() as i32;
+    let mut packet = Packet::new(bytes);
+    packet.set_frame_end(c.psize as usize);
+    c.handle_packet(opcode, &mut packet);
+    assert_eq!(packet.pos, c.psize as usize);
+    assert!(c.ingame, "fixture frame must not T2/logout");
+}
+
+/// An R289 client with the bank's two roots defined but closed: main 600
+/// wrapping withdraw grid 601, side 700 wrapping deposit grid 701 whose
+/// ops have a hole before the bulk op.
+fn bank_client_289() -> Client {
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    c.ingame = true;
+    c.scene_state = 2;
+    for (layer, grid, ops) in [
+        (
+            600,
+            601,
+            [
+                Some("Withdraw-1".into()),
+                Some("Withdraw-5".into()),
+                Some("Withdraw-10".into()),
+                Some("Withdraw-All".into()),
+                Some("Withdraw-X".into()),
+            ],
+        ),
+        (
+            700,
+            701,
+            [
+                Some("Deposit-1".into()),
+                None,
+                Some("Deposit-All".into()),
+                None,
+                None,
+            ],
+        ),
+    ] {
+        c.set_iface(
+            layer,
+            IfType {
+                id: layer as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![grid as i32]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            grid,
+            IfType {
+                id: grid as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_INV,
+                iop: ops,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            grid,
+            IfTypeMut {
+                link_obj_type: Some(vec![0; 28]),
+                link_obj_number: Some(vec![0; 28]),
+                ..Default::default()
+            },
+        );
+    }
+    c
+}
+
+/// P-side through the real packet order and the isolate IPC: the side
+/// inventory arrives before the one main+side packet (a drain may stop in
+/// between), a genuinely empty side posts as `Some(&[])`, and a close or a
+/// main-only reopen is `None` even though the leftover list is empty. The
+/// native accessor and the decoded isolate rows agree, with op positions
+/// (the hole before Deposit-All) preserved.
+#[test]
+fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
+    use client::io::ServerProt289;
+    use script::bank::ops;
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut c = bank_client_289();
+    let mut snap = GameSnapshot::new();
+    let mut last = None;
+    let mut tick = 0;
+    script::observed::on_reset();
+    // One host frame: rebuild, post the IPC delta, apply it in the isolate.
+    // Returns (native side, isolate side) as `None` / row count, plus the
+    // sweep op each representation chooses for the first side row.
+    let mut frame = |c: &Client, snap: &mut GameSnapshot| {
+        snap.rebuild(c);
+        tick += 1;
+        let (bytes, fp) = script_snapshot_fb(
+            last.as_ref(),
+            false,
+            tick,
+            None,
+            true,
+            None,
+            Some(snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        last = Some(fp);
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        script::observed::apply(&view);
+        let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
+            .bank_side()
+            .map(|side| {
+                (
+                    side.value.len(),
+                    side.value.first().and_then(ops::sweep_op),
+                    side.value
+                        .first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            });
+        let isolate = script::observed::with(|scene| {
+            let session = scene.since_login();
+            ops::side_observation(
+                session.bank_open().unwrap_or(false),
+                session.side_modal_id().unwrap_or(-1),
+                session.bank_side().map(Vec::as_slice).unwrap_or_default(),
+            )
+            .map(|side| {
+                (
+                    side.len(),
+                    side.first().and_then(ops::sweep_op),
+                    side.first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            })
+        });
+        (native, isolate)
+    };
+
+    // The side inventory lands first; the drain stops before the modal.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 1, 0, 2, 3],
+    );
+    assert_eq!(frame(&c, &mut snap), (None, None), "no root, no side");
+    // The one main+side packet raises both roots together.
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let click = ops::DepositClick {
+        id: 1,
+        slot: 0,
+        component: 701,
+        operation: 3,
+    };
+    let posted = Some((1, Some(3), Some(click)));
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+    // An unchanged delta keeps the posted root.
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+
+    // Close: both roots drop; the side is not posted, not empty.
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    // A genuinely empty side update, then the modal: posted empty.
+    dispatch_289(&mut c, ServerProt289::UPDATE_INV_FULL, vec![2, 189, 0, 0]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let empty = Some((0, None, None));
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+
+    // Close, then a main-only reopen: a new session whose side root is
+    // still down reads `None` although the leftover list is empty.
+    let before = snap.bank_session_generation();
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN, vec![2, 88]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    assert!(snap.bank_session_generation() > before);
+    assert!(snap.bank_component_id() >= 0, "the main bank is open");
+    assert!(snap.bank_side().is_empty(), "the leftover list is empty");
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+    script::observed::on_reset();
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -7628,6 +7831,17 @@ export default class T extends LoopingBot {
         .expect("withdraw-X isolate starts");
 
     let mut c = bank_fetch_client();
+    // The pack is the explicit posted inventory below: the isolate settles
+    // the whole request from the same rows the host settles each click on.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 28]),
+            link_obj_number: Some(vec![0; 28]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);

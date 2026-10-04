@@ -614,6 +614,9 @@ scene_pages! {
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
+        /// `modals().side` (`-1` none): with `bank_open`, whether
+        /// `bank_side` is a posted pack ([`crate::bank::ops::side_observation`]).
+        side_modal_id: i32,
         chat_open: bool,
         chat_continue: bool,
         count_dialog_open: bool,
@@ -1044,6 +1047,9 @@ impl Scene {
         }
         if snap.has_chat_modal_id() {
             p.chat_modal_id(snap.chat_modal_id());
+        }
+        if snap.has_side_modal_id() {
+            p.side_modal_id(snap.side_modal_id());
         }
         if snap.has_chat_open() {
             p.chat_open(snap.chat_open());
