@@ -20,26 +20,28 @@
 //! The caller's `Sustain.run()` runs once a tick while walking, as frozen
 //! runs it every follow pass (`WalkExecutor.ts:844–853`).
 //!
-//! `missingBoatFare` (`karamjaRecovery.ts:16–20`): on Karamja, walking off
-//! the island, and the only missing carry row is the selected coins item with
-//! a required count above the amount held. Frozen names the shortfall
-//! (`bankPlan.ts:98–113`); the host uses the edge's required total count from
-//! `walk_missing_carry` (`nav::router::missing_item_reqs`). The rows are only
-//! posted for a `NoPath` failure, as frozen only explains an `unreachable`
-//! one (`WalkExecutor.ts:466–490`).
+//! `missingBoatFare` (`karamjaRecovery.ts:16–20`) only applies on Karamja
+//! when walking off the island and the route reports exactly one missing
+//! coins row whose required count equals the selected full-crate payout and
+//! exceeds the amount held. Frozen names the shortfall (`bankPlan.ts:98–113`);
+//! the host gets the required total from `walk_missing_carry`
+//! (`nav::router::missing_item_reqs`). These rows are only posted for a
+//! `NoPath` failure, as frozen only explains an `unreachable` one
+//! (`WalkExecutor.ts:466–490`).
 //!
-//! The recovery is the banana-plantation job derived from selected content
-//! (`quest_hunt/scripts/luthas.rs2` and `piratestreasure/karamja.ts`): talk to
-//! Luthas, fill the configured crate from the fruiting grove, then talk again.
-//! Frozen primitives ported here: `openDialogue` / `talkChoosingBy`
-//! with no rules (`primitives.ts:227–253, 276–318`), `driveChoice` /
-//! `driveUntil` / `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`),
-//! `pickBananas` (`karamja.ts:45–74`) and `searchBananaCrate` /
-//! `readCrateMessages` (`crate.ts:16–60`). `openDialogue`'s
-//! `Reach.entityOp` is [`NpcReach`]. `driveUntil`'s `prayerUpkeep` has no
-//! host quest-prayer state and is not called; `Sustain.run` is the
-//! embedding family's per-tick `sustain` pump. The host posts no chat-modal
-//! text, so the strict talk's no-match line cannot quote what the NPC said.
+//! Karamja facts come from the selected Luthas and banana-crate scripts,
+//! plantation/tree configs, identity packs and map placements. The frozen
+//! `karamja.ts` orchestration is ported here: talk to Luthas, fill the
+//! configured crate from fruiting placements, then talk again. Frozen
+//! primitives ported here: `openDialogue` / `talkChoosingBy` with no rules
+//! (`primitives.ts:227–253, 276–318`), `driveChoice` / `driveUntil` /
+//! `useOnLoc` / `settleScene` (`prompts.ts:30–93, 316–345`), `pickBananas`
+//! (`karamja.ts:45–74`) and `searchBananaCrate` / `readCrateMessages`
+//! (`crate.ts:16–60`). `openDialogue`'s `Reach.entityOp` is [`NpcReach`].
+//! `driveUntil`'s `prayerUpkeep` has no host quest-prayer state and is not
+//! called; `Sustain.run` is the embedding family's per-tick `sustain` pump.
+//! The host posts no chat-modal text, so the strict talk's no-match line cannot
+//! quote what the NPC said.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
@@ -101,6 +103,35 @@ impl Drop for Guard {
 fn on_island(tile: WorldTile) -> bool {
     tile.level == 0 && (2700..3000).contains(&tile.x) && (2880..=3255).contains(&tile.z)
 }
+/// The frozen grove center is a free tile; anchor on its nearest content tree.
+const FROZEN_GROVE_ANCHOR: WorldTile = WorldTile {
+    x: 2926,
+    z: 3160,
+    level: 0,
+};
+
+/// Choose the content tree nearest the frozen grove center in Chebyshev tile
+/// distance, with plane, z, then x as deterministic tie-breakers.
+fn grove_anchor(spawns: &[api::game_data::KaramjaSpawn]) -> Option<WorldTile> {
+    spawns
+        .iter()
+        .min_by_key(|spawn| {
+            let dx = (i64::from(spawn.x) - i64::from(FROZEN_GROVE_ANCHOR.x)).abs();
+            let dz = (i64::from(spawn.z) - i64::from(FROZEN_GROVE_ANCHOR.z)).abs();
+            (
+                dx.max(dz),
+                (spawn.plane - FROZEN_GROVE_ANCHOR.level).abs(),
+                spawn.plane,
+                spawn.z,
+                spawn.x,
+            )
+        })
+        .map(|spawn| WorldTile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        })
+}
 
 struct TreeAction {
     id: i32,
@@ -117,7 +148,7 @@ struct BoatFacts {
     crate_tile: WorldTile,
     grove_tile: WorldTile,
     crate_capacity: i32,
-    fare: i32,
+    coin_payout: i32,
     crate_search: String,
     preferences: [String; 3],
 }
@@ -186,9 +217,7 @@ impl BoatFacts {
             z: spawn.z,
             level: spawn.plane,
         };
-        let grove = facts
-            .banana_tree_spawns
-            .first()
+        let grove_tile = grove_anchor(&facts.banana_tree_spawns)
             .ok_or_else(|| "selected content has no banana tree placement".to_string())?;
         Ok(Rc::new(Self {
             coins,
@@ -198,9 +227,9 @@ impl BoatFacts {
             luthas_name,
             luthas_anchor: tile(&facts.luthas_spawn),
             crate_tile: tile(&facts.crate_spawn),
-            grove_tile: tile(grove),
+            grove_tile,
             crate_capacity: facts.crate_capacity,
-            fare: facts.coin_payout,
+            coin_payout: facts.coin_payout,
             crate_search,
             preferences: [
                 facts.dialogue.employment.clone(),
@@ -250,29 +279,40 @@ fn inventory_full() -> bool {
     })
 }
 
-/// Frozen `missingBoatFare` over the host's posted walk shorts. The failed
-/// native route must report the selected content's full-crate coin payout.
-fn missing_boat_fare(dest: WorldTile, facts: &BoatFacts) -> Option<i32> {
-    let from = here()?;
-    if !on_island(from) || on_island(dest) {
-        return None;
-    }
+/// Whether the current failed walk reports the exact selected boat fare.
+fn missing_boat_fare(facts: &BoatFacts) -> bool {
     let coins_held = held(facts.coins);
     observed::with(|scene| {
         scene
             .since_login()
             .walk_missing_carry()
-            .and_then(|rows| match rows.as_slice() {
-                [row]
-                    if row.id == facts.coins
-                        && row.count == facts.fare
-                        && row.count > coins_held =>
-                {
-                    Some(row.count)
-                }
-                _ => None,
+            .is_some_and(|rows| {
+                matches!(
+                    rows.as_slice(),
+                    [row] if row.id == facts.coins
+                        && row.count == facts.coin_payout
+                        && row.count > coins_held
+                )
             })
     })
+}
+
+/// Cheap frozen island gate, checked before resolving selected game facts.
+fn is_island_exit(dest: WorldTile) -> bool {
+    here().is_some_and(|from| on_island(from) && !on_island(dest))
+}
+fn recovery_facts(
+    dest: WorldTile,
+    logs: &mut VecDeque<String>,
+) -> Result<Option<Rc<BoatFacts>>, bool> {
+    if !is_island_exit(dest) {
+        return Ok(None);
+    }
+    let facts = BoatFacts::selected().map_err(|error| {
+        logs.push_back(format!("boat fare recovery facts unavailable: {error}"));
+        false
+    })?;
+    Ok(missing_boat_fare(&facts).then_some(facts))
 }
 
 /// One posted loc the frozen query picked: its op target.
@@ -1051,7 +1091,6 @@ enum Stage {
 /// `Some(true)` once the pack holds the fare.
 pub(crate) struct Recover {
     facts: Rc<BoatFacts>,
-    required_coins: i32,
     stage: Stage,
     _guard: Guard,
 }
@@ -1067,10 +1106,7 @@ impl Recover {
         if RECOVERING.with(Cell::get) || interrupted(cx) {
             return Err(false);
         }
-        let Ok(facts) = BoatFacts::selected() else {
-            return Err(false);
-        };
-        let Some(required_coins) = missing_boat_fare(dest, &facts) else {
+        let Some(facts) = recovery_facts(dest, logs)? else {
             return Err(false);
         };
         if inventory_full() && held(facts.banana) == 0 {
@@ -1079,13 +1115,12 @@ impl Recover {
         }
         let guard = Guard::take().ok_or(false)?;
         logs.push_back(format!(
-            "no boat fare: earning {required_coins} coins at {}'s plantation",
-            facts.luthas_name
+            "no boat fare: earning {} coins at {}'s plantation",
+            facts.coin_payout, facts.luthas_name
         ));
         let stage = Self::talk(&facts, false, cx, logs)?;
         Ok(Self {
             facts,
-            required_coins,
             stage,
             _guard: guard,
         })
@@ -1160,8 +1195,8 @@ impl Recover {
                     return Some(false);
                 }
                 let coins = held(self.facts.coins);
-                if *second || coins >= self.required_coins {
-                    return Some(coins >= self.required_coins);
+                if *second || coins >= self.facts.coin_payout {
+                    return Some(coins >= self.facts.coin_payout);
                 }
                 if interrupted(cx) {
                     return Some(false);

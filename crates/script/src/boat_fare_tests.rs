@@ -3,15 +3,15 @@
 //! payment and the re-walk to the boat. Driven through the registered
 //! machine families and synthetic posts only.
 
-use super::BoatFacts;
+use super::{grove_anchor, recovery_facts, BoatFacts};
 use crate::machine::{self, Outcome, Started, Take};
 use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
 use crate::shim::InteractReq;
 use crate::walk::tests::{post_walk_outcome, reset, NoJs};
 use api::snapshot::WorldTile;
 use serde_json::json;
+use std::collections::VecDeque;
 use std::rc::Rc;
-
 const MUSA: WorldTile = WorldTile {
     x: 2954,
     z: 3147,
@@ -22,6 +22,60 @@ const PORT_SARIM: WorldTile = WorldTile {
     z: 3217,
     level: 0,
 };
+#[test]
+fn grove_anchor_uses_nearest_content_tree_to_frozen_center_deterministically() {
+    use api::game_data::KaramjaSpawn;
+
+    let spawn = |config: &str, x, z| KaramjaSpawn {
+        config: config.into(),
+        x,
+        z,
+        plane: 0,
+    };
+    let spawns = [
+        spawn("bananatreefull", 2918, 3155),
+        spawn("bananatreeone", 2926, 3161),
+        spawn("bananatreeempty", 2925, 3160),
+    ];
+    let expected = WorldTile {
+        x: 2925,
+        z: 3160,
+        level: 0,
+    };
+    assert_eq!(grove_anchor(&spawns), Some(expected));
+    let reversed: Vec<_> = spawns.iter().rev().cloned().collect();
+    assert_eq!(grove_anchor(&reversed), Some(expected));
+}
+
+#[test]
+fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
+    let mainland = WorldTile {
+        x: 3100,
+        z: 3200,
+        level: 0,
+    };
+    reset();
+    let mut world = World::new(mainland, 5);
+    world.post();
+    crate::supply_v2::configure(None);
+    let mut logs = VecDeque::new();
+    assert!(recovery_facts(PORT_SARIM, &mut logs).unwrap().is_none());
+    assert!(
+        logs.is_empty(),
+        "the cheap mainland gate does not inspect selected facts"
+    );
+
+    reset();
+    let mut world = World::new(MUSA, 5);
+    world.post();
+    crate::supply_v2::configure(None);
+    assert!(recovery_facts(PORT_SARIM, &mut logs).is_err());
+    assert_eq!(logs.len(), 1);
+    assert!(
+        logs[0].starts_with("boat fare recovery facts unavailable: "),
+        "selection error should be retained as a skip diagnostic: {logs:?}"
+    );
+}
 
 fn selected_facts() -> Rc<BoatFacts> {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -273,7 +327,7 @@ fn earn_the_fare() -> (machine::Handle, World, InteractReq, InteractReq) {
     let employment = world.facts.preferences[0].clone();
     let paid = world.facts.preferences[1].clone();
     let coins_id = world.facts.coins;
-    let fare = world.facts.fare;
+    let fare = world.facts.coin_payout;
     let h = start_walk_to(&mut world);
     let first = machine::merge_ops(Vec::new());
     assert!(
@@ -417,7 +471,7 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
                 z: 3200,
                 level: 0,
             },
-            selected_facts().fare,
+            selected_facts().coin_payout,
         ),
     ] {
         reset();
@@ -450,7 +504,7 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
     let mut world = World::new(MUSA, 5);
     world.filler = 27;
     let coins_id = world.facts.coins;
-    let fare = world.facts.fare;
+    let fare = world.facts.coin_payout;
     let h = start_walk_to(&mut world);
     let first = machine::merge_ops(Vec::new());
     fail_short(
@@ -470,7 +524,7 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
     let mut world = World::new(MUSA, 5);
     let coins_id = world.facts.coins;
     let luthas = world.facts.luthas_anchor;
-    let fare = world.facts.fare;
+    let fare = world.facts.coin_payout;
     world.post();
     let args = json!({
         "tile": { "x": PORT_SARIM.x, "z": PORT_SARIM.z, "level": 0 },

@@ -314,11 +314,8 @@ pub(crate) fn resolve_route_exclusions(
                 if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
                     return Err(format!("avoidZones: unknown zone {id:?}"));
                 }
-                let Some(rect) = table.resolve(id).and_then(|key| match key {
-                    ZoneKey::Group(index) => table
-                        .groups()
-                        .get(usize::from(index))
-                        .map(|group| group.rect),
+                let Some(group) = table.resolve(id).and_then(|key| match key {
+                    ZoneKey::Group(index) => table.groups().get(usize::from(index)),
                     ZoneKey::Zone(_) => None,
                 }) else {
                     return Err(format!(
@@ -326,12 +323,27 @@ pub(crate) fn resolve_route_exclusions(
                     ));
                 };
                 match id.as_str() {
-                    "white-wolf-mountain" => exclusions.avoid.push(rect),
+                    "white-wolf-mountain" => exclusions.avoid.push(group.rect),
                     "draynor-jail-guards" => {
-                        let endpoint_inside = rect.contains(from) || rect.contains(to);
+                        let member_rect = |member: &u16| {
+                            let zone = &table.zones()[usize::from(*member)];
+                            AvoidRect {
+                                min_x: zone.min_x,
+                                max_x: zone.max_x,
+                                min_z: zone.min_z,
+                                max_z: zone.max_z,
+                                level: Some(i32::from(zone.level)),
+                            }
+                        };
+                        let endpoint_inside = group.members.iter().any(|member| {
+                            let rect = member_rect(member);
+                            rect.contains(from) || rect.contains(to)
+                        });
                         let combat_high = state.combat_level.is_some_and(|level| level > 50);
                         if !endpoint_inside && !combat_high {
-                            exclusions.avoid.push(rect);
+                            exclusions
+                                .avoid
+                                .extend(group.members.iter().map(member_rect));
                         }
                     }
                     _ => unreachable!(),

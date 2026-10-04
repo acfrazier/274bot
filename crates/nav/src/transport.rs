@@ -510,12 +510,21 @@ fn derive_transports_with_audit(
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
+        &mut skipped,
     );
     if let Some(name) = gates.completed_quest_name("runemysteries", "runemysteries_complete") {
         essence_mine_edges(&mut graph, name);
+    } else {
+        bump(
+            &mut skipped,
+            SKIP_ESSENCE_JOURNAL_NAME,
+            ESSENCE_WIZARDS.len(),
+        );
     }
     if let Some(name) = gates.completed_quest_name("treequest", "tree_complete") {
         elkoy_edges(&mut graph, name);
+    } else {
+        bump(&mut skipped, SKIP_ELKOY_JOURNAL_NAME, ELKOY_ESCORTS.len());
     }
     glider_edges(content_root, &mut graph);
     spirit_tree_edges(
@@ -658,6 +667,10 @@ const SKIP_TELEPORT_UNPROVEN_CONSUMPTION: &str = "jewellery inventory transforma
 const SKIP_WILDERNESS_RULES: &str = "wilderness level formula or zones cannot be derived";
 const SKIP_TELEPORT_WILDY_CAP: &str = "teleport wilderness cap cannot be derived";
 const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";
+const SKIP_ESSENCE_JOURNAL_NAME: &str =
+    "Rune Mysteries journal name unresolved for essence-mine hops";
+const SKIP_ELKOY_JOURNAL_NAME: &str = "Tree Gnome Village journal name unresolved for Elkoy hops";
+const SKIP_HAJEDY_JOURNAL_NAME: &str = "Shilo Village journal name unresolved for Hajedy cart hop";
 const SKIP_WEB_NO_FAR: &str = "slashable web has no standable far side";
 const SKIP_FREE_ARM_GATE_CONFLICT: &str =
     "door reads as both a varp-gated door and a directional free arm (gate kept)";

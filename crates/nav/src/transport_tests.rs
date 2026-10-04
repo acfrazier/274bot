@@ -187,6 +187,48 @@ fn derive_transports_emits_elkoy_escort_both_ways() {
         }
     );
 }
+#[test]
+fn unresolved_quest_journal_names_count_skipped_transport_hops() {
+    let fx = Fixture::new();
+    write_static_route_journal(&fx);
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[rune]\n[tree]\n[cart]\n",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+
+    assert_eq!(
+        skipped.get(SKIP_ESSENCE_JOURNAL_NAME).copied(),
+        Some(ESSENCE_WIZARDS.len())
+    );
+    assert_eq!(
+        skipped.get(SKIP_ELKOY_JOURNAL_NAME).copied(),
+        Some(ELKOY_ESCORTS.len())
+    );
+    assert_eq!(
+        skipped.get(SKIP_HAJEDY_JOURNAL_NAME).copied(),
+        Some(1),
+        "the single journal-gated Hajedy cart hop is counted"
+    );
+    for npc in [553, 300, 462, 844, 171, 473, 474, 510] {
+        assert!(
+            !graph
+                .edges
+                .iter()
+                .any(|edge| { edge.kind == TransportKind::Npc && edge.loc_id == npc }),
+            "unresolved journal name must not emit gated NPC hop {npc}"
+        );
+    }
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == TransportKind::Npc && edge.loc_id == 511),
+        "the ungated return cart remains available"
+    );
+}
 
 /// The Zanaris shed door (`quest_zanaris.rs2:89-100`
 /// `[oploc1,zanarisdoor]`): its Open channel teleports through to Zanaris
