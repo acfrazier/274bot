@@ -103,24 +103,39 @@ struct HuntAntifire {
 impl HuntAntifire {
     fn observe(&mut self, scene: &Scene, tables: &CombatTables, tick: u16) -> bool {
         if self.epoch != scene.epoch() || scene.since_login().ingame() != Some(true) {
-            *self = Self { epoch: scene.epoch(), ..Self::default() };
+            *self = Self {
+                epoch: scene.epoch(),
+                ..Self::default()
+            };
         }
         let session = scene.since_login();
         let doses = session.inv().map(|rows| {
-            rows.iter().filter_map(|row| {
-                tables.potion(PotionKind::Antifire)?.doses.iter().flatten()
-                    .find(|dose| dose.id == row.id)
-                    .map(|dose| row.count.saturating_mul(i32::from(dose.doses)))
-            }).sum::<i32>()
+            rows.iter()
+                .filter_map(|row| {
+                    tables
+                        .potion(PotionKind::Antifire)?
+                        .doses
+                        .iter()
+                        .flatten()
+                        .find(|dose| dose.id == row.id)
+                        .map(|dose| row.count.saturating_mul(i32::from(dose.doses)))
+                })
+                .sum::<i32>()
         });
         let mut drank = false;
         if let Some(lines) = session.chat_lines() {
             for line in lines {
                 if self.last_chat.is_none_or(|seq| line.seq > seq) {
                     let text = line.text.as_bytes();
-                    drank |= text.get(..9).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"you drink"))
-                        && (text.windows(8).any(|part| part.eq_ignore_ascii_case(b"antifire"))
-                            || text.windows(9).any(|part| part.eq_ignore_ascii_case(b"anti-fire")));
+                    drank |= text
+                        .get(..9)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"you drink"))
+                        && (text
+                            .windows(8)
+                            .any(|part| part.eq_ignore_ascii_case(b"antifire"))
+                            || text
+                                .windows(9)
+                                .any(|part| part.eq_ignore_ascii_case(b"anti-fire")));
                 }
             }
             if let Some(seq) = lines.iter().map(|line| line.seq).max() {
@@ -544,7 +559,11 @@ impl FightRuntime {
             Some(tables) => tables,
             None => self.tables.insert(hunt_combat_tables()?),
         };
-        Ok(protect_button(&mut self.threats, &mut self.pending_protect, tables))
+        Ok(protect_button(
+            &mut self.threats,
+            &mut self.pending_protect,
+            tables,
+        ))
     }
 
     fn apply_freeze(&mut self, paused: bool, held: bool) {
@@ -930,9 +949,10 @@ fn protect_button(
         let varps = session.varps()?;
         let tick = scene.session_tick().unwrap_or_default() as u16;
         let prayer = session.stats()?.prayer?;
-        if pending.varp.is_some_and(|varp| {
-            varps.iter().any(|row| row.index == varp && row.value == 1)
-        }) {
+        if pending
+            .varp
+            .is_some_and(|varp| varps.iter().any(|row| row.index == varp && row.value == 1))
+        {
             pending.schedule.settle(OpKind::Prayer);
         } else if pending.schedule.pending(OpKind::Prayer)
             && pending.schedule.ready(OpKind::Prayer, tick)
@@ -940,10 +960,15 @@ fn protect_button(
             pending.schedule.timeout(OpKind::Prayer);
             pending.varp = None;
         }
-        let shield = tables.selected().item_by_alias("antidragonbreathshield")
-            .is_some_and(|shield| session.equipment().is_some_and(|rows| {
-                rows.iter().any(|row| row.slot == Some(5) && row.id == shield.id)
-            }));
+        let shield = tables
+            .selected()
+            .item_by_alias("antidragonbreathshield")
+            .is_some_and(|shield| {
+                session.equipment().is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row.slot == Some(5) && row.id == shield.id)
+                })
+            });
         let antifire = ANTIFIRE.with(|state| state.borrow_mut().observe(scene, tables, tick));
         threats.observe_hunt(
             npcs.iter().map(|npc| {
@@ -978,14 +1003,17 @@ fn protect_button(
         )?;
         if prayer.base < wanted.level
             || prayer.effective <= 0
-            || varps.iter().any(|row| row.index == wanted.varp && row.value == 1)
-            || (pending.varp == Some(wanted.varp)
-                && !pending.schedule.ready(OpKind::Prayer, tick))
+            || varps
+                .iter()
+                .any(|row| row.index == wanted.varp && row.value == 1)
+            || (pending.varp == Some(wanted.varp) && !pending.schedule.ready(OpKind::Prayer, tick))
         {
             return None;
         }
         pending.varp = Some(wanted.varp);
-        pending.schedule.admitted(OpKind::Prayer, tick, 0, false, InputEffect::PrayerOn);
+        pending
+            .schedule
+            .admitted(OpKind::Prayer, tick, 0, false, InputEffect::PrayerOn);
         Some(wanted.button_com)
     })
 }
@@ -2325,7 +2353,11 @@ fn seed_protect_observation() -> i32 {
                 value: 0,
             }]);
         post.stats(Skills {
-            prayer: Some(Skill { base: 43, effective: 43, xp: 0 }),
+            prayer: Some(Skill {
+                base: 43,
+                effective: 43,
+                xp: 0,
+            }),
             ..Skills::default()
         });
     });
@@ -2358,13 +2390,20 @@ mod tests {
         let effect = next_effect(&mut runtime, &projection, Some(&json!({ "eatOk": true })));
         assert_eq!(effect["kind"], "if-button");
         assert_eq!(effect["component_id"], button);
-        assert_ne!(runtime.mode, Mode::Eating, "the eat reply must already be handled");
+        assert_ne!(
+            runtime.mode,
+            Mode::Eating,
+            "the eat reply must already be handled"
+        );
         let deferred_kind = runtime.deferred_effect.as_ref().unwrap()["kind"].clone();
         let resumed = next_effect(&mut runtime, &projection, Some(&json!({ "queued": true })));
         assert_eq!(resumed["kind"], deferred_kind);
         assert_ne!(resumed["kind"], "aborted");
         assert!(runtime.deferred_effect.is_none());
-        assert_ne!(next_effect(&mut runtime, &projection, None)["kind"], "aborted");
+        assert_ne!(
+            next_effect(&mut runtime, &projection, None)["kind"],
+            "aborted"
+        );
     }
 
     #[test]
@@ -2385,12 +2424,20 @@ mod tests {
         for (base, points, expected) in [(39, 39, None), (43, 0, None), (40, 1, Some(button))] {
             observed::post(2, |post| {
                 post.stats(Skills {
-                    prayer: Some(Skill { base, effective: points, xp: 0 }),
+                    prayer: Some(Skill {
+                        base,
+                        effective: points,
+                        xp: 0,
+                    }),
                     ..Skills::default()
                 });
             });
             assert_eq!(
-                protect_button(&mut ThreatSet::default(), &mut PendingProtect::default(), &tables),
+                protect_button(
+                    &mut ThreatSet::default(),
+                    &mut PendingProtect::default(),
+                    &tables
+                ),
                 expected,
                 "base={base}, points={points}"
             );
@@ -2418,21 +2465,32 @@ mod tests {
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
         observed::post(4, |post| {
             post.stats(Skills {
-                prayer: Some(Skill { base: 43, effective: 0, xp: 0 }),
+                prayer: Some(Skill {
+                    base: 43,
+                    effective: 0,
+                    xp: 0,
+                }),
                 ..Skills::default()
             });
         });
         assert_eq!(runtime.protect_click().unwrap(), None);
         observed::post(5, |post| {
             post.stats(Skills {
-                prayer: Some(Skill { base: 43, effective: 17, xp: 0 }),
+                prayer: Some(Skill {
+                    base: 43,
+                    effective: 17,
+                    xp: 0,
+                }),
                 ..Skills::default()
             });
         });
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
         let varp = runtime.pending_protect.varp.unwrap();
         observed::post(6, |post| {
-            post.varps(vec![observed::VarpRow { index: varp, value: 1 }]);
+            post.varps(vec![observed::VarpRow {
+                index: varp,
+                value: 1,
+            }]);
         });
         assert_eq!(runtime.protect_click().unwrap(), None);
         assert!(!runtime.pending_protect.schedule.pending(OpKind::Prayer));
@@ -2451,7 +2509,8 @@ mod tests {
             },
             "items": [], "consumption": [], "pickpocket": [],
             "style_spotanims": [{ "spotanim_id": 9, "style": 0, "where": "projectile" }]
-        })).unwrap();
+        }))
+        .unwrap();
         crate::supply_v2::configure(Some(Arc::new(invalid)));
         assert!(hunt_combat_tables().is_err());
         let mut runtime = FightRuntime::new(17, Instant::now());
@@ -2461,36 +2520,54 @@ mod tests {
         assert_eq!(effect["notes"][0]["kind"], "log");
         assert_eq!(effect["notes"][0]["message"], effect["reason"]);
         seed_protect_observation();
-        assert!(hunt_combat_tables().is_ok(), "reconfigure must clear cached failure");
+        assert!(
+            hunt_combat_tables().is_ok(),
+            "reconfigure must clear cached failure"
+        );
     }
 
     #[test]
     fn hunt_antifire_tracks_confirmed_sips_across_tokens_and_expires_like_combat() {
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
-        let potion = tables.potion(PotionKind::Antifire).expect("selected antifire family");
+        let potion = tables
+            .potion(PotionKind::Antifire)
+            .expect("selected antifire family");
         let full = potion.doses[3].unwrap();
         let next = potion.doses[2].unwrap();
         let mut state = HuntAntifire::default();
         observed::post(10, |post| {
-            post.inv(vec![ItemRow { id: full.id, count: 1, ..ItemRow::default() }])
-                .chat_lines(vec![]);
+            post.inv(vec![ItemRow {
+                id: full.id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
         });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
         observed::post(11, |post| {
-            post.inv(vec![ItemRow { id: next.id, count: 1, ..ItemRow::default() }])
-                .chat_lines(vec![observed::ChatLine {
-                    seq: 1, text: "You drink some of your antifire potion.".into(),
-                }]);
+            post.inv(vec![ItemRow {
+                id: next.id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![observed::ChatLine {
+                seq: 1,
+                text: "You drink some of your antifire potion.".into(),
+            }]);
         });
         assert!(observed::with(|scene| state.observe(scene, &tables, 11)));
         assert!(observed::with(|scene| state.observe(scene, &tables, 610)));
         assert!(!observed::with(|scene| state.observe(scene, &tables, 611)));
         // The retained consume chat cannot renew the sip when another dose is
         // dropped/banked, and a scene reset cannot carry the old protection.
-        observed::post(612, |post| { post.inv(vec![]); });
+        observed::post(612, |post| {
+            post.inv(vec![]);
+        });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 612)));
-        observed::replace(1, true, |post| { post.inv(vec![]).chat_lines(vec![]); });
+        observed::replace(1, true, |post| {
+            post.inv(vec![]).chat_lines(vec![]);
+        });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 1)));
     }
 
@@ -2498,14 +2575,22 @@ mod tests {
     fn hunt_antifire_dose_drop_without_fresh_consume_chat_is_not_a_sip() {
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
-        let id = tables.potion(PotionKind::Antifire).unwrap().doses[3].unwrap().id;
+        let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
+            .unwrap()
+            .id;
         let mut state = HuntAntifire::default();
         observed::post(10, |post| {
-            post.inv(vec![ItemRow { id, count: 1, ..ItemRow::default() }])
-                .chat_lines(vec![]);
+            post.inv(vec![ItemRow {
+                id,
+                count: 1,
+                ..ItemRow::default()
+            }])
+            .chat_lines(vec![]);
         });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 10)));
-        observed::post(11, |post| { post.inv(vec![]); });
+        observed::post(11, |post| {
+            post.inv(vec![]);
+        });
         assert!(!observed::with(|scene| state.observe(scene, &tables, 11)));
     }
 }
