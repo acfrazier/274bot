@@ -50,45 +50,53 @@ pub(super) fn web_edges(
                 bump(skipped, SKIP_WEB_NO_FAR, 1);
                 continue;
             };
-            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-            player_delta: None,
-            at,
-            to,
-            loc_id: closed,
-            option: WEB_USE_OPTION,
-            ticks: WEB_TICKS,
-            dir: Some(dir),
-            open_loc_id: open_id,
-            skill_req: vec![],
-            item_req: vec![(knife, 1)],
-            consumed_req: vec![],
-            item_returns: vec![],
-            quest_req: vec![],
-            varp_req: vec![],
-            worn_req: vec![],
-            members_req: false,
-            wildy_cap: None,
-            quest_gates: None, });
-            if !slash_blades.is_empty() {
-                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
+            graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: Vec::new(),
+                kind: TransportKind::Door,
                 player_delta: None,
                 at,
                 to,
                 loc_id: closed,
-                option: 1,
+                option: WEB_USE_OPTION,
                 ticks: WEB_TICKS,
                 dir: Some(dir),
                 open_loc_id: open_id,
                 skill_req: vec![],
-                item_req: vec![],
+                item_req: vec![(knife, 1)],
                 consumed_req: vec![],
                 item_returns: vec![],
                 quest_req: vec![],
                 varp_req: vec![],
-                worn_req: slash_blades.clone(),
+                worn_req: vec![],
                 members_req: false,
                 wildy_cap: None,
-                quest_gates: None, });
+                quest_gates: None,
+            });
+            if !slash_blades.is_empty() {
+                graph.edges.push(TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
+                    kind: TransportKind::Door,
+                    player_delta: None,
+                    at,
+                    to,
+                    loc_id: closed,
+                    option: 1,
+                    ticks: WEB_TICKS,
+                    dir: Some(dir),
+                    open_loc_id: open_id,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    consumed_req: vec![],
+                    item_returns: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: slash_blades.clone(),
+                    members_req: false,
+                    wildy_cap: None,
+                    quest_gates: None,
+                });
             }
         }
     }

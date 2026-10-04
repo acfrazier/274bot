@@ -90,29 +90,33 @@ pub(super) fn zanaris_door_edges(
         if loc.level != 0 || loc.shape != 0 {
             continue;
         }
-        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: loc.x,
-            z: loc.z,
-            level: loc.level,
-        },
-        to,
-        loc_id,
-        option: 1, // Open (oploc1)
-        ticks: ZANARIS_DOOR_TICKS,
-        dir: None,
-        open_loc_id,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec!["Lost City".to_string()],
-        varp_req: vec![],
-        worn_req: vec![staff_id],
-        members_req,
-        wildy_cap: None,
-        quest_gates: None, });
+        graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            kind: TransportKind::Door,
+            player_delta: None,
+            at: WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            },
+            to,
+            loc_id,
+            option: 1, // Open (oploc1)
+            ticks: ZANARIS_DOOR_TICKS,
+            dir: None,
+            open_loc_id,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec!["Lost City".to_string()],
+            varp_req: vec![],
+            worn_req: vec![staff_id],
+            members_req,
+            wildy_cap: None,
+            quest_gates: None,
+        });
     }
     if graph.edges.len() == edge_start {
         bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);

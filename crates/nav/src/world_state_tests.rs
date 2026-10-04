@@ -37,33 +37,37 @@ fn client() -> Client {
 /// 10 coins, plus one requirement of each other kind so the gating
 /// test covers all five vectors.
 fn gated_edge() -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 3268,
-        z: 3227,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3269,
-        z: 3227,
-        level: 0,
-    },
-    loc_id: 2882,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
-    item_req: vec![],
-    consumed_req: vec![(995, 10)], // the 10-coin toll
-    item_returns: vec![],
-    quest_req: vec!["Rune Mysteries".to_string()],
-    varp_req: vec![(150, 160)], // Grand Tree complete
-    worn_req: vec![1712],       // a charged glory
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 3268,
+            z: 3227,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3269,
+            z: 3227,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
+        item_req: vec![],
+        consumed_req: vec![(995, 10)], // the 10-coin toll
+        item_returns: vec![],
+        quest_req: vec!["Rune Mysteries".to_string()],
+        varp_req: vec![(150, 160)], // Grand Tree complete
+        worn_req: vec![1712],       // a charged glory
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 #[test]
@@ -290,6 +294,7 @@ fn allows_requires_every_req_kind() {
     let mut s = WorldState {
         inv: HashMap::from([(995, 10)]),
         worn: HashSet::from([1712]),
+        allow_fetchable_worn: false,
         stats: HashMap::from([(6, 25)]),
         varps: HashMap::from([(150, 160)]),
         quests: HashSet::from(["Rune Mysteries".to_string()]),
@@ -397,7 +402,7 @@ fn worn_all_req_requires_every_item_to_be_equipped() {
 
     let mut state = WorldState {
         inv: HashMap::from([(1277, 1), (1321, 1)]),
-        fetchable_worn: HashSet::from([1277, 1321]),
+        allow_fetchable_worn: true,
         ..WorldState::empty()
     };
     assert!(
@@ -415,20 +420,63 @@ fn worn_all_req_requires_every_item_to_be_equipped() {
     assert!(state.allows(&edge), "every listed piece is now equipped");
 }
 
+#[test]
+fn fetchable_worn_capability_uses_only_positive_available_counts() {
+    let mut edge = gated_edge();
+    edge.skill_req.clear();
+    edge.item_req.clear();
+    edge.consumed_req.clear();
+    edge.quest_req.clear();
+    edge.varp_req.clear();
+    edge.worn_all_req.clear();
+    edge.worn_req = vec![1277, 1321];
+    let mut state = WorldState {
+        inv: HashMap::from([(1321, 1)]),
+        ..WorldState::empty()
+    };
+    assert!(
+        !state.allows(&edge),
+        "ordinary carried gear is not equipped"
+    );
+    state.allow_fetchable_worn = true;
+    assert!(
+        state.allows(&edge),
+        "BankBudget can supply a positive stack"
+    );
+    for count in [0, -1] {
+        state.inv.insert(1321, count);
+        assert!(!state.allows(&edge), "unavailable counts cannot be worn");
+    }
+    state.inv = HashMap::from([(946, 1)]);
+    assert!(
+        !state.allows(&edge),
+        "unlisted gear cannot satisfy the gate"
+    );
+    edge.worn_all_req = vec![946];
+    edge.worn_req.clear();
+    assert!(
+        !state.allows(&edge),
+        "strict worn gates ignore the capability"
+    );
+}
+
 /// An empty state proves nothing: even a req-free edge passes, every
 /// gated edge is refused.
 #[test]
 fn empty_state_allows_nothing_gated() {
     let e = gated_edge();
     assert!(!WorldState::empty().allows(&e));
-    let free = TransportEdge { takeoff: None, skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    ..gated_edge() };
+    let free = TransportEdge {
+        takeoff: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        ..gated_edge()
+    };
     assert!(
         WorldState::empty().allows(&free),
         "req-free edges stay usable"
@@ -553,8 +601,11 @@ fn from_snapshot_builds_inv_worn_stats_varps_and_quests() {
     // Gating through the built state: an edge the state proves (the
     // completed "Lost City", not the in-progress "Rune Mysteries")
     // passes; the same edge with a missing coin does not.
-    let e = TransportEdge { takeoff: None, quest_req: vec!["Lost City".to_string()],
-    ..gated_edge() };
+    let e = TransportEdge {
+        takeoff: None,
+        quest_req: vec!["Lost City".to_string()],
+        ..gated_edge()
+    };
     assert!(s.allows(&e));
     let poor = WorldState {
         inv: HashMap::new(),

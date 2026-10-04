@@ -945,25 +945,29 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: origin,
-    to: adjacent,
-    loc_id: 1,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, });
+    graph.edges.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: origin,
+        to: adjacent,
+        loc_id: 1,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    });
     let bytes = nav::pack::encode(&collision, &graph, &[]).unwrap();
     let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
     let pack = fixture.0.join("selected.navpack");

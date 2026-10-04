@@ -131,25 +131,29 @@ pub(super) fn toll_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                let edge = |consumed_req, quest_req| TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-                player_delta: None,
-                at,
-                to,
-                loc_id: id,
-                option: 1, // Open (oploc1, `@find_and_talk_to_border_guard`)
-                ticks: 1,
-                dir: Some(dir),
-                open_loc_id: open_ids.get(&id).copied(),
-                skill_req: vec![],
-                item_req: vec![],
-                consumed_req,
-                item_returns: vec![],
-                quest_req,
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-                quest_gates: None, };
+                let edge = |consumed_req, quest_req| TransportEdge {
+                    takeoff: None,
+                    worn_all_req: Vec::new(),
+                    kind: TransportKind::Door,
+                    player_delta: None,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1, // Open (oploc1, `@find_and_talk_to_border_guard`)
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: open_ids.get(&id).copied(),
+                    skill_req: vec![],
+                    item_req: vec![],
+                    consumed_req,
+                    item_returns: vec![],
+                    quest_req,
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                    wildy_cap: None,
+                    quest_gates: None,
+                };
                 // Prefer the free crossing on equal-cost relaxed searches
                 // (bank-fetch diagnosis); both alternatives remain available.
                 if let Some(quest) = &waiver {
@@ -229,48 +233,56 @@ pub(super) fn toll_shantay_henge_edges(
             z: p.z,
             level: p.level,
         };
-        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-        player_delta: None,
-        at,
-        to: SHANTAY_NORTH_TO,
-        loc_id: henge_id,
-        option: 1, // Go-through (oploc1)
-        ticks: SHANTAY_NORTH_TICKS,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![(pass_id, 1)],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None, });
-        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: p.x,
-            z: p.z - 1,
-            level: p.level,
-        },
-        to: SHANTAY_SOUTH_TO,
-        loc_id: henge_id,
-        option: 1, // Go-through (oploc1)
-        ticks: SHANTAY_SOUTH_TICKS,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None, });
+        graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            kind: TransportKind::Door,
+            player_delta: None,
+            at,
+            to: SHANTAY_NORTH_TO,
+            loc_id: henge_id,
+            option: 1, // Go-through (oploc1)
+            ticks: SHANTAY_NORTH_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![(pass_id, 1)],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        });
+        graph.edges.push(TransportEdge {
+            takeoff: None,
+            worn_all_req: Vec::new(),
+            kind: TransportKind::Door,
+            player_delta: None,
+            at: WorldTile {
+                x: p.x,
+                z: p.z - 1,
+                level: p.level,
+            },
+            to: SHANTAY_SOUTH_TO,
+            loc_id: henge_id,
+            option: 1, // Go-through (oploc1)
+            ticks: SHANTAY_SOUTH_TICKS,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            consumed_req: vec![],
+            item_returns: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: None,
+        });
     }
     if graph.edges.len() == edge_start {
         bump(skipped, SKIP_TOLL_HENGE, 1);

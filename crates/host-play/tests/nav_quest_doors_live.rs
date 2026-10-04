@@ -1,6 +1,6 @@
 //! Live proof of content-derived Black Knights Fortress disguise doors and push-wall routing.
 //! The account is seeded outside the fortress; every ingress movement uses the production router and Traveller.
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use api::interact::{self, Interactions, SendResult};
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use host::Pump;
-use host_play::{ProfileOptions, SharedClientTemplate};
+use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav::router::{find_with, FindOptions, Leg, Route, RouteError};
 use nav::transport::{TransportEdge, TransportKind};
 use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
@@ -41,7 +41,7 @@ const FIRST_SECRET_WALL_AT: WorldTile = WorldTile {
     level: 0,
 };
 const DESTINATION: WorldTile = WorldTile {
-    x: 3015,
+    x: 3016,
     z: 3519,
     level: 0,
 };
@@ -168,8 +168,7 @@ fn write_receipt(path: &Path, receipt: &Value) {
     .expect("write receipt");
 }
 
-/// Capture the CPU framebuffer as a portable pixmap with a matching JSON snapshot.
-/// The operator may convert the PPM to PNG without rerunning the live cell.
+/// Capture the actual CPU framebuffer as PNG with a matching JSON snapshot.
 fn save_frame(
     client: &mut Client,
     snapshot: &GameSnapshot,
@@ -184,18 +183,24 @@ fn save_frame(
         client.draw = false;
         return Err("BOT_CPU=1 did not produce a CPU pixmap".into());
     };
-    let mut ppm = format!("P6\n{} {}\n255\n", pixels.width, pixels.height).into_bytes();
-    ppm.reserve(pixels.pixels.len() * 3);
+    let mut rgb = Vec::with_capacity(pixels.pixels.len() * 3);
     for pixel in pixels.pixels {
-        ppm.extend_from_slice(&[
+        rgb.extend_from_slice(&[
             ((pixel >> 16) & 0xff) as u8,
             ((pixel >> 8) & 0xff) as u8,
             (pixel & 0xff) as u8,
         ]);
     }
     client.draw = false;
-    fs::write(evidence.join(format!("{stem}.ppm")), ppm)
-        .map_err(|error| format!("write {stem}.ppm: {error}"))?;
+    let file = fs::File::create(evidence.join(format!("{stem}.png")))
+        .map_err(|error| format!("create {stem}.png: {error}"))?;
+    let mut encoder = png::Encoder::new(file, pixels.width as u32, pixels.height as u32);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+    writer
+        .write_image_data(&rgb)
+        .map_err(|error| error.to_string())?;
     let paired = json!({
         "ingame": snapshot.ingame(),
         "attached": snapshot.attached(),
@@ -238,32 +243,27 @@ fn find_route(
 
 fn planned_edge(route: &Route, id: i32, at: WorldTile) -> Option<TransportEdge> {
     route.legs.iter().find_map(|leg| match leg {
-        Leg::Transport { edge } if edge.loc_id == id && edge.at == at => Some(edge.as_ref().clone()),
+        Leg::Transport { edge } if edge.loc_id == id && edge.at == at => {
+            Some(edge.as_ref().clone())
+        }
         _ => None,
     })
 }
 
-fn logout_and_wait(
-    client: &mut Client,
-    snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
-) -> bool {
+fn logout_and_wait(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) -> bool {
     if !snapshot.ingame() {
         return true;
     }
     let ifaces = Arc::clone(&client.ifaces);
     interact::logout(client, &ifaces)
-        && wait_for(client, snapshot, pump, Duration::from_secs(30), |s| !s.ingame())
+        && wait_for(client, snapshot, pump, Duration::from_secs(30), |s| {
+            !s.ingame()
+        })
 }
 
-fn attempt_for<'a>(
-    attempts: &'a [TransportAttemptRecord],
-    id: i32,
-) -> Option<&'a TransportAttemptRecord> {
+fn attempt_for(attempts: &[TransportAttemptRecord], id: i32) -> Option<&TransportAttemptRecord> {
     attempts.iter().find(|attempt| {
-        attempt.expected_id == id
-            && attempt.actual_id == id
-            && attempt.refusal.is_none()
+        attempt.expected_id == id && attempt.actual_id == id && attempt.refusal.is_none()
     })
 }
 
@@ -285,14 +285,22 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
     assert_eq!(prefix, "nd", "use this cell's account namespace");
-    let evidence = required_path("NAV_QUEST_DOORS_EVIDENCE");
-    fs::create_dir_all(&evidence).expect("create evidence directory");
-    let receipt_path = evidence.join("receipt.json");
+    let evidence_root = required_path("NAV_QUEST_DOORS_EVIDENCE");
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock")
         .as_millis();
-    let account = format!("{prefix}{:09}", serial % 1_000_000_000);
+    let timestamp = format!("{serial}Z");
+    let (account, password) = mint_live_entries(&mint_live_names(1))
+        .into_iter()
+        .next()
+        .expect("mint one owned live account");
+    let evidence = evidence_root.join(format!("NAV-QUEST-DOORS-1_fortress_{account}_{timestamp}"));
+    fs::create_dir_all(&evidence).expect("create per-account evidence directory");
+    let receipt_path = evidence.join(format!("{timestamp}_receipt.json"));
+    let start_stem = format!("{timestamp}_00-start");
+    let end_stem = format!("{timestamp}_01-end");
+    let failure_stem = format!("{timestamp}_FAIL-route-proof");
     let mut receipt = json!({
         "scenario": "black-knights-fortress-disguise-and-secret-wall",
         "account": account,
@@ -326,10 +334,16 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         .expect("bind Engine A R289 profile");
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let world = template.world().expect("explicit WORLD_NAV_PACK");
+    assert!(
+        world.collision.standable(DESTINATION),
+        "the proof destination must be a real stand, not the adjacent ladder's blocked anchor"
+    );
     let identity = profile.nav_identity().expect("navigation identity");
-    let data = game_data::for_revision(client::io::ClientRevision::R289)
-        .expect("selected R289 game data");
-    let helm = data.item_by_alias(HELM_ALIAS).expect("selected bronze helm fact");
+    let data =
+        game_data::for_revision(client::io::ClientRevision::R289).expect("selected R289 game data");
+    let helm = data
+        .item_by_alias(HELM_ALIAS)
+        .expect("selected bronze helm fact");
     let chainbody = data
         .item_by_alias(CHAINBODY_ALIAS)
         .expect("selected chainbody fact");
@@ -364,7 +378,10 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     client.draw = false;
     client.maininit();
     assert!(!client.error_loading, "client failed to load");
-    assert!(interact::login(&mut client, &account, &account, false), "local login refused");
+    assert!(
+        interact::login(&mut client, &account, &password, false),
+        "local login refused"
+    );
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     assert!(
@@ -387,8 +404,14 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         }),
         "tutorial skip was not acknowledged"
     );
-    assert!(logout_and_wait(&mut client, &mut snapshot, &mut pump), "tutorial relog-out failed");
-    assert!(interact::login(&mut client, &account, &account, false), "relogin refused");
+    assert!(
+        logout_and_wait(&mut client, &mut snapshot, &mut pump),
+        "tutorial relog-out failed"
+    );
+    assert!(
+        interact::login(&mut client, &account, &password, false),
+        "relogin refused"
+    );
     assert!(
         wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
             s.ingame() && s.attached() && s.scene_state() == 2
@@ -442,8 +465,34 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         snapshot.inv(),
         WorldState::from_snapshot(&snapshot).combat_level
     );
+    // Account-local placement near the Wilderness opens the game's warning.
+    // Close it through the ordinary native modal operation before navigation.
+    let modals = snapshot.modals();
+    if modals.main != -1 || modals.side != -1 || modals.chat != -1 || modals.tutorial != -1 {
+        assert!(
+            matches!(
+                Interactions::new(&snapshot, &mut client).close_modal(),
+                SendResult::Sent { .. }
+            ),
+            "native seed-warning dismissal refused"
+        );
+        assert!(
+            wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                let modals = s.modals();
+                s.ingame()
+                    && s.scene_state() == 2
+                    && modals.main == -1
+                    && modals.side == -1
+                    && modals.chat == -1
+                    && modals.tutorial == -1
+            }),
+            "seed-warning dismissal did not settle"
+        );
+    }
 
-    let inv_only_state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
+    let inv_only_state =
+        WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
+    let inventory_only_result = find_route(&world, ORIGIN, INVENTORY_ONLY_TARGET, &inv_only_state);
     let inventory_only_worn_empty =
         equipment_count(&snapshot, helm.id) == 0 && equipment_count(&snapshot, chainbody.id) == 0;
     let inventory_only_no_path = inventory_only_worn_empty
@@ -463,10 +512,13 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         &mut client,
         &snapshot,
         &evidence,
-        "00-start",
+        &start_stem,
         json!({"phase":"inventory-only-at-origin", "route_probe":format!("{inventory_only_result:?}")}),
     );
-    receipt["start_capture"] = json!(start_capture.as_ref().map(|_| "00-start.ppm").map_err(Clone::clone));
+    receipt["start_capture"] = json!(start_capture
+        .as_ref()
+        .map(|_| format!("{start_stem}.png"))
+        .map_err(Clone::clone));
     write_receipt(&receipt_path, &receipt);
 
     let mut setup_failure = start_capture.as_ref().err().cloned();
@@ -474,7 +526,10 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         if setup_failure.is_some() {
             break;
         }
-        let sent = matches!(Interactions::new(&snapshot, &mut client).wear(id), SendResult::Sent { .. });
+        let sent = matches!(
+            Interactions::new(&snapshot, &mut client).wear(id),
+            SendResult::Sent { .. }
+        );
         if !sent {
             setup_failure = Some(format!("production Interactions::wear({id}) was refused"));
             break;
@@ -513,7 +568,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
                     .as_ref()
                     .is_some_and(|edge| edge.kind == TransportKind::Door);
                 strict_all_gate = found_guard.as_ref().is_some_and(|edge| {
-                    let mut expected = vec![helm.id, chainbody.id];
+                    let mut expected = [helm.id, chainbody.id];
                     expected.sort_unstable();
                     edge.kind == TransportKind::Door
                         && edge.worn_all_req == expected
@@ -550,7 +605,8 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
             }
         }
     } else if route_error.is_none() {
-        route_error = Some("selected items were not both observed worn in their data-selected slots".into());
+        route_error =
+            Some("selected items were not both observed worn in their data-selected slots".into());
     }
     receipt["strict_all_gate"] = json!(strict_all_gate);
     receipt["route_uses_guard_door"] = json!(route_uses_guard_door);
@@ -670,7 +726,8 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         &travel_outcome,
         Some(TravelOutcome::Arrived { at }) if *at == DESTINATION
     );
-    let arrival_scene_ready = snapshot.ingame() && snapshot.attached() && snapshot.scene_state() == 2;
+    let arrival_scene_ready =
+        snapshot.ingame() && snapshot.attached() && snapshot.scene_state() == 2;
     receipt["travel"] = json!({
         "route_start_tile": route_start_tile,
         "route_start_tick": route_start_tick,
@@ -702,19 +759,23 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         "fresh_tile_progress": fresh_tile_progress,
         "route_error": route_error,
     });
-    let end_capture = save_frame(&mut client, &snapshot, &evidence, "01-end", end_detail.clone());
-    receipt["end_capture"] = json!(end_capture.as_ref().map(|_| "01-end.ppm").map_err(Clone::clone));
+    let end_capture = save_frame(
+        &mut client,
+        &snapshot,
+        &evidence,
+        &end_stem,
+        end_detail.clone(),
+    );
+    receipt["end_capture"] = json!(end_capture
+        .as_ref()
+        .map(|_| format!("{end_stem}.png"))
+        .map_err(Clone::clone));
     if !arrived || !guard_server_crossing || !secret_wall_server_crossing || !fresh_tile_progress {
-        let failure_capture = save_frame(
-            &mut client,
-            &snapshot,
-            &evidence,
-            "FAIL-route-proof",
-            end_detail,
-        );
+        let failure_capture =
+            save_frame(&mut client, &snapshot, &evidence, &failure_stem, end_detail);
         receipt["failure_capture"] = json!(failure_capture
             .as_ref()
-            .map(|_| "FAIL-route-proof.ppm")
+            .map(|_| format!("{failure_stem}.png"))
             .map_err(Clone::clone));
     }
     write_receipt(&receipt_path, &receipt);
@@ -730,21 +791,69 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         "tile": snapshot.tile(),
     });
     write_receipt(&receipt_path, &receipt);
-    println!("{}", serde_json::to_string_pretty(&receipt).expect("print receipt"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt).expect("print receipt")
+    );
 
-    assert!(fresh_account_baseline, "account was not fresh before seeding: {receipt}");
-    assert!(inventory_only_no_path, "inventory-only disguise opened a route: {receipt}");
-    assert!(both_items_worn, "both data-selected disguise items were not worn: {receipt}");
-    assert!(strict_all_gate, "guard route lacks the strict conjunction gate: {receipt}");
-    assert!(route_uses_guard_door, "route did not use bkfortressdoor1 at the reported tile: {receipt}");
-    assert!(route_uses_secret_wall, "route did not use the first secret push-wall: {receipt}");
-    assert!(guard_server_crossing, "no server-settled progress across the guard door: {receipt}");
-    assert!(secret_wall_server_crossing, "no server-settled progress across the secret wall: {receipt}");
-    assert!(attempts_in_order, "guard and secret-wall attempts were absent or out of route order: {receipt}");
-    assert!(fresh_tile_progress, "Traveller produced no fresh tile progress: {receipt}");
-    assert!(arrived, "Traveller did not reach the selected inside destination: {receipt}");
-    assert!(arrival_scene_ready, "arrival was not ingame with scene_state==2: {receipt}");
-    assert!(start_capture.is_ok(), "start capture was not preserved: {receipt}");
-    assert!(end_capture.is_ok(), "end capture was not preserved: {receipt}");
-    assert!(logout_observed, "successful explicit logout was not observed: {receipt}");
+    assert!(
+        fresh_account_baseline,
+        "account was not fresh before seeding: {receipt}"
+    );
+    assert!(
+        inventory_only_no_path,
+        "inventory-only disguise opened a route: {receipt}"
+    );
+    assert!(
+        both_items_worn,
+        "both data-selected disguise items were not worn: {receipt}"
+    );
+    assert!(
+        strict_all_gate,
+        "guard route lacks the strict conjunction gate: {receipt}"
+    );
+    assert!(
+        route_uses_guard_door,
+        "route did not use bkfortressdoor1 at the reported tile: {receipt}"
+    );
+    assert!(
+        route_uses_secret_wall,
+        "route did not use the first secret push-wall: {receipt}"
+    );
+    assert!(
+        guard_server_crossing,
+        "no server-settled progress across the guard door: {receipt}"
+    );
+    assert!(
+        secret_wall_server_crossing,
+        "no server-settled progress across the secret wall: {receipt}"
+    );
+    assert!(
+        attempts_in_order,
+        "guard and secret-wall attempts were absent or out of route order: {receipt}"
+    );
+    assert!(
+        fresh_tile_progress,
+        "Traveller produced no fresh tile progress: {receipt}"
+    );
+    assert!(
+        arrived,
+        "Traveller did not reach the selected inside destination: {receipt}"
+    );
+    assert!(
+        arrival_scene_ready,
+        "arrival was not ingame with scene_state==2: {receipt}"
+    );
+    assert!(
+        start_capture.is_ok(),
+        "start capture was not preserved: {receipt}"
+    );
+    assert!(
+        end_capture.is_ok(),
+        "end capture was not preserved: {receipt}"
+    );
+    assert!(
+        logout_observed,
+        "successful explicit logout was not observed: {receipt}"
+    );
 }

@@ -340,20 +340,13 @@ pub fn fetchable_state(
     stands: &[BankStand],
 ) -> WorldState {
     let mut fetchable = state.clone();
-    fetchable.fetchable_worn.extend(
-        state
-            .inv
-            .iter()
-            .filter(|&(_, &n)| n >= 1)
-            .map(|(&id, _)| id),
-    );
+    fetchable.allow_fetchable_worn = true;
     if !stands.is_empty() {
         let mut read = HashSet::new();
         for &(id, count) in bank {
             if read.insert(id) && count >= 1 {
                 let held = fetchable.inv.entry(id).or_insert(0);
                 *held = held.saturating_add(count);
-                fetchable.fetchable_worn.insert(id);
             }
         }
     }

@@ -138,29 +138,33 @@ pub(super) fn push_spell_teleport(
         }
         consumed_req.push((id, *count));
     }
-    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
-    player_delta: None,
-    at: TELEPORT_PLACEHOLDER_AT,
-    to: WorldTile {
-        x: coord.1,
-        z: coord.2,
-        level: coord.0,
-    },
-    loc_id: 0, // a spell button, not a loc/obj use
-    option: 0,
-    ticks: SPELL_TELEPORT_TICKS,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![(SKILL_MAGIC, level)],
-    item_req: vec![],
-    consumed_req,
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: block.members,
-    wildy_cap,
-    quest_gates: None, });
+    graph.teleports.push(TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Teleport,
+        player_delta: None,
+        at: TELEPORT_PLACEHOLDER_AT,
+        to: WorldTile {
+            x: coord.1,
+            z: coord.2,
+            level: coord.0,
+        },
+        loc_id: 0, // a spell button, not a loc/obj use
+        option: 0,
+        ticks: SPELL_TELEPORT_TICKS,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(SKILL_MAGIC, level)],
+        item_req: vec![],
+        consumed_req,
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: block.members,
+        wildy_cap,
+        quest_gates: None,
+    });
 }
 
 /// Jewellery rub teleports from `general/scripts/enchanted_jewellry/*.rs2`:
@@ -223,25 +227,29 @@ pub(super) fn jewellery_teleports(
                     continue;
                 };
                 for dest in &dests {
-                    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
-                    player_delta: None,
-                    at: TELEPORT_PLACEHOLDER_AT,
-                    to: *dest,
-                    loc_id: obj_id,
-                    option: 4, // Rub (opheld4)
-                    ticks: JEWELLERY_TELEPORT_TICKS,
-                    dir: None,
-                    open_loc_id: None,
-                    skill_req: vec![],
-                    item_req: vec![],
-                    consumed_req: vec![(obj_id, 1)],
-                    item_returns: return_id.map(|id| vec![(id, 1)]).unwrap_or_default(),
-                    quest_req: vec![],
-                    varp_req: vec![],
-                    worn_req: vec![],
-                    members_req: false,
-                    wildy_cap,
-                    quest_gates: None, });
+                    graph.teleports.push(TransportEdge {
+                        takeoff: None,
+                        worn_all_req: Vec::new(),
+                        kind: TransportKind::Teleport,
+                        player_delta: None,
+                        at: TELEPORT_PLACEHOLDER_AT,
+                        to: *dest,
+                        loc_id: obj_id,
+                        option: 4, // Rub (opheld4)
+                        ticks: JEWELLERY_TELEPORT_TICKS,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        consumed_req: vec![(obj_id, 1)],
+                        item_returns: return_id.map(|id| vec![(id, 1)]).unwrap_or_default(),
+                        quest_req: vec![],
+                        varp_req: vec![],
+                        worn_req: vec![],
+                        members_req: false,
+                        wildy_cap,
+                        quest_gates: None,
+                    });
                 }
             }
         }

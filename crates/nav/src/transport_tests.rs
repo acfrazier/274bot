@@ -450,33 +450,37 @@ queue(shantay_pass_enter, 0, 0);
 }
 
 fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
-    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind,
-    player_delta: None,
-    at: WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 3201,
-        z: 3200,
-        level: 0,
-    },
-    loc_id,
-    option,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, }
+    TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind,
+        player_delta: None,
+        at: WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        loc_id,
+        option,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    }
 }
 
 /// The bake's two-way check: a packed edge whose source handler reads
@@ -507,10 +511,12 @@ if (%bridge_quest >= 3 & map_members = ^true) {
     graph
         .edges
         .push(members_check_edge(TransportKind::Door, 100, 1));
-    let err = require_members_guards(fx.path(), &graph).expect_err("ungated read");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("ungated read");
     assert!(err.contains("[label,cross_bridge]"), "{err}");
     graph.edges[0].members_req = true;
-    let err = require_members_guards(fx.path(), &graph).expect_err("unpinned members arm");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("unpinned members arm");
     assert!(
         err.contains("leading path of [oploc1,_rope_bridge] does not refuse F2P"),
         "{err}"
@@ -550,21 +556,24 @@ if (map_members = ^false | %ferry < 2) { mes(\"No.\"); return; }
     apply_members_guards(&guards, &mut graph);
     assert!(!graph.edges[0].members_req, "the clue branch is no gate");
     assert!(graph.edges[1].members_req, "the ferry refuses F2P first");
-    require_members_guards(fx.path(), &graph).expect("both edges match their source");
+    require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect("both edges match their source");
 
     // A different read in the pinned handler is no longer the exemption.
     fx.write(
         "scripts/areas/scripts/sailors.rs2",
         &sailor.replace("captain_tobias", "seaman_thresnor"),
     );
-    let err = require_members_guards(fx.path(), &graph).expect_err("changed read");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("changed read");
     assert!(err.contains("[opnpc1,_sailor]"), "{err}");
     fx.write("scripts/areas/scripts/sailors.rs2", sailor);
 
     graph
         .edges
         .push(members_check_edge(TransportKind::Npc, 501, 1));
-    let err = require_members_guards(fx.path(), &graph).expect_err("no handler");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("no handler");
     assert!(err.contains("has no source handler"), "{err}");
     graph.edges.pop();
 
@@ -579,7 +588,8 @@ if (map_members = ^false | %ferry < 2) { mes(\"No.\"); return; }
         level: 0,
     };
     graph.teleports.push(camelot);
-    let err = require_members_guards(fx.path(), &graph).expect_err("free members spell");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("free members spell");
     assert!(err.contains("members spell teleport"), "{err}");
 }
 
@@ -629,12 +639,14 @@ if (map_members = ^false) {
         [true, false, false],
         "global handler gates; type and category handlers win over it"
     );
-    require_members_guards(fx.path(), &graph).expect("every edge matches its engine handler");
+    require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect("every edge matches its engine handler");
 
     graph
         .edges
         .push(members_check_edge(TransportKind::Door, 100, 2));
-    let err = require_members_guards(fx.path(), &graph).expect_err("no op2 handler");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("no op2 handler");
     assert!(
         err.contains(
             "has no source handler (tried [oploc2,plain_gate], [oploc2,loc_100], [oploc2,_])"
@@ -707,14 +719,16 @@ p_telejump(0_50_50_20_20);
         "the keeper's leading jump chain refuses F2P"
     );
 
-    let err = require_members_guards(fx.path(), &graph).expect_err("optional refusal");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("optional refusal");
     assert!(err.contains("Boat 500"), "{err}");
     assert!(err.contains("[label,ferry_lore]"), "{err}");
     assert!(err.contains("[queue,ferry_tale]"), "{err}");
     assert!(!err.contains("Boat 501"), "{err}");
 
     graph.edges[0].members_req = true;
-    let err = require_members_guards(fx.path(), &graph).expect_err("over-gate");
+    let err = require_members_guards(fx.path(), &graph, &VarpGateAudit::default())
+        .expect_err("over-gate");
     assert!(err.contains("Boat 500 op1"), "{err}");
     assert!(
         err.contains(
@@ -8069,33 +8083,37 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         "scripts/player/interfaces/questlist.if",
         "[grandtree]\ntext=The Grand Tree\n[blackarmgang]\ntext=Shield of Arrav\n",
     );
-    let edge = |loc_id, id, min| TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
-    player_delta: None,
-    at: WorldTile {
-        x: 100,
-        z: 100,
-        level: 0,
-    },
-    to: WorldTile {
-        x: 101,
-        z: 100,
-        level: 0,
-    },
-    loc_id,
-    option: 1,
-    ticks: 1,
-    dir: None,
-    open_loc_id: None,
-    skill_req: vec![],
-    item_req: vec![],
-    consumed_req: vec![],
-    item_returns: vec![],
-    quest_req: vec![],
-    varp_req: vec![(id, min)],
-    worn_req: vec![],
-    members_req: false,
-    wildy_cap: None,
-    quest_gates: None, };
+    let edge = |loc_id, id, min| TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        kind: TransportKind::Door,
+        player_delta: None,
+        at: WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 101,
+            z: 100,
+            level: 0,
+        },
+        loc_id,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![(id, min)],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
     let raw = [
         edge(10, 150, 160),
         edge(11, 145, 4),
