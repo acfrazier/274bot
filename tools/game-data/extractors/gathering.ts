@@ -1389,6 +1389,20 @@ export function gatherMethodLevel(method: MethodWire): number {
     return products.reduce((min, product) => Math.min(min, product.level), Number.POSITIVE_INFINITY);
 }
 
+/** Locale-independent ordering for stable string IDs (the verifier uses the same comparator). */
+export function compareCodepoint(a: string, b: string): number {
+    let aOffset = 0;
+    let bOffset = 0;
+    while (aOffset < a.length && bOffset < b.length) {
+        const aPoint = a.codePointAt(aOffset)!;
+        const bPoint = b.codePointAt(bOffset)!;
+        if (aPoint !== bPoint) return aPoint < bPoint ? -1 : 1;
+        aOffset += aPoint > 0xffff ? 2 : 1;
+        bOffset += bPoint > 0xffff ? 2 : 1;
+    }
+    return aOffset === a.length ? (bOffset === b.length ? 0 : -1) : 1;
+}
+
 /**
  * The pinned per-skill option rows the selected core carries so the UI never
  * decodes the family: every method in content order, selectable or refused
@@ -1428,7 +1442,7 @@ export function gatherResources(facts: GatheringFacts, itemNames: ReadonlyMap<nu
         else group.push(method);
     }
     for (const members of fishingGroups.values()) {
-        const methods = [...members].sort((a, b) => a.id.localeCompare(b.id));
+        const methods = [...members].sort((a, b) => compareCodepoint(a.id, b.id));
         const representative = methods[0];
         if (representative === undefined) continue;
         const methodIds = methods.map((method) => method.id);
