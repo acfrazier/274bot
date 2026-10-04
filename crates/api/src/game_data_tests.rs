@@ -1250,3 +1250,61 @@ fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
         );
     }
 }
+
+#[test]
+fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
+    let missing =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert!(missing.dialogue_ui().is_none());
+    let valid = serde_json::json!({
+        "scroll_root": 1136,
+        "book_root": 837,
+        "book_forward": 841,
+        "book_close": 10162,
+        "book_forward_marker": 842
+    });
+    let decode = |ids: &serde_json::Value| {
+        SelectedGameData::decode(
+            minimal_json(&format!(", \"dialogue_ui\": {ids}")).as_bytes(),
+            ClientRevision::R274,
+        )
+    };
+    let data = decode(&valid).unwrap();
+    assert_eq!(data.dialogue_ui().unwrap().book_forward, 841);
+    assert_eq!(data.dialogue_ui().unwrap().book_forward_marker, 842);
+    for field in [
+        "scroll_root",
+        "book_root",
+        "book_forward",
+        "book_close",
+        "book_forward_marker",
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = serde_json::json!(0);
+        assert!(decode(&invalid).unwrap().dialogue_ui().is_none(), "{field}");
+    }
+    let mut duplicate = valid.clone();
+    duplicate["book_forward"] = duplicate["book_close"].clone();
+    assert!(decode(&duplicate).unwrap().dialogue_ui().is_none());
+    let mut unknown = valid;
+    unknown["debug_catalog"] = serde_json::json!(true);
+    assert!(decode(&unknown).is_err());
+}
+
+#[test]
+fn generated_dialogue_ui_roles_match_both_pinned_sources() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        assert_eq!(
+            data.dialogue_ui(),
+            Some(&DialogueUiIds {
+                scroll_root: 1136,
+                book_root: 837,
+                book_forward: 841,
+                book_close: 10162,
+                book_forward_marker: 842,
+            }),
+            "{revision:?} forward is the handler, not the visibility marker"
+        );
+    }
+}

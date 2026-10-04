@@ -273,6 +273,14 @@ fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
 
+Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
+identities. Book forwarding resolves the script's forward handler separately
+from its last-page visibility marker; generic component names in revision 274
+are not guessed from their numeric ids. These facts are part of the pinned
+main asset and its source provenance, not the opt-in `DebugCatalog`.
+Message and object-box `mesbox` pages are chat surfaces and keep the ordinary
+chat continuation path.
+
 ### Quester expected combat handoff
 
 A `talk` step may declare `expect_combat: {"npc": "desertminingcaptain"}` when

@@ -1214,6 +1214,33 @@ pub struct GatherSiteKey {
     pub count: usize,
 }
 
+/// Source-proven identities for owned main scroll and book continuation.
+/// Chat message/objbox pages continue through the snapshot's chat controls.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueUiIds {
+    pub scroll_root: i32,
+    pub book_root: i32,
+    pub book_forward: i32,
+    pub book_close: i32,
+    pub book_forward_marker: i32,
+}
+
+impl DialogueUiIds {
+    fn available(&self) -> bool {
+        let ids = [
+            self.scroll_root,
+            self.book_root,
+            self.book_forward,
+            self.book_close,
+            self.book_forward_marker,
+        ];
+        ids.iter()
+            .enumerate()
+            .all(|(index, id)| *id > 0 && !ids[..index].contains(id))
+    }
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1235,6 +1262,8 @@ pub struct SelectedGameData {
     duel: Option<DuelControls>,
     #[serde(default)]
     special: Option<SpecialControls>,
+    #[serde(default)]
+    dialogue_ui: Option<DialogueUiIds>,
     #[serde(default)]
     teleports: Vec<TeleportSpell>,
     #[serde(default)]
@@ -1787,6 +1816,11 @@ impl SelectedGameData {
         self.autocast
             .as_ref()
             .filter(|controls| controls.available())
+    }
+
+    /// Minimal selected main-dialogue controls; no opt-in debug catalog is loaded.
+    pub fn dialogue_ui(&self) -> Option<&DialogueUiIds> {
+        self.dialogue_ui.as_ref().filter(|ids| ids.available())
     }
 
     pub fn duel_controls(&self) -> Option<&DuelControls> {

@@ -15,6 +15,7 @@ import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
+import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -91,6 +92,7 @@ const combatContentFiles = [
 const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, ...combatContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles, 'maps/labels.txt', 'scripts/skill_fishing/configs/fishing.npc'];
 // Manual spell names resolve through the magic tab interface, so it joins the base input closure.
 contentFiles.push('scripts/skill_magic/interfaces/magic.if');
+contentFiles.push(...dialogueUiContentFiles);
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
@@ -2918,6 +2920,7 @@ async function generate(spec: Revision) {
     if (!contentId) throw new Error(`${spec.revision}: quest starts require content identity`);
     const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
     Object.assign(facts, { quest_starts: questStarts });
+    Object.assign(facts, { dialogue_ui: extractDialogueUiFacts(spec.content) });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
     const deathRow = questIdentity.rows.find((row) => row.id === 'death');
     if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {

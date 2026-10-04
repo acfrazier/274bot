@@ -14,6 +14,7 @@ import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisi
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
+import './dialogue-ui.test.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 

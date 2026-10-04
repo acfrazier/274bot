@@ -75713,6 +75713,13 @@
       }
     ]
   },
+  "dialogue_ui": {
+    "scroll_root": 1136,
+    "book_root": 837,
+    "book_forward": 841,
+    "book_close": 10162,
+    "book_forward_marker": 842
+  },
   "style_seqs": [
     {
       "seq_id": 1,
