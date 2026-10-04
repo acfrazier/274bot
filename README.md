@@ -59,10 +59,11 @@ Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per r
 Without an explicit profile, the saved panel revision chooses `local-274` or
 `local-289`; otherwise local 274 is the default.
 
-Default engine roots (override with `--engine` / `ENGINE_DIR`):
-
-- 274: `$HOME/experiments/Server/engine`
-- 289: `$HOME/experiments/lostcity-289/engine`
+Local engine roots are never inferred from `HOME`. A local profile resolves
+the root in this order: `--engine`, `ENGINE_DIR`, then `login_key.engine_dir`
+in `~/.274bot/servers.json`. New `servers.json` files leave that path unset;
+without an explicit value, a local profile fails fast with setup guidance.
+The public WSS profile does not need an engine root.
 
 All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
 
@@ -89,17 +90,24 @@ git clone --recurse-submodules https://github.com/acfrazier/274bot.git
 cd 274bot
 ```
 
-Point **`$ENGINE_DIR`** (or `--engine`) at the engine root for the revision you will run. On first `maininit` the client GETs `/crc` and jag files from the engine HTTP and retains the checked JAGs plus the decoded snapshots under the revision unpack root; later boots revalidate and reuse them instead of downloading everything again. See [FIRST-START.md](FIRST-START.md) for the retention layout.
+Set `ENGINE_DIR` to your local engine root, or pass `--engine` on the command
+line. The command-line value wins over `ENGINE_DIR` and a saved profile path.
+On first `maininit` the client GETs `/crc` and jag files from the engine HTTP
+and retains the checked JAGs plus decoded snapshots under the revision unpack
+root; later boots revalidate and reuse them. See [FIRST-START.md](FIRST-START.md)
+for the retention layout.
 
 Stock Lost City Server uses the **Java default login RSA key pair** for local — no key bake. If you rotated `private.pem`, login reads the public half from `$ENGINE_DIR/data/config/private.pem` (or `LOGIN_RSAN` / `LOGIN_RSAE`).
 
 ```bash
+export ENGINE_DIR=/absolute/path/to/engine
+
 # The vault passphrase is never read from the environment or the command line:
 # the panel asks in its unlock window, host-play and tui-play ask on the terminal.
 # Prefer an explicit profile. Example: local 289 engine.
 cargo run --release -p panel --bin panel-play -- --profile local-289
-# Local 274:
-# BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
+# Local 274: set ENGINE_DIR to the 274 engine root for this build/run.
+# BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 
 # CLI: run one or more vaulted profiles (upserts --user; default test/test).
 # Asks for the vault passphrase on the terminal; a new vault asks twice.

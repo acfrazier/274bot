@@ -109,6 +109,7 @@ impl MapFixture {
             None,
             &ProfileEnvironment {
                 home: Some(root.clone()),
+                engine_dir: Some(root.join("engine")),
                 rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
                 rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
                 ..Default::default()

@@ -43,7 +43,7 @@ impl HostOutcome {
 }
 
 /// Facts are borrowed by the adapter for this call only. Arrival uses the
-/// shared reach predicate, not route-terminal success or geometric distance.
+/// adapter's scene predicate, never route-terminal success alone.
 pub trait Observation {
     fn outcome(&self) -> HostOutcome;
     fn cancelled(&self) -> bool;

@@ -23,6 +23,9 @@ fn validate_unpack_root(
 ) -> Result<(), String> {
     let unpack_dir_normalized = normalized_path(unpack_dir);
     for (label, root) in [("engine", engine_dir), ("content", content_dir)] {
+        if root.as_os_str().is_empty() {
+            continue;
+        }
         let root_normalized = normalized_path(root);
         if unpack_dir_normalized.starts_with(&root_normalized) {
             return Err(format!(
@@ -50,7 +53,7 @@ impl ProfileOptions {
         }
         let home = env.home.clone().unwrap_or_default();
         let bot_dir = home.join(".274bot");
-        let servers = crate::Servers::load(&bot_dir, &home)?;
+        let servers = crate::Servers::load(&bot_dir)?;
         if self.profile.is_some() && self.rs2b2t {
             return Err("--rs2b2t conflicts with --profile".into());
         }
@@ -171,16 +174,15 @@ impl ProfileOptions {
             .clone()
             .or_else(|| env.engine_dir.clone())
             .or_else(|| match &profile.login_key {
-                LoginKey::EngineDir { engine_dir } => Some(engine_dir.clone()),
+                LoginKey::EngineDir { engine_dir } => engine_dir.clone(),
                 _ => None,
-            })
-            .unwrap_or_else(|| {
-                home.join(if is_289 {
-                    "experiments/lostcity-289/engine"
-                } else {
-                    "experiments/Server/engine"
-                })
             });
+        if class == ProfileClass::Local && engine_dir.is_none() {
+            return Err(format!(
+                "local profile {:?} needs an engine directory; set ENGINE_DIR, pass --engine, or configure login_key.engine_dir in servers.json",
+                profile.name
+            ));
+        }
         let unpack_dir = self
             .unpack_dir
             .clone()
@@ -207,7 +209,9 @@ impl ProfileOptions {
             .unwrap_or_else(|| nav_pack.with_extension("navflags"));
         let content_dir = self.content_dir.clone().unwrap_or_else(|| {
             engine_dir
-                .parent()
+                .as_ref()
+                .and_then(|engine_dir| engine_dir.parent())
+                .filter(|parent| !parent.as_os_str().is_empty())
                 .unwrap_or(Path::new("."))
                 .join("content")
         });
@@ -228,7 +232,7 @@ impl ProfileOptions {
                 working_dir.join(path)
             }
         };
-        let engine_dir = absolute(engine_dir);
+        let engine_dir = engine_dir.map(&absolute).unwrap_or_default();
         let content_dir = absolute(content_dir);
         let unpack_dir = absolute(unpack_dir);
         validate_unpack_root(&unpack_dir, &engine_dir, &content_dir)?;

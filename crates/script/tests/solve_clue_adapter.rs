@@ -9,6 +9,7 @@ use client::io::ClientRevision;
 use script::isolate_fb::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
+use std::time::{Duration, Instant};
 
 /// `trail_clue_easy_simple001`: a selected search membership whose
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
@@ -302,8 +303,26 @@ fn scene_loc<'a>(
 
 fn spawn(src: &str) -> LoadIsolate {
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
-        .unwrap()
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    // `spawn` returns before V8 setup; the queued snapshot/tick/probe would
+    // otherwise share one 10 s probe budget with setup itself. Under parallel
+    // heavy validation setup alone can exceed it, so `tick(1)`'s probe times
+    // out with empty logs ("isolate stopped after tick 1: []"). Wait for the
+    // actual Ready transition here, still bounded, so each tick's own probe
+    // only covers its tick.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match iso.poll_ready() {
+            script::Ready::Ready => return iso,
+            script::Ready::Failed(error) => panic!("isolate setup failed: {error}"),
+            script::Ready::Pending if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            script::Ready::Pending => panic!("isolate setup timed out"),
+        }
+    }
 }
 
 /// The walked step the search membership's decoded tile is: the select

@@ -369,10 +369,6 @@ pub fn default_vault_path() -> PathBuf {
     script::bot_file("vault")
 }
 
-fn default_cache_dir() -> String {
-    client::cache_dir().display().to_string()
-}
-
 /// Panel-side per-slot IO: the frame mailbox the slot stores each rendered
 /// `FrameOutput` into while its renderer is on (the panel `take`s it and
 /// packs the `PixMap` or reads the `Texture` back at the consume site),
@@ -878,6 +874,10 @@ pub struct Session {
     /// The log section's filtered view and controls over the shared
     /// `frontend_core::log` store.
     pub log_pane: crate::log_pane::LogPane,
+    /// Whether the dockable Log window is open; this is session-local.
+    pub log_window_open: bool,
+    /// Whether the Log body ran this frame; transient and not serialized.
+    pub log_window_body_drawn: bool,
     /// Vault passphrase scratch buffer for the in-panel unlock prompt
     /// (zeroed when cleared or dropped).
     pub pass_scratch: Secret,
@@ -1319,6 +1319,8 @@ impl Session {
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
             log_pane: crate::log_pane::LogPane::default(),
+            log_window_open: false,
+            log_window_body_drawn: false,
             pass_scratch: Secret::with_capacity(256),
             statuses: Vec::new(),
             cred_user: String::new(),
@@ -1439,7 +1441,8 @@ impl Session {
                 host: "127.0.0.1".into(),
                 transport: client::Transport::Tcp,
                 port: 43594,
-                cache_dir: default_cache_dir(),
+                // Supplied by the selected profile after engine resolution.
+                cache_dir: String::new(),
                 lowmem: true,
                 // Panel per_frame queues hop from Session.mainland (env);
                 // spawn-time PlayOptions.mainland stays false.
