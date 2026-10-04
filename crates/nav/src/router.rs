@@ -1354,10 +1354,10 @@ fn many_search<'a>(
     }
 }
 
-/// Diagnose a refused route with every active zone on the reachable search
-/// frontier. An all-zone-exempt search is used only to establish that the
-/// same hard gates admit a route; its shortest witness does not determine the
-/// reported zones.
+/// Diagnose a refused single-target route with zones active along the best
+/// route after lifting zone restrictions. The strict search must fail with
+/// `NoPath`, and an all-zone-exempt search must find a route before its
+/// transitions can serve as the witness.
 #[allow(clippy::too_many_arguments)]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
@@ -1379,20 +1379,33 @@ pub fn find_blocking_zones(
         zones: ZoneExempt::all(),
         ..opts
     };
-    find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
+    let route = find_with_avoid(collision, graph, from, to, relaxed, state, avoid).ok()?;
     let mut blockers = HashSet::new();
-    if !blocking_frontier(
-        collision,
-        graph,
-        from,
-        &[to],
-        opts,
-        state,
-        avoid,
-        &filter,
-        &mut blockers,
-    ) {
-        return None;
+    let mut previous = from;
+    for leg in &route.legs {
+        match leg {
+            Leg::Walk { tiles } => {
+                for &arrival in tiles.iter().skip(1) {
+                    blockers.extend(filter.blocking_transition_at(
+                        &graph.wilderness,
+                        previous,
+                        arrival,
+                        &|| arrival == to,
+                    ));
+                    previous = arrival;
+                }
+            }
+            Leg::Transport { edge } => {
+                let arrival = edge.to;
+                blockers.extend(filter.blocking_transition_at(
+                    &graph.wilderness,
+                    previous,
+                    arrival,
+                    &|| arrival == to,
+                ));
+                previous = arrival;
+            }
+        }
     }
     blocking_zone_keys(graph.zones.as_ref()?, blockers)
 }

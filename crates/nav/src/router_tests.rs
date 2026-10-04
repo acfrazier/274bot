@@ -4557,7 +4557,7 @@ fn diagnosis_names_only_zones_active_under_the_original_predicate() {
 }
 
 #[test]
-fn refusal_attribution_reports_all_reachable_zone_frontiers_not_shortest_witness() {
+fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
     let blocked: Vec<_> = (0..3)
         .flat_map(|z| {
             (0..7).filter_map(move |x| {
@@ -4608,10 +4608,11 @@ fn refusal_attribution_reports_all_reachable_zone_frontiers_not_shortest_witness
         1,
         "one shortest witness traverses only one of the two blocked corridors"
     );
+    let witness_zone = *witness_zones.iter().next().unwrap();
     assert_eq!(
         crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
-        Some(vec![ZoneKey::Zone(0), ZoneKey::Zone(1)]),
-        "both source-reachable corridor frontiers block a feasible route"
+        Some(vec![ZoneKey::Zone(witness_zone)]),
+        "single-target attribution follows the selected relaxed route"
     );
 
     let goals = [tile(6, 0, 0), tile(6, 2, 0), tile(3, 1, 0)];
@@ -5217,7 +5218,7 @@ fn real_289_first_refusal_witness_exempts_its_chosen_goal_zone() {
 }
 
 #[test]
-fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
+fn real_289_refusals_report_best_relaxed_route_zone_witness() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -5242,8 +5243,7 @@ fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
     .unwrap();
     let mountain = table.resolve("white-wolf-mountain").unwrap();
     let wolf = table.resolve("wolf@2647,3584,0").unwrap();
-    assert!(keys.contains(&mountain), "{keys:?}");
-    assert!(keys.contains(&wolf), "{keys:?}");
+    assert_eq!(keys, vec![wolf, mountain]);
     let crossing = FindOptions {
         zones: ZoneExempt::named(&[mountain, wolf]).unwrap(),
         ..opts
