@@ -9,8 +9,9 @@
 //!   park, zero deaths, one Start (criterion 2);
 //! - [`Mode::Restart`]: Stop mid-step at two stages, Start again, complete
 //!   (criterion 3);
-//! - [`Mode::Death`]: one `~death` at a stage, the runner recovers and
-//!   completes with exactly one death (criterion 4).
+//! - [`Mode::Death`]: one `~death` while a named step of a stage runs (an
+//!   `open` combat step), the runner recovers and completes with exactly one
+//!   death (criterion 4).
 //!
 //! Every cell writes `status.jsonl` (each changed Quester status), CPU-rendered
 //! PNG + JSON receipts at Start, every stage change, Stop/Start, death and the
@@ -55,8 +56,10 @@ pub enum Mode {
     Clean,
     /// Stop mid-step once at each stage key (in order), Start again, complete.
     Restart { at: [String; 2] },
-    /// Send one `~death` while the stage key is `at`; complete with one death.
-    Death { at: String },
+    /// Send one `~death` while the stage key is `at` and the active step is
+    /// `step` (after it has run [`MID_STEP`]); complete with one death. The
+    /// status at injection is kept in the receipt (`death_status`).
+    Death { at: String, step: String },
 }
 
 impl Mode {
@@ -572,6 +575,7 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
     let mut awaiting_idle = false;
     let mut end_captured = false;
     let mut captured_starts = 0u32;
+    let mut death_status: Option<Value> = None;
     let result: Result<(), String> = loop {
         let status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
@@ -665,8 +669,19 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
                     }
                 }
             }
-            Mode::Death { at } if current.as_deref() == Some(at.as_str()) => {
-                shared.lock().map_err(|_| "live state poisoned")?.death_due = true;
+            Mode::Death { at, step } if death_status.is_none() => {
+                let on_step = current.as_deref() == Some(at.as_str())
+                    && status
+                        .as_ref()
+                        .is_some_and(|s| text(s, "step_id") == Some(step.as_str()));
+                if !on_step {
+                    stop_at = None;
+                } else if Instant::now()
+                    >= *stop_at.get_or_insert_with(|| Instant::now() + MID_STEP)
+                {
+                    death_status = status.as_ref().map(|s| status_json(s));
+                    shared.lock().map_err(|_| "live state poisoned")?.death_due = true;
+                }
             }
             _ => {}
         }
@@ -689,7 +704,9 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
                         "completed before both Stops: restarts={restarts_done} starts={starts}"
                     ))
                 }
-                Mode::Death { .. } if death_seen && deaths_max == 1 && starts == 1 => {
+                Mode::Death { .. }
+                    if death_seen && death_status.is_some() && deaths_max == 1 && starts == 1 =>
+                {
                     break Ok(())
                 }
                 Mode::Death { .. } => {
@@ -744,6 +761,7 @@ pub fn run(mut cell: Cell) -> Result<Value, String> {
         "deaths": deaths_max,
         "death_sent": s.death_sent,
         "death_observed": s.death_seen,
+        "death_status": death_status,
         "last_tile": s.last_tile.map(|t| [t.x, t.z, t.level]),
         "captures": s.captures,
         "final_status": play.script_native_status(&account).map(|status| status_json(&status)),
