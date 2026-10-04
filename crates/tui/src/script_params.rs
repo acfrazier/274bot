@@ -17,6 +17,7 @@ pub struct ParamsState {
     pub scroll: usize,
     pub editing: bool,
     pub multi_select: bool,
+    pub choice_single: bool,
     pub scratch: String,
     pub choice_cursor: usize,
     pub choice_selected: Vec<String>,
@@ -160,7 +161,7 @@ impl<'a> ParamsPane<'a> {
     }
 
     fn on_edit_key(&mut self, code: crossterm::event::KeyCode, rows: &[&SettingDef]) -> ParamsKey {
-        if self.state.multi_select {
+        if self.state.multi_select || self.state.choice_single {
             return self.on_choice_key(code, rows);
         }
         match code {
@@ -190,9 +191,12 @@ impl<'a> ParamsPane<'a> {
             return;
         };
         let options = self.resolved_options(def);
-        self.state.error =
-            frontend_core::scripts::parse_parameter_text(def, &self.state.scratch, &options.values)
-                .err();
+        self.state.error = frontend_core::scripts::parse_parameter_text(
+            def,
+            &self.state.scratch,
+            options.selectable(),
+        )
+        .err();
     }
 
     fn on_choice_key(
@@ -208,11 +212,14 @@ impl<'a> ParamsPane<'a> {
             self.cancel_edit();
             return ParamsKey::Cancel;
         }
-        let searchable = opts.values.len() > 16;
+        let searchable = self.state.choice_searchable;
         match code {
             crossterm::event::KeyCode::Esc => {
                 self.cancel_edit();
                 ParamsKey::Cancel
+            }
+            crossterm::event::KeyCode::Enter if self.state.choice_single => {
+                self.commit_single_choice(def, &opts)
             }
             crossterm::event::KeyCode::Enter => self.commit_choices(def),
             crossterm::event::KeyCode::Backspace if searchable => {
@@ -220,18 +227,32 @@ impl<'a> ParamsPane<'a> {
                 self.state.choice_cursor = 0;
                 ParamsKey::None
             }
-            crossterm::event::KeyCode::Char(ch) if searchable && ch != ' ' => {
+            crossterm::event::KeyCode::Char(ch)
+                if searchable && !ch.is_control() && (self.state.choice_single || ch != ' ') =>
+            {
                 self.state.choice_search.push(ch);
                 self.state.choice_cursor = 0;
                 ParamsKey::None
             }
-            crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+            crossterm::event::KeyCode::Up => {
                 if self.state.choice_cursor > 0 {
                     self.state.choice_cursor -= 1;
                 }
                 ParamsKey::Up
             }
-            crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+            crossterm::event::KeyCode::Down => {
+                if self.state.choice_cursor + 1 < self.choice_indices(&opts).len() {
+                    self.state.choice_cursor += 1;
+                }
+                ParamsKey::Down
+            }
+            crossterm::event::KeyCode::Char('k') => {
+                if self.state.choice_cursor > 0 {
+                    self.state.choice_cursor -= 1;
+                }
+                ParamsKey::Up
+            }
+            crossterm::event::KeyCode::Char('j') => {
                 if self.state.choice_cursor + 1 < self.choice_indices(&opts).len() {
                     self.state.choice_cursor += 1;
                 }
@@ -264,15 +285,18 @@ impl<'a> ParamsPane<'a> {
     }
 
     fn choice_indices(&self, options: &frontend_core::scripts::ParameterOptions) -> Vec<usize> {
-        let query = self.state.choice_search.to_lowercase();
-        options
-            .values
+        let values = if self.state.choice_single {
+            options.selectable()
+        } else {
+            options.values.as_slice()
+        };
+        values
             .iter()
             .enumerate()
-            .filter_map(|(index, value)| {
-                let label = options.label_for(value).to_lowercase();
-                let value_matches = value.to_lowercase().contains(&query);
-                (query.is_empty() || label.contains(&query) || value_matches).then_some(index)
+            .filter_map(|(index, _)| {
+                options
+                    .matches_query(index, &self.state.choice_search)
+                    .then_some(index)
             })
             .collect()
     }
@@ -304,6 +328,22 @@ impl<'a> ParamsPane<'a> {
                 .and_then(|v| v.as_str())
                 .or(def.default.as_deref())
                 .unwrap_or("");
+            if enter {
+                self.state.editing = true;
+                self.state.multi_select = false;
+                self.state.choice_single = true;
+                self.state.choice_cursor = opts
+                    .selectable()
+                    .iter()
+                    .position(|option| opts.matches_option(stored, option))
+                    .unwrap_or(0);
+                self.state.choice_search.clear();
+                self.state.choice_searchable = opts.selectable().len() > 16;
+                self.state.choice_selected.clear();
+                self.state.scratch.clear();
+                self.state.error = None;
+                return ParamsKey::Edit;
+            }
             let Some(next) = opts.next_selectable(stored) else {
                 return ParamsKey::None;
             };
@@ -319,6 +359,7 @@ impl<'a> ParamsPane<'a> {
         if def.ty == "string[]" && !opts.is_empty() {
             self.state.editing = true;
             self.state.multi_select = true;
+            self.state.choice_single = false;
             self.state.choice_cursor = 0;
             self.state.choice_search.clear();
             self.state.choice_searchable = opts.values.len() > 16;
@@ -333,6 +374,7 @@ impl<'a> ParamsPane<'a> {
         ) {
             self.state.editing = true;
             self.state.multi_select = false;
+            self.state.choice_single = false;
             self.state.scratch = self
                 .bag
                 .get(&def.id)
@@ -353,7 +395,7 @@ impl<'a> ParamsPane<'a> {
         match frontend_core::scripts::parse_parameter_text(
             def,
             &self.state.scratch,
-            &options.values,
+            options.selectable(),
         ) {
             Ok(value) => {
                 if self.persist(&def.id, value) {
@@ -367,6 +409,27 @@ impl<'a> ParamsPane<'a> {
                 self.state.error = Some(err);
                 ParamsKey::None
             }
+        }
+    }
+
+    fn commit_single_choice(
+        &mut self,
+        def: &SettingDef,
+        options: &frontend_core::scripts::ParameterOptions,
+    ) -> ParamsKey {
+        let visible = self.choice_indices(options);
+        let Some(index) = visible.get(self.state.choice_cursor).copied() else {
+            return ParamsKey::None;
+        };
+        let Some(value) = options.selectable().get(index) else {
+            return ParamsKey::None;
+        };
+        let value = options.value_for(value);
+        if self.persist(&def.id, serde_json::json!(value)) {
+            self.cancel_edit();
+            ParamsKey::Saved
+        } else {
+            ParamsKey::None
         }
     }
 
@@ -384,6 +447,7 @@ impl<'a> ParamsPane<'a> {
     fn cancel_edit(&mut self) {
         self.state.editing = false;
         self.state.multi_select = false;
+        self.state.choice_single = false;
         self.state.scratch.clear();
         self.state.choice_selected.clear();
         self.state.choice_cursor = 0;
@@ -422,7 +486,13 @@ impl<'a> ParamsPane<'a> {
             return report.to_string();
         }
         if self.state.editing {
-            if self.state.multi_select {
+            if self.state.choice_single {
+                if self.state.choice_searchable {
+                    "type to search · enter pick · esc cancel".into()
+                } else {
+                    "enter pick · esc cancel".into()
+                }
+            } else if self.state.multi_select {
                 if self.state.choice_searchable {
                     "type to search · backspace clear · space toggle · enter save · esc cancel"
                         .into()
@@ -504,12 +574,12 @@ impl Widget for ParamsPane<'_> {
 
         let mut lines = Vec::new();
         let mut cursor_line = 0usize;
-        if self.state.editing && self.state.multi_select {
+        if self.state.editing && (self.state.multi_select || self.state.choice_single) {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
                 let label = def.label.as_deref().unwrap_or(&def.id);
                 lines.push(Line::from(format!("{label} choices")));
-                if opts.values.len() > 16 {
+                if self.state.choice_searchable {
                     let query = if self.state.choice_search.is_empty() {
                         "type to filter"
                     } else {
@@ -528,8 +598,19 @@ impl Widget for ParamsPane<'_> {
                             .state
                             .choice_cursor
                             .min(indices.len().saturating_sub(1));
+                    let values = if self.state.choice_single {
+                        opts.selectable()
+                    } else {
+                        opts.values.as_slice()
+                    };
+                    let stored = self
+                        .bag
+                        .get(&def.id)
+                        .and_then(serde_json::Value::as_str)
+                        .or(def.default.as_deref())
+                        .unwrap_or("");
                     for (row, index) in indices.into_iter().enumerate() {
-                        let Some(opt) = opts.values.get(index) else {
+                        let Some(opt) = values.get(index) else {
                             continue;
                         };
                         let mark = if row == self.state.choice_cursor {
@@ -537,7 +618,13 @@ impl Widget for ParamsPane<'_> {
                         } else {
                             "  "
                         };
-                        let tick = if self
+                        let status = if self.state.choice_single {
+                            if opts.matches_option(stored, opt) {
+                                "(•)"
+                            } else {
+                                "( )"
+                            }
+                        } else if self
                             .state
                             .choice_selected
                             .iter()
@@ -547,7 +634,7 @@ impl Widget for ParamsPane<'_> {
                         } else {
                             "[ ]"
                         };
-                        lines.push(Line::from(format!("{mark}{tick} {}", opts.label_for(opt))));
+                        lines.push(Line::from(format!("{mark}{status} {}", opts.label_for(opt))));
                     }
                 }
             }
@@ -572,6 +659,11 @@ impl Widget for ParamsPane<'_> {
                     if def.options_from.is_some() && options.is_empty() {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
+                        } else if options.preserved > 0 {
+                            format!(
+                                "options unavailable · {}",
+                                display_value(self.bag, def, &options)
+                            )
                         } else {
                             "options unavailable".to_string()
                         }
@@ -1502,7 +1594,7 @@ mod tests {
                 state: &mut state,
             };
             for _ in 0..selectable.len() {
-                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Toggle);
+                assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
                 cycle.push(
                     pane.bag
                         .get("fishingMethod")
@@ -1525,6 +1617,205 @@ mod tests {
         assert!(
             refused.iter().all(|key| !cycle.contains(key)),
             "refused groups are never offered: {cycle:?}"
+        );
+    }
+
+    #[test]
+    fn gather_site_picker_filters_and_accepts_explicit_selection() {
+        let dir = temp_dir("site-picker");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let schema = script::gatherer::settings::schema();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        bag.insert("skill".into(), serde_json::json!("Woodcutting"));
+        bag.insert("woodcuttingResources".into(), serde_json::json!(["normal"]));
+        bag.insert("location".into(), serde_json::json!("Site"));
+        bag.insert("site".into(), serde_json::json!("woodcutting.draynor"));
+        let site_index = schema
+            .iter()
+            .position(|field| field.id == "site")
+            .expect("Gatherer schema includes the named site setting");
+        let visible_cursor = schema
+            .iter()
+            .filter(|field| script::setting_visible(field.show_if.as_deref(), &bag))
+            .position(|field| field.id == "site")
+            .expect("the Site setting is visible in Site mode");
+        let options = frontend_core::scripts::resolve_parameter_options(
+            &schema[site_index],
+            &bag,
+            &loadouts,
+            Some(data.as_ref()),
+        );
+        assert_eq!(options.selectable().len(), 223);
+        assert_eq!(
+            options
+                .selectable()
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| options.matches_query(*index, "varrock"))
+                .count(),
+            11
+        );
+        let original = bag.get("site").cloned().unwrap();
+        let mut state = ParamsState {
+            open: true,
+            cursor: visible_cursor,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert!(pane.state.choice_single);
+            assert!(pane.state.choice_searchable);
+            assert_eq!(
+                pane.state.choice_cursor,
+                options
+                    .selectable()
+                    .iter()
+                    .position(|value| value == "woodcutting.draynor")
+                    .unwrap()
+            );
+            assert_eq!(pane.on_key(KeyCode::Char('j')), ParamsKey::None);
+            assert_eq!(pane.state.choice_search, "j");
+            assert_eq!(pane.state.choice_cursor, 0, "j starts a query");
+            assert_eq!(pane.on_key(KeyCode::Backspace), ParamsKey::None);
+            for ch in "varrock".chars() {
+                pane.on_key(KeyCode::Char(ch));
+            }
+            assert_eq!(pane.state.choice_search, "varrock");
+            assert_eq!(pane.state.choice_cursor, 0);
+            assert_eq!(pane.bag.get("site"), Some(&original));
+        }
+
+        let filtered = options
+            .selectable()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| options.matches_query(*index, "varrock"))
+            .map(|(_, value)| value.clone())
+            .collect::<Vec<_>>();
+        let selected = filtered[0].clone();
+        let selected_label = options.label_for(&selected).to_owned();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("search: varrock"), "{text:?}");
+        assert!(text.contains(&selected_label), "{text:?}");
+
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(pane.bag.get("site"), Some(&serde_json::json!(selected)));
+
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            for ch in "no-such-place".chars() {
+                pane.on_key(KeyCode::Char(ch));
+            }
+            assert!(pane.choice_indices(&options).is_empty());
+            let saved = pane.bag.get("site").cloned();
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+            assert!(pane.state.editing);
+            assert_eq!(pane.bag.get("site").cloned(), saved);
+            assert_eq!(pane.on_key(KeyCode::Esc), ParamsKey::Cancel);
+            assert_eq!(pane.bag.get("site").cloned(), saved);
+        }
+    }
+
+    #[test]
+    fn invalid_gather_site_remains_disabled_and_explains_why() {
+        let dir = temp_dir("site-disabled");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let schema = script::gatherer::settings::schema();
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        bag.insert("skill".into(), serde_json::json!("Mining"));
+        bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
+        bag.insert("location".into(), serde_json::json!("Site"));
+        bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
+        let visible_cursor = schema
+            .iter()
+            .filter(|field| script::setting_visible(field.show_if.as_deref(), &bag))
+            .position(|field| field.id == "site")
+            .expect("the Site setting is visible in Site mode");
+        let original = bag.get("site").cloned();
+        let mut state = ParamsState {
+            open: true,
+            cursor: visible_cursor,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Gatherer"),
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+            assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::None);
+            assert!(!pane.state.editing);
+            assert_eq!(pane.bag.get("site").cloned(), original);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    commit: &mut store_commit(&mut store, "Gatherer"),
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("options unavailable"), "{text:?}");
+        assert!(
+            text.contains("not for the selected resources"),
+            "{text:?}"
         );
     }
 
