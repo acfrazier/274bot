@@ -287,6 +287,13 @@ main asset and its source provenance, not the opt-in `DebugCatalog`.
 Message and object-box `mesbox` pages are chat surfaces and keep the ordinary
 chat continuation path.
 
+### Exact loc use-on targets
+
+Item/widget use-on dispatch keeps the exact loc tile and applies every supplied
+loc name and id. Names compare without case sensitivity. If a supplied name/id
+is absent from the snapshot, or the id and name disagree, dispatch sends nothing;
+a co-located wall cannot replace the requested loc.
+
 ### Quester expected combat handoff
 
 A `talk` step may declare `expect_combat: {"npc": "desertminingcaptain"}` when

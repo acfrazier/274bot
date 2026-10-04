@@ -1332,7 +1332,17 @@ fn resolve_op_target<'a>(
         "loc" => snapshot
             .locs()
             .iter()
-            .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level)
+            .find(|loc| {
+                loc.tile.x == x
+                    && loc.tile.z == z
+                    && loc.tile.level == level
+                    && target_item_id.is_none_or(|id| loc.id == id)
+                    && target_name.is_none_or(|wanted| {
+                        loc.name
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(wanted))
+                    })
+            })
             .map(OpTarget::Loc),
         "obj" => snapshot
             .ground_items()
