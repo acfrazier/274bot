@@ -1638,6 +1638,8 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
         open_loc_id: None,
         skill_req: vec![(6, 37)],
         item_req: vec![(555, 1), (556, 3), (563, 1)],
+        consumed_req: vec![],
+        item_returns: vec![],
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
