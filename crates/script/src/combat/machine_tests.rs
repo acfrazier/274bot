@@ -344,6 +344,7 @@ impl Scene {
                     actor: actor(at),
                     combat_level: 60,
                     skill_level: 0,
+                    headicons: 0,
                     weapon: None,
                 },
                 energy: 100,
@@ -561,6 +562,7 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
         actor: actor(tile(2601, 3200)),
         combat_level: 60,
         skill_level: 0,
+        headicons: 0,
         weapon: None,
     };
     attacker.actor.name = Some("Alpha".into());

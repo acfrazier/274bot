@@ -876,6 +876,9 @@ pub struct NpcNameRow {
     pub vislevel: i32,
     pub hitpoints: i32,
     pub damagetype: Option<String>,
+    /// Selected-content NPC headicon; absent content remains unknown.
+    #[serde(default)]
+    pub headicon: Option<i32>,
     #[serde(default)]
     pub strength: Option<i32>,
     #[serde(default)]
