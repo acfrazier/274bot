@@ -4557,6 +4557,34 @@ fn diagnosis_names_only_zones_active_under_the_original_predicate() {
 }
 
 #[test]
+fn single_target_witness_observes_origin_escape_and_goal_entry() {
+    let collision = bake(9, 1, &[]);
+    let from = tile(1, 0, 0);
+    let to = tile(7, 0, 0);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![
+            rect_zone(1, 2, 0, 0),
+            rect_zone(6, 7, 0, 0),
+            rect_zone(4, 4, 0, 0),
+        ],
+    );
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+    assert!(matches!(
+        find_with(&collision, &graph, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    ));
+    assert_eq!(
+        crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
+        Some(vec![ZoneKey::Zone(2)]),
+        "origin escape and goal entry are permitted; only the intervening zone blocks"
+    );
+}
+
+#[test]
 fn refusal_attribution_reports_the_selected_witness_and_multi_goal_frontiers() {
     let blocked: Vec<_> = (0..3)
         .flat_map(|z| {
@@ -4753,7 +4781,7 @@ fn transport_and_any_tile_teleport_landings_are_checked_independently() {
         assert_eq!(
             crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[],),
             Some(vec![ZoneKey::Zone(0)]),
-            "a blocked transport/teleport landing is part of the route frontier"
+            "a blocked transport/teleport landing is on the selected relaxed route"
         );
         let route = find_with(
             &collision,
@@ -4804,7 +4832,7 @@ fn essence_return_landing_is_checked_before_the_following_walk() {
     assert_eq!(
         crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[]),
         Some(vec![ZoneKey::Zone(0)]),
-        "a blocked essence return landing is part of the route frontier"
+        "a blocked essence return landing is on the selected relaxed route"
     );
     let route = find_with(
         &collision,
@@ -5307,8 +5335,7 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
         .unwrap();
         let bear = table.resolve("brownbear@3176,3223,0").unwrap();
         let rat = table.resolve("giantrat1@3211,3195,0").unwrap();
-        assert!(keys.contains(&bear), "{keys:?}");
-        assert!(keys.contains(&rat), "{keys:?}");
+        assert_eq!(keys, vec![rat, bear], "{keys:?}");
         let route = find_with(
             &world.collision,
             &world.graph,
@@ -5566,21 +5593,7 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
         &[],
     )
     .expect("active zone witness");
-    // Attribution names the source-reachable frontier, which can precede
-    // the mage deeper inside overlapping zones on this raw-plane crossing.
-    assert!(
-        crossing.legs.iter().any(|leg| match leg {
-            Leg::Walk { tiles } => tiles.iter().any(|&cell| {
-                table
-                    .at(cell)
-                    .any(|index| blocked.contains(&table.key(index)))
-            }),
-            Leg::Transport { edge } => table
-                .at(edge.to)
-                .any(|index| blocked.contains(&table.key(index))),
-        }),
-        "{blocked:?}"
-    );
+    assert!(blocked.contains(&mage), "{blocked:?}");
 }
 
 #[path = "router/consumption_tests.rs"]

@@ -442,12 +442,17 @@ open or abandoned proof retains the normal forward-search budget. Thus a
 deep-zone goal need not exhaust the safe-reachable world, and exhausting
 the safe budget does not suppress its permitted completion pass.
 
-Refusal diagnosis requires a strict `NoPath` and an all-zone-exempt route
-that still satisfies the same hard gates. It reports active zone-blocked
-transitions on the source-reachable frontier, including separately blocked
-alternatives, rather than naming only a shortest relaxed witness. It does
-not claim a minimal cut; incomplete or budget-limited frontier searches
-return no diagnosis.
+Single-target refusal diagnosis requires a strict `NoPath` and a route that
+still satisfies the same hard gates with zone restrictions lifted. It names
+only the active zones blocking transitions on that best all-zone-exempt route,
+using the original transition rules: one-way escape from active origin zones
+(re-entry is reported) and entry into the selected goal's active zones without
+allowing transit out of them. This reverses NAV-N1's ROUTER-30 decision for
+single-target diagnosis only: a sufficient witness on the best route is more
+useful than listing every blocked alternative. Multi-goal
+`find_first_blocking_zones` retains reachable-frontier attribution per
+goal-zone partition. Neither diagnosis claims a minimal cut; incomplete or
+budget-limited searches return no diagnosis.
 Script bank-fetch refusal hints probe at most eight candidate goals, each
 through the existing bounded router searches, rather than running a separate
 bank/zone diagnosis for every Area tile. This optional hint budget does not
