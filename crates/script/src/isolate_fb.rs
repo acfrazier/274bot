@@ -3186,23 +3186,18 @@ fn api_gather_outcome_off<'b>(
     outcome: &crate::api_gather::GatherEnd,
 ) -> WIPOffset<ApiGatherOutcome<'b>> {
     use crate::api_gather::GatherEnd;
-    let (end, code, message, retryable, counts) = match outcome {
-        GatherEnd::Stopped { counts, .. } => (1, None, None, false, *counts),
+    let (end, code, message, counts) = match outcome {
+        GatherEnd::Stopped { counts, .. } => (1, None, None, *counts),
         GatherEnd::Blocked {
             failure, counts, ..
         } => (
             2,
             Some(failure.code.as_ref()),
             Some(failure.message.as_ref()),
-            failure.retryable,
             *counts,
         ),
-        GatherEnd::Refused { reason, .. } => {
-            (3, None, Some(reason.as_ref()), false, Default::default())
-        }
-        GatherEnd::Failed { reason, counts, .. } => {
-            (4, None, Some(reason.as_ref()), false, *counts)
-        }
+        GatherEnd::Refused { reason, .. } => (3, None, Some(reason.as_ref()), Default::default()),
+        GatherEnd::Failed { reason, counts, .. } => (4, None, Some(reason.as_ref()), *counts),
     };
     let code = code.map(|value| b.create_string(value));
     let message = message.map(|value| b.create_string(value));
@@ -3215,7 +3210,6 @@ fn api_gather_outcome_off<'b>(
     if let Some(message) = message {
         table.add_message(message);
     }
-    table.add_retryable(retryable);
     table.add_yielded(counts.yielded);
     table.add_dropped(counts.dropped);
     table.add_deposited(counts.deposited);

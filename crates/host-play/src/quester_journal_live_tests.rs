@@ -38,7 +38,6 @@ use std::sync::mpsc;
 
 use api::interact;
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};
 use api::snapshot::{ActorKind, GameSnapshot};
 #[cfg(all(windows, feature = "journal-paint-proof"))]
@@ -1430,12 +1429,6 @@ fn truth(status: &ScriptStatus, key: &str) -> Truth {
     }
 }
 
-fn progress_evidence(status: &ScriptStatus, key: &str) -> EvidenceStamp {
-    match field(status, key) {
-        StatusValue::Quest(progress) => progress.evidence,
-        other => panic!("status {key:?} is not Quest progress: {other:?}"),
-    }
-}
 fn wait_status(
     play: &super::Play,
     name: &str,
@@ -1464,31 +1457,6 @@ fn wait_status(
     }
 }
 
-fn wait_read_journal_active(
-    play: &super::Play,
-    name: &str,
-    target: api::selected::RunKey,
-    expected_lines: &str,
-) -> Arc<ScriptStatus> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(status) = play.script_native_status(name) {
-            if status.run == target
-                && matches!(status.phase, NativePhase::Waiting | NativePhase::Working)
-                && truth(&status, "needs_read") == Truth::True
-                && text(&status, "journal_lines") == expected_lines
-            {
-                return status;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "ReadJournal never exposed a pending Waiting/Working status; status={:?}",
-            play.script_native_status(name)
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
 fn wait_test_start(handle: &ScriptStartHandle, name: &str) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -1936,70 +1904,64 @@ fn live_quester_journal_synthetic_runemysteries() {
         )
         .expect("install no-match Quester");
     play.wake(&name);
-    let parked = wait_status(
+    let terminal_blocked = wait_status(
         &play,
         &name,
         SYNTHETIC_TIMEOUT,
-        "no-match journal parking",
+        "no-match terminal journal block",
         |status| {
             status.phase == NativePhase::Blocked
                 && text(status, "rule") == "unknown"
                 && text(status, "journal_lines") == text(&advanced, "journal_lines")
         },
     );
-    assert_eq!(parked.run, no_match_run);
+    assert_eq!(terminal_blocked.run, no_match_run);
     assert!(matches!(
-        field(&parked, "needs_read"),
+        field(&terminal_blocked, "needs_read"),
         StatusValue::Truth(Truth::True)
     ));
-    match field(&parked, "quest") {
+    match field(&terminal_blocked, "quest") {
         StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
         other => panic!("no-match progress is not Quest: {other:?}"),
     }
     println!(
-        "synthetic no-match journal status: run={:?} raw={:?} status={parked:?}",
-        parked.run,
-        text(&parked, "journal_lines")
+        "synthetic no-match journal status: run={:?} raw={:?} status={terminal_blocked:?}",
+        terminal_blocked.run,
+        text(&terminal_blocked, "journal_lines")
     );
-
-    // Read now is a real retry command for a parked run. It must expose a
-    // pending native read first, then publish a later no-match proof and park
-    // again; an Ok response that leaves the slot Blocked is not sufficient.
-    let parked_lines = text(&parked, "journal_lines").to_string();
-    let parked_evidence = progress_evidence(&parked, "quest");
-    assert!(
-        play.script_native_read_journal(&name, no_match_run).is_ok(),
-        "ReadJournal must accept the current parked native run"
+    wait_until("terminal no-match Quester Stop", SYNTHETIC_TIMEOUT, || {
+        handle.idle(&name) && play.script_native_run(&name).is_none()
+    });
+    let lifecycle = play
+        .script_lifecycle_receipt(&name)
+        .expect("terminal no-match lifecycle receipt");
+    assert_eq!(lifecycle.state, script::ScriptTerminalState::Failed);
+    let retained = play
+        .script_native_status(&name)
+        .expect("terminal blocked status is retained");
+    assert_eq!(retained.run, no_match_run);
+    assert_eq!(retained.phase, NativePhase::Blocked);
+    let failure = retained
+        .failure
+        .as_ref()
+        .expect("terminal reason is retained");
+    assert_eq!(failure.code.as_ref(), "parked");
+    assert_eq!(
+        failure.message.as_ref(),
+        "no journal rule matched or stage has no sequence"
     );
-    let active_read = wait_read_journal_active(&play, &name, no_match_run, &parked_lines);
-    assert_eq!(active_read.run, no_match_run);
-    let reread = wait_status(
-        &play,
-        &name,
-        SYNTHETIC_TIMEOUT,
-        "no-match ReadJournal re-parking",
-        |status| {
-            status.phase == NativePhase::Blocked
-                && text(status, "rule") == "unknown"
-                && text(status, "journal_lines") == parked_lines
-                && {
-                    let evidence = progress_evidence(status, "quest");
-                    evidence.run == parked_evidence.run
-                        && (evidence.tick, evidence.sequence)
-                            > (parked_evidence.tick, parked_evidence.sequence)
-                }
-        },
+    assert_eq!(truth(&retained, "needs_read"), Truth::True);
+    assert_eq!(
+        play.script_native_read_journal(&name, no_match_run),
+        Err("stale native run".into()),
+        "ReadJournal must not revive the terminal blocked run"
     );
-    assert_eq!(reread.run, no_match_run);
-    assert_eq!(truth(&reread, "needs_read"), Truth::True);
-    match field(&reread, "quest") {
-        StatusValue::Quest(progress) => assert!(progress.signals.is_empty()),
-        other => panic!("re-read progress is not Quest: {other:?}"),
-    }
-    println!(
-        "synthetic no-match ReadJournal re-read status: run={:?} raw={:?} status={reread:?}",
-        reread.run,
-        text(&reread, "journal_lines")
+    assert!(handle.idle(&name));
+    assert!(play.script_native_run(&name).is_none());
+    assert_eq!(
+        play.script_lifecycle_receipt(&name)
+            .expect("failed lifecycle receipt remains retained"),
+        lifecycle
     );
 
     if let Some(capture) = capture.as_ref() {

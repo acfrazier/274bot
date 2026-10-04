@@ -994,7 +994,6 @@ impl TellerScript {
         ScriptFlow::Blocked(ScriptFailure {
             code: "mage-bank-live-proof".into(),
             message: message.into(),
-            retryable: false,
         })
     }
 }

@@ -109,13 +109,7 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
-    queued.retry().unwrap();
-    with_tick_output(&snapshot, &mut ledger, 53, &mut output, |native| {
-        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
-    });
-    assert_eq!(output.0.last().unwrap().phase, NativePhase::Waiting);
 }
-
 #[test]
 fn individually_missing_quest_row_stays_fail_closed() {
     let (mut queued, mut snapshot) = fixture(cook_settings());
@@ -275,7 +269,6 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         failure.message.as_ref(),
         "maximum deaths exceeded; Stop/Start required"
     );
-    assert!(!failure.retryable);
     let reported_deaths = status
         .fields
         .iter()

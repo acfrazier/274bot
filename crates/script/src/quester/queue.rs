@@ -250,18 +250,6 @@ impl<'a> Queue<'a> {
         }
     }
 
-    /// Explicit operator retry also re-arms failed executions, but never
-    /// reselects excluded or skipped rows.
-    pub fn retry(&mut self) {
-        self.refresh_blocked();
-        for (position, row) in self.rows.iter_mut().enumerate() {
-            if row.picked && !row.skipped && row.status == QueueStatus::Parked {
-                row.status = QueueStatus::Unknown;
-                self.reasons[position] = None;
-            }
-        }
-    }
-
     pub fn all_done(&self) -> bool {
         self.rows
             .iter()
@@ -427,22 +415,6 @@ mod tests {
         assert_eq!(queue.reason(1), Some("need 20 quest points"));
         queue.refresh_blocked();
         assert_eq!(queue.status(1), Some(QueueStatus::Unknown));
-        assert_eq!(queue.reason(1), None);
-        assert_eq!(queue.next_candidate(), Some(1));
-    }
-
-    #[test]
-    fn explicit_retry_rearms_failures_but_preserves_exclusions() {
-        let index = index();
-        let mut queue =
-            Queue::from_index(&index, settings(&["cook", "sheep"], &[], &["cook"])).unwrap();
-        queue.mark_parked(1, Arc::from("step failed"));
-        queue.refresh_blocked();
-        assert_eq!(queue.status(1), Some(QueueStatus::Parked));
-        queue.retry();
-        assert_eq!(queue.status(0), Some(QueueStatus::Parked));
-        assert_eq!(queue.status(1), Some(QueueStatus::Unknown));
-        assert_eq!(queue.status(2), Some(QueueStatus::Parked));
         assert_eq!(queue.reason(1), None);
         assert_eq!(queue.next_candidate(), Some(1));
     }

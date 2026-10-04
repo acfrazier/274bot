@@ -43,7 +43,6 @@ pub struct GatherCounts {
 pub struct GatherFailure {
     pub code: Arc<str>,
     pub message: Arc<str>,
-    pub retryable: bool,
 }
 
 impl From<ScriptFailure> for GatherFailure {
@@ -51,7 +50,6 @@ impl From<ScriptFailure> for GatherFailure {
         Self {
             code: failure.code,
             message: failure.message,
-            retryable: failure.retryable,
         }
     }
 }
@@ -117,7 +115,6 @@ impl From<GatherEnd> for serde_json::Value {
                 "failure": {
                     "code": failure.code,
                     "message": failure.message,
-                    "retryable": failure.retryable,
                 },
                 "counts": counts(c),
             }),

@@ -41,13 +41,16 @@ instance, preparation or retained cell; a rejected Start may retain its cell.
 
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
-Quester, Gatherer and Sherlock all use the normal operator Stop cleanup:
-cancel actions and walks, release quiet leases, and discharge an owned
-WalkGuard's owed off-click. The instance is dropped and the lifecycle is Idle
-(stopped), not Running. Only the blocked status and reason survive for panel
-and TUI display through frontend-core and for the change-only status log.
-They carry no run/control authority. Watchdog, reconnect and fleet polling
-cannot restart that run; the operator must explicitly Start again.
+Quester, Gatherer and Sherlock take the same slot-level Stop path as operator
+Stop: cancel actions and walks, release quiet leases, and discharge an owned
+WalkGuard's owed off-click. For each `Failed`, `Stopped`, or `Completed`
+lifecycle receipt, host observation resets the navigation session exactly
+once, including routes, route inspect, bank picks, carried walks, and duel
+offers. A blocked instance is dropped and the slot is Idle, not Running. Its
+terminal blocked status and reason remain available to panel and TUI through
+frontend-core and to the change-only status log. They carry no run/control
+authority. Watchdog, reconnect and fleet polling cannot restart that run; the
+operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
 The typed action-machine facility is a separate cutover: begins/polls still

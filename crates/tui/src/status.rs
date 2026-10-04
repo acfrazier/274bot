@@ -313,7 +313,6 @@ mod tests {
                     code: "empty-queue".into(),
                     message: "no quests selected; review Script prefs and Skip, then Stop/Start"
                         .into(),
-                    retryable: true,
                 }),
             })),
             ..SlotDetail::default()

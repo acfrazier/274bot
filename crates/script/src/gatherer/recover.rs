@@ -37,18 +37,13 @@ impl Gatherer {
         self.advance_recovery(RecoveryState::Pending { step: 1 }, tick);
         self.set_event("death observed; inventory unknown");
         if exceeded {
-            self.fail(
-                "max-deaths",
-                "maximum deaths exceeded; Stop/Start required",
-                false,
-            );
+            self.fail("max-deaths", "maximum deaths exceeded; Stop/Start required");
         } else if repeated {
-            self.fail("died-again", "died before a recovered haul completed", true);
+            self.fail("died-again", "died before a recovered haul completed");
         } else if self.settings().death_policy.eq_ignore_ascii_case("Stop") {
             self.fail(
                 "died",
                 "death observed; Start again after reviewing recovery settings",
-                true,
             );
         }
     }
@@ -87,7 +82,6 @@ impl Gatherer {
                 self.fail(
                     "respawn-not-observed",
                     "restored HP at the respawn square was not observed",
-                    true,
                 );
             }
             return;
@@ -157,11 +151,7 @@ impl Gatherer {
             4 => {
                 if self.trip != TripStep::Idle {
                     if self.recovery_reprovisions != 0 {
-                        self.fail(
-                            "supply-missing",
-                            "supply-missing:tool after reprovision",
-                            true,
-                        );
+                        self.fail("supply-missing", "supply-missing:tool after reprovision");
                         return;
                     }
                     self.recovery_reprovisions += 1;
@@ -193,7 +183,6 @@ impl Gatherer {
                     "{}; arrival at the resource observation stand must be observed",
                     walk_failure_message(&result),
                 ),
-                true,
             );
             return;
         }

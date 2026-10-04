@@ -25,7 +25,8 @@
 //! fish, resources, NPCs or an incidental-drop gate. Initial level/tool fixtures
 //! precede the progression baseline; proof gains come from the running script.
 //! G4a cells exercise guardian-owned random-event holds and verified death
-//! recovery, including Retry and watchdog recreation; they require the
+//! recovery, including terminal return refusals and watchdog recreation;
+//! they require the
 //! `BOT_LIVE_NAME_PREFIX=g4a` namespace.
 //! Fixture helpers alter locations only; they never inject products or XP.
 //! Every live account uses the configured `BOT_LIVE_NAME_PREFIX` and a
@@ -253,7 +254,7 @@ impl Cell {
             }
             (Self::Woodcutting, LiveCase::DeathNoStock) => "gatherer_death_return_no_stock",
             (Self::Woodcutting, LiveCase::DeathReturnRefused) => {
-                "gatherer_death_return_refused_retry"
+                "gatherer_death_return_refused_stops"
             }
             (Self::Woodcutting, LiveCase::DeathWatchdogPending) => {
                 "gatherer_death_watchdog_pending5"
@@ -779,7 +780,7 @@ impl LiveCase {
             Self::DeathReturn => "death-return",
             Self::DeathRespawnRegion => "death-return-respawn-region",
             Self::DeathNoStock => "death-return-no-stock",
-            Self::DeathReturnRefused => "death-return-refused-retry",
+            Self::DeathReturnRefused => "death-return-refused-stop",
             Self::DeathWatchdogPending => "death-watchdog-pending5",
             Self::DeathWatchdogProving => "death-watchdog-proving",
             Self::FishBaitGate => "fish-bait-gate",
@@ -1433,9 +1434,7 @@ struct Witness {
     death_first_recovery_post_drop_gathers: Option<u32>,
     death_haul_between: bool,
     death_return_refused: bool,
-    death_retry_teleport_sent: bool,
-    death_retry_requested: bool,
-    death_retry_reentered: bool,
+    death_return_stopped: bool,
     death_watchdog_aged: bool,
     death_watchdog_generation_before: Option<u64>,
     death_watchdog_recreated: bool,
@@ -3415,14 +3414,6 @@ impl GatherSlot {
                         Some(self.witness.post_drop_gathers);
                 }
             }
-            if self.witness.death_retry_requested
-                && status.failure.is_none()
-                && event == "returning after death"
-                && current_deaths == 1
-                && current_recovery_step == 5
-            {
-                self.witness.death_retry_reentered = true;
-            }
             if event == "bank selected" {
                 self.witness.bank_selected = true;
                 if self.case == LiveCase::PowerToBank {
@@ -3579,7 +3570,8 @@ impl GatherSlot {
                 }
                 LiveCase::DeathNoStock => code == "supply-missing",
                 LiveCase::DeathReturnRefused => {
-                    self.witness.death_return_refused |= code == "return-failed";
+                    self.witness.death_return_refused |=
+                        code == "return-failed" && message.contains("walk ended with Refused");
                     code == "return-failed"
                 }
                 _ => false,
@@ -4993,50 +4985,39 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     _ => {}
                 }
             }
-            let (spawn_owned_event, trigger_recovery_death, death_command_tile, retry_teleport) =
-                frame_state
-                    .lock()
-                    .ok()
-                    .map(|slot| {
-                        let initial_progress = slot.witness.last_status_yielded > 0
-                            && slot.witness.last_xp > slot.baseline_xp();
-                        let death_command_tile =
-                            slot.latest.as_ref().and_then(|latest| latest.tile);
-                        let death_at_target = death_command_tile
-                            .and_then(|tile| tile_distance(tile, slot.target))
-                            .is_some_and(|distance| distance <= 12);
-                        let trigger_recovery_death = !hold
-                            && slot.case.is_death_recovery()
-                            && death_at_target
-                            && (slot.case != LiveCase::DeathReturn
-                                || slot.witness.death_recovery_command_sent > 0
-                                || slot.witness.pause_observed)
-                            && if slot.case == LiveCase::DeathReturn
-                                && slot.witness.death_recovery_command_sent == 1
-                            {
-                                slot.witness.death_haul_between
-                            } else {
-                                slot.witness.death_recovery_command_sent == 0 && initial_progress
-                            };
-                        let retry_teleport = (!hold
-                            && slot.case == LiveCase::DeathReturnRefused
-                            && slot.witness.death_return_refused
-                            && !slot.witness.death_retry_teleport_sent)
-                            .then_some(WorldTile {
-                                x: slot.target.x.saturating_add(13),
-                                ..slot.target
-                            });
-                        (
-                            !hold
-                                && slot.case == LiveCase::RandomEvent
-                                && initial_progress
-                                && !slot.witness.random_owned_command_sent,
-                            trigger_recovery_death,
-                            death_command_tile,
-                            retry_teleport,
-                        )
-                    })
-                    .unwrap_or((false, false, None, None));
+            let (spawn_owned_event, trigger_recovery_death, death_command_tile) = frame_state
+                .lock()
+                .ok()
+                .map(|slot| {
+                    let initial_progress = slot.witness.last_status_yielded > 0
+                        && slot.witness.last_xp > slot.baseline_xp();
+                    let death_command_tile = slot.latest.as_ref().and_then(|latest| latest.tile);
+                    let death_at_target = death_command_tile
+                        .and_then(|tile| tile_distance(tile, slot.target))
+                        .is_some_and(|distance| distance <= 12);
+                    let trigger_recovery_death = !hold
+                        && slot.case.is_death_recovery()
+                        && death_at_target
+                        && (slot.case != LiveCase::DeathReturn
+                            || slot.witness.death_recovery_command_sent > 0
+                            || slot.witness.pause_observed)
+                        && if slot.case == LiveCase::DeathReturn
+                            && slot.witness.death_recovery_command_sent == 1
+                        {
+                            slot.witness.death_haul_between
+                        } else {
+                            slot.witness.death_recovery_command_sent == 0 && initial_progress
+                        };
+                    (
+                        !hold
+                            && slot.case == LiveCase::RandomEvent
+                            && initial_progress
+                            && !slot.witness.random_owned_command_sent,
+                        trigger_recovery_death,
+                        death_command_tile,
+                    )
+                })
+                .unwrap_or((false, false, None));
             if spawn_owned_event && interact::cheat(client, "~macro_event 4").is_sent() {
                 if let Ok(mut slot) = frame_state.lock() {
                     slot.witness.random_owned_command_sent = true;
@@ -5050,13 +5031,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     slot.witness.death_recovery_command_sent =
                         slot.witness.death_recovery_command_sent.saturating_add(1);
                     slot.witness.death_command_tile = death_command_tile;
-                }
-            }
-            if let Some(tile) = retry_teleport {
-                if send_cheat(client, &interact::tele_args(tile.level, tile.x, tile.z)).is_ok() {
-                    if let Ok(mut slot) = frame_state.lock() {
-                        slot.witness.death_retry_teleport_sent = true;
-                    }
                 }
             }
             let plane_teleport = frame_state.lock().ok().and_then(|slot| {
@@ -5243,28 +5217,6 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             println!("{}", json!({"phase": "start", "cell": cell_name}));
         }
         let current_run = play.script_native_run(&account);
-        if case == LiveCase::DeathReturnRefused
-            && witness.death_return_refused
-            && witness.death_retry_teleport_sent
-            && !witness.death_retry_requested
-            && state
-                .lock()
-                .map_err(|_| "live state poisoned")?
-                .latest
-                .as_ref()
-                .and_then(|latest| latest.tile)
-                == Some((target.x.saturating_add(13), target.z, target.level))
-        {
-            let Some(run) = current_run else {
-                break Err(format!("{cell_name} lost the blocked run before Retry"));
-            };
-            if let Err(error) = play.script_native_retry(&account, run) {
-                break Err(format!("{cell_name} Retry failed: {error}"));
-            }
-            if let Ok(mut slot) = state.lock() {
-                slot.witness.death_retry_requested = true;
-            }
-        }
         if case == LiveCase::PowerToBank
             && !power_to_bank_edit_requested
             && witness.awaiting_drop
@@ -5563,6 +5515,16 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             let mut slot = state.lock().map_err(|_| "live state poisoned")?;
             if let Err(error) = slot.apply_status(&status) {
                 slot.error = Some(error);
+            }
+            if case == LiveCase::DeathReturnRefused && slot.witness.death_return_refused {
+                slot.witness.death_return_stopped |= play.script_state(&account)
+                    == script::RunState::Idle
+                    && play.script_native_run(&account).is_none()
+                    && play
+                        .script_lifecycle_receipt(&account)
+                        .is_some_and(|receipt| {
+                            receipt.state == script::ScriptTerminalState::Failed
+                        });
             }
         }
         let (
@@ -5882,9 +5844,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "death_xp_after": witness.death_xp_after,
             "death_haul_between": witness.death_haul_between,
             "death_return_refused": witness.death_return_refused,
-            "death_retry_teleport_sent": witness.death_retry_teleport_sent,
-            "death_retry_requested": witness.death_retry_requested,
-            "death_retry_reentered": witness.death_retry_reentered,
+            "death_return_stopped": witness.death_return_stopped,
             "death_watchdog_aged": witness.death_watchdog_aged,
             "death_watchdog_generation_before": witness.death_watchdog_generation_before,
             "death_watchdog_recreated": witness.death_watchdog_recreated,
@@ -6452,7 +6412,7 @@ fn gatherer_death_return_no_stock() {
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_DEATH_RETURN_REFUSE_TILE, and local 289 engine"]
-fn gatherer_death_return_refused_retry() {
+fn gatherer_death_return_refused_stops() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturnRefused).unwrap();
 }
 
@@ -6519,9 +6479,7 @@ fn interrupts_complete(case: LiveCase, witness: &Witness) -> bool {
         }
         LiveCase::DeathReturnRefused => {
             witness.death_return_refused
-                && witness.death_retry_teleport_sent
-                && witness.death_retry_requested
-                && witness.death_retry_reentered
+                && witness.death_return_stopped
                 && witness.last_deaths == 1
                 && witness.death_recovery_command_sent == 1
         }

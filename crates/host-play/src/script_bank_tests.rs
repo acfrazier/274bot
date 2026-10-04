@@ -582,7 +582,7 @@ fn bank_pick_walk_reset_abort_takeover_and_newer_route_lease_reject_late_results
         ));
         gate.0.wait(1);
         match replacement {
-            0 => super::super::reset_script_nav(&navs, "test"),
+            0 => super::super::reset_script_nav(&navs, "test", None),
             1 => super::super::abort_script_walk(&navs, "test"),
             2 => {
                 // Publish another walk owner's refusal while the bank worker

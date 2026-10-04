@@ -1026,7 +1026,6 @@ export interface GatherSession {
 export interface GatherFailure {
   code: string;
   message: string;
-  retryable: boolean;
 }
 
 export interface GatherCounts {
