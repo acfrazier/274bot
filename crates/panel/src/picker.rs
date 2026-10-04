@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
-use frontend_core::{MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING};
+use frontend_core::{
+    MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+};
 use host_play::walk_map::{
     select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
 };
@@ -31,7 +33,7 @@ use nav::world::NavWorld;
 
 use crate::game_view::FrameGpu;
 use crate::session::Session;
-use crate::theme::scale_px;
+use crate::theme::{scale_px, ERROR};
 use crate::walk_map::{
     overlay_colors, snap_tile, view_from_canvas, OverlayLayers, WalkMapRenderer, MAX_LABELS,
     NSEW_PPT,
@@ -61,7 +63,6 @@ static ZOOM: AtomicI32 = AtomicI32::new(DEFAULT_ZOOM);
 /// True while the picker window was drawn last frame; drives the view reset
 /// when it opens fresh.
 static PREV_OPEN: AtomicBool = AtomicBool::new(false);
-const ROUTE_THROUGH_ZONES_LABEL: &str = "Route through danger zones";
 const ROUTE_THROUGH_ZONES_TOOLTIP: &str = "Allows routes past monsters that may kill your bot.";
 
 /// Attach the session's nav world (one `Arc` shared with [`Play`]'s slots);
@@ -1577,6 +1578,7 @@ fn picker_map_body(
     map: &mut WalkMapRenderer,
     world: &NavWorld,
 ) {
+    session.refresh_walk_permissions();
     map.note_open();
     session.sync_walk_map(pack());
     draw_map_bake_banner(ui, session);
@@ -1641,8 +1643,13 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
-    let route_checkbox = checkbox_w(ui, ROUTE_THROUGH_ZONES_LABEL);
-    let controls = route_checkbox + spacing + cluster;
+    let global_danger = session.walk_permissions.globals.allow_danger_zones;
+    let route_control_w = if global_danger {
+        button_w(ui, GLOBAL_DANGER_WARNING)
+    } else {
+        checkbox_w(ui, DANGER_THIS_WALK_LABEL)
+    };
+    let controls = route_control_w + spacing + cluster;
     let status_text = format_walkto_status(
         walkto_selection_caption(session.map_model.pending(), teleport),
         &status,
@@ -1651,9 +1658,15 @@ fn picker_map_body(
     ui.text_disabled(ellipsize_to_width(ui, &status_text, status_max));
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], controls);
     ui.same_line_with_pos(x);
-    ui.checkbox(ROUTE_THROUGH_ZONES_LABEL, &mut session.route_through_zones);
-    let route_zones_rect = [ui.item_rect_min(), ui.item_rect_max()];
-    ui.set_item_tooltip(ROUTE_THROUGH_ZONES_TOOLTIP);
+    let route_zones_rect = if global_danger {
+        ui.text_colored(ERROR, GLOBAL_DANGER_WARNING);
+        [[0.0, 0.0], [0.0, 0.0]]
+    } else {
+        ui.checkbox(DANGER_THIS_WALK_LABEL, &mut session.route_through_zones);
+        let rect = [ui.item_rect_min(), ui.item_rect_max()];
+        ui.set_item_tooltip(ROUTE_THROUGH_ZONES_TOOLTIP);
+        rect
+    };
     ui.same_line();
     if ui.button("recentre") {
         let observed = session

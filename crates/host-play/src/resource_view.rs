@@ -2,9 +2,78 @@
 //! (`frontend-core` owns the meter itself), the background-bot count, and
 //! the shared `panel-ui.json` preferences store.
 
+use std::fs::{File, OpenOptions};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static PANEL_UI_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn panel_ui_write_lock() -> std::sync::MutexGuard<'static, ()> {
+    PANEL_UI_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn panel_ui_lock_path(path: &Path) -> PathBuf {
+    let mut lock_path = path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
+}
+
+fn panel_ui_file_lock(path: &Path) -> io::Result<File> {
+    if let Some(parent) = path.parent() {
+        vault::create_private_dir(parent)?;
+    }
+    let lock_path = panel_ui_lock_path(path);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    file.lock()?;
+    Ok(file)
+}
+
+fn preserve_corrupt_panel_ui(path: &Path, error: &str) -> io::Result<()> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
+    eprintln!(
+        "host-play: refusing to clobber invalid {}; moving it to {}",
+        path.display(),
+        backup.display()
+    );
+    if backup.exists() {
+        eprintln!(
+            "host-play: refusing to overwrite existing corrupt backup {}",
+            backup.display()
+        );
+        return Err(io::Error::new(
+            ErrorKind::AlreadyExists,
+            format!(
+                "corrupt panel-ui backup already exists: {}",
+                backup.display()
+            ),
+        ));
+    }
+    if let Err(rename_error) = std::fs::rename(path, &backup) {
+        eprintln!(
+            "host-play: could not preserve invalid {} as {}: {rename_error}",
+            path.display(),
+            backup.display()
+        );
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
+        ));
+    }
+    Ok(())
+}
 
 use crate::Play;
 
@@ -130,63 +199,54 @@ pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result
     persist_panel_ui_value_at(&panel_ui_path(), key, value)
 }
 
+/// Run a read/merge/write update under the shared in-process mutex and an
+/// advisory sidecar lock, including Continue-anyway concurrent frontends.
+/// `merge` receives the parsed document, whether a file existed, and whether
+/// its JSON was malformed; it may return an alternate destination.
+pub fn update_panel_ui_at(
+    path: &Path,
+    merge: impl FnOnce(&mut serde_json::Value, bool, bool) -> io::Result<Option<PathBuf>>,
+) -> io::Result<()> {
+    let _write = panel_ui_write_lock();
+    let _file_lock = panel_ui_file_lock(path)?;
+    let (mut document, file_exists, corrupt_json) = match std::fs::read(path) {
+        Ok(data) => match serde_json::from_slice(&data) {
+            Ok(document) => (document, true, None),
+            Err(error) => (serde_json::json!({}), true, Some(error.to_string())),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => (serde_json::json!({}), false, None),
+        Err(error) => return Err(error),
+    };
+    let alternate = merge(&mut document, file_exists, corrupt_json.is_some())?;
+    if document.as_object().is_none() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "panel-ui.json is not an object",
+        ));
+    }
+    if alternate.is_none() {
+        if let Some(error) = corrupt_json.as_deref() {
+            preserve_corrupt_panel_ui(path, error)?;
+        }
+    }
+    let data = serde_json::to_vec_pretty(&document)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+    vault::write_private_file(alternate.as_deref().unwrap_or(path), &data)
+}
+
 /// Set one top-level key in an explicitly supplied preference store.
 pub fn persist_panel_ui_value_at(
     path: &Path,
     key: &str,
     value: serde_json::Value,
 ) -> io::Result<()> {
-    let mut document = match std::fs::read(path) {
-        Ok(data) => match serde_json::from_slice(&data) {
-            Ok(document) => document,
-            Err(error) => {
-                let stamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
-                eprintln!(
-                    "host-play: refusing to clobber invalid {}; moving it to {}",
-                    path.display(),
-                    backup.display()
-                );
-                if backup.exists() {
-                    eprintln!(
-                        "host-play: refusing to overwrite existing corrupt backup {}",
-                        backup.display()
-                    );
-                    return Err(io::Error::new(
-                        ErrorKind::AlreadyExists,
-                        format!(
-                            "corrupt panel-ui backup already exists: {}",
-                            backup.display()
-                        ),
-                    ));
-                }
-                if let Err(rename_error) = std::fs::rename(path, &backup) {
-                    eprintln!(
-                        "host-play: could not preserve invalid {} as {}: {rename_error}",
-                        path.display(),
-                        backup.display()
-                    );
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
-                    ));
-                }
-                serde_json::json!({})
-            }
-        },
-        Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(e),
-    };
-    let obj = document
-        .as_object_mut()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object"))?;
-    obj.insert(key.into(), value);
-    let data = serde_json::to_vec_pretty(&document)
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    vault::write_private_file(path, &data)
+    update_panel_ui_at(path, |document, _, _| {
+        let object = document.as_object_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object")
+        })?;
+        object.insert(key.into(), value);
+        Ok(None)
+    })
 }
 
 #[cfg(test)]
@@ -275,6 +335,47 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(v["last_focus"], "alice");
         assert_eq!(v["background_bots_ack"], true);
+    }
+
+    #[test]
+    #[ignore = "preference-lock subprocess"]
+    fn preference_lock_child() {
+        let path = PathBuf::from(std::env::var_os("274BOT_PREFS_LOCK_PATH").unwrap());
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(panel_ui_lock_path(&path))
+            .unwrap();
+        assert!(matches!(
+            lock.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+    }
+
+    #[test]
+    fn shared_preference_transaction_holds_cross_process_advisory_lock() {
+        let _iso = script::IsolatedEnv::enter("prefs-advisory-lock");
+        let path = panel_ui_path();
+        update_panel_ui_at(&path, |document, _, _| {
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "resource_view::tests::preference_lock_child",
+                ])
+                .env("274BOT_PREFS_LOCK_PATH", &path)
+                .status()?;
+            assert!(status.success(), "other process must see the lock held");
+            document["nav"] = serde_json::json!({"allow_danger_zones": true});
+            Ok(None)
+        })
+        .unwrap();
+        let lock = panel_ui_file_lock(&path).expect("lock released after transaction");
+        lock.unlock().unwrap();
+        assert_eq!(
+            panel_ui_value_at(&path, "nav").unwrap()["allow_danger_zones"],
+            true
+        );
     }
 
     #[test]

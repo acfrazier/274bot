@@ -19,7 +19,7 @@ pub const CARD: CompiledCard = CompiledCard {
     category: "Quests",
     schema_version: 3,
     schema: settings_schema,
-    per_account_settings: &["partner_account", "gang"],
+    per_account_settings: &["partner_account", "gang", "crest_gauntlets"],
     prepare,
     create,
 };
@@ -37,8 +37,16 @@ struct QuesterSettings {
     partner_account: Option<String>,
     #[serde(default)]
     gang: Option<String>,
+    #[serde(default)]
+    crest_gauntlets: super::choices::CrestGauntlets,
     #[serde(default = "crate::native::death::default_max_deaths")]
     max_deaths: u8,
+    #[serde(default, rename = "allow_teleports")]
+    _allow_teleports: bool,
+    #[serde(default, rename = "allow_wilderness")]
+    _allow_wilderness: bool,
+    #[serde(default, rename = "allow_danger_zones")]
+    _allow_danger_zones: bool,
 }
 
 static RELEASE_INDEX: LazyLock<ReleaseIndex> =
@@ -88,7 +96,30 @@ fn settings_schema() -> &'static [SettingDef] {
                 "Explicit partner-quest gang for this account.",
                 &["phoenix", "blackarm"],
             ),
+            setting(
+                "crest_gauntlets",
+                "string",
+                "chaos",
+                "Family Crest gauntlets",
+                "Gauntlet enchantment for this account. Defaults to chaos.",
+                &["chaos", "cooking", "goldsmith"],
+            ),
             max_deaths,
+            walk_permission_setting(
+                "allow_teleports",
+                "Allow teleports",
+                "Allow this script to use teleports when the global setting is off.",
+            ),
+            walk_permission_setting(
+                "allow_wilderness",
+                "Allow wilderness",
+                "Allow this script to route through wilderness when the global setting is off.",
+            ),
+            walk_permission_setting(
+                "allow_danger_zones",
+                "Allow danger zones",
+                "Allow this script to route through danger zones when the global setting is off.",
+            ),
         ]
     });
     &SETTINGS
@@ -150,6 +181,12 @@ fn setting(
         help: Some(help.into()),
         item_option_spec: None,
     }
+}
+
+fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
+    let mut definition = setting(id, "boolean", "false", label, help, &[]);
+    definition.group = Some("Walk permissions".into());
+    definition
 }
 
 fn released(index: &ReleaseIndex, id: &str) -> bool {
@@ -214,6 +251,7 @@ struct Prepared {
     banks: Arc<api::named_banks::NamedBankFacts>,
     queue: Queue<'static>,
     max_deaths: u8,
+    choices: super::choices::QuestChoices,
 }
 
 fn prepare(
@@ -289,6 +327,9 @@ fn prepare(
         banks: Arc::clone(&cx.banks),
         queue,
         max_deaths: settings.max_deaths,
+        choices: super::choices::QuestChoices {
+            crest_gauntlets: settings.crest_gauntlets,
+        },
     };
     Ok(PreparedConfig::new(
         CARD.id,
@@ -315,6 +356,7 @@ fn create(
         prepared.queue.clone(),
         prepared.max_deaths,
     );
+    script.set_choices(prepared.choices);
     script.restore(retained.quester());
     Ok(Box::new(script))
 }
@@ -390,10 +432,17 @@ mod tests {
                 "skip",
                 "partner_account",
                 "gang",
+                "crest_gauntlets",
                 "max_deaths",
+                "allow_teleports",
+                "allow_wilderness",
+                "allow_danger_zones",
             ]
         );
-        assert_eq!(CARD.per_account_settings, ["partner_account", "gang"]);
+        assert_eq!(
+            CARD.per_account_settings,
+            ["partner_account", "gang", "crest_gauntlets"]
+        );
         let paths = released_setting_paths();
         assert!(!paths.is_empty());
         let quests = settings_schema()
@@ -464,6 +513,9 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(defaults.max_deaths, 2);
+        assert!(!defaults._allow_teleports);
+        assert!(!defaults._allow_wilderness);
+        assert!(!defaults._allow_danger_zones);
         assert_eq!(CARD.schema_version, 3);
 
         let max_deaths = settings_schema()
@@ -496,5 +548,68 @@ mod tests {
                 "out-of-range max_deaths {cap} must be rejected"
             );
         }
+    }
+    #[test]
+    fn crest_reward_is_a_persisted_account_choice_with_a_chaos_default() {
+        use super::super::choices::CrestGauntlets;
+        let decode = |value: serde_json::Value| serde_json::from_value::<QuesterSettings>(value);
+        assert_eq!(
+            decode(serde_json::json!({})).unwrap().crest_gauntlets,
+            CrestGauntlets::Chaos
+        );
+        for (value, expected) in [
+            ("chaos", CrestGauntlets::Chaos),
+            ("cooking", CrestGauntlets::Cooking),
+            ("goldsmith", CrestGauntlets::Goldsmith),
+        ] {
+            assert_eq!(
+                decode(serde_json::json!({"crest_gauntlets": value}))
+                    .unwrap()
+                    .crest_gauntlets,
+                expected
+            );
+        }
+        assert!(decode(serde_json::json!({"crest_gauntlets": "random"})).is_err());
+        assert!(CARD.per_account_settings.contains(&"crest_gauntlets"));
+        let setting = settings_schema()
+            .iter()
+            .find(|setting| setting.id == "crest_gauntlets")
+            .unwrap();
+        assert_eq!(setting.default.as_deref(), Some("chaos"));
+        assert_eq!(setting.options, ["chaos", "cooking", "goldsmith"]);
+    }
+}
+#[cfg(test)]
+mod walk_permission_settings_tests {
+    use super::*;
+
+    #[test]
+    fn walk_permission_settings_roundtrip_with_legacy_defaults_and_schema_v3() {
+        assert_eq!(CARD.schema_version, 3);
+        let ids = ["allow_teleports", "allow_wilderness", "allow_danger_zones"];
+        for id in ids {
+            let definition = settings_schema()
+                .iter()
+                .find(|setting| setting.id == id)
+                .unwrap();
+            assert_eq!(definition.ty, "boolean");
+            assert_eq!(definition.default.as_deref(), Some("false"));
+            assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
+        }
+
+        let mut bag = SettingsBag::new();
+        bag.insert("allow_teleports".into(), serde_json::json!(true));
+        bag.insert("allow_wilderness".into(), serde_json::json!(false));
+        bag.insert("allow_danger_zones".into(), serde_json::json!(true));
+        let restored: SettingsBag =
+            serde_json::from_value(serde_json::to_value(&bag).unwrap()).unwrap();
+        assert_eq!(restored, bag);
+        let settings = QuesterSettings::deserialize(serde::de::value::MapDeserializer::new(
+            restored.iter().map(|(key, value)| (key.as_str(), value)),
+        ))
+        .unwrap();
+        assert!(settings._allow_teleports);
+        assert!(!settings._allow_wilderness);
+        assert!(settings._allow_danger_zones);
     }
 }

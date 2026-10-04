@@ -479,7 +479,7 @@ pub(crate) fn answer_quest_journal_dialogs(
     if snapshot.chat_continue_component_id() != -1 {
         let mut ix = Interactions::new(snapshot, client);
         return matches!(
-            ix.continue_dialog(),
+            ix.continue_dialog(None),
             SendResult::Sent { .. } | SendResult::Refused { .. }
         );
     }
@@ -580,7 +580,7 @@ pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
     ]
 }
 
-pub(super) fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
+pub(crate) fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
     Step {
         name,
         kind: StepKind::Perform {

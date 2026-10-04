@@ -271,7 +271,7 @@ fn resolve_gather_site_options(
         if let Some(resource_def) = schema.iter().find(|field| field.id == resource_field) {
             for value in setting_values(resource_def, bag) {
                 if let Some(option) = data.gather_option(resource_skill, &value) {
-                    if !selected_keys.contains(&option.key.as_str()) {
+                    if option.selectable && !selected_keys.contains(&option.key.as_str()) {
                         selected_keys.push(option.key.as_str());
                     }
                 }
@@ -1231,6 +1231,47 @@ mod tests {
         let unknown = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
         assert_eq!(unknown.label_for("removed-site"), "Unknown: removed-site");
         assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn gather_sites_exclude_unselectable_resource_keys() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let refused = data
+            .gather_resources_for("fishing")
+            .find(|resource| {
+                !resource.selectable
+                    && data.gather_sites_for("fishing").any(|site| {
+                        site.keys
+                            .iter()
+                            .any(|site_key| site_key.key == resource.key)
+                    })
+            })
+            .expect("a refused fishing key is present at a named site");
+        let refused_site_ids = data
+            .gather_sites_for("fishing")
+            .filter(|site| site.keys.iter().any(|site_key| site_key.key == refused.key))
+            .map(|site| site.id.clone())
+            .collect::<Vec<_>>();
+        assert!(!refused_site_ids.is_empty());
+
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("site-unselectable-{}.json", std::process::id())),
+        );
+        let site = script::gatherer::settings::schema()
+            .iter()
+            .find(|field| field.id == "site")
+            .expect("the Gatherer Site field uses shared options");
+        let mut bag = serde_json::Map::new();
+        bag.insert("skill".into(), serde_json::json!("Fishing"));
+        bag.insert("fishingMethod".into(), serde_json::json!(refused.key));
+
+        let options = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
+        assert!(
+            refused_site_ids
+                .iter()
+                .all(|id| !options.selectable().contains(id)),
+            "sites that only offer a refused resource must not be selectable"
+        );
     }
 
     #[test]

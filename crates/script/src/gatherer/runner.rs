@@ -18,10 +18,9 @@ use crate::bank::{self, PickKind, SelectedBank};
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
-    Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkEnd, WalkReceipt,
-    WalkRequest,
+    Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit, WalkEnd, WalkOptions,
+    WalkReceipt, WalkRequest,
 };
-use crate::FindOptions;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
@@ -294,11 +293,7 @@ impl Gatherer {
             loc_id: None,
             radius,
             arrival,
-            options: FindOptions {
-                allow_teleports: self.settings().allow_teleports,
-                allow_wilderness: self.settings().allow_wilderness,
-                allow_bank_fetch: false,
-            },
+            options: WalkOptions::default(),
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Box::default(),
@@ -381,7 +376,7 @@ impl Gatherer {
                     facts: Arc::clone(&self.prepared.banks),
                     from: here.value,
                     preferences: self.settings().bank_preferences(),
-                    allow_wilderness: self.settings().allow_wilderness,
+                    options: WalkOptions::default(),
                     explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
                         .then(|| Arc::from(self.settings().bank.as_str())),
                 };
@@ -868,14 +863,16 @@ impl Gatherer {
     fn start_target(&mut self, selected: SelectedTarget, tick: &mut NativeTick<'_>) {
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
-        // Observed NPC ops own their client-side approach. Their occupied water
-        // tile is not a navigation destination (and can move before arrival).
-        let observation_approach = selected.class == PlacementClass::Unloaded;
+        // Observed NPC ops own their client-side approach. Only their unloaded
+        // observation stands use Area; locs keep loc-aware Reach settlement
+        // as soon as their live footprint becomes available.
+        let observation_approach = selected.class == PlacementClass::Unloaded
+            && matches!(selected.plan.entity, api::selected::EntityId::Npc(_));
         let loc_id = match selected.plan.entity {
-            api::selected::EntityId::Loc(id) if !observation_approach => Some(id),
+            api::selected::EntityId::Loc(id) => Some(id),
             _ => None,
         };
-        let needs_walk = if observation_approach {
+        let needs_walk = if selected.class == PlacementClass::Unloaded {
             true
         } else if selected.plan.npc_index >= 0 {
             false
@@ -896,11 +893,7 @@ impl Gatherer {
                 } else {
                     ArrivalKind::Reach
                 },
-                options: FindOptions {
-                    allow_teleports: self.settings().allow_teleports,
-                    allow_wilderness: self.settings().allow_wilderness,
-                    allow_bank_fetch: false,
-                },
+                options: WalkOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
@@ -1529,10 +1522,9 @@ impl Gatherer {
             loc_id: None,
             radius: 0,
             arrival: ArrivalKind::Reach,
-            options: FindOptions {
-                allow_teleports: false,
-                allow_wilderness: self.settings().allow_wilderness,
-                allow_bank_fetch: false,
+            options: WalkOptions {
+                allow_teleports: WalkBit::Forbid,
+                ..WalkOptions::default()
             },
             required_after: tick.cx.evidence(),
             evidence: None,

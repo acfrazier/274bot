@@ -316,16 +316,20 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
 
     let spell: SpellFact = serde_json::from_str(
         r#"{
-            "name":"Fire Strike","ssb":0,"level":13,
-            "continue_by_autocast":true,"spellcom":"fire_strike",
-            "maxhit":8,"members":false,"wornrequired":"staff_of_fire","runes":[]
+            "name":"Fire Strike","source_row":"magic_spell_fire_strike","ssb":3,
+            "component_id":1158,"autocast_selectable":true,"level":13,
+            "continue_by_autocast":true,"spellcom":"magic:fire_strike",
+            "maxhit":8,"members":false,"wornrequired":"staff_of_fire","impact_spotanim":101,"runes":[]
         }"#,
     )
     .unwrap();
-    assert_eq!(spell.spellcom, "fire_strike");
+    assert_eq!(spell.spellcom, "magic:fire_strike");
     assert_eq!(spell.maxhit, 8);
     assert!(!spell.members);
     assert_eq!(spell.wornrequired.as_deref(), Some("staff_of_fire"));
+    assert_eq!(spell.source_row, "magic_spell_fire_strike");
+    assert_eq!(spell.component_id, 1158);
+    assert!(spell.autocast_selectable);
 
     let npc: NpcNameRow = serde_json::from_str(
         r#"{
@@ -386,6 +390,53 @@ fn combat_fact_rows_preserve_nullable_delays_stages_and_combat_inputs() {
         ),
         (1, 2, 1, 9012),
     );
+}
+
+#[test]
+fn autocast_grid_admits_chooser_spells_and_refuses_manual_only_spells() {
+    let tail = r#", "spells": [
+        {"name":"Wind Strike","source_row":"magic_spell_wind_strike","ssb":0,"component_id":1152,"autocast_selectable":true,"level":1,"continue_by_autocast":true,"spellcom":"magic:wind_strike","maxhit":2,"members":false,"runes":[],"impact_spotanim":92},
+        {"name":"Crumble undead","source_row":"magic_spell_crumble_undead","ssb":-1,"component_id":1171,"autocast_selectable":false,"level":39,"continue_by_autocast":true,"spellcom":"magic:crumble_undead","maxhit":8,"members":false,"runes":[],"impact_spotanim":147},
+        {"name":"Iban blast","source_row":"magic_spell_iban_blast","ssb":-1,"component_id":1539,"autocast_selectable":false,"level":50,"continue_by_autocast":true,"spellcom":"magic:iban_blast","maxhit":25,"members":true,"wornrequired":"ibanstaff","worn_reqmessage":"You must wield Iban's staff to cast this spell.","runes":[],"impact_spotanim":89}
+    ], "failed_spell_impact": 85, "autocast": {"staff_tab_root":328,"spell_panel_root":1829,"choose_com":353,"toggle_com":349,"spell_grid_base":1830,"magic_varp":108,"selected_value":2,"armed_value":3}"#;
+    let data =
+        SelectedGameData::decode(minimal_json(tail).as_bytes(), ClientRevision::R274).unwrap();
+    // Name lookup stays case-insensitive and covers manual-only spells.
+    assert_eq!(
+        data.spell("wind strike").unwrap().source_row,
+        "magic_spell_wind_strike"
+    );
+    assert_eq!(data.spell("CRUMBLE UNDEAD").unwrap().component_id, 1171);
+    // The chooser spell resolves through the staff grid base ...
+    assert_eq!(data.spell_button_com("Wind Strike"), 1830);
+    // ... while manual-only spells keep their own widget component and are refused.
+    let crumble = data.spell("Crumble undead").unwrap();
+    assert!(!crumble.autocast_selectable);
+    assert_eq!(crumble.ssb, -1);
+    assert_eq!(crumble.component_id, 1171);
+    assert_eq!(crumble.impact_spotanim, 147);
+    assert_eq!(data.spell_button_com("Crumble undead"), -1);
+    // Refusal text is exact selected content, not a broad fallback.
+    let iban = data.spell("iban blast").unwrap();
+    assert_eq!(iban.wornrequired.as_deref(), Some("ibanstaff"));
+    assert_eq!(
+        iban.worn_reqmessage.as_deref(),
+        Some("You must wield Iban's staff to cast this spell.")
+    );
+    assert_eq!(data.spell_button_com("Iban blast"), -1);
+    // The shared miss splash is one selected scalar, excluded from per-spell impacts.
+    assert_eq!(data.failed_spell_impact(), Some(85));
+    assert!(data
+        .spells()
+        .iter()
+        .all(|spell| spell.impact_spotanim != 85));
+    // Unknown names stay refused.
+    assert!(data.spell("No Such Spell").is_none());
+    assert_eq!(data.spell_button_com("No Such Spell"), -1);
+    // A core without the scalar still decodes, with no splash published.
+    let legacy =
+        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
+    assert_eq!(legacy.failed_spell_impact(), None);
 }
 
 #[test]

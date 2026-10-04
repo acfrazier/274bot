@@ -1952,9 +1952,11 @@ fn many_targets_share_admitted_teleports_and_essence_returns() {
 
 #[test]
 fn bank_targets_match_independent_find_with_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+    let Some(mut world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
+    // Retain the pre-zone banking cost witness independently of danger policy.
+    world.graph.zones = None;
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     world.bind_named_bank_facts(&data).unwrap();
     let facts = world.named_bank_facts().unwrap();
@@ -2400,9 +2402,11 @@ fn real_resilient_opts() -> FindOptions {
 /// the city gate) and a long Wilderness web detour.
 #[test]
 fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+    let Some(mut world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
+    // Grants now try safe first; isolate the original collision-search cap.
+    world.graph.zones = None;
     let state = real_members_state();
     let falador = [
         tile(2944, 3367, 0),
@@ -2428,7 +2432,7 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
             if opts.zones.is_all() {
                 assert!(
                     search.settled() > 32_768,
-                    "the all-exempt route must exercise the old scene cap"
+                    "the unrestricted collision route must exercise the old scene cap"
                 );
             }
         }
@@ -2462,9 +2466,11 @@ fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
 /// pair, far below the 2,901,702-node flood of everything reachable.
 #[test]
 fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+    let Some(mut world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
+    // Measure one collision-search budget, not a separate danger fallback pass.
+    world.graph.zones = None;
     let state = real_members_state();
     let opts = real_resilient_opts();
     let from = tile(2452, 3481, 1);
@@ -3921,6 +3927,298 @@ fn route_walk_tiles(route: &crate::router::Route) -> impl Iterator<Item = WorldT
 }
 
 #[test]
+fn danger_grants_choose_the_safe_route_before_cheaper_zone_transit() {
+    let collision = bake(8, 1, &[]);
+    let from = tile(0, 0, 0);
+    let goal = tile(7, 0, 0);
+    let goals = [goal];
+    let mut graph = door(from, goal, 20);
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 4, 0, 0)]);
+    let state = WorldState::empty();
+    for zones in [
+        ZoneExempt::all(),
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+    ] {
+        let opts = FindOptions {
+            zones,
+            ..FindOptions::default()
+        };
+        let route = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+        assert_eq!(route.ticks, 20.0, "a grant permits danger only as fallback");
+        assert_eq!(
+            find_first_with(&collision, &graph, from, &goals, opts, &state)
+                .into_route()
+                .unwrap(),
+            route
+        );
+        assert_eq!(
+            find_many_with(&collision, &graph, from, &goals, opts, &state)
+                .route(0)
+                .unwrap(),
+            route
+        );
+    }
+    graph.at.clear();
+    graph.edges.clear();
+    assert_eq!(
+        find_with(
+            &collision,
+            &graph,
+            from,
+            goal,
+            FindOptions::default(),
+            &state
+        ),
+        Err(RouteError::NoPath)
+    );
+    let opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let fallback = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+    assert_eq!(fallback.ticks, 3.5);
+    assert!(route_walk_tiles(&fallback).any(|tile| tile.x == 3));
+    assert_eq!(
+        find_first_with(&collision, &graph, from, &goals, opts, &state)
+            .into_route()
+            .unwrap(),
+        fallback
+    );
+    assert_eq!(
+        find_many_with(&collision, &graph, from, &goals, opts, &state)
+            .route(0)
+            .unwrap(),
+        fallback
+    );
+}
+
+#[test]
+fn endpoint_completion_avoids_unrelated_granted_transit() {
+    let collision = bake(8, 1, &[]);
+    let from = tile(0, 0, 0);
+    let goal = tile(7, 0, 0);
+    let goals = [goal];
+    let mut graph = door(from, tile(5, 0, 0), 20);
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![rect_zone(2, 4, 0, 0), rect_zone(6, 7, 0, 0)],
+    );
+    let state = WorldState::empty();
+    for zones in [
+        ZoneExempt::NONE,
+        ZoneExempt::all(),
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+    ] {
+        let opts = FindOptions {
+            zones,
+            ..FindOptions::default()
+        };
+        let route = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+        assert_eq!(route.ticks, 21.0);
+        assert!(!route_walk_tiles(&route).any(|tile| tile.x == 3));
+        assert_eq!(
+            find_first_with(&collision, &graph, from, &goals, opts, &state)
+                .into_route()
+                .unwrap(),
+            route
+        );
+        assert_eq!(
+            find_many_with(&collision, &graph, from, &goals, opts, &state)
+                .route(0)
+                .unwrap(),
+            route
+        );
+    }
+    graph.at.clear();
+    graph.edges.clear();
+    assert_eq!(
+        find_with(
+            &collision,
+            &graph,
+            from,
+            goal,
+            FindOptions::default(),
+            &state,
+        ),
+        Err(RouteError::NoPath)
+    );
+    let opts = FindOptions {
+        zones: ZoneExempt::all(),
+        ..FindOptions::default()
+    };
+    let route = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+    assert_eq!(route.ticks, 3.5);
+    assert!(route_walk_tiles(&route).any(|tile| tile.x == 3));
+    assert_eq!(
+        find_first_with(&collision, &graph, from, &goals, opts, &state)
+            .into_route()
+            .unwrap(),
+        route
+    );
+    assert_eq!(
+        find_many_with(&collision, &graph, from, &goals, opts, &state)
+            .route(0)
+            .unwrap(),
+        route
+    );
+}
+
+#[test]
+fn endpoint_completion_fallback_outranks_granted_preferred_transit() {
+    let blocked: [_; 8] = std::array::from_fn(|x| (x as i32, 1, CollisionFlag::SQ_BLOCKED as u32));
+    let collision = bake(8, 3, &blocked);
+    let from = tile(0, 0, 0);
+    let preferred = tile(7, 0, 0);
+    let fallback = tile(7, 2, 0);
+    let mut graph = door(from, tile(5, 2, 0), 20);
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![
+            rect_zone(2, 4, 0, 0),
+            rect_zone(6, 7, 0, 0),
+            rect_zone(6, 7, 2, 2),
+        ],
+    );
+    for zones in [
+        ZoneExempt::NONE,
+        ZoneExempt::all(),
+        ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+    ] {
+        let search = find_first_with_fallback(
+            &collision,
+            &graph,
+            from,
+            &[preferred],
+            &[fallback],
+            FindOptions {
+                zones,
+                ..FindOptions::default()
+            },
+            &WorldState::empty(),
+        );
+        assert_eq!(search.route(), Err(RouteError::NoPath));
+        assert!(
+            matches!(search.fallback(), Some(FallbackRoute::Routed(route))
+                if route.dest == fallback && route.ticks == 21.0)
+        );
+    }
+}
+
+#[test]
+fn safe_fallback_targets_outrank_exempt_preferred_targets() {
+    let collision = bake(8, 1, &[]);
+    let from = tile(0, 0, 0);
+    let safe = tile(1, 0, 0);
+    let deep = tile(4, 0, 0);
+    let beyond = tile(7, 0, 0);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 5, 0, 0)]);
+    let named = ZoneExempt::named(&[graph.zones.as_ref().unwrap().key(0)]).unwrap();
+    let state = WorldState::empty();
+    for zones in [ZoneExempt::NONE, ZoneExempt::all(), named] {
+        let opts = FindOptions {
+            zones,
+            ..FindOptions::default()
+        };
+        let search = |preferred: &[WorldTile], fallback: &[WorldTile]| {
+            find_first_with_fallback(&collision, &graph, from, preferred, fallback, opts, &state)
+        };
+        let safer = search(&[deep], &[safe]);
+        assert_eq!(safer.route(), Err(RouteError::NoPath));
+        assert!(
+            matches!(safer.fallback(), Some(FallbackRoute::Routed(route))
+                if route.dest == safe && route.ticks == 0.5),
+            "a safe acceptable fallback must beat an exempt preferred target"
+        );
+
+        let preferred_safe = search(&[safe], &[from]);
+        assert_eq!(preferred_safe.route().unwrap().dest, safe);
+        assert!(preferred_safe.fallback().is_none());
+
+        let fallback_only = search(&[], &[safe]);
+        assert!(
+            matches!(fallback_only.fallback(), Some(FallbackRoute::Routed(route))
+                if route.dest == safe && route.ticks == 0.5)
+        );
+
+        let exempt = search(&[deep], &[beyond]);
+        assert_eq!(exempt.route().unwrap().dest, deep);
+        assert_eq!(exempt.route().unwrap().ticks, 2.0);
+        assert!(exempt.fallback().is_none());
+    }
+}
+
+#[test]
+fn endpoint_completion_and_grants_retry_after_safe_budget_exhaustion() {
+    let collision = bake(40, 32, &[]);
+    let from = tile(31, 0, 0);
+    let goal = tile(35, 0, 0);
+    // This real safe edge keeps the reverse proof open/reachable; the safe
+    // Dijkstra pass spends its cap on the large western region first.
+    let mut graph = door(from, goal, 100);
+    install_zones(&collision, &mut graph, vec![rect_zone(33, 39, 0, 31)]);
+    let state = WorldState::empty();
+    for zones in [ZoneExempt::NONE, ZoneExempt::all()] {
+        let opts = FindOptions {
+            zones,
+            ..FindOptions::default()
+        };
+        let route =
+            super::find_with_avoid_bounded(&collision, &graph, from, goal, opts, &state, &[], 64)
+                .unwrap();
+        assert_eq!(route.ticks, 2.0);
+        let first = super::first_search(
+            &collision,
+            &graph,
+            from,
+            &[goal],
+            &[],
+            opts,
+            &state,
+            super::Relax::Strict,
+            &[],
+            64,
+            64,
+        );
+        assert!(first.settled() > 64, "both bounded passes ran");
+        assert_eq!(first.into_route().unwrap(), route);
+        let goals = [goal];
+        let many = super::find_many_with_avoid_bounded(
+            &collision,
+            &graph,
+            from,
+            &goals,
+            opts,
+            &state,
+            &[],
+            64,
+        );
+        assert!(many.settled() > 64);
+        assert_eq!(many.route(0).unwrap(), route);
+    }
+}
+
+#[test]
+fn deep_zone_goal_proof_avoids_exhausting_the_safe_world() {
+    let collision = bake(128, 128, &[]);
+    let from = tile(31, 64, 0);
+    let goal = tile(35, 64, 0);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(33, 127, 0, 127)]);
+    let state = WorldState::empty();
+    let goals = [goal];
+    let opts = FindOptions::default();
+    let search = find_first_with(&collision, &graph, from, &goals, opts, &state);
+    assert!(search.settled() < 100, "{}", search.settled());
+    assert_eq!(search.into_route().unwrap().ticks, 2.0);
+    let many = find_many_with(&collision, &graph, from, &goals, opts, &state);
+    assert!(many.settled() < 100, "{}", many.settled());
+    assert_eq!(many.route(0).unwrap().ticks, 2.0);
+}
+
+#[test]
 fn endpoint_goal_exemption_does_not_turn_its_zone_into_a_transit_corridor() {
     // The walk-only corridor to past crosses Z. Pocket is in Z but is
     // reachable directly, so its endpoint exemption must not help the
@@ -3979,8 +4277,8 @@ fn endpoint_goal_exemption_does_not_turn_its_zone_into_a_transit_corridor() {
         &state,
     );
     assert_eq!(bypass.completion_partitions(), 0);
-    assert_eq!(bypass.scratch_capacities().zone_mask_words, 0);
-    assert_eq!(bypass.route(0).unwrap().ticks, 8.0);
+    assert!(bypass.scratch_capacities().zone_mask_words > 0);
+    assert_eq!(bypass.route(0).unwrap().ticks, 30.0);
 
     graph.at.clear();
     graph.edges.clear();
@@ -4561,8 +4859,14 @@ fn combat_lifting_is_by_tile_and_never_bypasses_wilderness_permission() {
         &[tile(0, 0, 0), tile(8, 0, 0)],
         &ZoneExempt::NONE,
     );
-    assert!(filter.blocks(&graph.wilderness, tile(5, 0, 0)));
-    assert!(!filter.blocks(&graph.wilderness, tile(6, 0, 0)));
+    assert!(filter
+        .blocking_at(&graph.wilderness, tile(5, 0, 0))
+        .next()
+        .is_some());
+    assert!(filter
+        .blocking_at(&graph.wilderness, tile(6, 0, 0))
+        .next()
+        .is_none());
     assert!(matches!(
         find_with(
             &collision,
@@ -4685,7 +4989,7 @@ fn assert_zone_route_clear(
                                 &world.graph.wilderness,
                                 previous,
                                 tile,
-                                tile == route.dest,
+                                &|| tile == route.dest,
                             )
                             .next()
                             .is_none(),
@@ -4699,12 +5003,8 @@ fn assert_zone_route_clear(
         };
         assert!(
             filter
-                .blocking_transition_at(
-                    &world.graph.wilderness,
-                    previous,
-                    arrival,
-                    arrival == route.dest,
-                )
+                .blocking_transition_at(&world.graph.wilderness, previous, arrival, &|| arrival
+                    == route.dest,)
                 .next()
                 .is_none(),
             "zone landing: {arrival:?} from {previous:?}"
@@ -4825,7 +5125,26 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
         &zones_rich_289_state(Some(126)),
     )
     .unwrap();
-    assert_eq!((route.ticks, zone_route_cell_count(&route)), (83.5, 168));
+    let safe = find_with(
+        &world.collision,
+        &world.graph,
+        lumbridge,
+        bank,
+        opts,
+        &zones_rich_289_state(Some(126)),
+    )
+    .unwrap();
+    assert_eq!(
+        route, safe,
+        "named consent must still prefer the safe route"
+    );
+    assert_zone_route_clear(
+        &world,
+        lumbridge,
+        &route,
+        opts,
+        &zones_rich_289_state(Some(126)),
+    );
     let mountain = ZoneExempt::named(&[table.resolve("white-wolf-mountain").unwrap()]).unwrap();
     for combat in [3, 126, 146] {
         let route = find_with(
@@ -4840,7 +5159,19 @@ fn real_289_zone_reroutes_lifting_endpoint_exemptions_and_stationary_road() {
             &zones_rich_289_state(Some(combat)),
         )
         .unwrap();
-        assert_eq!((route.ticks, zone_route_cell_count(&route)), (125.5, 252));
+        let safe = find_with(
+            &world.collision,
+            &world.graph,
+            taverley,
+            catherby,
+            opts,
+            &zones_rich_289_state(Some(combat)),
+        )
+        .unwrap();
+        assert_eq!(
+            route, safe,
+            "named consent must still prefer the safe route"
+        );
     }
 }
 
@@ -5012,16 +5343,16 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
         .map(|b| b.tile)
         .collect();
     assert_eq!(targets.len(), 19);
-    for (from, combat, changed) in [
-        (tile(3222, 3218, 0), 126, 8),
-        (tile(3222, 3218, 0), 3, 17),
-        (tile(3016, 9840, 0), 126, 7),
-        (tile(3016, 9840, 0), 3, 13),
+    for (from, combat) in [
+        (tile(3222, 3218, 0), 126),
+        (tile(3222, 3218, 0), 3),
+        (tile(3016, 9840, 0), 126),
+        (tile(3016, 9840, 0), 3),
     ] {
         let state = zones_rich_289_state(Some(combat));
         let opts = FindOptions::default();
         let many = find_many_with(&world.collision, &world.graph, from, &targets, opts, &state);
-        let legacy = find_many_with(
+        let granted = find_many_with(
             &world.collision,
             &world.graph,
             from,
@@ -5037,12 +5368,12 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
         assert_eq!(
             many.results()
                 .iter()
-                .zip(legacy.results())
+                .zip(granted.results())
                 .filter(|(a, b)| {
                     a.as_ref().map(|cost| cost.ticks) != b.as_ref().map(|cost| cost.ticks)
                 })
                 .count(),
-            changed
+            0,
         );
         for (index, &target) in targets.iter().enumerate() {
             let single = find_with(&world.collision, &world.graph, from, target, opts, &state);
@@ -5146,7 +5477,10 @@ fn zoned_first_keeps_preferred_priority_and_does_not_use_fallback_zones_for_tran
         FindOptions::default(),
         &state,
     );
-    assert!(matches!(empty.fallback(), Some(FallbackRoute::Undecided)));
+    assert!(
+        matches!(empty.fallback(), Some(FallbackRoute::Routed(route))
+            if route.dest == zoned && route.ticks == 1.0)
+    );
     assert_eq!(empty.completion_partitions(), 0);
 }
 

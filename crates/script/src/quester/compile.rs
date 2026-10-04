@@ -163,6 +163,8 @@ pub struct StepContext<'a, 'frame> {
     pub required_after: EvidenceStamp,
     pub bank: &'a super::bank_memo::BankMemo,
     pub banks: &'a Arc<api::named_banks::NamedBankFacts>,
+    /// Runtime account choices; never captured by a shared compiled plan.
+    pub choices: &'a super::choices::QuestChoices,
 }
 pub trait FamilyReceipt: Send + Sync + 'static {
     fn as_any(&self) -> &dyn Any;
@@ -356,20 +358,38 @@ fn compile_uncached(
             *required,
         ),
     };
+    // Path headers use config aliases; the shared Loadouts consumer uses
+    // display names. Resolve each kit row once, without an intermediate copy.
+    let loadout_item_name = |alias: &str| -> Result<&str, CompileError> {
+        selected
+            .item_by_alias(alias)
+            .ok_or_else(|| CompileError::code("unresolved-obj"))?
+            .name
+            .as_deref()
+            .ok_or_else(|| CompileError::code("unresolved-obj-name"))
+    };
     let compiled_loadouts: Vec<_> = header
         .loadouts
         .iter()
         .map(|(name, row)| {
             let mut out = crate::loadouts_store::Loadout::new(format!("{}/{name}", document.id.0));
             for (slot, item) in &row.worn {
-                out = out.with_slot(slot, item);
+                if !crate::loadouts_store::is_worn_slot(slot) {
+                    return Err(CompileError::code("invalid-worn-slot"));
+                }
+                out = out.with_slot(slot, loadout_item_name(item)?);
             }
             for carry in &row.carry {
-                out = out.with_carry(&carry.item, carry.qty);
+                let item = loadout_item_name(&carry.item)?;
+                if carry.qty == 0 {
+                    return Err(CompileError::code("invalid-quantity"));
+                }
+                out = out.with_carry(item, carry.qty);
             }
-            out
+            Ok(out)
         })
-        .collect();
+        .collect::<Result<Vec<_>, CompileError>>()
+        .map_err(|error| error.with_path(document.id.clone()))?;
     let loadouts =
         super::loadouts::LoadoutOverlay::from_default_store(Arc::from(compiled_loadouts));
     let compiled_items: Arc<[CompiledQuestItem]> = Arc::from(
@@ -472,20 +492,18 @@ fn compile_uncached(
         bank_items: &bank_items,
         loadouts: &loadouts,
     };
-    let mut recipes = HashMap::new();
-    for (name, steps) in &header.acquire {
-        recipes.insert(
-            name.clone(),
-            compile_steps(steps, &recipe_ctx, document)?
-                .into_iter()
-                .map(|step| CompiledAcquireStep {
-                    advances: step.advances,
-                    skip_if: step.skip_if,
-                    settle: step.settle,
-                    plan: step.plan,
-                })
-                .collect(),
-        );
+    let mut recipes = HashMap::with_capacity(header.acquire.len());
+    let mut bindings = HashMap::with_capacity(header.acquire.len());
+    let mut active = Vec::with_capacity(header.acquire.len().min(MAX_RECIPE_NESTING_DEPTH));
+    for name in header.acquire.keys() {
+        compile_recipe(
+            name,
+            document,
+            &recipe_ctx,
+            &mut recipes,
+            &mut bindings,
+            &mut active,
+        )?;
     }
     recipe_ctx.recipes = &recipes;
     let mut warnings: Vec<Arc<str>> = Vec::new();
@@ -766,6 +784,97 @@ fn compile_acquire_step(
     }))
 }
 
+const MAX_RECIPE_NESTING_DEPTH: usize = 32;
+
+enum RecipeBinding {
+    Active { index: usize },
+    Bound { depth: usize },
+}
+
+fn recipe_nesting_error(document: &PathDocument, name: &str, depth: usize) -> CompileError {
+    let mut error = CompileError::code("recipe-nesting-limit").with_path(document.id.clone());
+    error.detail = Some(Arc::from(format!(
+        "Recipe {name} needs nesting depth {depth}. The limit is {MAX_RECIPE_NESTING_DEPTH}."
+    )));
+    error
+}
+
+fn compile_recipe<'a>(
+    name: &'a str,
+    document: &'a PathDocument,
+    base: &CompileContext<'_>,
+    recipes: &mut HashMap<String, Vec<CompiledAcquireStep>>,
+    bindings: &mut HashMap<&'a str, RecipeBinding>,
+    active: &mut Vec<&'a str>,
+) -> Result<usize, CompileError> {
+    match bindings.get(name) {
+        Some(RecipeBinding::Bound { depth }) => return Ok(*depth),
+        Some(RecipeBinding::Active { index }) => {
+            let mut error = CompileError::code("recipe-cycle").with_path(document.id.clone());
+            error.detail = Some(Arc::from(format!(
+                "Acquisition recipe cycle: {} -> {name}",
+                active[*index..].join(" -> ")
+            )));
+            return Err(error);
+        }
+        None => {}
+    }
+    let steps = document
+        .quest
+        .as_ref()
+        .expect("recipe compilation follows header validation")
+        .acquire
+        .get(name)
+        .ok_or_else(|| CompileError::code("unresolved-recipe").with_path(document.id.clone()))?;
+    if active.len() >= MAX_RECIPE_NESTING_DEPTH {
+        return Err(recipe_nesting_error(document, name, active.len() + 1));
+    }
+    bindings.insert(
+        name,
+        RecipeBinding::Active {
+            index: active.len(),
+        },
+    );
+    active.push(name);
+    let mut depth = 1;
+    for step in steps.iter().filter(|step| step.kind == "acquire") {
+        let dependency = step
+            .args
+            .get("recipe")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                let mut error = CompileError::code("invalid-args").with_path(document.id.clone());
+                error.step = Some(step.id.clone());
+                error
+            })?;
+        let child_depth = compile_recipe(dependency, document, base, recipes, bindings, active)
+            .map_err(|mut error| {
+                if error.step.is_none() {
+                    error.step = Some(step.id.clone());
+                }
+                error
+            })?;
+        depth = depth.max(child_depth + 1);
+        if depth > MAX_RECIPE_NESTING_DEPTH {
+            return Err(recipe_nesting_error(document, name, depth));
+        }
+    }
+    let context = CompileContext { recipes, ..*base };
+    let compiled = compile_steps(steps, &context, document)?
+        .into_iter()
+        .map(|step| CompiledAcquireStep {
+            advances: step.advances,
+            skip_if: step.skip_if,
+            settle: step.settle,
+            plan: step.plan,
+        })
+        .collect();
+    recipes.insert(name.to_owned(), compiled);
+    bindings.insert(name, RecipeBinding::Bound { depth });
+    active.pop();
+    Ok(depth)
+}
+
 fn validate_header(
     header: &super::path::QuestHeaderDocument,
     selected: &SelectedGameData,
@@ -790,20 +899,6 @@ fn validate_header(
         obj(tool
             .strip_prefix("obj:")
             .ok_or_else(|| CompileError::code("invalid-tool"))?)?;
-    }
-    for loadout in header.loadouts.values() {
-        for (slot, item) in &loadout.worn {
-            if !crate::loadouts_store::is_worn_slot(slot) {
-                return Err(CompileError::code("invalid-worn-slot"));
-            }
-            obj(item)?;
-        }
-        for item in &loadout.carry {
-            obj(&item.item)?;
-            if item.qty == 0 {
-                return Err(CompileError::code("invalid-quantity"));
-            }
-        }
     }
     match &header.bank {
         super::path::QuestBankDocument::Nearest(name) if name == "nearest" => {}
@@ -897,6 +992,7 @@ pub const SHEEP_JSON: &str = include_str!("../../paths/289/sheep.json");
 pub const RUNE_MYSTERIES_JSON: &str = include_str!("../../paths/289/runemysteries.json");
 pub const ROMEO_AND_JULIET_JSON: &str = include_str!("../../paths/289/romeojuliet.json");
 pub const IMP_JSON: &str = include_str!("../../paths/289/imp.json");
+pub const VAMPIRE_JSON: &str = include_str!("../../paths/289/vampire.json");
 pub const INDEX_JSON: &str = include_str!("../../paths/289/index.json");
 
 pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
@@ -906,6 +1002,7 @@ pub fn path_bytes(id: &str) -> Option<&'static [u8]> {
         "runemysteries" => Some(RUNE_MYSTERIES_JSON.as_bytes()),
         "romeojuliet" => Some(ROMEO_AND_JULIET_JSON.as_bytes()),
         "imp" => Some(IMP_JSON.as_bytes()),
+        "vampire" => Some(VAMPIRE_JSON.as_bytes()),
         _ => None,
     }
 }
@@ -991,23 +1088,153 @@ mod tests {
         }
     }
 
+    fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {
+        StepDocument {
+            id: FactKey::new(id),
+            kind: "acquire".into(),
+            version: 1,
+            args: serde_json::json!({"recipe": recipe}),
+            comment: None,
+            advances: false,
+            skip_if: PredicateDocument::Any(vec![]),
+            settle: PredicateDocument::All(vec![]),
+        }
+    }
+
     #[test]
-    fn path_walk_cross_refusal_has_invalid_args_code_and_specific_detail() {
-        let err = compile_err(|document| {
-            let step = &mut document.roles[0].sequences[0].steps[0];
-            step.kind = "walk".into();
-            step.args = serde_json::json!({
+    fn acquire_recipe_forward_and_shared_dependencies_resolve() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-forward");
+        let mut document = decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        let mut leaf = header.acquire["acquire:egg"][0].clone();
+        leaf.id = FactKey::new("recipe-leaf");
+        header.acquire.insert("acquire:z-leaf".into(), vec![leaf]);
+        header.acquire.insert(
+            "acquire:a-root".into(),
+            vec![
+                acquire_recipe_step("nested-first", "acquire:z-leaf"),
+                acquire_recipe_step("nested-second", "acquire:z-leaf"),
+            ],
+        );
+        let data = selected();
+        let quests = quests(&data);
+        let compiled = compile_uncached_for_test(&document, &data, &quests)
+            .unwrap_or_else(|error| panic!("nested recipe: {} {:?}", error.code, error.detail));
+        assert_eq!(compiled.provisioning.recipes["acquire:a-root"].len(), 2);
+        assert_eq!(compiled.provisioning.recipes["acquire:z-leaf"].len(), 1);
+    }
+
+    #[test]
+    fn acquire_recipe_cycle_names_the_cycle() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-cycle");
+        let error = compile_err(|document| {
+            let recipes = &mut document.quest.as_mut().unwrap().acquire;
+            recipes.insert(
+                "acquire:cycle-a".into(),
+                vec![acquire_recipe_step("cycle-a", "acquire:cycle-b")],
+            );
+            recipes.insert(
+                "acquire:cycle-b".into(),
+                vec![acquire_recipe_step("cycle-b", "acquire:cycle-a")],
+            );
+        });
+        assert_eq!(error.code.as_ref(), "recipe-cycle");
+        assert!(error
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("acquire:cycle-a -> acquire:cycle-b -> acquire:cycle-a"));
+    }
+
+    #[test]
+    fn acquire_recipe_missing_dependency_stays_unresolved_recipe() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-missing");
+        let error = compile_err(|document| {
+            document.quest.as_mut().unwrap().acquire.insert(
+                "acquire:root".into(),
+                vec![acquire_recipe_step("missing-child", "acquire:absent")],
+            );
+        });
+        assert_eq!(error.code.as_ref(), "unresolved-recipe");
+    }
+
+    #[test]
+    fn acquire_recipe_depth_limit_is_order_independent() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-depth");
+        let data = selected();
+        let quests = quests(&data);
+        for leaf_first in [true, false] {
+            let name = |depth| {
+                let index = if leaf_first { depth } else { 32 - depth };
+                format!("acquire:chain-{index:02}")
+            };
+            let mut document = decode_cook().unwrap();
+            let header = document.quest.as_mut().unwrap();
+            let mut leaf = header.acquire["acquire:egg"][0].clone();
+            leaf.id = FactKey::new("depth-leaf");
+            header.acquire.insert(name(0), vec![leaf]);
+            // Leaf-first order tests memoized heights. Root-first order
+            // tests the traversal stack bound before compilation.
+            for depth in 1..32 {
+                header.acquire.insert(
+                    name(depth),
+                    vec![acquire_recipe_step(
+                        &format!("depth-{depth}"),
+                        &name(depth - 1),
+                    )],
+                );
+            }
+            assert!(compile_uncached_for_test(&document, &data, &quests).is_ok());
+            document
+                .quest
+                .as_mut()
+                .unwrap()
+                .acquire
+                .insert(name(32), vec![acquire_recipe_step("depth-32", &name(31))]);
+            let error = match compile_uncached_for_test(&document, &data, &quests) {
+                Err(error) => error,
+                Ok(_) => panic!("a 33-recipe chain must fail"),
+            };
+            assert_eq!(error.code.as_ref(), "recipe-nesting-limit");
+            assert!(error.detail.as_deref().unwrap().contains("32"));
+        }
+    }
+
+    #[test]
+    fn path_walk_crossing_and_protection_compile_independently() {
+        let data = selected();
+        let quests = quests(&data);
+        for args in [
+            serde_json::json!({
                 "tile": [3224, 3200, 0],
                 "source": "regression test",
                 "radius": 1,
-                "cross": ["Test barrier"],
-            });
-        });
-        assert_eq!(err.code.as_ref(), "invalid-args");
-        assert_eq!(
-            err.detail.as_deref(),
-            Some("walk: cross needs protected walk (combat slice)")
-        );
+                "cross": ["death-plateau-throwers"],
+            }),
+            serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "regression test",
+                "radius": 1,
+                "guard": "protect",
+            }),
+        ] {
+            let mut document = decode_cook().unwrap();
+            let step = &mut document.roles[0].sequences[0].steps[0];
+            step.kind = "walk".into();
+            step.args = args;
+            step.skip_if = PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+            };
+            step.settle = PredicateDocument::Fact {
+                kind: "near".into(),
+                version: 1,
+                args: serde_json::json!({ "tile": [3224, 3200, 0], "radius": 1 }),
+            };
+            compile_uncached_for_test(&document, &data, &quests)
+                .expect("a named crossing or protection does not require the other");
+        }
     }
 
     #[test]
@@ -1019,7 +1246,7 @@ mod tests {
             "tile": [3224, 3200, 0],
             "source": "regression test",
             "radius": 1,
-            "cross": ["Test barrier"],
+            "cross": ["death-plateau-throwers"],
             "guard": "protect",
         });
         step.skip_if = PredicateDocument::Fact {
@@ -1352,6 +1579,48 @@ mod tests {
         assert_eq!(error.code.as_ref(), "unresolved-progress-stage");
         assert_eq!(error.path, FactKey::new("cook"));
         assert!(error.step.is_some());
+    }
+
+    #[test]
+    fn alias_loadout_compiles_and_begins_application() {
+        let _home = crate::IsolatedEnv::enter("quester-alias-loadout");
+        let data = selected();
+        let quests = quests(&data);
+        let mut document: serde_json::Value = serde_json::from_str(COOK_JSON).unwrap();
+        document["quest"]["loadouts"] = serde_json::json!({
+            "probe": {
+                "worn": { "righthand": "rune_scimitar" },
+                "carry": [{ "item": "4doseprayerrestore", "qty": 2 }]
+            }
+        });
+        document["roles"][0]["prelude"] = serde_json::json!([{
+            "id": "apply-alias-kit", "kind": "loadout", "version": 1,
+            "args": { "loadout": "probe", "at": "nearest" },
+            "skip_if": { "Any": [] }, "settle": { "All": [] }
+        }]);
+        let document: PathDocument = serde_json::from_value(document).unwrap();
+        let path = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        let bank = super::super::bank_memo::BankMemo::default();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut ledger = None;
+        families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let required_after = tick.cx.evidence();
+            let mut context = StepContext {
+                tick,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                bank: &bank,
+                banks: &banks,
+                choices: &super::super::choices::QuestChoices::default(),
+            };
+            if let Err(error) = path.prelude[0].plan.begin(&mut context) {
+                panic!("valid alias loadout could not begin application: {error:?}");
+            }
+        });
     }
 
     #[test]

@@ -114,11 +114,20 @@ impl TuiApp {
                 &mut self.map_bake,
                 &mut self.settings_state,
             )
-            .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort);
+            .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+            .script_scope_notice_ack(&mut self.script_scope_notice_ack);
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
-            frame.render_widget(pane, area);
+            let settings_area = if self.regions.message.is_empty() {
+                area
+            } else {
+                Rect {
+                    height: self.regions.message.y.saturating_sub(area.y),
+                    ..area
+                }
+            };
+            frame.render_widget(pane, settings_area);
         }
         self.draw_modal(frame);
     }

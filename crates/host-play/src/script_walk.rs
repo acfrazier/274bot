@@ -154,11 +154,14 @@ pub(crate) fn apply_guard_op(
     sent
 }
 
-/// A retired guard owes only its own protect, settled by observation.
-/// In-flight switches owe the new protect, never an off-click on the old style.
+/// A serialized protect cleanup, used by retired walk guards and Combat raises.
+/// In-flight guard switches may retain a previously owned style as fallback.
 pub(crate) struct WalkGuardOff {
     component: i32,
+    fallback_component: Option<i32>,
     admitted_tick: u16,
+    nav_defer_tick: u16,
+    start_at_first_pump: bool,
     awaiting_on: bool,
     off_tick: Option<u16>,
     retried: bool,
@@ -166,21 +169,23 @@ pub(crate) struct WalkGuardOff {
 
 impl WalkGuardOff {
     fn blocks_nav(&self, tick: u16) -> bool {
-        elapsed(tick, self.admitted_tick) < GUARD_PRAYER_WINDOW_TICKS
+        elapsed(tick, self.nav_defer_tick) < GUARD_PRAYER_WINDOW_TICKS
     }
 }
 
 pub(super) fn owe_walk_guard_off(bot: &mut NavBot) {
     if let Some(guard) = bot.walk_guard.take() {
         let awaiting_on = guard.pending_protect().is_some();
-        let admitted_tick = guard
-            .pending_protect_tick()
-            .unwrap_or_else(|| guard.observed_tick());
-        if let GuardOp::IfButton { component } = guard.end() {
+        let admitted_tick = guard.pending_protect_tick().unwrap_or_default();
+        let (end, fallback_component) = guard.end();
+        if let GuardOp::IfButton { component } = end {
             if component > 0 && bot.walk_guard_off.is_none() {
                 bot.walk_guard_off = Some(WalkGuardOff {
                     component,
+                    fallback_component,
                     admitted_tick,
+                    nav_defer_tick: admitted_tick,
+                    start_at_first_pump: !awaiting_on,
                     awaiting_on,
                     off_tick: None,
                     retried: false,
@@ -290,8 +295,11 @@ pub(crate) fn finish_combat_prayers(
         debt.current = Some(WalkGuardOff {
             component: fact.button_com,
             admitted_tick: debt.admitted_tick,
+            nav_defer_tick: debt.admitted_tick,
             awaiting_on: debt.awaiting_on.contains(fact.varp),
             off_tick: None,
+            fallback_component: None,
+            start_at_first_pump: false,
             retried: false,
         });
     }
@@ -324,6 +332,35 @@ pub(crate) fn finish_walk_guard<D: Driver>(
     }
 }
 
+fn prayer_varp_value(snapshot: &GameSnapshot, component: i32) -> Option<i32> {
+    if !snapshot.ingame() || snapshot.scene_state() != 2 {
+        return None;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+    let fact = data
+        .prayers()
+        .iter()
+        .find(|fact| fact.button_com == component)?;
+    snapshot
+        .varps()
+        .iter()
+        .find(|row| row.index == fact.varp)
+        .map(|row| row.value)
+}
+
+fn log_prayer_off_drop(off: &WalkGuardOff, account: Option<&str>, reason: &'static str) {
+    api::host_log!(
+        api::hostlog::Category::NavEvent,
+        api::hostlog::Level::Warn,
+        slot = account.unwrap_or(""),
+        "prayer cleanup drops protect debt component={} awaiting_on={} retry={} reason={}",
+        off.component,
+        off.awaiting_on,
+        off.retried,
+        reason
+    );
+}
+
 fn finish_prayer_off(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
@@ -340,21 +377,13 @@ fn finish_prayer_off(
     {
         return false;
     }
-    let age = elapsed(tick, off.admitted_tick);
-    let value = (snapshot.ingame() && snapshot.scene_state() == 2)
-        .then(|| {
-            let data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
-            let fact = data
-                .prayers()
-                .iter()
-                .find(|fact| fact.button_com == off.component)?;
-            snapshot
-                .varps()
-                .iter()
-                .find(|row| row.index == fact.varp)
-                .map(|row| row.value)
-        })
-        .flatten();
+    if off.start_at_first_pump {
+        off.admitted_tick = tick;
+        off.nav_defer_tick = tick;
+        off.start_at_first_pump = false;
+    }
+    let mut age = elapsed(tick, off.admitted_tick);
+    let mut value = prayer_varp_value(snapshot, off.component);
     if value == Some(0) && !off.awaiting_on {
         return false;
     }
@@ -363,35 +392,61 @@ fn finish_prayer_off(
     let expired_enable = off.awaiting_on
         && (age > GUARD_PRAYER_WINDOW_TICKS
             || (age == GUARD_PRAYER_WINDOW_TICKS && value != Some(1)));
+    if expired_enable {
+        if let Some(fallback_component) = off.fallback_component.filter(|_| value != Some(1)) {
+            if prayer_varp_value(snapshot, fallback_component) == Some(1) {
+                api::host_log!(
+                    api::hostlog::Category::NavEvent,
+                    api::hostlog::Level::Warn,
+                    slot = account.unwrap_or(""),
+                    "walk guard retires owned fallback component={} after dropped switch component={}",
+                    fallback_component,
+                    off.component
+                );
+                off.component = fallback_component;
+                off.fallback_component = None;
+                off.admitted_tick = tick;
+                off.start_at_first_pump = false;
+                off.awaiting_on = false;
+                off.off_tick = None;
+                off.retried = false;
+                age = 0;
+                value = Some(1);
+            } else {
+                log_prayer_off_drop(
+                    off,
+                    account,
+                    "enable not observed within 3 ticks; owned fallback not observed on",
+                );
+                return false;
+            }
+        } else {
+            log_prayer_off_drop(off, account, "enable not observed within 3 ticks");
+            return false;
+        }
+    }
     let off_age = off.off_tick.map(|sent| elapsed(tick, sent));
     let expired_off = off_age.is_some_and(|age| {
         age >= GUARD_PRAYER_WINDOW_TICKS * 2
             || (age >= GUARD_PRAYER_WINDOW_TICKS && value.is_none())
     });
-    if expired_enable || expired_off {
-        api::host_log!(
-            api::hostlog::Category::NavEvent,
-            api::hostlog::Level::Warn,
-            slot = account.unwrap_or(""),
-            "walk guard drops protect debt component={} awaiting_on={} retry={} reason={}",
-            off.component,
-            off.awaiting_on,
-            off.retried,
-            if expired_enable {
-                "enable not observed within 3 ticks"
-            } else {
-                "off not observed within bounded retry window"
-            }
-        );
+    if expired_off {
+        log_prayer_off_drop(off, account, "off not observed within bounded retry window");
         return false;
     }
     if value != Some(1) {
         if !off.awaiting_on && off.off_tick.is_none() && age >= GUARD_PRAYER_WINDOW_TICKS {
+            log_prayer_off_drop(
+                off,
+                account,
+                "owned protect varp unavailable within cleanup window",
+            );
             return false;
         }
         return true;
     }
     off.awaiting_on = false;
+    off.fallback_component = None;
     if let Some(age) = off_age {
         if age < GUARD_PRAYER_WINDOW_TICKS || off.retried {
             return true;
@@ -410,6 +465,7 @@ fn finish_prayer_off(
     ) {
         off.off_tick.get_or_insert(tick);
     } else if off.off_tick.is_none() && age >= GUARD_PRAYER_WINDOW_TICKS {
+        log_prayer_off_drop(off, account, "off click refused within cleanup window");
         return false;
     }
     true

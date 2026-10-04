@@ -2058,6 +2058,13 @@ impl SlotScript {
             return;
         }
         #[cfg(feature = "load")]
+        if self.load.is_some() {
+            if let Some(failure) = trapped_failure(ctx) {
+                self.stop_blocked(failure, ctx.tick);
+                return;
+            }
+        }
+        #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             self.tick_api(ctx);
@@ -2142,6 +2149,22 @@ impl SlotScript {
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
     fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
+        #[cfg(feature = "load")]
+        if self.compiled.is_none() {
+            let generation = self.runtime_generation;
+            let reason = format!("{}: {}", failure.code, failure.message);
+            self.stop_with_reason(StopReason::Error, "blocked");
+            self.pending_logs.push(reason.clone());
+            self.last_error = Some(reason.clone());
+            self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                runtime_generation: generation,
+                state: ScriptTerminalState::Failed,
+                tick,
+                reason,
+            });
+            return;
+        }
+
         use crate::native::NativeOutput;
         let run = self.compiled.as_mut().expect("blocked compiled run");
         let status = crate::native::ScriptStatus {
@@ -2367,12 +2390,12 @@ impl Drop for SlotScript {
     }
 }
 
-/// An unheld native run standing on a random event's trap square (the Maze
+/// An unheld running script standing on a random event's trap square (the Maze
 /// or the Mime stage). Only that event's own solution leads off the square,
 /// and an unheld frame means the host guardian is not running one (it gave
-/// up, or random events are off), so the card cannot make progress there:
-/// Blocked with the reason instead of ticking it against a world it was
-/// never placed in.
+/// up, was explicitly ignored, or random events are off). Native and Load
+/// scripts take the same terminal Blocked Stop rather than running against
+/// a world they cannot leave through ordinary work.
 fn trapped_failure(ctx: &ScriptCtx<'_>) -> Option<ScriptFailure> {
     if ctx.compiled.hold {
         return None;

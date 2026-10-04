@@ -461,7 +461,7 @@ impl Pages {
             return Some(false);
         }
         if cont {
-            cx.emit(InteractReq::ContinueDialog);
+            cx.emit(InteractReq::ContinueDialog { component_id: None });
             cx.clock().arm(crate::dialog::PAGE_ACK_MS);
             self.phase = PagePhase::Ack {
                 before: modal,

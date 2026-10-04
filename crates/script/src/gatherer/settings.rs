@@ -116,6 +116,8 @@ pub struct GathererSettings {
     pub allow_teleports: bool,
     #[serde(default)]
     pub allow_wilderness: bool,
+    #[serde(default)]
+    pub allow_danger_zones: bool,
     #[serde(default = "default_death_policy")]
     pub death_policy: String,
     #[serde(default = "default_max_deaths")]
@@ -187,6 +189,7 @@ impl Default for GathererSettings {
             reserve_casts: 0,
             allow_teleports: false,
             allow_wilderness: false,
+            allow_danger_zones: false,
             death_policy: default_death_policy(),
             max_deaths: default_max_deaths(),
         }
@@ -417,6 +420,7 @@ impl GathererSettings {
             || self.reserve_teleport != other.reserve_teleport
             || self.reserve_casts != other.reserve_casts
             || self.allow_wilderness != other.allow_wilderness
+            || self.allow_danger_zones != other.allow_danger_zones
     }
 
     pub fn bank_preferences(&self) -> BankPreferences {
@@ -779,6 +783,15 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             None,
         ),
         number_setting("maxDeaths", "2", "0", "255"),
+        setting_group(boolean_setting("allowTeleports", false), "Walk permissions"),
+        setting_group(
+            boolean_setting("allowWilderness", false),
+            "Walk permissions",
+        ),
+        setting_group(
+            boolean_setting("allowDangerZones", false),
+            "Walk permissions",
+        ),
     ]
 });
 
@@ -1161,5 +1174,41 @@ mod tests {
             gaps: Arc::from([]),
         };
         assert!(target_admits_method("miningResources", &method).unwrap());
+    }
+}
+#[cfg(test)]
+mod walk_permission_settings_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_defaults_and_camel_case_permission_bags_roundtrip() {
+        let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert!(!defaults.allow_teleports);
+        assert!(!defaults.allow_wilderness);
+        assert!(!defaults.allow_danger_zones);
+
+        for id in ["allowTeleports", "allowWilderness", "allowDangerZones"] {
+            let definition = schema().iter().find(|setting| setting.id == id).unwrap();
+            assert_eq!(definition.ty, "boolean");
+            assert_eq!(definition.default.as_deref(), Some("false"));
+            assert_eq!(definition.group.as_deref(), Some("Walk permissions"));
+        }
+
+        let mut bag = SettingsBag::new();
+        bag.insert("allowTeleports".into(), json!(true));
+        bag.insert("allowWilderness".into(), json!(false));
+        bag.insert("allowDangerZones".into(), json!(true));
+        let restored: SettingsBag =
+            serde_json::from_value(serde_json::to_value(&bag).unwrap()).unwrap();
+        assert_eq!(restored, bag);
+        let settings = GathererSettings::from_bag(&restored).unwrap();
+        assert!(settings.allow_teleports);
+        assert!(!settings.allow_wilderness);
+        assert!(settings.allow_danger_zones);
+
+        let mut boundary = defaults.clone();
+        boundary.allow_danger_zones = true;
+        assert!(defaults.boundary_changed(&boundary));
     }
 }

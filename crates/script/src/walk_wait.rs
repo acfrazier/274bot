@@ -83,7 +83,7 @@ impl HostOutcome {
                         level: o.tile.level,
                     },
                     radius: o.radius,
-                    allow_teleports: o.allow_teleports,
+                    allow_teleports: Some(o.allow_teleports),
                 },
             })
     }
@@ -181,10 +181,12 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                         level: json_i32(input.get("level")),
                     },
                     radius: json_i32(input.get("radius")),
-                    allow_teleports: input
-                        .get("allow_teleports")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    allow_teleports: Some(
+                        input
+                            .get("allow_teleports")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    ),
                 };
                 let outcome = observed::with(HostOutcome::posted);
                 let intent_baseline = input
