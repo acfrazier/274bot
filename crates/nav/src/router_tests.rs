@@ -3921,9 +3921,10 @@ fn route_walk_tiles(route: &crate::router::Route) -> impl Iterator<Item = WorldT
 }
 
 #[test]
-fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
-    // S=(0,0), G1=(16,0); the narrow corridor crosses Z. G2=(14,4)
-    // is its only dead-end pocket. Walking costs 8 and 9 respectively.
+fn endpoint_goal_exemption_does_not_turn_its_zone_into_a_transit_corridor() {
+    // The walk-only corridor to past crosses Z. Pocket is in Z but is
+    // reachable directly, so its endpoint exemption must not help the
+    // separate outside goal.
     let mut blocked: Vec<_> = (0..5)
         .flat_map(|z| {
             (0..17).filter_map(move |x| {
@@ -3938,8 +3939,12 @@ fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
     let pocket = tile(14, 4, 0);
     let goals = [past, pocket];
     let mut graph = door(from, past, 30);
+    let direct_to_pocket = door(from, pocket, 9).edges.pop().unwrap();
+    graph.at.entry(from).or_default().push(graph.edges.len());
+    graph.edges.push(direct_to_pocket);
     install_zones(&collision, &mut graph, vec![rect_zone(2, 14, 0, 4)]);
     let state = WorldState::empty();
+
     let first = find_first_with(
         &collision,
         &graph,
@@ -3948,7 +3953,7 @@ fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
         FindOptions::default(),
         &state,
     );
-    assert_eq!(first.completion_partitions(), 1);
+    assert_eq!(first.completion_partitions(), 0);
     let first = first.into_route().unwrap();
     assert_eq!((first.dest, first.ticks), (pocket, 9.0));
     let many = find_many_with(
@@ -3959,7 +3964,7 @@ fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
         FindOptions::default(),
         &state,
     );
-    assert_eq!(many.completion_partitions(), 1);
+    assert_eq!(many.completion_partitions(), 0);
     assert_eq!(many.route(0).unwrap().ticks, 30.0);
     assert_eq!(many.route(1).unwrap().ticks, 9.0);
     let bypass = find_many_with(
@@ -3988,7 +3993,7 @@ fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
             FindOptions::default(),
             &state
         ),
-        Err(RouteError::NoPath),
+        Err(RouteError::NoPath)
     ));
     assert_eq!(
         crate::router::find_blocking_zones(
@@ -4002,19 +4007,189 @@ fn zoned_candidate_end_authorizes_only_its_own_completion_route() {
         ),
         Some(vec![ZoneKey::Zone(0)]),
     );
+    let completion = find_first_with(
+        &collision,
+        &graph,
+        from,
+        &goals,
+        FindOptions::default(),
+        &state,
+    )
+    .into_route()
+    .unwrap();
     assert_eq!(
-        find_first_with(
+        completion.dest, pocket,
+        "the goal's zone allows completion, but cannot reach the outside goal"
+    );
+}
+
+#[test]
+fn endpoint_completion_prefers_safe_routes_and_never_leaves_the_goal_zone() {
+    let collision = bake(8, 1, &[]);
+    let from = tile(0, 0, 0);
+    let goal = tile(4, 0, 0);
+    let mut graph = door(from, goal, 10);
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 4, 0, 0)]);
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+    let goals = [goal];
+    let safe = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+    assert_eq!(
+        safe.ticks, 10.0,
+        "safe landing wins over a shorter zone crossing"
+    );
+    assert_eq!(
+        find_first_with(&collision, &graph, from, &goals, opts, &state)
+            .into_route()
+            .unwrap(),
+        safe
+    );
+    assert_eq!(
+        find_many_with(&collision, &graph, from, &goals, opts, &state)
+            .route(0)
+            .unwrap(),
+        safe
+    );
+    graph.at.clear();
+    graph.edges.clear();
+    let completion = find_with(&collision, &graph, from, goal, opts, &state).unwrap();
+    assert_eq!(completion.ticks, 2.0, "enter and move inside the goal zone");
+    assert_eq!(
+        find_first_with(&collision, &graph, from, &goals, opts, &state)
+            .into_route()
+            .unwrap(),
+        completion
+    );
+    assert_eq!(
+        find_many_with(&collision, &graph, from, &goals, opts, &state)
+            .route(0)
+            .unwrap(),
+        completion
+    );
+    assert!(matches!(
+        find_with(&collision, &graph, from, tile(6, 0, 0), opts, &state),
+        Err(RouteError::NoPath)
+    ));
+}
+
+#[test]
+fn endpoint_exemptions_allow_departure_and_arrival_without_zone_transit() {
+    let collision = bake(8, 1, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 4, 0, 0)]);
+    let state = WorldState::empty();
+
+    let leaving = find_with(
+        &collision,
+        &graph,
+        tile(2, 0, 0),
+        tile(6, 0, 0),
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap();
+    assert_eq!(leaving.ticks, 2.0, "the origin may escape through its zone");
+
+    let arriving = find_with(
+        &collision,
+        &graph,
+        tile(1, 0, 0),
+        tile(2, 0, 0),
+        FindOptions::default(),
+        &state,
+    )
+    .unwrap();
+    assert_eq!(arriving.ticks, 0.5, "the selected goal may be in its zone");
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            tile(1, 0, 0),
+            tile(6, 0, 0),
+            FindOptions::default(),
+            &state,
+        ),
+        Err(RouteError::NoPath)
+    ));
+
+    let named = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+    let whole_walk = find_with(
+        &collision,
+        &graph,
+        tile(1, 0, 0),
+        tile(6, 0, 0),
+        FindOptions {
+            zones: named,
+            ..FindOptions::default()
+        },
+        &state,
+    )
+    .unwrap();
+    assert_eq!(whole_walk.ticks, 2.5, "named exemptions remain whole-walk");
+}
+
+#[test]
+fn origin_endpoint_permission_cannot_reenter_its_active_zone() {
+    let collision = bake(8, 1, &[]);
+    let mut graph = TransportGraph {
+        wilderness: WildernessRules {
+            zones: vec![
+                WildernessZone {
+                    x1: 1,
+                    x2: 2,
+                    z1: 0,
+                    z2: 0,
+                    level1: 0,
+                    level2: 0,
+                    origin_z: 0,
+                },
+                WildernessZone {
+                    x1: 5,
+                    x2: 5,
+                    z1: 0,
+                    z2: 0,
+                    level1: 0,
+                    level2: 0,
+                    origin_z: 0,
+                },
+            ],
+            divisor: 0,
+            offset: 0,
+        },
+        ..TransportGraph::default()
+    };
+    let mut zone = rect_zone(1, 5, 0, 0);
+    zone.class = ZoneClass::LevelRule;
+    zone.cap = 12;
+    install_zones(&collision, &mut graph, vec![zone]);
+    let state = WorldState {
+        combat_level: Some(126),
+        ..WorldState::empty()
+    };
+    let from = tile(1, 0, 0);
+    let to = tile(6, 0, 0);
+    let opts = FindOptions {
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    assert!(matches!(
+        find_with(&collision, &graph, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    ));
+    assert!(
+        find_with(
             &collision,
             &graph,
             from,
-            &goals,
-            FindOptions::default(),
-            &state
+            to,
+            FindOptions {
+                zones: ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap(),
+                ..opts
+            },
+            &state,
         )
-        .into_route()
-        .unwrap()
-        .dest,
-        pocket,
+        .is_ok(),
+        "explicit named permission can still cross the full zone"
     );
 }
 
@@ -4084,7 +4259,121 @@ fn diagnosis_names_only_zones_active_under_the_original_predicate() {
 }
 
 #[test]
-fn straddling_zone_endpoint_keys_on_geometry_not_goal_activation() {
+fn refusal_attribution_reports_all_reachable_zone_frontiers_not_shortest_witness() {
+    let blocked: Vec<_> = (0..3)
+        .flat_map(|z| {
+            (0..7).filter_map(move |x| {
+                let open = z != 1 || x == 0 || x == 6;
+                (!open).then_some((x, z, CollisionFlag::WALK_SCENERY as u32))
+            })
+        })
+        .collect();
+    let collision = bake(7, 3, &blocked);
+    let from = tile(0, 1, 0);
+    let to = tile(6, 1, 0);
+    let mut graph = TransportGraph::default();
+    install_zones(
+        &collision,
+        &mut graph,
+        vec![
+            rect_zone(3, 3, 0, 0),
+            rect_zone(3, 3, 2, 2),
+            rect_zone(3, 3, 1, 1),
+        ],
+    );
+    let opts = FindOptions::default();
+    let state = WorldState::empty();
+    assert!(matches!(
+        find_with(&collision, &graph, from, to, opts, &state),
+        Err(RouteError::NoPath)
+    ));
+
+    let witness = find_with(
+        &collision,
+        &graph,
+        from,
+        to,
+        FindOptions {
+            zones: ZoneExempt::all(),
+            ..opts
+        },
+        &state,
+    )
+    .unwrap();
+    let table = graph.zones.as_ref().unwrap();
+    let witness_zones: std::collections::HashSet<_> = route_walk_tiles(&witness)
+        .flat_map(|tile| table.at(tile))
+        .filter(|&index| index < 2)
+        .collect();
+    assert_eq!(
+        witness_zones.len(),
+        1,
+        "one shortest witness traverses only one of the two blocked corridors"
+    );
+    assert_eq!(
+        crate::router::find_blocking_zones(&collision, &graph, from, to, opts, &state, &[]),
+        Some(vec![ZoneKey::Zone(0), ZoneKey::Zone(1)]),
+        "both source-reachable corridor frontiers block a feasible route"
+    );
+
+    let goals = [tile(6, 0, 0), tile(6, 2, 0), tile(3, 1, 0)];
+    assert_eq!(
+        find_first_with(&collision, &graph, from, &goals, opts, &state).into_route(),
+        Err(RouteError::NoPath)
+    );
+    let first_frontier = crate::router::find_first_blocking_zones(
+        &collision,
+        &graph,
+        from,
+        &goals,
+        opts,
+        &state,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        first_frontier,
+        vec![ZoneKey::Zone(0), ZoneKey::Zone(1)],
+        "multigoal attribution includes each feasible frontier and excludes the wall-sealed zone"
+    );
+}
+
+#[test]
+fn refusal_attribution_does_not_override_unrelated_item_gates() {
+    let collision = bake(5, 1, &[(2, 0, CollisionFlag::WALK_SCENERY as u32)]);
+    let from = tile(0, 0, 0);
+    let goal = tile(4, 0, 0);
+    let mut graph = door(from, goal, 1);
+    graph.edges[0].item_req.push((995, 1));
+    install_zones(&collision, &mut graph, vec![rect_zone(1, 1, 0, 0)]);
+    assert!(matches!(
+        find_with(
+            &collision,
+            &graph,
+            from,
+            goal,
+            FindOptions::default(),
+            &WorldState::empty(),
+        ),
+        Err(RouteError::NoPath)
+    ));
+    assert_eq!(
+        crate::router::find_blocking_zones(
+            &collision,
+            &graph,
+            from,
+            goal,
+            FindOptions::default(),
+            &WorldState::empty(),
+            &[],
+        ),
+        None,
+        "zones are not reported when the same route is impossible with zones lifted"
+    );
+}
+
+#[test]
+fn straddling_zone_endpoint_does_not_clear_its_active_interior() {
     let collision = bake(9, 1, &[]);
     let mut graph = TransportGraph {
         wilderness: WildernessRules {
@@ -4110,20 +4399,28 @@ fn straddling_zone_endpoint_keys_on_geometry_not_goal_activation() {
         ..FindOptions::default()
     };
     let goal = tile(7, 0, 0);
-    for (min_x, partitions) in [(2, 1), (6, 0)] {
+    for (min_x, partitions, reachable) in [(2, 0, false), (6, 0, true)] {
         let mut zone = rect_zone(min_x, 7, 0, 0);
         zone.class = ZoneClass::LevelRule;
         zone.cap = 12;
         install_zones(&collision, &mut graph, vec![zone]);
-        let single = find_with(&collision, &graph, tile(0, 0, 0), goal, opts, &state).unwrap();
-        assert_eq!((single.ticks, route_walk_tiles(&single).count()), (3.5, 8));
+        let single = find_with(&collision, &graph, tile(0, 0, 0), goal, opts, &state);
         let first = find_first_with(&collision, &graph, tile(0, 0, 0), &[goal], opts, &state);
         assert_eq!(first.completion_partitions(), partitions);
-        assert_eq!(first.into_route().unwrap(), single);
+        let first = first.into_route();
         let goals = [goal];
         let many = find_many_with(&collision, &graph, tile(0, 0, 0), &goals, opts, &state);
         assert_eq!(many.completion_partitions(), partitions);
-        assert_eq!(many.route(0).unwrap(), single);
+        if reachable {
+            let single = single.unwrap();
+            assert_eq!((single.ticks, route_walk_tiles(&single).count()), (3.5, 8));
+            assert_eq!(first.unwrap(), single);
+            assert_eq!(many.route(0).unwrap(), single);
+        } else {
+            assert!(matches!(single, Err(RouteError::NoPath)));
+            assert_eq!(first, Err(RouteError::NoPath));
+            assert_eq!(many.route(0), Err(TargetError::NoPath));
+        }
     }
 }
 
@@ -4153,6 +4450,11 @@ fn transport_and_any_tile_teleport_landings_are_checked_independently() {
                 Err(RouteError::NoPath),
             ),
             "landing must block, teleport={teleport}"
+        );
+        assert_eq!(
+            crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[],),
+            Some(vec![ZoneKey::Zone(0)]),
+            "a blocked transport/teleport landing is part of the route frontier"
         );
         let route = find_with(
             &collision,
@@ -4200,6 +4502,11 @@ fn essence_return_landing_is_checked_before_the_following_walk() {
         find_with(&collision, &graph, from, goal, opts, &state),
         Err(RouteError::NoPath),
     ));
+    assert_eq!(
+        crate::router::find_blocking_zones(&collision, &graph, from, goal, opts, &state, &[]),
+        Some(vec![ZoneKey::Zone(0)]),
+        "a blocked essence return landing is part of the route frontier"
+    );
     let route = find_with(
         &collision,
         &graph,
@@ -4367,24 +4674,42 @@ fn assert_zone_route_clear(
         &[from, route.dest],
         &opts.zones,
     );
+    let mut previous = from;
     for leg in &route.legs {
-        match leg {
+        let arrival = match leg {
             Leg::Walk { tiles } => {
                 for &tile in tiles {
                     assert!(
-                        !filter.blocks(&world.graph.wilderness, tile),
-                        "zone entered: {tile:?}"
+                        filter
+                            .blocking_transition_at(
+                                &world.graph.wilderness,
+                                previous,
+                                tile,
+                                tile == route.dest,
+                            )
+                            .next()
+                            .is_none(),
+                        "zone entered: {tile:?} from {previous:?}"
                     );
+                    previous = tile;
                 }
+                continue;
             }
-            Leg::Transport { edge } => {
-                assert!(
-                    !filter.blocks(&world.graph.wilderness, edge.to),
-                    "zone landing: {:?}",
-                    edge.to
-                );
-            }
-        }
+            Leg::Transport { edge } => edge.to,
+        };
+        assert!(
+            filter
+                .blocking_transition_at(
+                    &world.graph.wilderness,
+                    previous,
+                    arrival,
+                    arrival == route.dest,
+                )
+                .next()
+                .is_none(),
+            "zone landing: {arrival:?} from {previous:?}"
+        );
+        previous = arrival;
     }
 }
 
@@ -4561,7 +4886,7 @@ fn real_289_first_refusal_witness_exempts_its_chosen_goal_zone() {
 }
 
 #[test]
-fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
+fn real_289_refusals_report_frontier_zones_not_only_the_shortest_witness() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -4584,15 +4909,12 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
         &[],
     )
     .unwrap();
-    assert_eq!(
-        keys,
-        vec![
-            table.resolve("white-wolf-mountain").unwrap(),
-            table.resolve("wolf@2647,3584,0").unwrap(),
-        ]
-    );
+    let mountain = table.resolve("white-wolf-mountain").unwrap();
+    let wolf = table.resolve("wolf@2647,3584,0").unwrap();
+    assert!(keys.contains(&mountain), "{keys:?}");
+    assert!(keys.contains(&wolf), "{keys:?}");
     let crossing = FindOptions {
-        zones: ZoneExempt::named(&keys).unwrap(),
+        zones: ZoneExempt::named(&[mountain, wolf]).unwrap(),
         ..opts
     };
     let route = find_with(&world.collision, &world.graph, from, to, crossing, &state).unwrap();
@@ -4600,34 +4922,6 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
         (route.ticks, zone_route_cell_count(&route), route.legs.len()),
         (256.5, 502, 7)
     );
-    assert!(matches!(
-        find_with(
-            &world.collision,
-            &world.graph,
-            from,
-            to,
-            FindOptions {
-                zones: ZoneExempt::named(&keys[..1]).unwrap(),
-                ..opts
-            },
-            &state,
-        ),
-        Err(RouteError::NoPath),
-    ));
-    let wolf_exempt = FindOptions {
-        zones: ZoneExempt::named(&keys[1..]).unwrap(),
-        ..opts
-    };
-    let route = find_with(
-        &world.collision,
-        &world.graph,
-        from,
-        to,
-        wolf_exempt,
-        &state,
-    )
-    .unwrap();
-    assert_zone_route_clear(&world, from, &route, wolf_exempt, &state);
     let mut combat_129_ticks = None;
     let mut combat_147_ticks = None;
     for combat in [129, 147] {
@@ -4680,20 +4974,17 @@ fn real_289_refusals_name_the_shortest_unblocked_route_zones() {
             &[],
         )
         .unwrap();
-        assert_eq!(
-            keys,
-            vec![
-                table.resolve("brownbear@3176,3223,0").unwrap(),
-                table.resolve("giantrat1@3211,3195,0").unwrap(),
-            ]
-        );
+        let bear = table.resolve("brownbear@3176,3223,0").unwrap();
+        let rat = table.resolve("giantrat1@3211,3195,0").unwrap();
+        assert!(keys.contains(&bear), "{keys:?}");
+        assert!(keys.contains(&rat), "{keys:?}");
         let route = find_with(
             &world.collision,
             &world.graph,
             from,
             to,
             FindOptions {
-                zones: ZoneExempt::named(&keys).unwrap(),
+                zones: ZoneExempt::named(&[bear, rat]).unwrap(),
                 ..opts
             },
             &fresh,
@@ -4778,8 +5069,10 @@ fn real_289_grouped_goals_merge_their_own_endpoint_completion_costs() {
         tile(3123, 3245, 0),
         tile(3253, 3402, 0),
     ];
-    for (combat, partitions, ticks) in [(3, 2, [87.5, 70.5, 109.5]), (126, 1, [84.5, 67.5, 107.5])]
-    {
+    for (combat, partitions, ticks, first_target) in [
+        (3, 2, [87.5, 70.5, 109.5], 0),
+        (126, 1, [84.5, 67.5, 107.5], 0),
+    ] {
         let state = zones_rich_289_state(Some(combat));
         let opts = FindOptions::default();
         let many = find_many_with(&world.collision, &world.graph, from, &targets, opts, &state);
@@ -4793,9 +5086,12 @@ fn real_289_grouped_goals_merge_their_own_endpoint_completion_costs() {
             );
         }
         let first = find_first_with(&world.collision, &world.graph, from, &targets, opts, &state);
-        assert_eq!(first.completion_partitions(), partitions);
+        assert_eq!(first.completion_partitions(), 0);
         let first = first.into_route().unwrap();
-        assert_eq!((first.dest, first.ticks), (targets[1], ticks[1]));
+        assert_eq!(
+            (first.dest, first.ticks),
+            (targets[first_target], ticks[first_target])
+        );
     }
 }
 
@@ -4872,7 +5168,7 @@ fn expired_many_deadline_cannot_publish_a_completion_route() {
         Some(Instant::now() - Duration::from_secs(1)),
     );
     assert!(!search.complete());
-    assert_eq!(search.completion_partitions(), 1);
+    assert_eq!(search.completion_partitions(), 0);
     assert_eq!(
         search.results(),
         &[Err(TargetError::NotSettled), Err(TargetError::NotSettled)]
@@ -4936,7 +5232,21 @@ fn linked_battle_mage_hunts_on_the_raw_plane_used_by_routes() {
         &[],
     )
     .expect("active zone witness");
-    assert!(blocked.contains(&mage), "{blocked:?}");
+    // Attribution names the source-reachable frontier, which can precede
+    // the mage deeper inside overlapping zones on this raw-plane crossing.
+    assert!(
+        crossing.legs.iter().any(|leg| match leg {
+            Leg::Walk { tiles } => tiles.iter().any(|&cell| {
+                table
+                    .at(cell)
+                    .any(|index| blocked.contains(&table.key(index)))
+            }),
+            Leg::Transport { edge } => table
+                .at(edge.to)
+                .any(|index| blocked.contains(&table.key(index))),
+        }),
+        "{blocked:?}"
+    );
 }
 
 #[path = "router/consumption_tests.rs"]
