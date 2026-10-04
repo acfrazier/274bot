@@ -10,11 +10,21 @@ pub struct ReleaseIndex {
     pub paths: Vec<ReleasePath>,
 }
 
+/// One release roster row. A released row names its Path `file`. An
+/// unavailable row names the quest and an end-user reason instead; it is never
+/// compiled or started, and may keep a `file` so the authored Path stays
+/// validated until the server can run it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePath {
     pub id: String,
-    pub file: String,
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Display name of an unavailable row; released rows take it from the Path.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub unavailable: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -125,9 +135,13 @@ impl<'a> Queue<'a> {
         let mut rows = Vec::with_capacity(index.paths.len());
         let mut reasons = Vec::with_capacity(index.paths.len());
         for (ordinal, path) in index.paths.iter().enumerate() {
-            let picked = pick_all || picked_ids.contains(path.id.as_str());
+            let explicit = picked_ids.contains(path.id.as_str());
             let skipped = skipped_ids.contains(path.id.as_str());
-            let status = if !picked || skipped {
+            // An empty selection means every quest this server can run.
+            let picked = explicit || (pick_all && path.unavailable.is_none());
+            let status = if path.unavailable.is_some() {
+                QueueStatus::Blocked
+            } else if !picked || skipped {
                 QueueStatus::Parked
             } else {
                 QueueStatus::Unknown
@@ -140,7 +154,30 @@ impl<'a> Queue<'a> {
                 skipped,
                 status,
             });
-            reasons.push(None);
+            reasons.push(path.unavailable.as_deref().map(Arc::from));
+        }
+
+        if !pick_all
+            && rows
+                .iter()
+                .all(|row| !row.picked || row.skipped || row.status == QueueStatus::Blocked)
+        {
+            let refused = index
+                .paths
+                .iter()
+                .zip(&rows)
+                .filter(|(_, row)| row.picked && !row.skipped)
+                .filter_map(|(path, _)| {
+                    Some(format!(
+                        "{}: {}",
+                        path.name.as_deref().unwrap_or(&path.id),
+                        path.unavailable.as_deref()?
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if !refused.is_empty() {
+                return Err(QueueConfigError::new("quests", refused.join("; ")));
+            }
         }
 
         let mut order = Vec::with_capacity(rows.len());
@@ -199,7 +236,7 @@ impl<'a> Queue<'a> {
         self.index
             .paths
             .get(usize::from(row.index))
-            .map(|path| path.file.as_str())
+            .and_then(|path| path.file.as_deref())
     }
 
     pub fn status(&self, position: usize) -> Option<QueueStatus> {
@@ -241,9 +278,16 @@ impl<'a> Queue<'a> {
 
     /// A changed quest/status/equipment observation may make an earlier
     /// eligibility blocker pass. Preserve its row but require a fresh check.
+    /// Rows the release index marks unavailable stay blocked.
     pub fn refresh_blocked(&mut self) {
         for (position, row) in self.rows.iter_mut().enumerate() {
-            if row.picked && !row.skipped && row.status == QueueStatus::Blocked {
+            if row.picked
+                && !row.skipped
+                && row.status == QueueStatus::Blocked
+                && self.index.paths[usize::from(row.index)]
+                    .unavailable
+                    .is_none()
+            {
                 row.status = QueueStatus::Unknown;
                 self.reasons[position] = None;
             }
@@ -296,10 +340,18 @@ fn validate_index(index: &ReleaseIndex) -> Result<(), QueueConfigError> {
     let mut ids = std::collections::HashSet::with_capacity(index.paths.len());
     let mut files = std::collections::HashSet::with_capacity(index.paths.len());
     for path in &index.paths {
-        if path.id.is_empty() || path.file.is_empty() {
+        let shape_ok = match (&path.unavailable, &path.name) {
+            (None, None) => path.file.is_some(),
+            (Some(reason), Some(name)) => !reason.is_empty() && !name.is_empty(),
+            _ => false,
+        };
+        if path.id.is_empty() || path.file.as_deref() == Some("") || !shape_ok {
             return Err(QueueConfigError::new(
                 "",
-                "release index has an empty id or file",
+                format!(
+                    "release index row {:?} needs a file, or a name and an unavailable reason",
+                    path.id
+                ),
             ));
         }
         if !ids.insert(path.id.as_str()) {
@@ -308,11 +360,13 @@ fn validate_index(index: &ReleaseIndex) -> Result<(), QueueConfigError> {
                 format!("duplicate release path id {:?}", path.id),
             ));
         }
-        if !files.insert(path.file.as_str()) {
-            return Err(QueueConfigError::new(
-                "",
-                format!("duplicate release path file {:?}", path.file),
-            ));
+        if let Some(file) = path.file.as_deref() {
+            if !files.insert(file) {
+                return Err(QueueConfigError::new(
+                    "",
+                    format!("duplicate release path file {file:?}"),
+                ));
+            }
         }
     }
     Ok(())
@@ -461,5 +515,89 @@ mod tests {
             "secondary"
         );
         assert_eq!(queue.gang, Some(Gang::BlackArm));
+    }
+
+    fn index_with_unavailable() -> ReleaseIndex {
+        serde_json::from_str(
+            r#"{"schema":1,"paths":[
+                {"id":"cook","file":"cook.json"},
+                {"id":"fortress","file":"fortress.json","name":"Black Knights' Fortress","unavailable":"Can't be completed on this server: the grill can't be reached"},
+                {"id":"hauntedmine","name":"Haunted Mine","unavailable":"Not on this server"},
+                {"id":"sheep","file":"sheep.json"}
+            ]}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unavailable_rows_stay_blocked_with_their_reason_and_never_become_candidates() {
+        let index = index_with_unavailable();
+        let mut queue = Queue::from_index(&index, QueueSettings::default()).unwrap();
+        assert_eq!(queue.status_text(), "?BB?");
+        assert_eq!(
+            queue.reason(1),
+            Some("Can't be completed on this server: the grill can't be reached")
+        );
+        assert_eq!(queue.reason(2), Some("Not on this server"));
+        assert_eq!(queue.file(2), None);
+        assert!(
+            !queue.rows()[1].picked,
+            "select-all leaves unavailable rows out"
+        );
+        assert_eq!(queue.next_candidate(), Some(0));
+        queue.mark_done(0);
+        assert_eq!(queue.next_candidate(), Some(3));
+        queue.mark_done(3);
+        assert!(
+            queue.all_done(),
+            "select-all completes without unavailable rows"
+        );
+        assert!(!queue.any_blocked());
+
+        let mut picked =
+            Queue::from_index(&index, settings(&["fortress", "cook"], &["fortress"], &[])).unwrap();
+        assert_eq!(picked.next_candidate(), Some(0));
+        picked.refresh_blocked();
+        assert_eq!(picked.status(1), Some(QueueStatus::Blocked));
+        assert!(picked.reason(1).unwrap().contains("grill"));
+        picked.mark_done(0);
+        assert_eq!(picked.next_candidate(), None);
+        assert!(
+            picked.any_blocked(),
+            "an explicit unavailable pick is reported"
+        );
+    }
+
+    #[test]
+    fn explicit_pick_of_only_unavailable_quests_is_refused_with_the_reason() {
+        let index = index_with_unavailable();
+        let error = Queue::from_index(&index, settings(&["fortress", "hauntedmine"], &[], &[]))
+            .unwrap_err();
+        assert_eq!(error.field, "quests");
+        assert_eq!(
+            error.message.as_ref(),
+            "Black Knights' Fortress: Can't be completed on this server: the grill can't be reached; Haunted Mine: Not on this server"
+        );
+        let error =
+            Queue::from_index(&index, settings(&["fortress", "cook"], &[], &["cook"])).unwrap_err();
+        assert!(error.message.starts_with("Black Knights' Fortress: "));
+        Queue::from_index(&index, settings(&[], &[], &["fortress"])).unwrap();
+    }
+
+    #[test]
+    fn release_rows_need_a_file_or_a_name_and_reason() {
+        for rejected in [
+            r#"{"schema":1,"paths":[{"id":"cook"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json","name":"Cook"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","unavailable":"why"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","name":"Cook","unavailable":""}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":""}]}"#,
+        ] {
+            let index: ReleaseIndex = serde_json::from_str(rejected).unwrap();
+            assert!(
+                Queue::from_index(&index, QueueSettings::default()).is_err(),
+                "accepted {rejected}"
+            );
+        }
     }
 }

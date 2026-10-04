@@ -137,6 +137,13 @@ Quester uses the ordered `crates/script/paths/289/index.json` release roster.
 and `gang` are per-account settings, not bulk-copy settings; partner quest
 execution remains separate from this release slice.
 
+A roster row can be unavailable on this server: it carries `name` and an
+end-user `unavailable` reason instead of being released (it may keep its
+authored `file` for validation). The queue keeps such a row blocked with that
+reason and never compiles or starts it; an empty selection leaves it out, and a
+selection of only unavailable quests refuses Start with their reasons. Quest
+pickers list it as non-selectable, and a stored pick shows the reason.
+
 `crest_gauntlets` is also per-account: `chaos` (the default), `cooking`, or
 `goldsmith`. Runtime account choices are available to quest handlers when a step
 begins, without specializing the shared compiled Path. Omitted saved values use

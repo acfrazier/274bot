@@ -3,24 +3,10 @@ use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey};
 use script::quester::compile::{compile_uncached_for_test, CompileError};
 use script::quester::path::PathDocument;
+use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BundledIndex {
-    schema: u16,
-    paths: Vec<IndexEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IndexEntry {
-    id: String,
-    file: String,
-}
 
 fn paths_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289")
@@ -150,7 +136,7 @@ fn bundled_paths_decode_and_compile() {
     let _home = script::IsolatedEnv::enter("path-schema-bundled");
     let root = paths_dir();
     let index_path = root.join("index.json");
-    let index: BundledIndex = serde_json::from_slice(
+    let index: ReleaseIndex = serde_json::from_slice(
         &std::fs::read(&index_path)
             .unwrap_or_else(|error| panic!("read {}: {error}", index_path.display())),
     )
@@ -159,21 +145,20 @@ fn bundled_paths_decode_and_compile() {
 
     let (selected, quests) = selected_and_quests();
     for entry in index.paths {
-        let path = root.join(&entry.file);
+        // Unavailable rows may keep their authored Path validated here.
+        let Some(file) = entry.file else {
+            continue;
+        };
+        let path = root.join(&file);
         let bytes =
             std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         let document: PathDocument = serde_json::from_slice(&bytes)
             .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
-        assert_eq!(
-            document.id.0.as_ref(),
-            entry.id,
-            "{} id mismatch",
-            entry.file
-        );
+        assert_eq!(document.id.0.as_ref(), entry.id, "{file} id mismatch");
         compile_uncached_for_test(&document, &selected, &quests).unwrap_or_else(|error| {
             panic!(
-                "{} path={} step={:?} code={} detail={:?}",
-                entry.file, error.path.0, error.step, error.code, error.detail
+                "{file} path={} step={:?} code={} detail={:?}",
+                error.path.0, error.step, error.code, error.detail
             )
         });
     }

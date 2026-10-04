@@ -125,12 +125,17 @@ fn settings_schema() -> &'static [SettingDef] {
     &SETTINGS
 }
 
+/// Quest picker rows in release order: released Paths with their display
+/// names, plus unavailable rows the picker shows as non-selectable.
 fn released_setting_paths() -> &'static [(String, String)] {
     static PATHS: LazyLock<Vec<(String, String)>> = LazyLock::new(|| {
         RELEASE_INDEX
             .paths
             .iter()
             .filter_map(|entry| {
+                if let (Some(name), Some(_)) = (&entry.name, &entry.unavailable) {
+                    return Some((entry.id.clone(), name.clone()));
+                }
                 let bytes = released_path(&entry.id)?;
                 let document: super::path::PathDocument =
                     serde_json::from_slice(bytes).expect("released Path document");
@@ -139,6 +144,17 @@ fn released_setting_paths() -> &'static [(String, String)] {
             .collect()
     });
     PATHS.as_slice()
+}
+
+/// End-user reason a release-roster quest can't run on this server, if any.
+/// Pickers show such quests as non-selectable; the queue keeps them blocked.
+pub fn unavailable_quest(id: &str) -> Option<&'static str> {
+    RELEASE_INDEX
+        .paths
+        .iter()
+        .find(|entry| entry.id == id)?
+        .unavailable
+        .as_deref()
 }
 
 fn path_setting(id: &str, default: &str, label: &str, help: &str) -> SettingDef {
@@ -192,7 +208,14 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
 fn released(index: &ReleaseIndex, id: &str) -> bool {
     index.schema == 1
         && index.paths.iter().any(|path| {
-            path.id == id && path.file.strip_suffix(".json") == Some(id) && path_bytes(id).is_some()
+            path.id == id
+                && path.unavailable.is_none()
+                && path
+                    .file
+                    .as_deref()
+                    .and_then(|file| file.strip_suffix(".json"))
+                    == Some(id)
+                && path_bytes(id).is_some()
         })
 }
 
@@ -305,10 +328,11 @@ fn prepare(
         gang,
     };
     for entry in &RELEASE_INDEX.paths {
-        if released_path(&entry.id).is_none() {
+        if entry.unavailable.is_none() && released_path(&entry.id).is_none() {
             return Err(StartError::Unavailable(Arc::from(format!(
                 "release index Path is unavailable: {} ({})",
-                entry.id, entry.file
+                entry.id,
+                entry.file.as_deref().unwrap_or_default()
             ))));
         }
     }
@@ -577,6 +601,40 @@ mod tests {
             .unwrap();
         assert_eq!(setting.default.as_deref(), Some("chaos"));
         assert_eq!(setting.options, ["chaos", "cooking", "goldsmith"]);
+    }
+
+    #[test]
+    fn unavailable_rows_are_picker_rows_never_released_and_refuse_an_only_pick() {
+        let reason = unavailable_quest("hauntedmine").expect("Haunted Mine row");
+        assert!(!reason.is_empty());
+        assert!(released_path("hauntedmine").is_none());
+        assert!(unavailable_quest("cook").is_none());
+        assert!(released_setting_paths()
+            .iter()
+            .any(|(id, name)| id == "hauntedmine" && name == "Haunted Mine"));
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let expected = format!("Haunted Mine: {reason}");
+        FamilyPreparation::run(move |families| {
+            let pin = selected.selected_pin().unwrap();
+            let mut cx = PrepareContext {
+                selected,
+                pin,
+                banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                families,
+            };
+            let mut bag = SettingsBag::new();
+            bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+            match prepare(&mut cx, 1, Arc::new(bag)) {
+                Err(StartError::Config(error)) => {
+                    assert_eq!(error.field.as_ref(), "quests");
+                    assert_eq!(error.message.as_ref(), expected);
+                }
+                other => panic!("an unavailable-only pick must refuse Start, got {other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
     }
 }
 #[cfg(test)]
