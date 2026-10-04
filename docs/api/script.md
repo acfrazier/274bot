@@ -204,6 +204,11 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Path loadout headers use selected item aliases, such as `rune_scimitar` and
+`4doseprayerrestore`. Compilation resolves each worn and carried item once into
+the display-name rows consumed by Loadouts; operator overrides remain ordinary
+display-name Loadouts rows.
+
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
 not change that ranking. A bank must have usable packed or declared access.
