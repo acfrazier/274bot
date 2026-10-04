@@ -91,7 +91,8 @@ const AIR_RUNE_ID: i32 = 556;
 const MIND_RUNE_ID: i32 = 558;
 const MAGIC_AIR_RUNES: i32 = 150;
 const MAGIC_CHAOS_RUNES: i32 = 12;
-const MAGIC_MIND_RUNES: i32 = 30;
+const MAGIC_MIND_RUNES: i32 = 90;
+const MAGIC_PRAYER_RESTORES: i32 = 2;
 const FIRE_BOLT_WIDGET: i64 = 1169;
 const FIRE_STRIKE_WIDGET: i64 = 1158;
 const AUTO_CHOOSER_COMPONENT: i64 = 353;
@@ -917,6 +918,11 @@ fn preparation_steps(case: Case) -> Vec<Step> {
                 ("chaosrune", CHAOS_RUNE_ID, MAGIC_CHAOS_RUNES),
                 ("airrune", AIR_RUNE_ID, MAGIC_AIR_RUNES),
                 ("mindrune", MIND_RUNE_ID, MAGIC_MIND_RUNES),
+                (
+                    "4doseprayerrestore",
+                    PRAYER_POTION_4_ID,
+                    MAGIC_PRAYER_RESTORES,
+                ),
             ] {
                 steps.push(cheat_step(
                     "seed exact mage equipment and runes before Start",
@@ -1171,11 +1177,12 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 || item_count(baseline, CHAOS_RUNE_ID) != i64::from(MAGIC_CHAOS_RUNES)
                 || item_count(baseline, AIR_RUNE_ID) != i64::from(MAGIC_AIR_RUNES)
                 || item_count(baseline, MIND_RUNE_ID) != i64::from(MAGIC_MIND_RUNES)
+                || item_count(baseline, PRAYER_POTION_4_ID) != i64::from(MAGIC_PRAYER_RESTORES)
                 || item_count(baseline, STAFF_OF_FIRE_ID) != 0
                 || equipment_count(baseline, STAFF_OF_FIRE_ID) != 1
             {
                 return Some(format!(
-                    "{} did not reach magic35/defence40/HP40/prayer43 with the exact staff and 12/150/30 rune seed",
+                    "{} did not reach magic35/defence40/HP40/prayer43 with the exact staff, 12/150/90 runes, and two Prayer(4) restores",
                     case.key()
                 ));
             }
@@ -1628,22 +1635,15 @@ fn root_visible(frame: &Value, component: i64) -> bool {
             .is_some_and(|tabs| tabs.iter().any(|tab| tab["root"] == json!(component)))
 }
 
-fn settled_between(
-    capture: &CombatCapture,
-    first: &Value,
-    next: &Value,
-    settled: impl Fn(&Value) -> bool,
-) -> bool {
+fn settled_between(first: &Value, next: &Value, settled: impl Fn(&Value) -> bool) -> bool {
     let (Some(first_tick), Some(next_tick)) = (first["tick"].as_i64(), next["tick"].as_i64())
     else {
         return false;
     };
-    capture.frames.iter().any(|frame| {
-        frame["tick"]
-            .as_i64()
-            .is_some_and(|tick| first_tick < tick && tick < next_tick)
-            && settled(frame)
-    })
+    first_tick < next_tick
+        && action_precedes(first, next)
+        && next["snapshot"]["tick"].as_i64() == Some(next_tick)
+        && settled(&next["snapshot"])
 }
 
 fn autocast_arm_actions<'a>(
@@ -1668,26 +1668,31 @@ fn autocast_arm_actions<'a>(
         || ![chooser, selection, toggle]
             .into_iter()
             .all(action_wire_valid)
-        || !settled_between(capture, chooser, selection, |frame| {
+        || !settled_between(chooser, selection, |frame| {
             root_visible(frame, SPELL_PANEL_ROOT)
         })
-        || !settled_between(capture, selection, toggle, |frame| {
+        || !settled_between(selection, toggle, |frame| {
             root_visible(frame, COMBAT_TAB_ROOT) && frame["magicvarp"] == json!(2)
         })
-        || !capture.frames.iter().any(|frame| {
-            frame["tick"].as_i64().is_some_and(|tick| {
-                next_action_tick(toggle)
-                    .is_some_and(|toggle_tick| toggle_tick < tick && tick < before_tick)
-            }) && root_visible(frame, COMBAT_TAB_ROOT)
-                && frame["magicvarp"] == json!(3)
-        })
+        || !capture
+            .actions
+            .iter()
+            .filter(|action| is_npc_attack(action))
+            .any(|action| {
+                action["tick"].as_i64().is_some_and(|tick| {
+                    next_action_tick(toggle)
+                        .is_some_and(|toggle_tick| toggle_tick < tick && tick <= before_tick)
+                }) && action_precedes(toggle, action)
+                    && root_visible(&action["snapshot"], COMBAT_TAB_ROOT)
+                    && action["snapshot"]["magicvarp"] == json!(3)
+            })
     {
         return None;
     }
     if let Some(side_tab) = side_tab {
         if !action_precedes(side_tab, chooser)
             || !action_wire_valid(side_tab)
-            || !settled_between(capture, side_tab, chooser, |frame| {
+            || !settled_between(side_tab, chooser, |frame| {
                 frame["active_side_tab"] == json!(0) && root_visible(frame, COMBAT_TAB_ROOT)
             })
         {
@@ -2135,22 +2140,23 @@ fn magic_receipt(capture: &CombatCapture, case: Case) -> Value {
             "staff": "staff_of_fire",
             "chaos_runes": 12,
             "air_runes": 150,
-            "mind_runes": 30,
+            "mind_runes": MAGIC_MIND_RUNES,
+            "prayer_restores_4dose": MAGIC_PRAYER_RESTORES,
         },
         "seed_rationale": {
-            "approved_resource_change_only": {
-                "resource": "air_runes",
-                "previous": 40,
-                "current": 150,
-                "scope": "same change in G1, G2 fallback=true, and G2 fallback=false",
-            },
+            "approved_resource_changes": [
+                {"resource": "air_runes", "previous": 40, "current": MAGIC_AIR_RUNES},
+                {"resource": "mind_runes", "previous": 30, "current": MAGIC_MIND_RUNES},
+                {"resource": "prayer_restores_4dose", "previous": 0, "current": MAGIC_PRAYER_RESTORES}
+            ],
+            "scope": "same fixed changes in G1, G2 fallback=true, and G2 fallback=false; other stats, Chaos12, staff, and deadline unchanged",
             "previous_seed_maximum_damage": {
                 "fire_bolt": {"casts": 12, "maximum_per_cast": 12, "total": 144},
                 "fire_strike": {"available_air_after_bolts": 4, "casts": 2, "maximum_per_cast": 8, "total": 16},
                 "combined": 160,
                 "warlord_hitpoints": 170,
                 "shortfall": 10,
-                "conclusion": "airrune 40 cannot kill the 170-HP Warlord even at maximum damage; approved airrune 150 corrects only that resource",
+                "conclusion": "airrune40 cannot kill the 170-HP Warlord even at maximum damage; measured 12/150/30 seed then exhausted prayer and still left HP24, so the approved reserve corrects stock and drain without policy or RNG changes",
             },
         },
         "local_npc_setup": &capture.magic_setup,
@@ -5253,12 +5259,12 @@ fn mage_rune_deltas_count_splashes_and_capture_two_cast_ranges() {
     let mut capture = CombatCapture::default();
     capture.start_baseline = Some(json!({
         "snapshot_tick": 10,
-        "inventory": inventory(12, 150, 30),
+        "inventory": inventory(12, 150, MAGIC_MIND_RUNES),
         "nearby_npcs": [npc(5, 0, 0)],
     }));
     let mut chaos = 12;
     let mut air = 150;
-    let mut mind = 30;
+    let mut mind = MAGIC_MIND_RUNES;
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let projectile_id = selected
         .style_spotanims()
@@ -5360,6 +5366,8 @@ fn mage_rune_deltas_count_splashes_and_capture_two_cast_ranges() {
 
     let receipt = magic_receipt(&capture, Case::MageAuto);
     assert_eq!(receipt["seed"]["air_runes"], json!(150));
+    assert_eq!(receipt["seed"]["mind_runes"], json!(90));
+    assert_eq!(receipt["seed"]["prayer_restores_4dose"], json!(2));
     assert_eq!(
         receipt["seed_rationale"]["previous_seed_maximum_damage"]["combined"],
         json!(160)
@@ -5434,7 +5442,8 @@ fn magic_preflight_compares_array_baseline_with_object_setup_tiles() {
         "inventory": [
             {"id": CHAOS_RUNE_ID, "count": MAGIC_CHAOS_RUNES},
             {"id": AIR_RUNE_ID, "count": MAGIC_AIR_RUNES},
-            {"id": MIND_RUNE_ID, "count": MAGIC_MIND_RUNES}
+            {"id": MIND_RUNE_ID, "count": MAGIC_MIND_RUNES},
+            {"id": PRAYER_POTION_4_ID, "count": MAGIC_PRAYER_RESTORES}
         ],
         "equipment": [{"id": STAFF_OF_FIRE_ID, "count": 1}],
         "nearby_npcs": [{"name": "Khazard warlord", "distance": 5}]
@@ -5457,6 +5466,30 @@ fn magic_preflight_compares_array_baseline_with_object_setup_tiles() {
     }
     baseline["tile"] = json!([tele.x + 1, tele.z, tele.level]);
     assert!(start_preflight_at(Case::MageAuto, &baseline, Some(tele), Some(&setup)).is_some());
+}
+
+#[test]
+fn adjacent_arm_steps_use_the_observation_that_enabled_the_next_press() {
+    let first = json!({"tick": 49, "sequence": 1});
+    let mut next = json!({
+        "tick": 50, "sequence": 2,
+        "snapshot": {
+            "tick": 50,
+            "roots": {"side_tabs": [{"root": SPELL_PANEL_ROOT}]}
+        }
+    });
+    assert!(settled_between(&first, &next, |frame| {
+        root_visible(frame, SPELL_PANEL_ROOT)
+    }));
+    next["snapshot"]["tick"] = json!(49);
+    assert!(!settled_between(&first, &next, |frame| {
+        root_visible(frame, SPELL_PANEL_ROOT)
+    }));
+    next["snapshot"]["tick"] = json!(50);
+    next["snapshot"]["roots"]["side_tabs"][0]["root"] = json!(COMBAT_TAB_ROOT);
+    assert!(!settled_between(&first, &next, |frame| {
+        root_visible(frame, SPELL_PANEL_ROOT)
+    }));
 }
 
 #[test]
