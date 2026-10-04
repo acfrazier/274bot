@@ -3168,15 +3168,39 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
     assert_eq!(site_work_anchor(&slot), anchor);
     slot.stop();
 
-    let mut changed = started_with(4421, &selected, site_willow_bag("woodcutting.market"));
+    // A fresh Start on the SAME slot must clear the previous Site anchor
+    // through the production Stop path (`RetainedMemory` is dropped on
+    // Stop), not merely by constructing a new slot.
+    slot.start_compiled(
+        "alice",
+        script::CompiledId("Gatherer"),
+        Arc::new(site_willow_bag("woodcutting.market")),
+        Arc::clone(&selected),
+        Arc::default(),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match slot.poll_start() {
+            StartPoll::Settled(outcome) => {
+                assert_eq!(outcome, StartOutcome::Ready);
+                break;
+            }
+            StartPoll::Pending => {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            StartPoll::NotOwed => panic!("no start owed"),
+        }
+    }
     let mut now = 0;
-    next_trip_effect(&mut changed, &site_willow_frame(), &mut now);
+    next_trip_effect(&mut slot, &site_willow_frame(), &mut now);
     assert_ne!(
-        site_work_anchor(&changed),
+        site_work_anchor(&slot),
         anchor,
         "fresh Start clears the previous Site anchor"
     );
-    changed.stop();
+    slot.stop();
 }
 
 #[test]

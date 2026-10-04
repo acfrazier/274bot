@@ -1,19 +1,39 @@
-//! BANK-CORE L-withdraw: a native exact `WithdrawTo` of 7 coins at a real
-//! Draynor booth through real Play, on the shared transfer kernel.
+//! BANK-CORE live cells at a real Draynor booth through real Play, on the
+//! shared transfer kernel.
 //!
-//! A fresh account is moved to the bank, its pack cleared and coins seeded
-//! into the bank only (no random content). The native script then selects
-//! Draynor, opens its booth, withdraws to exactly 7 coins and closes. The
-//! cell passes only when 7 coins are held, the bank lost exactly 7, and the
-//! whole cell finished inside 60 s. It saves a JSON receipt and a
-//! CPU-rendered PNG below `LIVE_EVIDENCE_DIR`.
+//! A fresh account is logged in through real Play. The shared ScenarioRunner
+//! gates tutorial-skip/relog once on the server logout and the rebound
+//! inventory tab; the bank floor, cleared pack and account-owned seeds are
+//! then established before the cell clock starts. Each cell saves a JSON
+//! receipt and CPU-rendered PNG below `LIVE_EVIDENCE_DIR`.
+//!
+//! Login has its own bounded prerequisite deadline. The cell's fixed bound
+//! starts only after `ingame && scene_state == 2` and its fixture seed is
+//! posted, and covers the scripted operation.
+//!
+//! - **L-withdraw** (60 s): the native script selects Draynor, opens its
+//!   booth, withdraws to exactly 7 of 50 banked coins and closes.
+//! - **L-load** (90 s): compat `Bank.withdrawLoad('Feather')` with 300
+//!   feathers banked and 20 free slots empties that row into the pack.
+//! - **L-load-unstack** (120 s): compat `Bank.withdrawLoad('Logs')` with
+//!   40 logs banked and 20 free slots fills the pack and leaves 20 banked.
+//! - **L-close** (20 s): compat `Bank.close()` on the open booth is true
+//!   within 4 s with the bank shut, its side root released and the session
+//!   generation newer; a second close on the shut bank is true at once.
+//! - **L-except** (60 s): compat host `Bank.depositAllExcept(['Coins'])`
+//!   with coins, bones and a tinderbox held banks the junk and keeps the
+//!   coins.
+//!
+//! The compat cells run a frozen-API Load script that opens the booth
+//! itself; the cell decides from the posted snapshot after the script's
+//! answer, not from the answer alone.
 //!
 //! Like the Gatherer live cells, the client cache is the revision's decoded
 //! snapshot copied once and reused: `BOT_CACHE_DIR` is the copied versioned
 //! snapshot and `CLIENT_UNPACK_DIR` its copied unpack root. A launch never
 //! fetches or deletes that immutable cache.
 //!
-//! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=bk GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --lib live_bank_core_exact_withdraw_at_draynor -- --ignored --nocapture --test-threads=1`
+//! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=bk GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --lib live_bank_core_ -- --ignored --nocapture --test-threads=1`
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,19 +62,26 @@ const DRAYNOR: WorldTile = WorldTile {
     level: 0,
 };
 const CELL_BOUND: Duration = Duration::from_secs(60);
+// Keep the login prerequisite separate from every cell's deadline, with room
+// for the server's 60-second already-logged-in retry message.
+const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
+const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
+const CAPTURE_GRACE: Duration = Duration::from_secs(10);
+const FEATHER: i32 = 314;
+const LOGS: i32 = 1511;
+const BONES: i32 = 526;
+const TINDERBOX: i32 = 590;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Prep {
-    WaitLogin,
-    SkipTutorial,
-    Logout,
-    WaitRelog,
+    Session,
     Teleport,
     WaitArrive,
     Clear,
     WaitClear,
-    SeedBank,
+    Seed,
     Ready,
+    PrerequisiteFailed,
     Failed,
 }
 
@@ -71,6 +98,7 @@ struct Trace {
     closed: bool,
     final_tile: Option<[i32; 3]>,
     script_ms: Option<u128>,
+    preparation_ms: Option<u128>,
     cell_ms: Option<u128>,
     live_held: Option<i32>,
     live_bank_open: Option<bool>,
@@ -78,21 +106,113 @@ struct Trace {
     passed: bool,
 }
 
+/// The posted facts a cell decides from, refreshed every in-game frame.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct Facts {
+    /// Frames read so far: a verdict waits for one after the answer.
+    frame: u64,
+    /// `(id, held)` for the cell's watched ids.
+    held: Vec<(i32, i32)>,
+    /// `(id, banked)` while the bank's stock is posted.
+    banked: Option<Vec<(i32, i32)>>,
+    used: i32,
+    inventory_size: i32,
+    bank_open: bool,
+    side_root: i32,
+    generation: u64,
+    /// The newest bank session generation posted while the bank was open.
+    open_generation: Option<u64>,
+}
+
+impl Facts {
+    fn held(&self, id: i32) -> i32 {
+        self.held
+            .iter()
+            .find(|(held, _)| *held == id)
+            .map_or(0, |(_, count)| *count)
+    }
+
+    fn banked(&self, id: i32) -> Option<i32> {
+        self.banked.as_ref().map(|rows| {
+            rows.iter()
+                .find(|(banked, _)| *banked == id)
+                .map_or(0, |(_, count)| *count)
+        })
+    }
+}
+
 struct Cell {
     phase: Prep,
-    started: Instant,
+    bound: Duration,
+    /// Set only once the final seed is posted in an in-game scene-2 frame.
+    started: Option<Instant>,
+    preparation_started: Instant,
     last_action: Instant,
-    offline_seen: bool,
+    session_runner: scenario::ScenarioRunner,
+    preparation_failure: Option<String>,
+    /// Seed cheats sent in order once the pack is cleared.
+    seed: &'static [&'static str],
+    seeded: usize,
+    /// Whether the posted pack shows the seed (bank seeds are not visible).
+    seed_ready: fn(&GameSnapshot) -> bool,
+    watch: &'static [i32],
+    facts: Facts,
     script_started: Option<Instant>,
     trace: Trace,
+    /// The compat script's own answer.
+    result: Option<serde_json::Value>,
+    /// The receipt's fixed part: scenario, seed and request.
+    scenario: serde_json::Value,
+    /// Whether the posted frame matches a passing verdict before capture.
+    capture_ready: fn(&Cell) -> bool,
     terminal: bool,
     evidence_dir: PathBuf,
     capture_started: bool,
     capture_written: bool,
     capture_error: Option<String>,
+    /// The frame snapshot, rebuilt in place as the host keeps its own: the
+    /// bank session generation is tracked across frames.
+    snapshot: Option<GameSnapshot>,
 }
 
 impl Cell {
+    fn new(
+        bound: Duration,
+        seed: &'static [&'static str],
+        seed_ready: fn(&GameSnapshot) -> bool,
+        watch: &'static [i32],
+        scenario: serde_json::Value,
+        capture_ready: fn(&Cell) -> bool,
+        evidence_dir: PathBuf,
+    ) -> Self {
+        let preparation_started = Instant::now();
+        Self {
+            phase: Prep::Session,
+            bound,
+            started: None,
+            preparation_started,
+            last_action: preparation_started,
+            session_runner: session_fixture_runner(),
+            preparation_failure: None,
+            seed,
+            seeded: 0,
+            seed_ready,
+            watch,
+            facts: Facts::default(),
+            script_started: None,
+            trace: Trace::default(),
+            result: None,
+            scenario,
+            capture_ready,
+            terminal: false,
+            evidence_dir,
+            capture_started: false,
+            capture_written: false,
+            capture_error: None,
+            snapshot: None,
+        }
+    }
+
     fn fail(&mut self, message: String) {
         if !self.terminal {
             self.trace.failure = Some(message);
@@ -100,6 +220,61 @@ impl Cell {
         }
         self.phase = Prep::Failed;
     }
+
+    fn fail_prerequisite(&mut self, message: String) {
+        if self.preparation_failure.is_none() {
+            self.preparation_failure = Some(message);
+        }
+        self.phase = Prep::PrerequisiteFailed;
+    }
+}
+
+/// The common tutorial/relog fixture used by live script scenarios. The
+/// runner owns the one-shot logout and waits for both a departed session and
+/// the new session's inventory side-tab readiness before setup continues.
+fn session_fixture_runner() -> scenario::ScenarioRunner {
+    use scenario::{Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
+
+    let scenario = Scenario {
+        name: "bank_core_session_fixture",
+        seed: Seed {
+            profiles: vec![],
+            mainland: false,
+        },
+        steps: vec![
+            Step {
+                name: "skip tutorial and verify the server value",
+                kind: StepKind::Perform {
+                    send: Box::new(|client, _| {
+                        let _ = interact::cheat(client, "setvar tutorial 1000");
+                        let _ = interact::cheat(client, "getvar tutorial");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Chat {
+                        needle: "get tutorial: 1000",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            Step {
+                name: "relog once and wait for the inventory tab",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::SideTabAvailable { index: 3 },
+        companions: vec![],
+        settings: ScenarioSettings {
+            deadline: PREPARATION_DEADLINE,
+            ..ScenarioSettings::default()
+        },
+    };
+    scenario::ScenarioRunner::with_world(scenario, None)
 }
 
 fn count(items: &[api::snapshot::ItemView], id: i32) -> i32 {
@@ -299,16 +474,18 @@ impl Script for WithdrawCell {
                         cell.trace.final_tile = here;
                         cell.trace.script_ms =
                             cell.script_started.map(|at| at.elapsed().as_millis());
-                        cell.trace.cell_ms = Some(cell.started.elapsed().as_millis());
+                        let started = cell
+                            .started
+                            .expect("fixture readiness starts the bank-cell clock");
+                        let elapsed = started.elapsed();
+                        cell.trace.cell_ms = Some(elapsed.as_millis());
                         if !cell.trace.closed {
                             drop(cell);
                             return Ok(self.blocked("Close returned with the bank still open"));
                         }
-                        if cell.started.elapsed() > CELL_BOUND {
-                            let message = format!(
-                                "the cell took {:?}, over its {CELL_BOUND:?} bound",
-                                cell.started.elapsed()
-                            );
+                        if elapsed > CELL_BOUND {
+                            let message =
+                                format!("the cell took {elapsed:?}, over its {CELL_BOUND:?} bound");
                             drop(cell);
                             return Ok(self.blocked(message));
                         }
@@ -326,28 +503,16 @@ impl Script for WithdrawCell {
 fn save_evidence(
     client: &mut Client,
     directory: &Path,
-    account: &str,
-    trace: &Trace,
+    passed: bool,
+    mut receipt: serde_json::Value,
 ) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let step = if trace.passed {
-        "01-final"
-    } else {
-        "FAIL-final"
-    };
+    let step = if passed { "01-final" } else { "FAIL-final" };
     let png = directory.join(format!("{step}.png"));
     let png_result = write_teller_png(client, &png);
-    let receipt = serde_json::json!({
-        "scenario": "bank_core_l_withdraw_exact_coins",
-        "account": account,
-        "bank_floor": tile(DRAYNOR),
-        "seed": { "bank_coins": SEEDED, "pack": "cleared" },
-        "request": { "action": "WithdrawTo", "id": COINS, "target": TARGET },
-        "trace": trace,
-        "png": png.file_name().and_then(|name| name.to_str()),
-        "png_error": png_result.as_ref().err(),
-    });
+    receipt["png"] = serde_json::json!(png.file_name().and_then(|name| name.to_str()));
+    receipt["png_error"] = serde_json::json!(png_result.as_ref().err());
     let json = directory.join(format!("{step}.json"));
     std::fs::write(
         &json,
@@ -357,8 +522,40 @@ fn save_evidence(
     png_result
 }
 
+fn read_facts(snapshot: &GameSnapshot, watch: &[i32], last: &Facts) -> Facts {
+    let bank_open = snapshot.bank_component_id() >= 0;
+    let generation = snapshot.bank_session_generation();
+    Facts {
+        frame: last.frame + 1,
+        held: watch
+            .iter()
+            .map(|id| (*id, count(snapshot.inventory(), *id)))
+            .collect(),
+        banked: snapshot.bank_loaded().then(|| {
+            watch
+                .iter()
+                .map(|id| (*id, count(snapshot.bank(), *id)))
+                .collect()
+        }),
+        used: snapshot
+            .inventory()
+            .iter()
+            .filter(|item| item.count > 0)
+            .count() as i32,
+        inventory_size: snapshot.inventory_size(),
+        bank_open,
+        side_root: snapshot.modals().side,
+        generation,
+        open_generation: if bank_open {
+            Some(generation)
+        } else {
+            last.open_generation
+        },
+    }
+}
+
 fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
-    let mut snapshot = GameSnapshot::new();
+    let mut snapshot = shared.lock().snapshot.take().unwrap_or_default();
     snapshot.rebuild(client);
     let now = Instant::now();
     let capture = {
@@ -366,46 +563,34 @@ fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
         if client.ingame && client.scene_state == 2 {
             cell.trace.live_held = Some(count(snapshot.inventory(), COINS));
             cell.trace.live_bank_open = Some(snapshot.bank_component_id() >= 0);
+            cell.facts = read_facts(&snapshot, cell.watch, &cell.facts);
         }
-        if !cell.terminal && now.duration_since(cell.started) > CELL_BOUND {
-            let message = format!("the cell exceeded {CELL_BOUND:?} in {:?}", cell.phase);
+        if !cell.terminal
+            && cell
+                .started
+                .is_some_and(|started| now.duration_since(started) > cell.bound)
+        {
+            let message = format!("the cell exceeded {:?} in {:?}", cell.bound, cell.phase);
             cell.fail(message);
         }
-        let spaced = now.duration_since(cell.last_action) >= Duration::from_millis(400);
-        match cell.phase {
-            Prep::WaitLogin => {
-                if client.ingame && client.scene_state == 2 && snapshot.local_player().is_some() {
-                    cell.phase = Prep::SkipTutorial;
-                    cell.last_action = now;
-                }
-            }
-            Prep::SkipTutorial if spaced => {
-                let _ = interact::cheat(client, "setvar tutorial 1000");
-                cell.last_action = now;
-                cell.phase = Prep::Logout;
-            }
-            Prep::Logout if now.duration_since(cell.last_action) >= Duration::from_secs(2) => {
-                let ifaces = Arc::clone(&client.ifaces);
-                if interact::logout(client, &ifaces) {
-                    cell.offline_seen = false;
-                    cell.phase = Prep::WaitRelog;
-                    cell.last_action = now;
-                } else {
-                    cell.fail("tutorial relog logout interface was unavailable".into());
-                }
-            }
-            Prep::WaitRelog => {
-                if !client.ingame {
-                    cell.offline_seen = true;
-                } else if cell.offline_seen
-                    && client.scene_state == 2
-                    && snapshot.local_player().is_some()
-                    && snapshot.inventory_size() > 0
-                {
+        if cell.phase == Prep::Session {
+            cell.session_runner.tick(client);
+            match cell.session_runner.status() {
+                scenario::RunnerStatus::Passed => {
                     cell.phase = Prep::Teleport;
                     cell.last_action = now;
                 }
+                scenario::RunnerStatus::Failed(error) => {
+                    cell.fail_prerequisite(format!(
+                        "shared tutorial/relog fixture failed: {error}"
+                    ));
+                }
+                scenario::RunnerStatus::Seeding | scenario::RunnerStatus::Running { .. } => {}
             }
+        }
+        let spaced = now.duration_since(cell.last_action) >= Duration::from_millis(400);
+        match cell.phase {
+            Prep::Session | Prep::PrerequisiteFailed => {}
             Prep::Teleport if spaced => {
                 let _ = interact::cheat(client, &tele_args(DRAYNOR));
                 cell.last_action = now;
@@ -424,33 +609,89 @@ fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
             }
             Prep::WaitClear => {
                 if snapshot.inventory().is_empty() && snapshot.bank_component_id() < 0 {
-                    cell.phase = Prep::SeedBank;
+                    cell.phase = Prep::Seed;
                     cell.last_action = now;
                 }
             }
-            Prep::SeedBank if spaced => {
-                let _ = interact::cheat(client, &format!("givebank coins {SEEDED}"));
-                cell.last_action = now;
-                cell.phase = Prep::Ready;
+            Prep::Seed if spaced => {
+                if let Some(cheat) = cell.seed.get(cell.seeded) {
+                    let _ = interact::cheat(client, cheat);
+                    cell.seeded += 1;
+                    cell.last_action = now;
+                } else if client.ingame && client.scene_state == 2 && (cell.seed_ready)(&snapshot) {
+                    cell.phase = Prep::Ready;
+                    cell.started = Some(now);
+                    cell.trace.preparation_ms =
+                        Some(now.duration_since(cell.preparation_started).as_millis());
+                    cell.last_action = now;
+                }
             }
             _ => {}
         }
-        let ready = cell.terminal
-            && (!cell.trace.passed
-                || (cell.trace.live_bank_open == Some(false)
-                    && cell.trace.live_held == Some(TARGET)));
+        let ready = cell.terminal && (!cell.trace.passed || (cell.capture_ready)(&cell));
         if ready && !cell.capture_started {
             cell.capture_started = true;
-            Some((cell.evidence_dir.clone(), cell.trace.clone()))
+            let mut receipt = cell.scenario.clone();
+            receipt["account"] = serde_json::json!(account);
+            receipt["bank_floor"] = serde_json::json!(tile(DRAYNOR));
+            receipt["trace"] = serde_json::json!(cell.trace);
+            if cell.result.is_some() {
+                receipt["script_answer"] = serde_json::json!(cell.result);
+                receipt["posted"] = serde_json::json!(cell.facts);
+            }
+            Some((cell.evidence_dir.clone(), cell.trace.passed, receipt))
         } else {
             None
         }
     };
-    if let Some((directory, trace)) = capture {
-        let result = save_evidence(client, &directory, account, &trace);
+    if let Some((directory, passed, receipt)) = capture {
+        let result = save_evidence(client, &directory, passed, receipt);
         let mut cell = shared.lock();
         cell.capture_written = true;
         cell.capture_error = result.err();
+    }
+    shared.lock().snapshot = Some(snapshot);
+}
+
+fn check_prerequisites(
+    play: &super::Play,
+    account: &str,
+    preparation_started: Instant,
+    login_ready: &mut bool,
+    cell: &Arc<Mutex<Cell>>,
+) {
+    let status = play
+        .statuses()
+        .into_iter()
+        .find(|status| status.username == account);
+    *login_ready |= status
+        .as_ref()
+        .is_some_and(|status| status.ingame && status.scene_state == 2);
+    if !*login_ready && preparation_started.elapsed() >= LOGIN_DEADLINE {
+        panic!(
+            "HARNESS PREREQUISITE FAILURE (before the cell deadline): initial login did not reach \
+             ingame && scene_state == 2 within {LOGIN_DEADLINE:?}; status={status:?}"
+        );
+    }
+
+    let (started, failure, phase) = {
+        let cell = cell.lock();
+        (
+            cell.started.is_some(),
+            cell.preparation_failure.clone(),
+            cell.phase,
+        )
+    };
+    if let Some(failure) = failure {
+        panic!(
+            "HARNESS PREREQUISITE FAILURE (before the cell deadline): {failure}; phase={phase:?}"
+        );
+    }
+    if !started && preparation_started.elapsed() >= PREPARATION_DEADLINE {
+        panic!(
+            "HARNESS PREREQUISITE FAILURE (before the cell deadline): bank fixture did not reach \
+             seeded ingame scene-2 readiness within {PREPARATION_DEADLINE:?}; phase={phase:?}"
+        );
     }
 }
 
@@ -526,19 +767,24 @@ fn live_bank_core_exact_withdraw_at_draynor() {
             .expect("selected facts name a Draynor bank")
             .name,
     );
-    let cell = Arc::new(Mutex::new(Cell {
-        phase: Prep::WaitLogin,
-        started: Instant::now(),
-        last_action: Instant::now(),
-        offline_seen: false,
-        script_started: None,
-        trace: Trace::default(),
-        terminal: false,
-        evidence_dir: evidence_dir.clone(),
-        capture_started: false,
-        capture_written: false,
-        capture_error: None,
-    }));
+    let cell = Cell::new(
+        CELL_BOUND,
+        &[WITHDRAW_SEED],
+        |_| true,
+        &[COINS],
+        serde_json::json!({
+            "scenario": "bank_core_l_withdraw_exact_coins",
+            "seed": { "bank_coins": SEEDED, "pack": "cleared" },
+            "request": { "action": "WithdrawTo", "id": COINS, "target": TARGET },
+            "login_deadline_ms": LOGIN_DEADLINE.as_millis(),
+            "preparation_deadline_ms": PREPARATION_DEADLINE.as_millis(),
+            "cell_clock_starts_after": "ingame && scene_state == 2 and seed posted",
+        }),
+        |cell| cell.trace.live_bank_open == Some(false) && cell.trace.live_held == Some(TARGET),
+        evidence_dir.clone(),
+    );
+    let preparation_started = cell.preparation_started;
+    let cell = Arc::new(Mutex::new(cell));
     let frame_cell = Arc::clone(&cell);
     let frame_account = account.clone();
     let play = run_with_template(
@@ -553,11 +799,32 @@ fn live_bank_core_exact_withdraw_at_draynor() {
         |_| (None, None),
         move |client, _, _| frame(client, &frame_cell, &frame_account),
     )
-    .expect("start real Play");
-    cell.lock().started = Instant::now();
+    .unwrap_or_else(|error| {
+        panic!("HARNESS PREREQUISITE FAILURE (before the cell deadline): starting login: {error}")
+    });
+    let mut login_ready = false;
     let start = play.script_start_handle();
-    let hard_stop = Instant::now() + CELL_BOUND + Duration::from_secs(20);
     loop {
+        check_prerequisites(
+            &play,
+            &account,
+            preparation_started,
+            &mut login_ready,
+            &cell,
+        );
+        let deadline = {
+            let guard = cell.lock();
+            guard
+                .started
+                .map_or(preparation_started + PREPARATION_DEADLINE, |started| {
+                    started + CELL_BOUND + CAPTURE_GRACE
+                })
+        };
+        assert!(
+            Instant::now() < deadline,
+            "FAIL L-withdraw: no evidence by its fixed cell deadline; trace={:#?}",
+            cell.lock().trace
+        );
         let begin = {
             let mut guard = cell.lock();
             if guard.phase == Prep::Ready
@@ -616,11 +883,401 @@ fn live_bank_core_exact_withdraw_at_draynor() {
             let _ = std::fs::remove_dir_all(&scratch);
             return;
         }
-        assert!(
-            Instant::now() < hard_stop,
-            "FAIL L-withdraw: no evidence; trace={:#?}",
-            cell.lock().trace
-        );
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+const WITHDRAW_SEED: &str = "givebank coins 50";
+
+/// One compat cell: its bound, seed, frozen script and posted verdict.
+struct CompatSpec {
+    label: &'static str,
+    uid: i32,
+    bound: Duration,
+    seed: &'static [&'static str],
+    seed_ready: fn(&GameSnapshot) -> bool,
+    watch: &'static [i32],
+    /// The cell's frozen calls after the booth is open and ready; they
+    /// assign the answer object to `cell`.
+    body: &'static str,
+    /// The verdict on the script's answer and the posted facts after it.
+    verdict: fn(&serde_json::Value, &Facts) -> Result<(), String>,
+}
+
+/// The frozen-API Load script around a cell body: open the booth the
+/// player stands at, wait for its stock, run the body once, and publish
+/// `globalThis.__cell`.
+fn compat_script(body: &str) -> String {
+    format!(
+        r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+import {{ Inventory }} from '../../api/inventory/Inventory.js';
+export default class BankCoreCell extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const opened = await Bank.openNearest();
+        const ready = opened && await Bank.waitReady(5000);
+        if (!ready) {{
+            globalThis.__cell = {{ opened, ready }};
+            return;
+        }}
+        let cell = {{}};
+        {body}
+        globalThis.__cell = {{ opened, ready, ...cell }};
+    }}
+}}
+"#
+    )
+}
+
+fn has(snapshot: &GameSnapshot, id: i32, held: i32) -> bool {
+    count(snapshot.inventory(), id) == held
+}
+
+fn run_compat_cell(spec: &CompatSpec) {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
+    let root = PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR names the evidence root"),
+    );
+    let account = super::mint_live_names(1).pop().expect("one live account");
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let evidence_dir = root.join(format!("{}_{account}_utc-{epoch}Z", spec.label));
+    let scratch = evidence_dir.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let options = live_profile(&scratch).expect("live profile options");
+    let profile = options
+        .resolve(None)
+        .and_then(|resolved| resolved.bind())
+        .expect("bind the local 289 profile");
+    assert_eq!(
+        profile.client().game_host(),
+        "127.0.0.1",
+        "loopback engine only"
+    );
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
+    let script = compat_script(spec.body);
+    let cell = Cell::new(
+        spec.bound,
+        spec.seed,
+        spec.seed_ready,
+        spec.watch,
+        serde_json::json!({
+            "scenario": format!("bank_core_{}", spec.label.replace('-', "_")),
+            "seed": spec.seed,
+            "bound_ms": spec.bound.as_millis(),
+            "login_deadline_ms": LOGIN_DEADLINE.as_millis(),
+            "preparation_deadline_ms": PREPARATION_DEADLINE.as_millis(),
+            "cell_clock_starts_after": "ingame && scene_state == 2 and seed posted",
+            "script": script,
+        }),
+        |_| true,
+        evidence_dir.clone(),
+    );
+    let preparation_started = cell.preparation_started;
+    let cell = Arc::new(Mutex::new(cell));
+    let frame_cell = Arc::clone(&cell);
+    let frame_account = account.clone();
+    let play = run_with_template(
+        template,
+        true,
+        vec![Profile {
+            username: account.clone(),
+            password: account.clone().into(),
+            uid: spec.uid,
+            settings: ProfileSettings::default(),
+        }],
+        |_| (None, None),
+        move |client, _, _| frame(client, &frame_cell, &frame_account),
+    )
+    .unwrap_or_else(|error| {
+        panic!("HARNESS PREREQUISITE FAILURE (before the cell deadline): starting login: {error}")
+    });
+    let mut login_ready = false;
+    // The posted frame the answer arrived at; the verdict reads a later one.
+    let mut answered_at: Option<u64> = None;
+    loop {
+        check_prerequisites(
+            &play,
+            &account,
+            preparation_started,
+            &mut login_ready,
+            &cell,
+        );
+        let deadline = {
+            let guard = cell.lock();
+            guard
+                .started
+                .map_or(preparation_started + PREPARATION_DEADLINE, |started| {
+                    started + spec.bound + CAPTURE_GRACE
+                })
+        };
+        assert!(
+            Instant::now() < deadline,
+            "FAIL {}: no evidence by its fixed cell deadline; trace={:#?}",
+            spec.label,
+            cell.lock().trace
+        );
+        let begin = {
+            let mut guard = cell.lock();
+            if guard.phase == Prep::Ready
+                && guard.script_started.is_none()
+                && Instant::now().duration_since(guard.last_action) >= Duration::from_secs(1)
+            {
+                guard.script_started = Some(Instant::now());
+                true
+            } else {
+                false
+            }
+        };
+        if begin {
+            if let Err(error) = play.script_start_load(
+                &account,
+                script.clone(),
+                script::LoadShape::CompatClass,
+                None,
+                vec![],
+            ) {
+                cell.lock()
+                    .fail(format!("Play refused the Load script: {error}"));
+            }
+        }
+        let started = cell.lock().script_started.is_some();
+        if started && !cell.lock().terminal {
+            let answer = super::script_slot(&play.scripts, &account)
+                .and_then(|slot| slot.lock().ok()?.probe("globalThis.__cell || null").ok());
+            let mut guard = cell.lock();
+            match (answer, answered_at) {
+                (Some(answer), None) if !answer.is_null() => {
+                    guard.trace.script_ms = guard.script_started.map(|at| at.elapsed().as_millis());
+                    guard.result = Some(answer);
+                    answered_at = Some(guard.facts.frame);
+                }
+                (_, Some(at)) if guard.facts.frame > at + 1 => {
+                    let elapsed = guard
+                        .started
+                        .expect("fixture readiness starts the bank-cell clock")
+                        .elapsed();
+                    guard.trace.cell_ms = Some(elapsed.as_millis());
+                    let result = guard.result.clone().unwrap_or_default();
+                    match (spec.verdict)(&result, &guard.facts) {
+                        Ok(()) if elapsed <= spec.bound => {
+                            guard.trace.passed = true;
+                            guard.terminal = true;
+                        }
+                        Ok(()) => {
+                            let message = format!(
+                                "the cell took {elapsed:?}, over its {:?} bound",
+                                spec.bound
+                            );
+                            guard.fail(message);
+                        }
+                        Err(message) => guard.fail(message),
+                    }
+                }
+                _ => {}
+            }
+        }
+        let written = {
+            let guard = cell.lock();
+            guard.capture_written.then(|| {
+                (
+                    guard.trace.clone(),
+                    guard.result.clone(),
+                    guard.facts.clone(),
+                    guard.capture_error.clone(),
+                )
+            })
+        };
+        if let Some((trace, result, facts, error)) = written {
+            assert!(
+                error.is_none(),
+                "evidence capture failed: {error:?}; {trace:#?}"
+            );
+            assert!(
+                trace.passed,
+                "FAIL {}: {:?}; answer={result:?}; posted={facts:?}; evidence={}",
+                spec.label,
+                trace.failure,
+                evidence_dir.display()
+            );
+            println!(
+                "PASS {} preparation_ms={:?} cell_ms={:?} script_ms={:?} answer={result:?} posted={facts:?} evidence={}",
+                spec.label,
+                trace.preparation_ms,
+                trace.cell_ms,
+                trace.script_ms,
+                evidence_dir.display()
+            );
+            let _ = std::fs::remove_dir_all(&scratch);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn answered_true(answer: &serde_json::Value, key: &str) -> Result<(), String> {
+    if answer[key] == serde_json::json!(true) {
+        Ok(())
+    } else {
+        Err(format!("{key} answered {} ({answer})", answer[key]))
+    }
+}
+
+/// Eight bones take eight slots: 20 of 28 stay free.
+const PACK_OF_EIGHT: &str = "give bones 8";
+
+fn eight_bones(snapshot: &GameSnapshot) -> bool {
+    has(snapshot, BONES, 8)
+}
+
+/// The load cells' body for one bank row name.
+macro_rules! load_body {
+    ($name:literal) => {
+        concat!(
+            "
+        const name = '",
+            $name,
+            "';
+        cell.before = { held: Inventory.count(name), banked: Bank.count(name), used: Inventory.used() };
+        const t = Date.now();
+        cell.ok = await Bank.withdrawLoad(name);
+        cell.ms = Date.now() - t;"
+        )
+    };
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_withdraw_load_stackable_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-load",
+        uid: 274_279_102,
+        bound: Duration::from_secs(90),
+        seed: &["givebank feather 300", PACK_OF_EIGHT],
+        seed_ready: eight_bones,
+        watch: &[FEATHER, BONES],
+        body: load_body!("Feather"),
+        verdict: |answer, posted| {
+            answered_true(answer, "ok")?;
+            let (held, banked) = (posted.held(FEATHER), posted.banked(FEATHER));
+            // That row filled the pack or emptied: one stack of 300.
+            if held == 300 && banked == Some(0) && posted.held(BONES) == 8 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "feathers held={held} banked={banked:?} bones={}",
+                    posted.held(BONES)
+                ))
+            }
+        },
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_withdraw_load_unstackable_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-load-unstack",
+        uid: 274_279_103,
+        bound: Duration::from_secs(120),
+        seed: &["givebank logs 40", PACK_OF_EIGHT],
+        seed_ready: eight_bones,
+        watch: &[LOGS, BONES],
+        body: load_body!("Logs"),
+        verdict: |answer, posted| {
+            answered_true(answer, "ok")?;
+            let (held, banked) = (posted.held(LOGS), posted.banked(LOGS));
+            // The pack filled; the bank row kept the rest.
+            if held == 20 && banked == Some(20) && posted.used == 28 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "logs held={held} banked={banked:?} used={}",
+                    posted.used
+                ))
+            }
+        },
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_close_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-close",
+        uid: 274_279_104,
+        bound: Duration::from_secs(20),
+        seed: &[],
+        seed_ready: |_| true,
+        watch: &[],
+        body: "
+        let t = Date.now();
+        cell.ok = await Bank.close();
+        cell.ms = Date.now() - t;
+        cell.shut = !Bank.isOpen();
+        t = Date.now();
+        cell.again = await Bank.close();
+        cell.againMs = Date.now() - t;",
+        verdict: |answer, posted| {
+            answered_true(answer, "ok")?;
+            answered_true(answer, "shut")?;
+            answered_true(answer, "again")?;
+            let ms = answer["ms"].as_u64().unwrap_or(u64::MAX);
+            if ms > 4_000 {
+                return Err(format!("close took {ms} ms, over 4 s"));
+            }
+            let acknowledged = posted
+                .open_generation
+                .is_some_and(|open| posted.generation > open);
+            if !posted.bank_open && posted.side_root == -1 && acknowledged {
+                Ok(())
+            } else {
+                Err(format!(
+                    "not acknowledged: open={} side={} generation={} open_generation={:?}",
+                    posted.bank_open, posted.side_root, posted.generation, posted.open_generation
+                ))
+            }
+        },
+    });
+}
+
+#[test]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
+fn live_bank_core_compat_deposit_all_except_at_draynor() {
+    run_compat_cell(&CompatSpec {
+        label: "l-except",
+        uid: 274_279_105,
+        bound: Duration::from_secs(60),
+        seed: &["give coins 100", "give bones 3", "give tinderbox 1"],
+        seed_ready: |snapshot| {
+            has(snapshot, COINS, 100) && has(snapshot, BONES, 3) && has(snapshot, TINDERBOX, 1)
+        },
+        watch: &[COINS, BONES, TINDERBOX],
+        body: "
+        const t = Date.now();
+        await Bank.depositAllExcept(['Coins']);
+        cell.ms = Date.now() - t;",
+        verdict: |_, posted| {
+            let held = (
+                posted.held(COINS),
+                posted.held(BONES),
+                posted.held(TINDERBOX),
+            );
+            let banked = (
+                posted.banked(COINS),
+                posted.banked(BONES),
+                posted.banked(TINDERBOX),
+            );
+            if held == (100, 0, 0) && banked == (Some(0), Some(3), Some(1)) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "held (coins, bones, tinderbox)={held:?} banked={banked:?}"
+                ))
+            }
+        },
+    });
 }
