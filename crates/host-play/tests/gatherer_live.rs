@@ -4978,7 +4978,7 @@ fn fixture_plan(
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
         LiveCase::Site => match cell {
-            Cell::Fishing => CATHERBY_HARPOON_START,
+            Cell::Fishing => world_tile(2809, 3441),
             Cell::Woodcutting => world_tile(3120, 3267),
             Cell::Mining => world_tile(3253, 3420),
         },
@@ -5945,8 +5945,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     slot.witness.site_initial_walk |= !returning
                         && slot.witness.status_trips == 0
                         && slot.witness.last_status_yielded == 0
-                        && anchor.is_some_and(|tile| site_nav_targets_anchor(nav, tile));
-                    if returning && anchor.is_some_and(|tile| site_return_nav_matches(nav, tile)) {
+                        && text_field(&status, "phase") == Some("walking")
+                        && text_field(&status, "target").is_some_and(|target| target != "—")
+                        && anchor.is_some_and(|tile| site_nav_targets_area(nav, tile));
+                    if returning
+                        && anchor.is_some_and(|tile| {
+                            site_return_nav_matches(
+                                nav,
+                                tile,
+                                text_field(&status, "target").unwrap_or_default(),
+                            )
+                        })
+                    {
                         slot.witness.site_return_area_r1 = true;
                     }
                     if slot
@@ -7442,15 +7452,37 @@ fn parse_work_anchor(area: &str) -> Option<WorldTile> {
     parse_tile("site area", coords).ok()
 }
 
-fn site_nav_targets_anchor(nav: &Value, anchor: WorldTile) -> bool {
-    nav["requested_destination"] == json!([anchor.x, anchor.z, anchor.level])
+fn site_nav_destination(nav: &Value) -> Option<WorldTile> {
+    let [x, z, level] = nav["requested_destination"].as_array()?.as_slice() else {
+        return None;
+    };
+    Some(WorldTile {
+        x: i32::try_from(x.as_i64()?).ok()?,
+        z: i32::try_from(z.as_i64()?).ok()?,
+        level: i32::try_from(level.as_i64()?).ok()?,
+    })
 }
 
-fn site_return_nav_matches(nav: &Value, anchor: WorldTile) -> bool {
+fn site_nav_targets_area(nav: &Value, anchor: WorldTile) -> bool {
+    site_nav_destination(nav).is_some_and(|goal| {
+        goal.level == anchor.level && goal.x.abs_diff(anchor.x).max(goal.z.abs_diff(anchor.z)) <= 12
+    })
+}
+
+fn site_return_nav_matches(nav: &Value, anchor: WorldTile, target: &str) -> bool {
+    let Some(stand) = target
+        .split_once("; observation stand:")
+        .and_then(|(_, coords)| parse_tile("Site Return stand", coords).ok())
+    else {
+        return false;
+    };
     nav["armed"] == true
+        && nav["requested"] == true
+        && nav["request_id"].as_u64().is_some_and(|id| id > 0)
         && nav["arrival"] == "Area"
         && nav["requested_radius"] == 1
-        && site_nav_targets_anchor(nav, anchor)
+        && site_nav_destination(nav) == Some(stand)
+        && site_nav_targets_area(nav, anchor)
 }
 
 fn site_bank_complete(cell: Cell, witness: &Witness, plan: &FixturePlan, baseline_xp: i32) -> bool {
@@ -7719,7 +7751,15 @@ mod named_site_fixture_tests {
             for coordinate in ["x", "z", "level"] {
                 assert!(!settings.contains_key(coordinate));
             }
-            let (_, plan, task) = fixture_plan(cell, LiveCase::Site).unwrap();
+            let (start, plan, task) = fixture_plan(cell, LiveCase::Site).unwrap();
+            assert_eq!(
+                start,
+                match cell {
+                    Cell::Fishing => world_tile(2809, 3441),
+                    Cell::Woodcutting => world_tile(3120, 3267),
+                    Cell::Mining => world_tile(3253, 3420),
+                }
+            );
             assert!(plan.seed_locs.is_empty());
             assert!(plan.oak_tiles.is_empty());
             assert!(plan.inventory_seed.is_empty());
@@ -7799,29 +7839,72 @@ mod named_site_fixture_tests {
     }
 
     #[test]
-    fn return_proof_requires_current_area_request_at_the_retained_anchor() {
+    fn site_walk_goal_is_inside_the_selected_work_area_not_necessarily_its_anchor() {
         let anchor = world_tile(3083, 3237);
+        let mut nav = json!({"requested_destination": [3084, 3237, 0]});
+        assert!(site_nav_targets_area(&nav, anchor));
+        for goal in [
+            json!([3096, 3237, 0]),
+            json!([3084, 3237, 1]),
+            json!([3084, 3237]),
+            json!([3084.5, 3237, 0]),
+        ] {
+            nav["requested_destination"] = goal;
+            assert!(!site_nav_targets_area(&nav, anchor));
+        }
+    }
+
+    #[test]
+    fn return_proof_binds_current_area_request_to_its_resource_observation_stand() {
+        let anchor = world_tile(3083, 3237);
+        let target = "willowtree; observation stand:3084,3237,0";
         let mut nav = json!({
             "armed": true,
+            "requested": true,
+            "request_id": 1,
             "arrival": "Area",
             "requested_radius": 1,
-            "requested_destination": [anchor.x, anchor.z, anchor.level],
+            "requested_destination": [3084, 3237, 0],
             "outcome_radius": 1,
         });
-        assert!(site_return_nav_matches(&nav, anchor));
-        nav["requested_destination"] = json!([3084, 3237, 0]);
-        assert!(!site_return_nav_matches(&nav, anchor));
+        assert!(site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(&nav, anchor, "willowtree"));
+        assert!(!site_return_nav_matches(
+            &nav,
+            anchor,
+            "willowtree; observation stand:3084,3237,1"
+        ));
+        assert!(!site_return_nav_matches(
+            &json!({
+                "armed": true,
+                "requested": true,
+                "request_id": 1,
+                "arrival": "Area",
+                "requested_radius": 1,
+                "requested_destination": [3096, 3237, 0],
+            }),
+            anchor,
+            "willowtree; observation stand:3096,3237,0"
+        ));
         nav["requested_destination"] = json!([anchor.x, anchor.z, anchor.level]);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["requested_destination"] = json!([3084, 3237, 0]);
         nav["requested_radius"] = json!(12);
         assert!(
-            !site_return_nav_matches(&nav, anchor),
+            !site_return_nav_matches(&nav, anchor, target),
             "a stale r1 outcome is not a current Return"
         );
         nav["requested_radius"] = json!(1);
         nav["arrival"] = json!("Reach");
-        assert!(!site_return_nav_matches(&nav, anchor));
+        assert!(!site_return_nav_matches(&nav, anchor, target));
         nav["arrival"] = json!("Area");
+        nav["requested"] = json!(false);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["requested"] = json!(true);
+        nav["request_id"] = json!(0);
+        assert!(!site_return_nav_matches(&nav, anchor, target));
+        nav["request_id"] = json!(1);
         nav["armed"] = json!(false);
-        assert!(!site_return_nav_matches(&nav, anchor));
+        assert!(!site_return_nav_matches(&nav, anchor, target));
     }
 }
