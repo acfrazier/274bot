@@ -7,7 +7,8 @@ mod observations;
 mod routes;
 
 pub(crate) use actions::{
-    emit_walk_aborted, emit_walk_cancelled, emit_walk_terminal, LEGACY_ZONES_DETAIL,
+    emit_walk_aborted, emit_walk_cancelled, emit_walk_terminal, route_supply_shortfall_detail,
+    LEGACY_ZONES_DETAIL,
 };
 pub use actions::{
     ActionError, ActionKind, FocusToken, GroupWalkReport, Layers, MapCommand, MapContext, MapModel,
