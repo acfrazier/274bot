@@ -64,10 +64,6 @@ impl RaisedPrayers {
         }
     }
 
-    pub(crate) const fn mask(self) -> u16 {
-        self.0
-    }
-
     fn bit(varp: i32) -> Option<u16> {
         let index = varp.checked_sub(api::prayer::PRAYER_VARP0)?;
         if !(0..PRAYER_COUNT as i32).contains(&index) {

@@ -161,6 +161,16 @@ pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
     gather: crate::gatherer::GatherRetained,
     quester: crate::quester::QuesterRetained,
+    #[cfg(feature = "load")]
+    sherlock: SherlockRetained,
+}
+
+/// Watchdog-retained death state; active clue tokens and action ownership stay card-local.
+#[cfg(feature = "load")]
+#[derive(Default)]
+pub(crate) struct SherlockRetained {
+    pub(crate) death_seq: Option<i32>,
+    pub(crate) death_pending: bool,
 }
 
 impl RetainedMemory {
@@ -174,6 +184,11 @@ impl RetainedMemory {
 
     pub fn quester(&mut self) -> &mut crate::quester::QuesterRetained {
         &mut self.quester
+    }
+
+    #[cfg(feature = "load")]
+    pub(crate) fn sherlock(&mut self) -> &mut SherlockRetained {
+        &mut self.sherlock
     }
 }
 
