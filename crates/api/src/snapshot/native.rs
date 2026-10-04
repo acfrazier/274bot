@@ -23,6 +23,9 @@ pub struct JournalModalView<'a> {
 pub struct BankSessionView {
     pub open: bool,
     pub generation: u64,
+    /// `modals().side` (`-1` none): a close is acknowledged once it is
+    /// released or changed.
+    pub side: i32,
 }
 
 /// A journal page borrowed from the currently open main root. The caller
@@ -203,6 +206,7 @@ impl<'a> SnapshotView<'a> {
             value: BankSessionView {
                 open: snapshot.bank_component_id() >= 0,
                 generation: snapshot.bank_session_generation(),
+                side: snapshot.modals().side,
             },
             stamp: self.stamp,
         })

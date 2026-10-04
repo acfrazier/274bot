@@ -1,19 +1,9 @@
 import { Execution } from '../execution/Execution.js';
-import { Inventory } from '../inventory/Inventory.js';
 import { runMachine } from '../../shim/_kernel.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 const snap = () => host().snapshot || {};
-const sessionGeneration = () => {
-    const generation = snap().bank_generation;
-    return Number.isFinite(generation) && generation >= 0 ? generation : 0;
-};
-const queue = (req) => {
-    const h = host();
-    h.interact = h.interact || [];
-    h.interact.push(req);
-};
 
 // One try: Rust walks, presses the booth it observed and waits for the
 // fresh item list, then the caller's await answers the frozen boolean.
@@ -78,8 +68,8 @@ export const Bank = new Proxy(
                 )
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
-        deposit(name) {
-            return bankOp({ kind: 'deposit', name: String(name) });
+        deposit(name, op = 'Deposit-1') {
+            return bankOp({ kind: 'deposit', name: String(name), op: String(op) });
         },
         async depositInventory() {
             await deposit({ all: true });
@@ -104,12 +94,13 @@ export const Bank = new Proxy(
         async setNoteMode(on) {
             await runMachine('bank_note_mode', { on: !!on });
         },
-        async close() {
-            if (!Bank.isOpen()) {
-                return true;
-            }
-            queue({ op: 'close' });
-            return Execution.delayUntil(() => !Bank.isOpen(), 3000);
+        // Rust sends the Close and waits for the posted acknowledgement;
+        // an omitted bound is Rust's default.
+        async close(timeoutMs) {
+            const out = await runMachine('bank_close', {
+                timeout_ms: timeoutMs === undefined ? null : Number(timeoutMs),
+            });
+            return out.kind === 'done' && out.value === true;
         },
         withdrawById(id, op = 'Withdraw-1') {
             return bankOp({ kind: 'withdraw-id', id, op: String(op) });
@@ -196,34 +187,11 @@ export const Bank = new Proxy(
                 .filter((r) => r && r.id === want)
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
+        // Rust picks the row's Withdraw-All or the fill ladder and settles
+        // on the posted pack.
         async withdrawLoad(name) {
-            if (!Bank.ready()) return false;
-            if (Inventory.isFull()) return true;
-            const wanted = String(name).toLowerCase();
-            const row = (snap().bank || []).find(
-                (r) =>
-                    r &&
-                    typeof r.name === 'string' &&
-                    r.name.toLowerCase() === wanted &&
-                    Number(r.count) > 0,
-            );
-            if (!row) return false;
-            const generation = sessionGeneration();
-            const resultSeq = Number(snap().withdraw_load_result_seq) || 0;
-            queue({ op: 'withdraw-load', name: row.name, bank_generation: generation });
-            await Execution.delayUntil(
-                () =>
-                    (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq ||
-                    !Bank.isOpen() ||
-                    sessionGeneration() !== generation,
-                0,
-            );
-            return (
-                Bank.isOpen() &&
-                sessionGeneration() === generation &&
-                (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq &&
-                snap().withdraw_load_result === true
-            );
+            const out = await runMachine('bank_withdraw_load', { name: String(name) });
+            return out.kind === 'done' && out.value === true;
         },
         async openNearestAccess(access, log) {
             const first = access?.openFirst;
