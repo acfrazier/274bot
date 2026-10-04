@@ -618,16 +618,26 @@ impl TuiApp {
                 self.settings_save.edited();
             }
             SettingsKey::WalkGlobal(preference) => {
+                let pending = frontend_core::WalkGlobalsView {
+                    globals: self.nav,
+                    script_scope_notice_ack: self.script_scope_notice_ack,
+                };
                 if preference == frontend_core::NavPreference::AllowDangerZones
-                    && self.nav.allow_danger_zones
+                    && !pending.danger_this_walk(true)
                 {
                     self.map_route_through_zones = false;
                 }
                 self.queue_nav_preference(preference);
+                if self.shared_preferences_path().is_none() {
+                    self.refresh_walk_permissions();
+                }
             }
             SettingsKey::ScriptScopeNoticeAck => {
                 self.script_scope_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
+                if self.shared_preferences_path().is_none() {
+                    self.refresh_walk_permissions();
+                }
             }
             SettingsKey::MemoryRelog => {
                 if let Some(name) = self.settings_profile.clone() {

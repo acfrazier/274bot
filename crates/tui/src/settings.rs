@@ -15,8 +15,10 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
-use crate::app::NavFindSettings;
-use frontend_core::{FormNotice, MapBakeChoice, MemoryNotice, NavPreference, NOTHING_SAVED};
+use frontend_core::{
+    FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
+    GLOBAL_PERMISSION_LABELS, GLOBAL_PERMISSION_SCOPE, NOTHING_SAVED, SCRIPT_SCOPE_NOTICE,
+};
 use vault::ProfileSettings;
 
 /// The popup's title while no profile is bound to it.
@@ -85,7 +87,7 @@ pub enum SettingsKey {
 /// The notices are drawn into the same buffer as the settings rows.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut ProfileSettings,
-    pub nav: &'a mut NavFindSettings,
+    pub nav: &'a mut host_play::WalkGlobals,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
@@ -98,7 +100,7 @@ pub struct SettingsPane<'a> {
 impl<'a> SettingsPane<'a> {
     pub fn new(
         settings: &'a mut ProfileSettings,
-        nav: &'a mut NavFindSettings,
+        nav: &'a mut host_play::WalkGlobals,
         map_bake: &'a mut MapBakeChoice,
         state: &'a mut SettingsState,
     ) -> Self {
@@ -225,24 +227,32 @@ impl Widget for SettingsPane<'_> {
             format!("{}lamp skill: {}", marker(1), self.settings.lamp_skill),
             format!("{}lamp auto: {}", marker(2), self.settings.lamp_auto),
             format!(
-                "{}allow teleports: {} · Global — applies to every walk.",
+                "{}{}: {} · {}",
                 marker(3),
-                self.nav.allow_teleports
+                GLOBAL_PERMISSION_LABELS[0].1,
+                self.nav.allow_teleports,
+                GLOBAL_PERMISSION_SCOPE
             ),
             format!(
-                "{}allow wilderness: {} · Global — applies to every walk.",
+                "{}{}: {} · {}",
                 marker(4),
-                self.nav.allow_wilderness
+                GLOBAL_PERMISSION_LABELS[1].1,
+                self.nav.allow_wilderness,
+                GLOBAL_PERMISSION_SCOPE
             ),
             format!(
-                "{}bank fetch: {} · Global — applies to every walk.",
+                "{}{}: {} · {}",
                 marker(5),
-                self.nav.allow_bank_fetch
+                GLOBAL_PERMISSION_LABELS[2].1,
+                self.nav.allow_bank_fetch,
+                BANK_FETCH_PERMISSION_SCOPE
             ),
             format!(
-                "{}Route through danger zones: {} · Global — applies to every walk.",
+                "{}{}: {} · {}",
                 marker(6),
-                self.nav.allow_danger_zones
+                GLOBAL_PERMISSION_LABELS[3].1,
+                self.nav.allow_danger_zones,
+                GLOBAL_PERMISSION_SCOPE
             ),
             format!(
                 "{}Pause script on manual movement: {}",
@@ -264,7 +274,7 @@ impl Widget for SettingsPane<'_> {
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
         let memory_height = wrapped_rows(memory_note, columns);
         let scope_height = if show_scope_notice {
-            wrapped_rows(SCOPE_NOTICE_TEXT, columns) + 1
+            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + 1
         } else {
             0
         };
@@ -324,7 +334,7 @@ impl Widget for SettingsPane<'_> {
                 inner,
                 memory_bottom,
                 dismiss_y,
-                SCOPE_NOTICE_TEXT,
+                SCRIPT_SCOPE_NOTICE,
                 yellow,
             );
             draw_wrapped(
@@ -360,8 +370,6 @@ impl Widget for SettingsPane<'_> {
     }
 }
 
-/// One-time scope-change copy required when manual opt-ins widen to scripts.
-const SCOPE_NOTICE_TEXT: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. Danger is new (default off). rs2b0t-compatible scripts always allow wilderness and bank fetch.";
 
 /// The width in columns of one character, as [`Span`] measures it.
 fn char_width(text: &str, at: usize, ch: char) -> usize {
@@ -428,7 +436,7 @@ mod tests {
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
     use vault::ProfileSettings;
 
-    use crate::app::NavFindSettings;
+    use host_play::WalkGlobals;
 
     use super::{SettingsKey, SettingsPane, SettingsState, LAMP_SKILLS};
 
@@ -455,7 +463,7 @@ mod tests {
     #[test]
     fn popup_flips_random_events_on_the_profile() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -482,7 +490,7 @@ mod tests {
     #[test]
     fn popup_cycles_lamp_skill_and_toggles_lamp_auto() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -509,7 +517,7 @@ mod tests {
     #[test]
     fn popup_toggles_bank_fetch_and_requests_single_key_persistence() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -527,7 +535,7 @@ mod tests {
     #[test]
     fn each_permission_row_requests_its_global_preference() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         for (row, preference) in [
             (3, NavPreference::AllowTeleports),
@@ -555,7 +563,7 @@ mod tests {
     #[test]
     fn script_scope_notice_is_dismissible_and_stays_hidden_after_ack() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -592,7 +600,7 @@ mod tests {
     #[test]
     fn up_and_down_move_the_row_and_esc_closes() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -616,7 +624,7 @@ mod tests {
     #[test]
     fn popup_draws_the_rows_while_open_and_nothing_when_closed() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -646,7 +654,7 @@ mod tests {
     fn manual_movement_pause_row_is_reachable_persistent_and_visible_at_common_sizes() {
         for (width, height) in [(120, 40), (80, 24)] {
             let mut settings = ProfileSettings::default();
-            let mut nav = NavFindSettings::default();
+            let mut nav = WalkGlobals::default();
             let mut bake = MapBakeChoice::Ask;
             let mut pause = true;
             let mut state = SettingsState {
@@ -682,7 +690,7 @@ mod tests {
     #[test]
     fn memory_row_toggles_lowmem_and_reports_the_change() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -700,7 +708,7 @@ mod tests {
     #[test]
     fn r_requests_relog_only_while_the_server_mode_differs_and_none_is_queued() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -739,7 +747,7 @@ mod tests {
             lowmem: false,
             ..ProfileSettings::default()
         };
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
@@ -765,7 +773,7 @@ mod tests {
     #[test]
     fn map_bake_row_flips_the_shared_choice_and_asks_the_binary_to_persist_it() {
         let mut settings = ProfileSettings::default();
-        let mut nav = NavFindSettings::default();
+        let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
         let mut state = SettingsState {
             open: true,
