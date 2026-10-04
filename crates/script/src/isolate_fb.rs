@@ -477,6 +477,10 @@ pub struct NativeFactsInput<'a> {
     pub projectiles: Option<&'a [ProjectileView]>,
     /// Host-published native fingerprint for the current chat modal page.
     pub chat_page_fingerprint: u64,
+    /// `modals().side` (`-1` none). With `bank_open` it is the posted-side
+    /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
+    /// last root.
+    pub side_modal_id: Option<i32>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -796,6 +800,7 @@ impl<'a> Snapshot<'a> {
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
+        has_side_modal_id => VT_SIDE_MODAL_ID,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1253,6 +1258,7 @@ pub struct SnapshotFingerprint {
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
     pub chat_page_fingerprint: u64,
+    pub side_modal_id: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1548,6 +1554,7 @@ impl SnapshotFingerprint {
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
+            side_modal_id: native.side_modal_id,
         }
     }
 }
@@ -1708,6 +1715,8 @@ pub struct DeltaMask {
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
     pub chat_page_fingerprint: bool,
+    /// The side modal root; written only when supplied.
+    pub side_modal_id: bool,
 }
 
 impl DeltaMask {
@@ -1805,6 +1814,7 @@ impl DeltaMask {
             api_gather_outcome: true,
             api_progress: true,
             chat_page_fingerprint: true,
+            side_modal_id: true,
         }
     }
 
@@ -1928,6 +1938,7 @@ impl DeltaMask {
                 && next.api_gather_outcome != last.api_gather_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
+            side_modal_id: next.side_modal_id != last.side_modal_id,
         }
     }
 }
@@ -2882,6 +2893,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.chat_page_fingerprint {
         table.add_chat_page_fingerprint(native.chat_page_fingerprint);
+    }
+    if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
+        table.add_side_modal_id(side);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -5297,6 +5311,93 @@ pub(crate) mod tests {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
             assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
         });
+    }
+
+    /// `side_modal_id` is an appended delta scalar: present on the
+    /// keyframe, omitted (and retained) while unchanged, an explicit `-1`
+    /// on close, never leaked across a login, and absent on old buffers.
+    #[test]
+    fn side_modal_id_round_trips_as_a_delta_scalar() {
+        let native = |side| NativeFactsInput {
+            side_modal_id: Some(side),
+            ..NativeFactsInput::default()
+        };
+        let side = |scene: &crate::observed::Scene| {
+            (
+                scene.latest().side_modal_id(),
+                scene.since_login().side_modal_id(),
+            )
+        };
+        crate::observed::on_reset();
+        let mut input = empty_input(1);
+        input.bank_open = true;
+        let (keyframe_bytes, fp) =
+            encode_snapshot_delta_with_native(None, &input, native(700), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert!(keyframe.has_side_modal_id());
+        assert_eq!(keyframe.side_modal_id(), 700);
+        crate::observed::apply(&keyframe);
+        assert_eq!(crate::observed::with(side), (Some(700), Some(700)));
+
+        input.tick = 2;
+        let (unchanged_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged");
+        assert!(
+            !unchanged.has_side_modal_id(),
+            "an unchanged root is omitted"
+        );
+        assert_eq!(
+            unchanged.side_modal_id(),
+            -1,
+            "the reader default is absent"
+        );
+        crate::observed::apply(&unchanged);
+        assert_eq!(
+            crate::observed::with(side),
+            (Some(700), Some(700)),
+            "omission retains the posted root, not -1"
+        );
+
+        input.tick = 3;
+        input.bank_open = false;
+        let (closed_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
+        let closed = decode_snapshot(&closed_bytes).expect("closed");
+        assert!(closed.has_side_modal_id(), "-1 is an explicit close");
+        assert_eq!(closed.side_modal_id(), -1);
+        crate::observed::apply(&closed);
+        assert_eq!(crate::observed::with(side), (Some(-1), Some(-1)));
+
+        input.tick = 4;
+        input.bank_open = true;
+        let (open_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        crate::observed::apply(&decode_snapshot(&open_bytes).expect("reopen"));
+        input.tick = 5;
+        input.ingame = false;
+        let (logout_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        crate::observed::apply(&decode_snapshot(&logout_bytes).expect("logout"));
+        input.tick = 6;
+        input.ingame = true;
+        let (login_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        let login = decode_snapshot(&login_bytes).expect("login");
+        assert!(!login.has_side_modal_id());
+        crate::observed::apply(&login);
+        assert_eq!(
+            crate::observed::with(side),
+            (Some(700), None),
+            "a prior session's root is not this session's observation"
+        );
+
+        // A caller that supplies no root writes none, and an old buffer
+        // without the slot reads absent.
+        let (old_bytes, _) = encode_snapshot_delta(None, &empty_input(7), false);
+        let old = decode_snapshot(&old_bytes).expect("old");
+        assert!(!old.has_side_modal_id());
+        assert_eq!(old.side_modal_id(), -1);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.

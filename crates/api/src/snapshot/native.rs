@@ -208,10 +208,12 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
-    /// The bank-side backpack once an open bank has published that container.
+    /// The bank-side backpack once an open bank has raised its side root.
+    /// `None` while the side root is down, even if a leftover list is empty;
+    /// `Some(&[])` is a posted empty pack. Never inferred from list length.
     pub fn bank_side(&self) -> Option<Observed<&[ItemView]>> {
         let snapshot = self.ingame()?;
-        (snapshot.bank_component_id() >= 0).then(|| Observed {
+        (snapshot.bank_component_id() >= 0 && snapshot.modals().side >= 0).then(|| Observed {
             value: snapshot.bank_side(),
             stamp: self.stamp,
         })
