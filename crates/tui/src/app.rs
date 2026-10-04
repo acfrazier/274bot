@@ -13,12 +13,13 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
-use frontend_core::MapBakeChoice;
+use frontend_core::{MapBakeChoice, NavPreference};
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail};
 use host_play::walk_map::{
     Catalogue, DisplayName, MapModel, ObservedService, Search, WalkSlotStatus,
@@ -27,7 +28,6 @@ use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
 use script::{RunState, ScriptSel};
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
@@ -246,23 +246,28 @@ impl AppAction {
     }
 }
 
-/// Session nav find opt-ins (panel `NavSettings` parity for Walk-confirm).
+/// Durable nav globals projected from the shared panel-ui preference store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NavFindSettings {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
+    pub allow_danger_zones: bool,
 }
 
 impl NavFindSettings {
-    /// The [`FindOptions`] Walk-confirm passes to [`host_play::arm_walk_on`].
-    pub fn find_options(self) -> FindOptions {
-        FindOptions {
+    pub fn walk_globals(self) -> host_play::WalkGlobals {
+        host_play::WalkGlobals {
             allow_teleports: self.allow_teleports,
             allow_wilderness: self.allow_wilderness,
             allow_bank_fetch: self.allow_bank_fetch,
-            ..FindOptions::default()
+            allow_danger_zones: self.allow_danger_zones,
         }
+    }
+
+    /// The Walk-confirm options when no one-shot map permission is selected.
+    pub fn find_options(self) -> FindOptions {
+        self.walk_globals().manual_options(false)
     }
 }
 /// Parse the explicit `x,z,plane` form used by Map search/coordinate entry.
@@ -406,14 +411,16 @@ pub struct TuiApp {
     /// [`TuiApp::settings`] back to the vault when
     /// [`TuiApp::settings_dirty`] flips.
     pub settings: vault::ProfileSettings,
-    /// Walk-confirm find opt-ins (teleports / wilderness / BankBudget).
+    /// Global nav preferences used by Walk-confirm and script parameters.
     pub nav: NavFindSettings,
-    /// Per-Map-open route-through-danger-zones opt-out; never persisted.
+    /// Per-Map-open danger permission; never persisted.
     pub map_route_through_zones: bool,
+    /// The shared one-time script-scope notice was dismissed.
+    pub script_scope_notice_ack: bool,
+    /// Shared settings writes queued one nested nav preference at a time.
+    pub nav_preferences_dirty: Vec<NavPreference>,
     pub settings_state: SettingsState,
     pub settings_dirty: bool,
-    /// Profile the settings popup was opened for and stays bound to: focus
-    /// changes never rebind it or rewrite its buffers. `None` while closed
     /// (or before the first pump binds it).
     pub settings_profile: Option<String>,
     /// The popup's title, naming its bound profile: built when it binds, so
@@ -541,6 +548,8 @@ impl TuiApp {
             settings: vault::ProfileSettings::default(),
             nav: NavFindSettings::default(),
             map_route_through_zones: false,
+            script_scope_notice_ack: false,
+            nav_preferences_dirty: Vec::new(),
             settings_state: SettingsState::default(),
             settings_dirty: false,
             settings_profile: None,
@@ -598,6 +607,16 @@ impl TuiApp {
             None,
         )
         .unwrap_or(true);
+        let read = |preference| {
+            frontend_core::nav_preference_at(&path, preference, None).unwrap_or(false)
+        };
+        self.nav = NavFindSettings {
+            allow_teleports: read(frontend_core::NavPreference::AllowTeleports),
+            allow_wilderness: read(frontend_core::NavPreference::AllowWilderness),
+            allow_bank_fetch: read(frontend_core::NavPreference::AllowBankFetch),
+            allow_danger_zones: read(frontend_core::NavPreference::AllowDangerZones),
+        };
+        self.script_scope_notice_ack = read(frontend_core::NavPreference::ScriptScopeNoticeAck);
         self.shared_preferences_path = Some(path.clone());
         self.map.restore_persisted_wilderness(path);
     }
@@ -1069,17 +1088,12 @@ impl TuiApp {
         self.map_coverage = "coverage: unavailable until Map is opened".into();
         AppAction::MapClose
     }
-    /// Map-specific route options: dangerous zones are exempt only until
-    /// this Map tab closes.
+    /// Map options resolve the durable globals and the one-shot danger grant
+    /// through the same host helper used by the panel.
     pub fn map_find_options(&self) -> FindOptions {
-        FindOptions {
-            zones: if self.map_route_through_zones {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            },
-            ..self.nav.find_options()
-        }
+        self.nav
+            .walk_globals()
+            .manual_options(self.map_route_through_zones)
     }
 
     /// Shared model adapters may publish a ready catalogue after activation.
@@ -1126,7 +1140,7 @@ impl TuiApp {
 
     /// The Map tab's own keys (after the router tried the `MAP_KEYS`
     /// commands and Esc-to-leave): plane, diagnostic layers, the group
-    /// toggle for the selected bot, zone crossing, Enter select/confirm, pan and zoom.
+    /// toggle for the selected bot, one-shot zone crossing, Enter select/confirm, pan and zoom.
     pub(crate) fn map_pane_key(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
             KeyCode::PageUp => self.set_map_plane(self.map.plane.saturating_add(1)),
@@ -1136,9 +1150,10 @@ impl TuiApp {
             KeyCode::Char('c') => self.map.layers.collision = !self.map.layers.collision,
             KeyCode::Char('r') => self.map.layers.reach = !self.map.layers.reach,
             KeyCode::Char(' ') => self.toggle_walk_send_focused(),
-            KeyCode::Char('z') => {
+            KeyCode::Char('z') if !self.nav.allow_danger_zones => {
                 self.map_route_through_zones = !self.map_route_through_zones;
             }
+            KeyCode::Char('z') => {}
             KeyCode::Enter => return self.map_enter(),
             _ => return self.map_on_key(key),
         }
@@ -1249,6 +1264,7 @@ impl TuiApp {
         self.params_state = ParamsState {
             open: true,
             cursor: 0,
+            walk_globals: Some(self.nav.walk_globals()),
             ..Default::default()
         };
     }
@@ -1738,7 +1754,12 @@ impl TuiApp {
                 format!("Send: Group  {}  {rows}", self.walk_send.walk_label())
             }
         };
-        let mut info = vec![
+        let zones = if self.nav.allow_danger_zones {
+            Line::styled(
+                format!("{send} · DANGER ROUTING GLOBAL OVERRIDE ENABLED"),
+                Style::default().fg(Color::Red),
+            )
+        } else {
             Line::from(format!(
                 "{send} · {}",
                 if self.map_route_through_zones {
@@ -1746,8 +1767,19 @@ impl TuiApp {
                 } else {
                     "zones: avoided"
                 }
-            )),
-            Line::from("z: Allows routes past monsters that may kill your bot."),
+            ))
+        };
+        let zone_hint = if self.nav.allow_danger_zones {
+            Line::styled(
+                "Danger routing is globally enabled; z cannot disable it.",
+                Style::default().fg(Color::Red),
+            )
+        } else {
+            Line::from("z: Allows routes past monsters that may kill your bot.")
+        };
+        let mut info = vec![
+            zones,
+            zone_hint,
             Line::from(if let Some(err) = &self.error {
                 format!("status: {err}")
             } else {

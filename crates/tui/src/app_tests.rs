@@ -693,6 +693,29 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
+    app.nav.allow_danger_zones = false;
+    app.map_route_through_zones = true;
+    app.settings_state.open = true;
+    app.settings_state.row = 6;
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    app.settings_state.open = false;
+    assert!(app.nav.allow_danger_zones);
+    assert!(
+        !app.map_route_through_zones,
+        "enabling global danger clears any hidden one-shot grant"
+    );
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(
+        !app.map_route_through_zones,
+        "global danger makes the one-shot z control unavailable"
+    );
+    assert!(app.map_find_options().zones.is_all());
+    let global = text(&draw(&mut app, 120, 40));
+    assert!(
+        global.contains("DANGER ROUTING GLOBAL OVERRIDE ENABLED")
+            && global.contains("z cannot disable it"),
+        "global danger replaces the one-shot label with a warning: {global}"
+    );
 }
 
 #[test]

@@ -50,7 +50,6 @@ use nav::paint::{
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
 use nav::WorldState;
 use vault::{Profile, ProfileSettings, Secret, Vault};
 
@@ -1295,7 +1294,9 @@ impl Session {
         let map_bake = frontend_core::MapBakeGate::new(ui.map_bake);
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
+        core.set_walk_globals(ui.nav.walk_globals());
         core.set_pause_script_on_manual_walk_abort(ui.nav.pause_script_on_manual_walk_abort);
+
         // The fleet rows show the WalkTo walks this panel arms.
         core.set_walk_arms(Arc::clone(&travellers));
         Self {
@@ -4523,17 +4524,10 @@ impl Session {
     }
 
     fn walk_find_options(&self) -> FindOptions {
-        FindOptions {
-            allow_teleports: self.ui.nav.allow_teleports,
-            allow_wilderness: self.ui.nav.allow_wilderness,
-            allow_bank_fetch: self.ui.nav.allow_bank_fetch,
-            zones: if self.route_through_zones {
-                ZoneExempt::all()
-            } else {
-                ZoneExempt::NONE
-            },
-            ..Default::default()
-        }
+        self.ui
+            .nav
+            .walk_globals()
+            .manual_options(self.route_through_zones)
     }
 
     /// Consume a pending selection once. Missing player/focus is an explicit
