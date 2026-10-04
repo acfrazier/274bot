@@ -3395,8 +3395,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     preview,
                     combo_opts,
                 ) {
-                    let first_open = session.script_parameter_filter_id.as_deref()
-                        != Some(def.id.as_str());
+                    let first_open =
+                        session.script_parameter_filter_id.as_deref() != Some(def.id.as_str());
                     if first_open {
                         session.script_parameter_filter_id = Some(def.id.clone());
                         session.script_parameter_filter.clear();
@@ -3406,12 +3406,9 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     let searchable = opts.len() > 16;
                     if searchable {
                         ui.set_next_item_width(-1.0);
-                        ui.input_text(
-                            format!("##param-filter-{id}", id = def.id),
-                            &mut filter,
-                        )
-                        .hint("Filter options")
-                        .build();
+                        ui.input_text(format!("##param-filter-{id}", id = def.id), &mut filter)
+                            .hint("Filter options")
+                            .build();
                         ui.separator();
                     } else {
                         filter.clear();
@@ -5789,10 +5786,9 @@ mod parameter_options_tests {
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "panel-site-filter-{}.json",
-            std::process::id()
-        )));
+        let loadouts = script::LoadoutsStore::at(
+            std::env::temp_dir().join(format!("panel-site-filter-{}.json", std::process::id())),
+        );
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()
@@ -5825,10 +5821,9 @@ mod parameter_options_tests {
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = script::LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "panel-site-disabled-{}.json",
-            std::process::id()
-        )));
+        let loadouts = script::LoadoutsStore::at(
+            std::env::temp_dir().join(format!("panel-site-disabled-{}.json", std::process::id())),
+        );
         let schema = script::gatherer::settings::schema();
         let site = schema
             .iter()

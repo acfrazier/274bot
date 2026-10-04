@@ -574,6 +574,7 @@ impl Widget for ParamsPane<'_> {
 
         let mut lines = Vec::new();
         let mut cursor_line = 0usize;
+        let mut unavailable_current = None;
         if self.state.editing && (self.state.multi_select || self.state.choice_single) {
             if let Some(def) = rows.get(self.state.cursor) {
                 let opts = self.resolved_options(def);
@@ -634,7 +635,10 @@ impl Widget for ParamsPane<'_> {
                         } else {
                             "[ ]"
                         };
-                        lines.push(Line::from(format!("{mark}{status} {}", opts.label_for(opt))));
+                        lines.push(Line::from(format!(
+                            "{mark}{status} {}",
+                            opts.label_for(opt)
+                        )));
                     }
                 }
             }
@@ -660,10 +664,13 @@ impl Widget for ParamsPane<'_> {
                         if def.options_from.as_deref() == Some("loadouts") {
                             "no loadouts available".to_string()
                         } else if options.preserved > 0 {
-                            format!(
-                                "options unavailable · {}",
-                                display_value(self.bag, def, &options)
-                            )
+                            let current = display_value(self.bag, def, &options);
+                            if i == self.state.cursor {
+                                unavailable_current = Some(current);
+                                "options unavailable".to_string()
+                            } else {
+                                format!("options unavailable · {current}")
+                            }
                         } else {
                             "options unavailable".to_string()
                         }
@@ -675,12 +682,18 @@ impl Widget for ParamsPane<'_> {
             }
         }
 
-        let hint = self.hint();
-        // A report or prompt wider than the popup wraps onto a second row.
-        let reserve = if hint.chars().count() > inner.width as usize {
-            2u16
+        let (hint, reserve) = if let Some(current) = unavailable_current {
+            // Keep the disabled row in a small scrollable context window and give
+            // its retained identity/reason the remaining wrapped detail area.
+            (current, inner.height.saturating_sub(5).max(1))
         } else {
-            1u16
+            let hint = self.hint();
+            let reserve = if hint.chars().count() > inner.width as usize {
+                2u16
+            } else {
+                1u16
+            };
+            (hint, reserve)
         };
         let content_h = inner.height.saturating_sub(reserve) as usize;
         if cursor_line < self.state.scroll {
@@ -1627,7 +1640,7 @@ mod tests {
         let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
-        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
         bag.insert("skill".into(), serde_json::json!("Woodcutting"));
         bag.insert("woodcuttingResources".into(), serde_json::json!(["normal"]));
         bag.insert("location".into(), serde_json::json!("Site"));
@@ -1665,7 +1678,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema,
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1708,7 +1721,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let pane = ParamsPane {
-                    schema: &schema,
+                    schema,
                     bag: &mut bag,
                     commit: &mut store_commit(&mut store, "Gatherer"),
                     loadouts: &loadouts,
@@ -1730,7 +1743,7 @@ mod tests {
 
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema,
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1761,7 +1774,7 @@ mod tests {
         let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let schema = script::gatherer::settings::schema();
-        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", &schema, None);
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Gatherer", schema, None);
         bag.insert("skill".into(), serde_json::json!("Mining"));
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("location".into(), serde_json::json!("Site"));
@@ -1779,7 +1792,7 @@ mod tests {
         };
         {
             let mut pane = ParamsPane {
-                schema: &schema,
+                schema,
                 bag: &mut bag,
                 commit: &mut store_commit(&mut store, "Gatherer"),
                 loadouts: &loadouts,
@@ -1791,32 +1804,39 @@ mod tests {
             assert!(!pane.state.editing);
             assert_eq!(pane.bag.get("site").cloned(), original);
         }
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        terminal
-            .draw(|frame| {
-                let pane = ParamsPane {
-                    schema: &schema,
-                    bag: &mut bag,
-                    commit: &mut store_commit(&mut store, "Gatherer"),
-                    loadouts: &loadouts,
-                    game_data: Some(data.as_ref()),
-                    state: &mut state,
-                };
-                frame.render_widget(pane, frame.area());
-            })
-            .unwrap();
-        let text: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
-        assert!(text.contains("options unavailable"), "{text:?}");
-        assert!(
-            text.contains("not for the selected resources"),
-            "{text:?}"
-        );
+        for (width, height) in [(120, 40), (80, 24)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let pane = ParamsPane {
+                        schema,
+                        bag: &mut bag,
+                        commit: &mut store_commit(&mut store, "Gatherer"),
+                        loadouts: &loadouts,
+                        game_data: Some(data.as_ref()),
+                        state: &mut state,
+                    };
+                    frame.render_widget(pane, frame.area());
+                })
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                text.contains("options unavailable"),
+                "{width}x{height}: {text:?}"
+            );
+            assert!(text.contains("Varrock East"), "{width}x{height}: {text:?}");
+            let unwrapped: String = text.chars().filter(char::is_ascii_alphanumeric).collect();
+            assert!(
+                unwrapped.contains("notfortheselectedresources"),
+                "{width}x{height}: {text:?}"
+            );
+        }
     }
 
     #[test]

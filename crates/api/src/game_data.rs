@@ -1181,6 +1181,25 @@ pub struct GatherResourceOption {
     pub gap: Option<String>,
 }
 
+/// A build-time named gathering camp. Its box selects a resource anchor;
+/// runtime gathering still uses the operator's radius around that anchor.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GatherSiteOption {
+    pub id: String,
+    pub skill: String,
+    pub label: String,
+    pub region: crate::gather_methods::SceneRegionInput,
+    pub keys: Vec<GatherSiteKey>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GatherSiteKey {
+    pub key: String,
+    pub count: usize,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1252,6 +1271,8 @@ pub struct SelectedGameData {
     mining_hazards: Option<Vec<crate::gather_methods::MiningHazard>>,
     #[serde(default)]
     gather_resources: Vec<GatherResourceOption>,
+    #[serde(default)]
+    gather_sites: Vec<GatherSiteOption>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -1954,6 +1975,29 @@ impl SelectedGameData {
                         .iter()
                         .any(|alias| alias.eq_ignore_ascii_case(key)))
         })
+    }
+
+    /// Named sites in generator order, without decoding the gathering family.
+    pub fn gather_sites(&self) -> &[GatherSiteOption] {
+        &self.gather_sites
+    }
+
+    pub fn gather_sites_for<'a>(
+        &'a self,
+        skill: &'a str,
+    ) -> impl Iterator<Item = &'a GatherSiteOption> {
+        let wanted = skill.trim();
+        self.gather_sites
+            .iter()
+            .filter(move |row| row.skill.eq_ignore_ascii_case(wanted))
+    }
+
+    pub fn gather_site(&self, skill: &str, id: &str) -> Option<&GatherSiteOption> {
+        let skill = skill.trim();
+        let id = id.trim();
+        self.gather_sites
+            .iter()
+            .find(|row| row.skill.eq_ignore_ascii_case(skill) && row.id.eq_ignore_ascii_case(id))
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

@@ -251,7 +251,7 @@ and Stop/Pause revocation still govern all captures and closes.
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
-equipped tool, at the Start area, a Custom location or an Auto-selected area.
+equipped tool, at the Start area, a named Site, a Custom location or an Auto-selected area.
 Power mode drops selected logs, ores or fish in bounded batches, counts drops only after their slots are observed
 empty, and retains confirmed partial-batch progress across interruptions.
 Unsettled drops are retried even after their dispatch receipts age out.
@@ -291,6 +291,26 @@ anchor, and temporarily skips exhausted groups until their respawn bound.
 Four unexpired skipped groups produce `widen-limit`; exhausted search produces
 `resource-unavailable`. These terminal search failures stop the run;
 an explicit Start begins a fresh search at the current position.
+
+`location` defaults to `Start`, unchanged for existing schema-4 settings.
+Choose `Site` to pick a content-derived named camp for the selected resources
+or fishing method. The site list follows the active selection; an old or
+incompatible saved site stays visible with its reason but cannot be picked
+and refuses Start. Entering Site mode saves before a place is picked; an empty
+site refuses Start until a named place is selected. In the TUI, Space cycles
+eligible choices and Enter opens
+a choice list; lists with more than 16 choices support search. The panel
+combo has the same eligibility and search threshold. Search matches site
+names and ids; Esc cancels without changing the selection.
+
+Site chooses an accessible placement of a selected resource nearest the
+camp's resource centroid. That retained anchor survives Pause/Resume; changing
+the site requires a fresh Start. The work area remains `anchor ± radius`,
+not the camp's entire box. Site does not widen on exhaustion. `Custom` keeps
+free tile and radius entry, including underground locations that have no named
+surface site. Banking with `Nearest` picks the nearest routable eligible bank;
+Return uses a resource/observation-stand Area arrival at radius 1, even when
+the bank is inside the configured gathering radius.
 Gas, ents and whirlpools are identified by generated IDs and trigger reselection
 or a walk away, not another gathering click on the hazard. Pause/Resume preserves
 an unfinished escape walk. A temporary hold defers actions and resumes on release
