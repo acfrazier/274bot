@@ -203,9 +203,11 @@ fn quest_paths_is_synchronous_and_lists_every_released_path() {
     let expected_rows: Vec<_> = index
         .paths
         .into_iter()
+        .filter(|entry| entry.unavailable.is_none())
         .map(|entry| {
+            let file = entry.file.expect("released row file");
             let document: script::quester::path::PathDocument =
-                serde_json::from_slice(&std::fs::read(root.join(&entry.file)).unwrap()).unwrap();
+                serde_json::from_slice(&std::fs::read(root.join(&file)).unwrap()).unwrap();
             assert_eq!(document.id.0.as_ref(), entry.id);
             let role = &document.roles[0];
             let mut stages: Vec<_> = role

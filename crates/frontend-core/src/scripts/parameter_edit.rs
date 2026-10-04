@@ -137,6 +137,23 @@ fn move_unselectable_to_preserved(
     options.preserved += initial - end;
 }
 
+/// Release-roster quests this server can't run stay visible for a stored pick,
+/// labelled with the reason, but are never picker choices.
+fn preserve_unavailable_quests(options: &mut ParameterOptions) {
+    move_unselectable_to_preserved(options, |id| {
+        script::quester::card::unavailable_quest(id).is_none()
+    });
+    let start = options.selectable().len();
+    for (value, label) in options.values[start..]
+        .iter()
+        .zip(&mut options.labels[start..])
+    {
+        if let Some(reason) = script::quester::card::unavailable_quest(value) {
+            *label = format!("{label} — {reason}");
+        }
+    }
+}
+
 /// Resolve a schema row once for both front ends. The renderers only choose
 /// among these rows; aliases normalize only after an explicit user pick.
 pub fn resolve_parameter_options(
@@ -229,10 +246,14 @@ pub fn resolve_parameter_options(
             options.labels.push(label);
         }
         options.aliases.clear();
+        preserve_unavailable_quests(&mut options);
         preserve_unknown_values(def, bag, &mut options);
         return options;
     }
 
+    if source == "released-paths" {
+        preserve_unavailable_quests(&mut options);
+    }
     if source.starts_with("gather:") || source == "gatherer-food" || source == "released-paths" {
         preserve_unknown_values(def, bag, &mut options);
     }
@@ -1113,6 +1134,46 @@ mod tests {
             parse_parameter_text(&radius, "20", &[]),
             Ok(serde_json::json!(20))
         );
+    }
+
+    #[test]
+    fn unavailable_quests_are_not_picker_choices_and_stored_picks_show_the_reason() {
+        let reason = script::quester::card::unavailable_quest("hauntedmine")
+            .expect("Haunted Mine is an unavailable release row");
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("quest-unavailable-{}.json", std::process::id())),
+        );
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
+        for (id, source) in [
+            ("quests", "released-paths"),
+            ("order_override", "released-path-order"),
+        ] {
+            let mut def = source_setting(id, "string[]", source);
+            def.options = vec!["cook".into(), "hauntedmine".into()];
+            def.option_labels = vec!["Cook's Assistant".into(), "Haunted Mine".into()];
+            if id == "order_override" {
+                bag.insert(id.into(), serde_json::json!(["hauntedmine"]));
+            }
+            let mut empty = bag.clone();
+            empty.insert("quests".into(), serde_json::json!([]));
+            let offered = resolve_parameter_options(&def, &empty, &loadouts, None);
+            assert_eq!(offered.selectable(), ["cook"], "{source}");
+
+            let stored = resolve_parameter_options(&def, &bag, &loadouts, None);
+            assert!(stored
+                .selectable()
+                .iter()
+                .all(|value| value != "hauntedmine"));
+            assert_eq!(stored.preserved, 1, "{source}");
+            assert!(
+                stored
+                    .label_for("hauntedmine")
+                    .ends_with(&format!("Haunted Mine — {reason}")),
+                "{source}: {}",
+                stored.label_for("hauntedmine")
+            );
+        }
     }
 
     #[test]
