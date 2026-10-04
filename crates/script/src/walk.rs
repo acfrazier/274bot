@@ -2050,6 +2050,7 @@ pub(crate) mod tests {
     ) {
         observed::post(seq, |post| {
             post.session(true)
+                .local_player_motion(crate::isolate_fb::LOCAL_PLAYER_MOTION_STATIONARY)
                 .here(observed::Tile {
                     x: here.x,
                     z: here.z,
@@ -2694,7 +2695,7 @@ pub(crate) mod tests {
                 canlight: &view.canlight,
                 stamp: post_number,
             };
-            let native =
+            let mut native =
                 outcome.map_or_else(NativeFactsInput::default, |(seq, token)| NativeFactsInput {
                     walk_outcome_seq: seq,
                     walk_outcome_request_id: token,
@@ -2706,6 +2707,7 @@ pub(crate) mod tests {
                     walk_outcome_allow_teleports: false,
                     ..Default::default()
                 });
+            native.local_player_moving = Some(false);
             let bytes = encode_snapshot_with_native(&input, native);
             let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
             observed::apply(&snap);

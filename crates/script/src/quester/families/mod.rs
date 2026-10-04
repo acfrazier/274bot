@@ -13,7 +13,7 @@ use super::compile::{
 use super::path::PredicateDocument;
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkReceipt};
 use crate::shim::InteractReq;
 use api::selected::Truth;
 use api::snapshot::{ChatLineView, QuestListStatus};
@@ -34,30 +34,12 @@ pub(super) fn manual_movement_message() -> Arc<str> {
     Arc::clone(&REASON)
 }
 
-fn manual_movement_error() -> ActionError {
-    ActionError::UserInput
-}
-
 /// A route refusal is a terminal for the owning step, not permission to
 /// silently re-arm its approach. Park until an explicit owner retry.
 fn walk_step_evidence(
     receipt: WalkReceipt,
 ) -> Result<api::quest_progress::EvidenceStamp, ActionError> {
-    match receipt.end {
-        WalkEnd::Arrived | WalkEnd::RouteEnded => Ok(receipt.evidence),
-        WalkEnd::UserInput => Err(manual_movement_error()),
-        WalkEnd::NeedsEvidence(gates) => Err(ActionError::Blocked(Arc::from(format!(
-            "walk needs live quest evidence: {gates:?}"
-        )))),
-        WalkEnd::Failed | WalkEnd::Blocked | WalkEnd::Refused => {
-            static REASON: std::sync::LazyLock<Arc<str>> =
-                std::sync::LazyLock::new(|| Arc::from("walk failed"));
-            Err(ActionError::Blocked(
-                receipt.detail.unwrap_or_else(|| Arc::clone(&REASON)),
-            ))
-        }
-        WalkEnd::Cancelled => Err(ActionError::Cancelled),
-    }
+    receipt.into_arrival()
 }
 
 pub fn handlers() -> &'static [super::compile::StepHandler] {
@@ -1721,8 +1703,10 @@ impl StepRun for UseOnRun {
             let timed_out = self.deadline.is_some_and(|d| cx.tick.cx.active_now() >= d);
             if let Some(handle) = &self.walk {
                 match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                    Poll::Ready(Ok(receipt)) if receipt.end == WalkEnd::UserInput => {
-                        return Poll::Ready(Err(manual_movement_error()))
+                    Poll::Ready(Ok(receipt))
+                        if receipt.end == crate::native::WalkEnd::UserInput =>
+                    {
+                        return Poll::Ready(Err(ActionError::UserInput))
                     }
                     _ if timed_out => {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
