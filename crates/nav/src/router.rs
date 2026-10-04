@@ -2461,12 +2461,9 @@ impl<'a> ReverseClosure<'a> {
     fn zone_step_ok(&self, from: WorldTile, to: WorldTile) -> bool {
         self.zones.is_none_or(|zones| {
             zones
-                .blocking_transition_at(
-                    &self.graph.wilderness,
-                    from,
-                    to,
-                    self.targets.contains(&to),
-                )
+                .blocking_transition_at(&self.graph.wilderness, from, to, &|| {
+                    self.targets.contains(&to)
+                })
                 .next()
                 .is_none()
         })
@@ -2926,12 +2923,10 @@ fn search_kernel_budget<B: Budget>(
                     continue;
                 }
                 if let Some(filter) = zones {
-                    let mut blocked = filter.blocking_transition_at(
-                        &graph.wilderness,
-                        cur,
-                        nb,
-                        goals.is_target(nb),
-                    );
+                    let mut blocked =
+                        filter.blocking_transition_at(&graph.wilderness, cur, nb, &|| {
+                            goals.is_target(nb)
+                        });
                     if let Some(first) = blocked.next() {
                         goals.record_blockers(std::iter::once(first).chain(blocked));
                         continue;
@@ -2986,12 +2981,10 @@ fn search_kernel_budget<B: Budget>(
                             continue;
                         }
                         if let Some(filter) = zones {
-                            let mut blocked = filter.blocking_transition_at(
-                                &graph.wilderness,
-                                cur,
-                                to,
-                                goals.is_target(to),
-                            );
+                            let mut blocked =
+                                filter.blocking_transition_at(&graph.wilderness, cur, to, &|| {
+                                    goals.is_target(to)
+                                });
                             if let Some(first) = blocked.next() {
                                 if goals.is_frontier() {
                                     match resources.cross(n.tile, edge, state, relax) {
@@ -3055,7 +3048,7 @@ fn search_kernel_budget<B: Budget>(
                             &graph.wilderness,
                             cur,
                             session.return_tile,
-                            goals.is_target(session.return_tile),
+                            &|| goals.is_target(session.return_tile),
                         );
                         if let Some(first) = blocked.next() {
                             goals.record_blockers(std::iter::once(first).chain(blocked));
@@ -3098,12 +3091,10 @@ fn search_kernel_budget<B: Budget>(
                     continue;
                 }
                 if let Some(filter) = zones {
-                    let mut blocked = filter.blocking_transition_at(
-                        &graph.wilderness,
-                        cur,
-                        edge.to,
-                        goals.is_target(edge.to),
-                    );
+                    let mut blocked =
+                        filter.blocking_transition_at(&graph.wilderness, cur, edge.to, &|| {
+                            goals.is_target(edge.to)
+                        });
                     if let Some(first) = blocked.next() {
                         if goals.is_frontier() {
                             match resources.cross(n.tile, edge, state, relax) {

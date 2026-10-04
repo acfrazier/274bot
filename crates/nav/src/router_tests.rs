@@ -4989,7 +4989,7 @@ fn assert_zone_route_clear(
                                 &world.graph.wilderness,
                                 previous,
                                 tile,
-                                tile == route.dest,
+                                &|| tile == route.dest,
                             )
                             .next()
                             .is_none(),
@@ -5003,12 +5003,8 @@ fn assert_zone_route_clear(
         };
         assert!(
             filter
-                .blocking_transition_at(
-                    &world.graph.wilderness,
-                    previous,
-                    arrival,
-                    arrival == route.dest,
-                )
+                .blocking_transition_at(&world.graph.wilderness, previous, arrival, &|| arrival
+                    == route.dest,)
                 .next()
                 .is_none(),
             "zone landing: {arrival:?} from {previous:?}"
