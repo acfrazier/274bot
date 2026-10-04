@@ -653,14 +653,18 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             None,
             None,
         ),
-        setting_with(
-            "bank",
-            "string",
-            Some("Nearest"),
-            &["Nearest"],
-            Some("{ key: 'disposition', anyOf: ['Bank'] }"),
-            Some("named-banks"),
-        ),
+        {
+            let mut bank = setting_with(
+                "bank",
+                "string",
+                Some("Nearest"),
+                &["Nearest"],
+                Some("{ key: 'disposition', anyOf: ['Bank'] }"),
+                Some("named-banks"),
+            );
+            bank.label = Some("Bank: Nearest (default), or always use the bank you pick".into());
+            bank
+        },
         boolean_setting_show_if(
             "useMageBank",
             false,
@@ -798,6 +802,15 @@ mod tests {
         assert_eq!(defaults.bank_preferences(), BankPreferences::default());
         assert_eq!(defaults.death_policy, "Recover");
         assert_eq!(defaults.max_deaths, 2);
+        let bank = schema()
+            .iter()
+            .find(|setting| setting.id == "bank")
+            .unwrap();
+        assert_eq!(bank.default.as_deref(), Some("Nearest"));
+        assert_eq!(
+            bank.label.as_deref(),
+            Some("Bank: Nearest (default), or always use the bank you pick")
+        );
 
         let mut bag = SettingsBag::new();
         bag.insert("skill".into(), json!("Mining"));

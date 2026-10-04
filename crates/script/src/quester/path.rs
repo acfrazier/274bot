@@ -60,7 +60,12 @@ pub struct QuestItemDocument {
 #[serde(untagged)]
 pub enum QuestBankDocument {
     Nearest(String),
-    Tile { tile: [i32; 3], source: String },
+    Tile {
+        tile: [i32; 3],
+        source: String,
+        #[serde(default)]
+        required: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +280,21 @@ mod tests {
         });
         let decoded: QuestHeaderDocument = serde_json::from_value(header.clone()).unwrap();
         assert!(!decoded.members);
+        assert!(matches!(
+            decoded.bank,
+            QuestBankDocument::Tile {
+                required: false,
+                ..
+            }
+        ));
+        let mut required = header.clone();
+        required["bank"]["required"] = json!(true);
+        assert!(matches!(
+            serde_json::from_value::<QuestHeaderDocument>(required)
+                .unwrap()
+                .bank,
+            QuestBankDocument::Tile { required: true, .. }
+        ));
         let mut extra = header;
         extra["food"] = json!([]);
         assert!(serde_json::from_value::<QuestHeaderDocument>(extra).is_err());
