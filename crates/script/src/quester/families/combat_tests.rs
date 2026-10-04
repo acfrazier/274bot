@@ -70,6 +70,57 @@ fn open_tactic_defaults_auto_retaliate_on() {
     assert!(!args.auto_retaliate);
 }
 
+#[test]
+fn combat_owned_walk_permissions_require_explicit_protection() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_walk_policy"),
+        role: None,
+        colour_not_started: FactKey::new("combat_walk_policy:0"),
+        colour_in_progress: FactKey::new("combat_walk_policy:1"),
+        colour_complete: FactKey::new("combat_walk_policy:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_walk_policy");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let args = serde_json::json!({
+        "target": {"npc": "jailguard", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+        "stand": {"tile": [3125, 3246, 0], "source": "native Prince live return-walk regression"},
+        "lost_radius": 16,
+        "kill_budget_ticks": 400,
+        "cross": ["draynor-jail-guards"],
+        "guard": "protect"
+    });
+    compile(&args, &cx).unwrap();
+    for guard in [
+        serde_json::Value::Null,
+        serde_json::json!(""),
+        serde_json::json!("off"),
+    ] {
+        let mut invalid = args.clone();
+        invalid["guard"] = guard;
+        assert_eq!(
+            compile(&invalid, &cx).err().unwrap().code.as_ref(),
+            "invalid-args"
+        );
+    }
+    let mut defaults = args;
+    let fields = defaults.as_object_mut().unwrap();
+    fields.remove("cross");
+    fields.remove("guard");
+    compile(&defaults, &cx).unwrap();
+}
+
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,
@@ -443,6 +494,8 @@ fn combat_test_run(
     CombatRun {
         request: Arc::new(request),
         tables,
+        cross: Arc::from([]),
+        protect: false,
         until,
         win: None,
         loot: Arc::from(loot),
@@ -707,6 +760,58 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
         .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
         .expect("restarted combat must retain the TargetGone report");
     assert_eq!(receipt.target_gone_restarts, 1);
+}
+
+#[test]
+fn return_and_abort_walks_retain_only_the_combat_steps_declared_permissions() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let stand = api::WorldTile {
+        x: 3125,
+        z: 3246,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_local_player(super::super::tests::local_player(api::WorldTile {
+        x: 3112,
+        z: 3242,
+        level: 0,
+    }));
+    for protect in [false, true] {
+        for end in [
+            CombatEnd::TargetGone,
+            CombatEnd::Aborted(AbortReason::Unprotected(crate::combat::Unprotected::NoFood)),
+        ] {
+            let mut ledger = None;
+            let mut run = combat_test_run(
+                imp_target(&data),
+                Some(stand),
+                Some(Arc::new(NeverStop)),
+                Vec::new(),
+            );
+            if protect {
+                run.cross = Arc::from([Arc::from("draynor-jail-guards")]);
+                run.protect = true;
+            }
+            assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+                run.on_combat_report(report(end), cx)
+            })
+            .is_pending());
+            let crate::native::HostEffect::Walk(request) =
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+            else {
+                panic!("the combat-owned transition must submit a native walk");
+            };
+            assert_eq!(request.target, stand);
+            assert_eq!(request.radius, 1);
+            assert_eq!(request.protect, protect);
+            if protect {
+                assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
+            } else {
+                assert!(request.cross.is_empty());
+            }
+        }
+    }
 }
 
 #[test]

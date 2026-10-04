@@ -65,6 +65,12 @@ pub(super) struct CombatArgs {
     /// Optional sourced stand tile; `anchor` is accepted as an alias.
     #[serde(default, alias = "anchor")]
     stand: Option<super::AnchorArg>,
+    /// Danger-zone permissions for this step's return and abort walks.
+    #[serde(default)]
+    cross: Vec<String>,
+    /// Use protect to permit the declared danger-zone crossings.
+    #[serde(default)]
+    guard: Option<String>,
     /// Optional named or inline search area.
     #[serde(default)]
     area: Option<AreaArg>,
@@ -207,6 +213,20 @@ pub(super) fn compile(
     args: CombatArgs,
     cx: &CompileContext<'_>,
 ) -> Result<Arc<dyn StepPlan>, CompileError> {
+    let protect = match args.guard.as_deref() {
+        None | Some("") => false,
+        Some("protect") => true,
+        Some(_) => {
+            return Err(
+                CompileError::code("invalid-args").with_detail("combat: guard must be protect")
+            );
+        }
+    };
+    if !args.cross.is_empty() && !protect {
+        return Err(
+            CompileError::code("invalid-args").with_detail("combat: cross needs protected walk")
+        );
+    }
     if args
         .spells
         .as_ref()
@@ -277,6 +297,8 @@ pub(super) fn compile(
     Ok(Arc::new(CombatPlan {
         request: Arc::new(request),
         tables,
+        cross: args.cross.into_iter().map(Arc::from).collect(),
+        protect,
         until,
         win,
         loot: Arc::from(loot),
@@ -487,6 +509,8 @@ struct LootItem {
 struct CombatPlan {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
+    cross: Arc<[Arc<str>]>,
+    protect: bool,
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
@@ -497,6 +521,8 @@ impl StepPlan for CombatPlan {
         let mut run = CombatRun {
             request: Arc::clone(&self.request),
             tables: Arc::clone(&self.tables),
+            cross: Arc::clone(&self.cross),
+            protect: self.protect,
             until: self.until.as_ref().map(Arc::clone),
             win: self.win.as_ref().map(Arc::clone),
             loot: Arc::clone(&self.loot),
@@ -552,6 +578,8 @@ enum LootStart {
 struct CombatRun {
     request: Arc<CombatRequest>,
     tables: Arc<CombatTables>,
+    cross: Arc<[Arc<str>]>,
+    protect: bool,
     until: Option<Arc<dyn PredicatePlan>>,
     win: Option<Arc<dyn PredicatePlan>>,
     loot: Arc<[LootItem]>,
@@ -618,10 +646,10 @@ impl CombatRun {
         stand: api::WorldTile,
         cx: &mut StepContext<'_, '_>,
     ) -> Result<(), ActionError> {
-        let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(stand, 1, None, cx.required_after),
-            &mut cx.tick.cx,
-        )?;
+        let mut request = reach::walk_request(stand, 1, None, cx.required_after);
+        request.cross = self.cross.iter().cloned().collect();
+        request.protect = self.protect;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::ReturningToStand;
         self.action = Some(Action::Walk(handle));
         Ok(())
@@ -712,10 +740,10 @@ impl CombatRun {
         let destination = self
             .abort_walk_destination(report, cx)
             .ok_or_else(|| ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))?;
-        let handle = cx.tick.actions.begin::<Walk>(
-            reach::walk_request(destination, 1, None, cx.required_after),
-            &mut cx.tick.cx,
-        )?;
+        let mut request = reach::walk_request(destination, 1, None, cx.required_after);
+        request.cross = self.cross.iter().cloned().collect();
+        request.protect = self.protect;
+        let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
         self.phase = Phase::WalkingOutAfterAbort;
         self.action = Some(Action::Walk(handle));
         Ok(())
