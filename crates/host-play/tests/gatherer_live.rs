@@ -36,6 +36,9 @@
 //! cell uses Draynor's live oak grove east of its bank. It does not seed scene
 //! locations; only the account's bronze axe is bank-seeded for its real
 //! gathering and deposit trip.
+//! Bank receipts use the prepared native deposit policy for every skill:
+//! products and incidental gifts must reach the bank, leaving only next-run
+//! tools/supplies. Initial tool-fetch visits do not count as deposit receipts.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1213,6 +1216,10 @@ impl BankTripReceipt {
             .values()
             .map(|count| i64::from(*count))
             .sum()
+    }
+
+    fn is_deposit_trip(&self) -> bool {
+        self.deposit_verified && self.deposited_count > 0
     }
 
     fn expected_product_count(&self) -> i64 {
@@ -2874,32 +2881,12 @@ impl GatherSlot {
             || (self.case == LiveCase::PowerToBank && self.witness.power_to_bank_applied)
     }
 
-    fn status_tool_id(&self, status: &script::native::ScriptStatus) -> Option<i32> {
-        // Gatherer renders this status field as an item id, optionally "(worn)".
-        let id = text_field(status, "tool")?
-            .split_whitespace()
-            .next()?
-            .parse::<i32>()
-            .ok()?;
-        (id >= 0).then_some(id)
-    }
-
-    fn native_deposit_ids(
-        &self,
-        status: &script::native::ScriptStatus,
-        inventory: &[api::snapshot::ItemView],
-    ) -> Result<Arc<[i32]>, String> {
+    fn native_deposit_ids(&self) -> Result<Arc<[i32]>, String> {
         let config = self
             .bank_config
             .as_deref()
             .ok_or_else(|| format!("{} has no prepared Gatherer bank settings", self.name()))?;
-        let tool_id = self.status_tool_id(status).ok_or_else(|| {
-            format!(
-                "{} status tool is absent from inventory/equipment",
-                self.name()
-            )
-        })?;
-        script::gatherer::test_bank_deposit_ids(config, tool_id, inventory)
+        script::gatherer::test_bank_deposit_ids(config, &self.snapshot)
             .ok_or_else(|| format!("{} bank settings are not a Gatherer config", self.name()))
     }
 
@@ -2911,10 +2898,6 @@ impl GatherSlot {
         if !self.bank_conservation_active() {
             return Ok(());
         }
-        // Wait for the inventory component's posted capacity before reading a tool ID.
-        if self.snapshot.inventory_size() <= 0 {
-            return Ok(());
-        }
         let bank = text_field(status, "bank");
         let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
         let event = text_field(status, "last_event");
@@ -2923,7 +2906,7 @@ impl GatherSlot {
             && self.witness.pending_bank_trip.is_none()
         {
             let inventory_before = self.snapshot_inventory_counts();
-            let deposit_ids = self.native_deposit_ids(status, self.snapshot.inventory())?;
+            let deposit_ids = self.native_deposit_ids()?;
             let seeded_casket_expected =
                 if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
                     self.witness.seeded_casket_baseline_count
@@ -2967,7 +2950,7 @@ impl GatherSlot {
                 });
         if should_observe_deposit {
             let inventory_after = self.snapshot_inventory_counts();
-            let deposit_ids = self.native_deposit_ids(status, self.snapshot.inventory())?;
+            let deposit_ids = self.native_deposit_ids()?;
             let unneeded_after = bank_deposit_expectation(&inventory_after, &deposit_ids);
             let bank_loaded = self.snapshot.bank_loaded();
             let bank_after = if bank_loaded {
@@ -3487,7 +3470,11 @@ impl GatherSlot {
                 self.witness.pending_bank_trip = Some(receipt);
                 return Err(format!("{}: {error}", self.name()));
             }
-            self.witness.bank_trips.push(receipt);
+            // A supply-only visit verifies its empty deposit boundary, but is
+            // not a completed deposit trip and must not produce such a receipt.
+            if receipt.is_deposit_trip() {
+                self.witness.bank_trips.push(receipt);
+            }
             self.witness.bank_arrivals = self
                 .witness
                 .bank_arrivals
@@ -3503,7 +3490,7 @@ impl GatherSlot {
                 self.witness.bank_nonzero_roundtrips =
                     self.witness.bank_nonzero_roundtrips.saturating_add(1);
             }
-            if self.bank_conservation_active() {
+            if self.bank_conservation_active() && self.witness.waiting_for_bank_yield {
                 let Some(receipt) = self
                     .witness
                     .bank_trips
@@ -6957,10 +6944,139 @@ mod bank_conservation_tests {
         aggregate_item_counts(items.iter().copied())
     }
 
+    fn bank_fixture(items: &[(i32, i32)]) -> (Arc<script::native::PreparedConfig>, GameSnapshot) {
+        let config = api::selected::FamilyPreparation::run(|families| {
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let mut cx = script::native::PrepareContext {
+                pin: selected.selected_pin().unwrap(),
+                selected,
+                banks: Arc::default(),
+                families,
+            };
+            let mut settings = script::native::SettingsBag::new();
+            settings.insert("disposition".into(), json!("Bank"));
+            (script::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(settings)).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_inventory(
+            items
+                .iter()
+                .enumerate()
+                .map(|(slot, &(id, count))| api::snapshot::ItemView {
+                    def: api::ItemDefView {
+                        id,
+                        name: None,
+                        stackable: false,
+                        members: false,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count,
+                    actions: vec![],
+                    component_id: -1,
+                })
+                .collect(),
+            28,
+        );
+        (config, snapshot)
+    }
+
+    fn native_deposit_ids(items: &[(i32, i32)]) -> Arc<[i32]> {
+        let (config, snapshot) = bank_fixture(items);
+        script::gatherer::test_bank_deposit_ids(&config, &snapshot).unwrap()
+    }
+
+    #[test]
+    fn woodcutting_status_gate_rejects_kebab_left_after_deposit() {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        let (config, snapshot) = bank_fixture(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::WoodcuttingBank,
+            SEERS_MAPLE_BANK_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(vec![]), vec![]);
+        let status = |event: &'static str, deposited| ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text("Seers; Deposit".into()),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(deposited),
+                },
+            ]),
+        };
+        slot.apply_status(&status("bank opened", 0)).unwrap();
+        let rows = slot.snapshot.inventory().to_vec();
+        slot.snapshot.seed_inventory(vec![rows[1].clone()], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(vec![rows[0].clone()]), vec![]);
+        let result = slot.apply_status(&status("deposit confirmed", 4));
+        assert!(
+            result.is_err(),
+            "a completed WC deposit must not leave a kebab: {result:?}"
+        );
+    }
+
+    #[test]
+    fn tool_fetch_first_visit_is_not_a_deposit_trip() {
+        let empty = BTreeMap::new();
+        let deposit_ids = native_deposit_ids(&[]);
+        assert!(deposit_ids.is_empty());
+        let mut receipt = BankTripReceipt::new(
+            1,
+            empty.clone(),
+            &deposit_ids,
+            empty.clone(),
+            0,
+            &[LOG_ID],
+            0,
+        );
+        receipt
+            .observe_deposit(&empty, &empty, true, &empty, 0, true)
+            .unwrap();
+        receipt.record_return(1, 0, false).unwrap();
+        assert!(!receipt.is_deposit_trip());
+    }
+
     #[test]
     fn woodcutting_bank_conserves_products_and_incidental_kebab() {
         let inventory_before = counts(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
-        let deposit_ids = [LOG_ID, KEBAB_ID];
+        let deposit_ids = native_deposit_ids(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let expected_items = bank_deposit_expectation(&inventory_before, &deposit_ids);
         let expected_products = counts(&[(LOG_ID, 4)]);
         let expected_incidentals = counts(&[(KEBAB_ID, 1)]);
