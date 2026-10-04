@@ -256,6 +256,22 @@ fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
 
+### Quester expected combat handoff
+
+A `talk` step may declare `expect_combat: {"npc": "desertminingcaptain"}` when
+the conversation deliberately starts a fight. The config name resolves to an
+exact NPC type. A combat interruption succeeds only when the local player's
+observed NPC target has that type and targets the local player in return.
+The NPC's own damage timer need not be set before the player retaliates.
+The step returns a `HandedToCombat` receipt; wrong, missing, player or unrelated
+targets remain **Blocked**.
+
+Author the handoff with `"advances": false` and an `in_combat` settle, followed
+by a `combat` step on the declared opponent. This avoids opening a progress
+journal during the fight. The combat step may declare `"advances": true` once
+the fight and its reward have settled. An ordinary dialogue completion retains
+the normal talk outcome; `expect_combat` does not fabricate a fight.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with
@@ -269,8 +285,9 @@ fail-closed and requires an explicit operator Start. Poison hits count too:
 poison closes interfaces before applying its damage hitsplat, which sets the
 same flag. A closed chat while the flag is set produces an explicit
 combat-interruption outcome, including during dialogue opening or page
-acknowledgement. Quester does not count that interruption as successful work,
-settle the step, or request an advancement journal read. It does not fight or
+acknowledgement. Without an explicit expected-combat handoff, Quester does not
+count that interruption as successful work, settle the step, or request an
+advancement journal read. It does not fight or
 automatically retry the conversation. A journal transaction
 that loses ownership or becomes transiently busy is retried only after both
 main and chat modals have been observed closed for three game ticks. Unknown
