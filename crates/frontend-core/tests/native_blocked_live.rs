@@ -249,7 +249,7 @@ fn gatherer_blocked_stops_with_shared_status() {
         assert!(snapshot.inventory().iter().any(|row| row.def.id == 309));
         assert!(!snapshot.inventory().iter().any(|row| row.def.id == 314));
         let receipt = json!({
-            "request": "BLOCKED-STOP-1", "account": account,
+            "request": "BLOCKED-STOP-2", "account": account,
             "outcome": "PASS", "run_state": "Idle", "native_run": null,
             "frontend_core_label": script_status_label(play.script_state(&account), Some(&blocked)),
             "panel_tui_reason": script_status_reason(&blocked),

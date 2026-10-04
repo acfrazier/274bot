@@ -796,7 +796,6 @@ fn read_gather_outcome(page: ApiGatherOutcome<'_>) -> Option<GatherOutcomeObserv
             failure: GatherFailure {
                 code: page.code().unwrap_or_default().into(),
                 message: message.into(),
-                retryable: page.retryable(),
             },
             counts,
         },

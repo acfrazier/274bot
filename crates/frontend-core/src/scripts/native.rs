@@ -21,7 +21,6 @@ pub enum NativeCommand {
     Pause,
     Resume,
     Stop,
-    Retry,
 }
 #[derive(Debug, Clone)]
 pub struct NativeTarget {
@@ -257,7 +256,6 @@ impl Scripts {
             NativeCommand::Pause => play.script_native_pause(&target.profile, target.run, true),
             NativeCommand::Resume => play.script_native_pause(&target.profile, target.run, false),
             NativeCommand::Stop => play.script_native_stop(&target.profile, target.run),
-            NativeCommand::Retry => return play.script_native_retry(&target.profile, target.run),
         };
         if accepted {
             Ok(())

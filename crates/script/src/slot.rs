@@ -1835,7 +1835,6 @@ impl SlotScript {
                         self.fail_compiled(ScriptFailure {
                             code: "recovery-anchor-panic".into(),
                             message: panic_message(&payload).into(),
-                            retryable: false,
                         });
                         return WatchdogAction::None;
                     }
@@ -2177,7 +2176,6 @@ impl SlotScript {
                 self.fail_compiled(ScriptFailure {
                     code: "random-panic".into(),
                     message: panic_message(&payload).into(),
-                    retryable: false,
                 });
                 RandomClaim::Host
             }
@@ -2218,6 +2216,18 @@ impl SlotScript {
     /// Latest ScriptRunner.stop receipt. Reading it never drains panel logs.
     pub fn lifecycle_receipt(&self) -> Option<ScriptLifecycleReceipt> {
         self.lifecycle_receipt.clone()
+    }
+    /// Generation whose Failed, Stopped, or Completed lifecycle releases host navigation.
+    /// Copies only the scalar; the receipt's diagnostic remains borrowed in place.
+    pub fn terminal_lifecycle_generation(&self) -> Option<u64> {
+        let receipt = self.lifecycle_receipt.as_ref()?;
+        matches!(
+            receipt.state,
+            ScriptTerminalState::Failed
+                | ScriptTerminalState::Stopped
+                | ScriptTerminalState::Completed
+        )
+        .then_some(receipt.runtime_generation)
     }
 
     /// Drain isolate tick / `this.log` lines. Tick errors update

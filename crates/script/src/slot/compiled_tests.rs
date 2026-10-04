@@ -837,7 +837,7 @@ fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
 }
 
 #[test]
-fn gatherer_stop_policy_death_cancels_undrained_drop_until_retry() {
+fn gatherer_stop_policy_death_cancels_undrained_drop() {
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(85);
     let (tick, authorities) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -854,7 +854,6 @@ fn gatherer_stop_policy_death_cancels_undrained_drop_until_retry() {
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died");
-    assert!(failure.retryable);
     gatherer_tick(&mut slot, &snapshot, tick + 2);
     assert!(
         !slot.has_native_actions(),
@@ -1052,7 +1051,6 @@ fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress()
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "inventory-blocked");
-    assert!(failure.retryable);
     slot.stop();
 }
 
@@ -1822,7 +1820,6 @@ impl Script for TerminalReporter {
         let failure = ScriptFailure {
             code: "no-route".into(),
             message: "no reachable bank under the walk permissions".into(),
-            retryable: true,
         };
         tick.output.status(ScriptStatus {
             run: tick.cx.run(),
@@ -1923,7 +1920,6 @@ fn native_status_logs_each_phase_or_failure_change_once() {
     let failure = ScriptFailure {
         code: Arc::from("walk-ended"),
         message: Arc::from("walk ended with Failed"),
-        retryable: false,
     };
     output.status(status_line_test_status(
         NativePhase::Blocked,
@@ -1945,7 +1941,6 @@ fn native_status_logs_each_phase_or_failure_change_once() {
         Some(ScriptFailure {
             code: Arc::from("walk-ended"),
             message: Arc::from("walk ended with a different reason"),
-            retryable: false,
         }),
     ));
 
@@ -2016,7 +2011,6 @@ fn native_status_logs_present_fields_as_plain_text() {
         Some(ScriptFailure {
             code: Arc::from("walk-ended"),
             message: Arc::from("walk ended with Failed"),
-            retryable: false,
         }),
     ));
 
@@ -2078,7 +2072,6 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
         );
     }
 }
-
 
 #[test]
 fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {

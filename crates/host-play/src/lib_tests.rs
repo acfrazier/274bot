@@ -24569,7 +24569,6 @@ mod read_journal_tests {
                 Ok(ScriptFlow::Blocked(ScriptFailure {
                     code: "journal-no-match".into(),
                     message: "no journal rule matched".into(),
-                    retryable: true,
                 }))
             } else {
                 tick.output.status(script::native::ScriptStatus {

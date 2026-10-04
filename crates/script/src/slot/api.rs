@@ -396,7 +396,6 @@ impl SlotScript {
                         failure: GatherFailure {
                             code: failure.code,
                             message: failure.message,
-                            retryable: failure.retryable,
                         },
                     },
                     StopReason::Error,

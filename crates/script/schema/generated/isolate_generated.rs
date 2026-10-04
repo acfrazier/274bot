@@ -4248,7 +4248,6 @@ impl<'a> ApiGatherOutcome<'a> {
   pub const VT_END: ::flatbuffers::VOffsetT = 6;
   pub const VT_CODE: ::flatbuffers::VOffsetT = 8;
   pub const VT_MESSAGE: ::flatbuffers::VOffsetT = 10;
-  pub const VT_RETRYABLE: ::flatbuffers::VOffsetT = 12;
   pub const VT_YIELDED: ::flatbuffers::VOffsetT = 14;
   pub const VT_DROPPED: ::flatbuffers::VOffsetT = 16;
   pub const VT_DEPOSITED: ::flatbuffers::VOffsetT = 18;
@@ -4273,7 +4272,6 @@ impl<'a> ApiGatherOutcome<'a> {
     builder.add_yielded(args.yielded);
     if let Some(x) = args.message { builder.add_message(x); }
     if let Some(x) = args.code { builder.add_code(x); }
-    builder.add_retryable(args.retryable);
     builder.add_end(args.end);
     builder.finish()
   }
@@ -4306,13 +4304,6 @@ impl<'a> ApiGatherOutcome<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ApiGatherOutcome::VT_MESSAGE, None)}
-  }
-  #[inline]
-  pub fn retryable(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(ApiGatherOutcome::VT_RETRYABLE, Some(false)).unwrap()}
   }
   #[inline]
   pub fn yielded(&self) -> u32 {
@@ -4361,7 +4352,6 @@ impl ::flatbuffers::Verifiable for ApiGatherOutcome<'_> {
      .visit_field::<u8>("end", Self::VT_END, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("code", Self::VT_CODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("message", Self::VT_MESSAGE, false)?
-     .visit_field::<bool>("retryable", Self::VT_RETRYABLE, false)?
      .visit_field::<u32>("yielded", Self::VT_YIELDED, false)?
      .visit_field::<u32>("dropped", Self::VT_DROPPED, false)?
      .visit_field::<u32>("deposited", Self::VT_DEPOSITED, false)?
@@ -4376,7 +4366,6 @@ pub struct ApiGatherOutcomeArgs<'a> {
     pub end: u8,
     pub code: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub message: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub retryable: bool,
     pub yielded: u32,
     pub dropped: u32,
     pub deposited: u32,
@@ -4391,7 +4380,6 @@ impl<'a> Default for ApiGatherOutcomeArgs<'a> {
       end: 0,
       code: None,
       message: None,
-      retryable: false,
       yielded: 0,
       dropped: 0,
       deposited: 0,
@@ -4421,10 +4409,6 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiGatherOutcomeBuilder<'a, '
   #[inline]
   pub fn add_message(&mut self, message: ::flatbuffers::WIPOffset<&'b  str>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ApiGatherOutcome::VT_MESSAGE, message);
-  }
-  #[inline]
-  pub fn add_retryable(&mut self, retryable: bool) {
-    self.fbb_.push_slot::<bool>(ApiGatherOutcome::VT_RETRYABLE, retryable, false);
   }
   #[inline]
   pub fn add_yielded(&mut self, yielded: u32) {
@@ -4468,7 +4452,6 @@ impl ::core::fmt::Debug for ApiGatherOutcome<'_> {
       ds.field("end", &self.end());
       ds.field("code", &self.code());
       ds.field("message", &self.message());
-      ds.field("retryable", &self.retryable());
       ds.field("yielded", &self.yielded());
       ds.field("dropped", &self.dropped());
       ds.field("deposited", &self.deposited());

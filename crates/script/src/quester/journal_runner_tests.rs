@@ -320,29 +320,7 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
     assert_eq!(script.last_error.as_deref(), Some("pre-existing failure"));
 
     assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
-    script.retry().unwrap();
-    drive(&mut script, &snapshot, &mut ledger, 3);
-    assert!(script.clear_prayers.is_some());
-    drive(&mut script, &snapshot, &mut ledger, 4);
-    let resumed_authority = ledger.as_ref().unwrap().outbox[0].authority();
-    assert!(resumed_authority.live());
-    assert!(matches!(
-        ack(&mut ledger, 4),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
-    ));
-    snapshot.seed_varps(vec![VarpView {
-        index: prayer_varp,
-        value: 0,
-    }]);
-    drive(&mut script, &snapshot, &mut ledger, 5);
-    assert!(script.clear_prayers.is_none());
-    assert!(!script.prayer_cleanup_pending);
-    assert!(script.journal.is_some());
-    finish_read(&mut script, &mut snapshot, &mut ledger, 6, "seeded branch");
-    assert!(!script.parked);
-    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
 }
-
 #[test]
 fn unknown_skip_never_dispatches_and_wait_is_bounded() {
     let (mut script, mut snapshot) = fixture(false);
@@ -496,46 +474,6 @@ fn stopping_mid_read_revokes_host_click_and_quiet_lease() {
     assert!(!ledger.outbox[0].live());
     assert!(ledger.quiet_read(std::time::Instant::now()).is_none());
     assert!(script.last_journal().is_none());
-}
-
-#[test]
-fn read_journal_retries_a_park_with_fresh_failure_budgets() {
-    let (mut script, snapshot) = fixture(true);
-    script.parked = true;
-    script.fail_streak = 3;
-    script.attempts = 3;
-    script.empty_reads = 2;
-    script.unreadable_reads = 2;
-    script.unreadable_since = Some(Duration::ZERO);
-    script.last_error = Some(Arc::from("previous step failure"));
-    script.park_reason = "previous watchdog park";
-    for _ in 0..9 {
-        script.watchdog.observe(None, None, &[], &[], 0);
-    }
-    assert_eq!(
-        script.watchdog.observe(None, None, &[], &[], 0),
-        WatchdogAction::Park
-    );
-    script.read_journal().unwrap();
-    assert!(!script.parked);
-    assert_eq!(script.fail_streak, 0);
-    assert_eq!(script.attempts, 0);
-    assert_eq!(script.empty_reads, 0);
-    assert_eq!(script.unreadable_reads, 0);
-    assert!(script.last_error.is_none());
-    assert!(script.unreadable_since.is_none());
-    assert_eq!(
-        script.watchdog.observe(None, None, &[], &[], 0),
-        WatchdogAction::None,
-        "Read now on a park must reset the watchdog too"
-    );
-    let mut ledger = None;
-    drive(&mut script, &snapshot, &mut ledger, 1);
-    drive(&mut script, &snapshot, &mut ledger, 2);
-    assert!(matches!(
-        ack(&mut ledger, 2),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id: 42 })
-    ));
 }
 
 #[test]
@@ -725,10 +663,6 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
         script.blocked_failure().message.as_ref(),
         "journal read retry limit reached (journal ownership repeatedly lost)"
     );
-    script.read_journal().unwrap();
-    drive(&mut script, &snapshot, &mut ledger, 81);
-    finish_read(&mut script, &mut snapshot, &mut ledger, 82, "seeded branch");
-    assert!(!script.parked, "operator retry gets a fresh read budget");
 }
 
 #[test]

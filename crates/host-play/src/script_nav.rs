@@ -181,6 +181,8 @@ pub(crate) struct NavBot {
     pub(crate) walk_guard_off: Option<super::script_walk::WalkGuardOff>,
     /// Non-terminal protection warnings, drained to the correlated owner.
     pub(crate) walk_guard_events: Vec<(script::native::HostAuthority, script::native::WalkEvent)>,
+    /// Latest terminal script generation whose navigation state was reset.
+    pub(crate) terminal_nav_reset_generation: Option<u64>,
 }
 
 /// A held script walk or its identity across a watchdog-owned replacement.
@@ -2200,15 +2202,29 @@ impl NavBot {
 
 /// End the session's navigation: every route, find, bank-fetch session,
 /// inspect and bank pick of the slot, a walk a reconnect was carrying, and
-/// the duel offer its accept gate validated.
-pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+/// the duel offer its accept gate validated. When `terminal_generation` is
+/// present, the same lifecycle receipt resets this state only once.
+pub(crate) fn reset_script_nav(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    terminal_generation: Option<u64>,
+) {
     if let Some(nav) = navs.lock().unwrap().get_mut(name) {
+        if terminal_generation.is_some_and(|generation| {
+            nav.terminal_nav_reset_generation
+                .is_some_and(|last| last >= generation)
+        }) {
+            return;
+        }
         end_route_follow(nav);
         nav.reset_walk_outcome();
         route_inspect::reset_inspect(nav);
         nav.bank_pick.reset();
         nav.carried_walk = None;
         nav.duel_offer_partner = None;
+        if let Some(generation) = terminal_generation {
+            nav.terminal_nav_reset_generation = Some(generation);
+        }
     }
 }
 

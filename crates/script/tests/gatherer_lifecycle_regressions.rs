@@ -2543,7 +2543,6 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "supply-missing");
     assert!(failure.message.to_ascii_lowercase().contains("axe"));
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 3);
     slot.stop();
 }
@@ -2591,7 +2590,7 @@ fn death_return_and_recreation_resume_retained_live_steps() {
         script::native::WalkEnd::Arrived,
     );
     let mut returned = lifecycle_frame_copy(&death);
-    trip_position(&mut returned, anchor);
+    trip_position(&mut returned, return_target);
     now += 1;
     tick(&mut slot, &returned, now);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 6);
@@ -2667,7 +2666,9 @@ fn death_return_refused_stops_terminally_with_reason() {
     assert_eq!(failure.code.as_ref(), "return-failed");
     assert!(
         failure.message.contains("Refused")
-            && failure.message.contains("arrival must be observed"),
+            && failure
+                .message
+                .contains("arrival at the resource observation stand must be observed"),
         "terminal status retains the return refusal reason: {}",
         failure.message
     );
@@ -2763,13 +2764,12 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "max-deaths");
-    assert!(!failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 3);
     slot.stop();
 }
 
 #[test]
-fn stop_death_policy_ends_the_run_instead_of_retrying_recovery() {
+fn stop_death_policy_terminates_the_recovery_run() {
     let selected = selected();
     let mut settings = SettingsBag::new();
     settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
@@ -2778,22 +2778,16 @@ fn stop_death_policy_ends_the_run_instead_of_retrying_recovery() {
     initial.seed_chat_lines(Vec::new());
     let mut slot = started_with(4406, &selected, settings);
     tick(&mut slot, &initial, 1);
-    let run = slot.native_run().unwrap();
     let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
     tick(&mut slot, &death, 2);
     let status = slot.native_status().unwrap();
     assert_eq!(status.phase, NativePhase::Blocked);
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died");
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
 
     assert_eq!(slot.state(), script::RunState::Idle);
     assert!(slot.native_run().is_none());
-    assert!(
-        slot.retry_compiled(run).is_err(),
-        "stopped runs cannot retry"
-    );
     for now in 3..=6 {
         tick(&mut slot, &death, now);
     }
@@ -2986,7 +2980,6 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
     let status = slot.native_status().unwrap();
     let failure = status.failure.as_ref().unwrap();
     assert_eq!(failure.code.as_ref(), "died-again");
-    assert!(failure.retryable);
     assert_eq!(lifecycle_status_integer(&slot, "deaths"), 2);
     assert_eq!(lifecycle_status_integer(&slot, "recovery_step"), 1);
     assert!(!slot.has_native_actions());
@@ -3034,14 +3027,13 @@ fn recovery_return_reconnect_on_another_plane_keeps_the_retained_resource_area()
 }
 
 #[test]
-fn refused_death_return_stops_and_cannot_be_recreated_or_retried() {
+fn refused_death_return_stops_and_cannot_be_recreated() {
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
     initial.seed_chat_lines(Vec::new());
     let mut slot = started(4410, &selected);
     tick(&mut slot, &initial, 1);
-    let run = slot.native_run().unwrap();
     let death = lifecycle_death_frame(&initial, 1, LUMBRIDGE_RESPAWN_EDGE, 10, 10);
     let mut now = 2;
     tick(&mut slot, &death, now);
@@ -3066,7 +3058,6 @@ fn refused_death_return_stops_and_cannot_be_recreated_or_retried() {
         status.failure.as_ref().unwrap().code.as_ref(),
         "return-failed"
     );
-    assert!(slot.retry_compiled(run).is_err());
     assert!(slot.restart_from_identity(Instant::now()).is_err());
     tick(&mut slot, &death, now + 2);
     assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
