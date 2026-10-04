@@ -14,6 +14,14 @@ use std::time::{Duration, Instant};
 /// `trail_clue_easy_simple001`: a selected search membership whose
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
+
+const DEATH_CHAT: [script::isolate_fb::ChatLineInput<'static>; 1] =
+    [script::isolate_fb::ChatLineInput {
+        seq: 1,
+        text: "Oh dear, you are dead!",
+        type_: 0,
+        username: None,
+    }];
 /// The packed `access: "constrained"` row whose special runtime crosses the
 /// Duel Arena before digging.
 const CONSTRAINED_ID: i32 = 3554;
@@ -63,8 +71,10 @@ struct Scene<'a> {
     /// The display names the posted pack rows carry, by item id: the Drop, the
     /// Dig and the Open all resolve identity by posted name.
     names: &'a [(i32, &'a str)],
-    /// The posted stat page the death read comes off.
+    /// The posted stat page can require waiting, but does not prove death.
     stats: &'a [script::isolate_fb::StatInput<'a>],
+    /// Rust-decoded game chat supplies the shared native death latch.
+    chat_lines: &'a [script::isolate_fb::ChatLineInput<'a>],
     main_modal_id: i32,
     hold: bool,
     ours: bool,
@@ -102,6 +112,7 @@ impl Default for Scene<'_> {
             locs: &[],
             names: &[],
             stats: &[],
+            chat_lines: &[],
             main_modal_id: 0,
             hold: false,
             ours: false,
@@ -236,7 +247,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         make_products: &[],
         side_tab_ifaces: &[],
         spell_buttons: &[],
-        chat_lines: &[],
+        chat_lines: scene.chat_lines,
         bank_note_on: -1,
         bank_note_off: -1,
         scene_state: 0,
@@ -1484,12 +1495,12 @@ export default class T extends TaskBot {
     assert_clean(&logs);
 }
 
-/// The posted death over the `TaskBot` loop: any live call whose posted
-/// effective `hitpoints` is at or below zero ends the session — the adapter
-/// clears the token, queues no verb and marks nothing solved — and the sibling
-/// grind task takes the next tick. A page that posted no stat is not a death.
+/// The native death latch over the `TaskBot` loop: zero effective hitpoints
+/// alone waits. A fresh Rust-decoded death chat line ends the session, clears
+/// the token, queues no verb and marks nothing solved; the sibling grind task
+/// takes the next tick.
 #[test]
-fn solve_clue_adapter_ends_the_session_on_a_posted_death() {
+fn solve_clue_adapter_ends_the_session_on_an_observed_death() {
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1531,8 +1542,7 @@ export default class T extends TaskBot {
         "the session is live before the death"
     );
 
-    // Tick 2: the posted effective hitpoints read zero. The machine's `dead`,
-    // and the adapter clears the token on it.
+    // Tick 2: zero hitpoints without new death chat cannot end the token.
     post_scene(
         &iso,
         2,
@@ -1543,6 +1553,36 @@ export default class T extends TaskBot {
         },
     );
     tick(&iso, 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "zero hitpoints wait without an interact"
+    );
+    assert_eq!(machine_next(&iso, false)["kind"], "wait");
+    assert_ne!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        "null",
+        "zero hitpoints alone leave the session live"
+    );
+
+    // Tick 3: fresh native death chat is authoritative even after HP recovers.
+    let recovered = [script::isolate_fb::StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 40,
+    }];
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            stats: &recovered,
+            chat_lines: &DEATH_CHAT,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 3);
     assert!(
         iso.drain_interacts().is_empty(),
         "a death pushes no interact"
@@ -1558,10 +1598,10 @@ export default class T extends TaskBot {
         "the adapter cleared the dead token"
     );
 
-    // Tick 3: the row is gone, so the finished session gives the tick back and
+    // Tick 4: the row is gone, so the finished session gives the tick back and
     // marks nothing solved.
-    post_page(&iso, 3, &[]);
-    tick(&iso, 3);
+    post_page(&iso, 4, &[]);
+    tick(&iso, 4);
     let value = json(
         &iso,
         "JSON.stringify({ statuses: globalThis.__statuses, grind: globalThis.__grind })",
@@ -1855,7 +1895,7 @@ export default class T extends TaskBot {
         "a posted continue is continued before the Talk-to"
     );
 
-    // Tick 6: a posted hitpoints at zero ends the session: the token is gone
+    // Tick 6: fresh native death chat ends the session: the token is gone
     // and nothing was solved.
     let dead = [script::isolate_fb::StatInput {
         index: 3,
@@ -1876,6 +1916,7 @@ export default class T extends TaskBot {
             }),
             npcs: &on_tile,
             stats: &dead,
+            chat_lines: &DEATH_CHAT,
             ..Scene::default()
         },
     );

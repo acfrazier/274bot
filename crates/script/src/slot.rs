@@ -156,6 +156,8 @@ pub struct SlotScript {
     api: Option<Box<api_seat::ApiSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
+    /// Host-side Stop cleanup outlives the revoked native action owner.
+    stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
     control_generation: u64,
     /// The compiled card's own interact queue: what its tick enqueued, drained
@@ -278,6 +280,7 @@ impl SlotScript {
             api: None,
             retained: None,
             native_runtime: Default::default(),
+            stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
             control_generation: 0,
             #[cfg(feature = "load")]
@@ -877,7 +880,23 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
+        if let Some(run) = self.compiled.as_ref() {
+            match catch_unwind(AssertUnwindSafe(|| run.script.prayer_cleanup())) {
+                Ok(owned) => self.stop_prayer_cleanup.merge(owned),
+                Err(payload) => {
+                    self.pending_logs.push(format!(
+                        "prayer cleanup snapshot panic: {}",
+                        panic_message(&payload)
+                    ));
+                }
+            }
+        }
         self.stop_with_reason(StopReason::Operator, "operator stop");
+    }
+
+    /// Transfer only accepted Combat raises to the ordinary host off-click pump.
+    pub fn take_stop_prayer_cleanup(&mut self) -> crate::combat::RaisedPrayers {
+        std::mem::take(&mut self.stop_prayer_cleanup)
     }
 
     /// Retire a removed slot, distinct from the operator's Stop command.

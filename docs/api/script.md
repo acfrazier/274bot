@@ -162,14 +162,14 @@ holds, reconnect and death reset that window, including ineligible frames
 without an explicit hold callback. This remains distinct from the shared slot's
 wall-clock wedge clock and Gatherer's eligible-gameplay-tick idle bound.
 
-All Rust-native cards observe death through the shared death-chat latch.
-Quester and Sherlock temporarily suppress work at zero HP while the content's
-delayed death message or restored HP is awaited. HP alone neither spends a
-death allowance nor terminates a clue; lethal damage must not turn an active
-Quester dialogue into a living-player combat interruption. Sherlock cancels
-the current clue without counting it as solved on a new death message, even
-if HP has already been restored. Compat clue death arguments retain their
-existing semantics.
+Rust-native cards and the compatibility clue machine observe death through the
+same death-chat latch. Quester, Sherlock and compatibility clues temporarily
+suppress work at zero HP while the content's delayed death message or restored
+HP is awaited. HP alone neither spends a death allowance nor terminates a clue;
+lethal damage must not turn an active Quester dialogue into a living-player
+combat interruption. A new death message cancels the current clue without
+counting it as solved, even while held or after HP has already been restored.
+Posted compatibility arguments cannot manufacture a death observation.
 
 Running Load cards can exempt explicitly named random events through their
 cached `ignoredRandoms()` list. The event is still published, but the guardian
@@ -236,6 +236,10 @@ stamp, even while the enclosing step remains pending. A new receipt publishes
 on change; unchanged polls do not allocate or republish it. These intermediate
 status fields do not complete the step or replace the final outcome used by
 Path predicates.
+
+Loot is optional: an unreachable drop is skipped and the combat step continues.
+Manual movement, cancellation and missing-evidence outcomes still end the
+operation. Non-loot Reach door-recovery failures still park Quester.
 
 ### Dialogue page acknowledgements
 
@@ -623,13 +627,19 @@ cancelled fight or Pause and clear only those prayers before continuing.
 Scoped cleanup waits for missing owned prayer rows rather than treating them
 as off. Accepted dispatches are included even when cancellation occurs before
 Combat's next poll.
-Sherlock retires that obligation when death clears prayers, so a later Pause
-does not turn off prayers the user activates after respawn.
+Quester and Sherlock retire that obligation when death clears prayers, so a
+later Pause or Resume does not turn off prayers the user activates after respawn.
 Quester recipe substeps retain that obligation when a combat child completes,
 and finish scoped cleanup before settling or starting the next recipe child.
-Cancellation revokes the fight's action authority and emits no compensating
-click. A completed fight does not trigger another clear merely because user
-prayers remain on. Explicit `Prayer.clear` retains its broad all-prayers meaning.
+Operator Stop ends the fight too. Before revoking and dropping the native card,
+the slot transfers its accepted Combat raises to the host. The ordinary host
+pump pays only those owed off-clicks with WalkGuard's bounded,
+observation-settled retirement rule; a new run waits for that cleanup instead
+of adopting the raised prayers as its baseline. User prayers remain untouched.
+Cancellation still revokes the fight's action authority; the retirement
+off-clicks belong to the host, not that revoked owner. A completed fight does
+not trigger another clear merely because user prayers remain on. Explicit
+`Prayer.clear` retains its broad all-prayers meaning.
 
 ## Nav vs scripts
 

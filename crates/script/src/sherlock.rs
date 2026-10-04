@@ -387,6 +387,13 @@ impl Script for Sherlock {
             self.hygiene_pending = !self.hygiene_owned.is_empty();
         }
     }
+
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        match self.fight.as_ref() {
+            Some(Fight::Combat(handle)) => handle.prayer_cleanup(),
+            _ => self.hygiene_owned,
+        }
+    }
 }
 
 impl Sherlock {
