@@ -110,10 +110,10 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Echo #14: the isolate keeps the posted loadouts in Rust. `selectedLoadout`
-// passes only the setting name; a re-post replaces the rows it selects from.
+// The isolate keeps posted loadouts in Rust, resolves the saved setting there,
+// and uses a re-posted row when the same name is selected again.
 #[test]
-fn selected_loadout_reads_the_latest_posted_rows() {
+fn selected_loadout_resolves_blank_and_unique_trimmed_case_match() {
     use script::Loadout;
 
     let src = r#"
@@ -121,32 +121,43 @@ import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
 export default class T extends LoopingBot {
     loop() {
         const picked = selectedLoadout(this.settings);
-        (globalThis.__picked ||= []).push(picked ? picked.name : null);
-        globalThis.__worn = picked ? picked.worn : null;
+        (globalThis.__picked ||= []).push(picked.name);
+        globalThis.__worn = picked.worn;
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
         .expect("spawn loadout selection");
-    iso.on_game_tick(1);
     iso.post_loadouts(&[
         Loadout::new("Melee").with_slot("righthand", "Rune scimitar"),
-        Loadout::new("Range").with_slot("righthand", "Oak shortbow"),
+        Loadout::new("Second").with_slot("righthand", "Oak shortbow"),
     ]);
     let mut bag = serde_json::Map::new();
-    bag.insert("loadout".into(), serde_json::json!("Range"));
+    bag.insert("loadout".into(), serde_json::json!(""));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__picked").unwrap(), serde_json::json!(["Melee"]));
+
+    bag.insert("loadout".into(), serde_json::json!(" SECOND "));
     iso.post_settings_bag(&bag);
     iso.on_game_tick(2);
     assert_eq!(
-        iso.probe("__worn").unwrap(),
-        serde_json::json!({ "righthand": "Oak shortbow" })
+        iso.probe("__picked").unwrap(),
+        serde_json::json!(["Melee", "Second"])
     );
-    iso.post_loadouts(&[Loadout::new("Mage")]);
+
+    iso.post_loadouts(&[
+        Loadout::new("Melee").with_slot("righthand", "Rune scimitar"),
+        Loadout::new("Second").with_slot("righthand", "Crossbow"),
+    ]);
     iso.on_game_tick(3);
     assert_eq!(
         iso.probe("__picked").unwrap(),
-        serde_json::json!([null, "Range", null]),
-        "no selection, then the exact named row, then no match after the re-post"
+        serde_json::json!(["Melee", "Second", "Second"])
+    );
+    assert_eq!(
+        iso.probe("__worn").unwrap(),
+        serde_json::json!({ "righthand": "Crossbow" })
     );
     iso.join();
 }
