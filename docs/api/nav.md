@@ -54,20 +54,29 @@ the derived `TransportGraph`. Magic `b"274V"`, version byte **16**. Each
 edge's reusable `item_req` remains a held-item gate; v15 added count-prefixed
 `(id, count)` `consumed_req` and `item_returns` vectors after it. Version 16
 adds a count-prefixed `worn_all_req` ID vector after the existing any-of
-`worn_req`; every listed item must be equipped at traversal time. Resource
-counts must be positive, and a returned item requires consumed resources.
+`worn_req`; every listed item must be equipped at traversal time. It also
+stores an optional exact `takeoff` tile after quest gates and before approach
+geometry. `at` remains the loc/NPC interaction anchor and `to` remains the
+final landing. An absent takeoff preserves legacy radius/footprint admission;
+an exact takeoff admits only that stand, on the same valid game plane as `at`,
+and must pass the edge's standable/footprint admission predicate. Travellers
+walk to that planned tile before interacting and never send from a nearby
+substitute. Requirement counts must be positive, and returned items require
+consumed resources.
 Version 16 retains v11's selected quest-family binding — its
 `quest_facts_sha256` and `quest_extractor_schema` — and typed per-edge
 quest-stage gates; it keeps the content-derived bank-stand table after the
 edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
 wilderness-level formula after the banks, the content-derived zone table, and
-v13's approach geometry after each edge's quest gates. Geometry is tag `0`
-by `width:u8`, `length:u8`, and `blocked_sides:u8` (a rotated four-bit mask).
-Only footprint-backed Ladder/Stairs/AgilityShortcut/SpiritTree edges use it;
-Door, NPC and teleport admission is unchanged. Zone data includes stable
-kind identities/labels, NPC and hazard rows, curated groups, carves, and
-shaped masks. A shape row stores a zone index u16, north extent u8, and
-row-major u64 cell mask; the shaped NPC's `r` byte stores its east extent.
+v13's approach geometry follows the takeoff tag. Geometry is tag `0` (absent)
+or tag `1` followed by `width:u8`, `length:u8`, and `blocked_sides:u8` (a
+rotated four-bit mask). Only footprint-backed
+Ladder/Stairs/AgilityShortcut/SpiritTree edges use it; an exact takeoff still
+honors that geometry. Legacy edges without takeoff retain prior
+Door/NPC/teleport admission. Zone data includes stable kind identities/labels,
+NPC/hazard rows, curated groups, carves and shaped masks. A shape row stores a
+zone index u16, north extent u8, and row-major u64 cell mask; the shaped NPC's
+`r` byte stores its east extent.
 Thus shaped bounds up to 8×8 remain self-describing. Decoding any v16 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. The decoder rebuilds the zone

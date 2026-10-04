@@ -131,7 +131,7 @@ pub(super) fn toll_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                let edge = |consumed_req, quest_req| TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                let edge = |consumed_req, quest_req| TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
                 player_delta: None,
                 at,
                 to,
@@ -229,7 +229,7 @@ pub(super) fn toll_shantay_henge_edges(
             z: p.z,
             level: p.level,
         };
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
         player_delta: None,
         at,
         to: SHANTAY_NORTH_TO,
@@ -248,7 +248,7 @@ pub(super) fn toll_shantay_henge_edges(
         members_req: false,
         wildy_cap: None,
         quest_gates: None, });
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
             x: p.x,

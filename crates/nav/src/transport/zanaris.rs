@@ -90,7 +90,7 @@ pub(super) fn zanaris_door_edges(
         if loc.level != 0 || loc.shape != 0 {
             continue;
         }
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
             x: loc.x,

@@ -1083,6 +1083,7 @@ fn test_route() -> nav::router::Route {
             },
             Leg::Transport {
                 edge: Box::new(TransportEdge {
+                    takeoff: None,
                     kind: TransportKind::Door,
                     player_delta: None,
                     at: wt(3, 0),

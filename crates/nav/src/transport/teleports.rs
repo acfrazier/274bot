@@ -138,7 +138,7 @@ pub(super) fn push_spell_teleport(
         }
         consumed_req.push((id, *count));
     }
-    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: TELEPORT_PLACEHOLDER_AT,
     to: WorldTile {
@@ -223,7 +223,7 @@ pub(super) fn jewellery_teleports(
                     continue;
                 };
                 for dest in &dests {
-                    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+                    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
                     player_delta: None,
                     at: TELEPORT_PLACEHOLDER_AT,
                     to: *dest,

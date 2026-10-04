@@ -226,7 +226,7 @@ impl NavWorld {
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
             let i = graph.edges.len();
-            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
             player_delta: None,
             at: WorldTile {
                 x: d.from.x,

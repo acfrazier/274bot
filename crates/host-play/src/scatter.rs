@@ -104,6 +104,7 @@ mod tests {
 
     fn door(at: WorldTile, to: WorldTile) -> nav::transport::TransportEdge {
         nav::transport::TransportEdge {
+            takeoff: None,
             kind: nav::transport::TransportKind::Door,
             player_delta: None,
             at,

@@ -68,7 +68,7 @@ pub(super) fn rangingguild_door_edges(
         (enter_at, enter_to, vec![(SKILL_RANGED, 40)]),
         (exit_at, exit_to, vec![]),
     ] {
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
         player_delta: None,
         at,
         to,

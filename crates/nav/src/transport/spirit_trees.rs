@@ -122,7 +122,7 @@ pub(super) fn spirit_tree_edges(
             for to in &dests {
                 gates.admit_edge(
                     graph,
-                    TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::SpiritTree,
+                    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::SpiritTree,
                     player_delta: None,
                     at,
                     to: *to,

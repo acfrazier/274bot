@@ -293,7 +293,7 @@ fn load_pack_path_round_trips_a_world() {
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: tile(1, 0, 0),
     to: tile(3, 0, 0),
@@ -360,7 +360,7 @@ fn world_round_trips_the_teleport_layer_off_the_default_find() {
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: tile(0, 0, 0),
     to: tile(4, 4, 0),

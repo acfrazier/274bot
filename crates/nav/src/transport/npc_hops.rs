@@ -112,7 +112,7 @@ pub(super) const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 /// `varp_req` gate could never pass live.
 pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
     for w in ESSENCE_WIZARDS {
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Npc,
         player_delta: None,
         at: w.at,
         to: ESSENCE_MINE_PAD,
@@ -205,7 +205,7 @@ pub(super) const ELKOY_ESCORTS: &[ElkoyEscort] = &[
 /// per escort, keyed from the Elkoy NPC's tile.
 pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
     for e in ELKOY_ESCORTS {
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Npc,
         player_delta: None,
         at: e.at,
         to: e.to,

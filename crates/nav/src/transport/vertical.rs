@@ -472,7 +472,7 @@ fn resolve_ladder_stair_rules(
                         bump(skipped, SKIP_DEST_OUTSIDE, 1);
                         continue;
                     }
-                    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: *kind,
+                    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: *kind,
                     player_delta: landing.player_delta(),
                     at,
                     to,
@@ -608,7 +608,7 @@ pub(super) fn trapdoor_edges(
                     continue;
                 }
                 seen.insert(at);
-                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Ladder,
+                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Ladder,
                 player_delta: landing.player_delta(),
                 at,
                 to,
@@ -649,7 +649,7 @@ pub(super) fn trapdoor_edges(
                 bump(skipped, SKIP_DEST_OUTSIDE, 1);
                 continue;
             }
-            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Ladder,
+            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Ladder,
             player_delta: landing.player_delta(),
             at,
             to,

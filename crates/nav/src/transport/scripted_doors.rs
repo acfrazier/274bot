@@ -180,7 +180,7 @@ pub(super) fn scripted_door_edges(
                     continue;
                 };
                 let gated = guild.skill.is_some() && dir == gated_dir;
-                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
                 player_delta: None,
                 at,
                 to,

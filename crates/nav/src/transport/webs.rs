@@ -50,7 +50,7 @@ pub(super) fn web_edges(
                 bump(skipped, SKIP_WEB_NO_FAR, 1);
                 continue;
             };
-            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
             player_delta: None,
             at,
             to,
@@ -70,7 +70,7 @@ pub(super) fn web_edges(
             wildy_cap: None,
             quest_gates: None, });
             if !slash_blades.is_empty() {
-                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
                 player_delta: None,
                 at,
                 to,

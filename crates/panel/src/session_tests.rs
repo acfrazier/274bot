@@ -3333,7 +3333,7 @@ fn toll_world() -> NavWorld {
         flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 1,
@@ -3535,7 +3535,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         level: 0,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: WorldTile {
         x: 0,
@@ -3641,7 +3641,7 @@ fn picker_confirm_uses_find_with_options() {
         },
         ..TransportGraph::default()
     };
-    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: WorldTile {
         x: 0,

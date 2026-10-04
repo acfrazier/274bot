@@ -179,7 +179,7 @@ fn context() -> MapContext {
     }
 }
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind,
     player_delta: None,
     at,
     to,
@@ -620,7 +620,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
     let from = wt(0, 0, 0);
     let to = wt(0, 0, 1);
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Boat,
+    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Boat,
     player_delta: None,
     at: from,
     to,
