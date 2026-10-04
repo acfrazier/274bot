@@ -160,6 +160,7 @@ impl std::error::Error for StartError {}
 pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
     gather: crate::gatherer::GatherRetained,
+    quester: crate::quester::QuesterRetained,
 }
 
 impl RetainedMemory {
@@ -169,6 +170,10 @@ impl RetainedMemory {
 
     pub fn gather(&mut self) -> &mut crate::gatherer::GatherRetained {
         &mut self.gather
+    }
+
+    pub fn quester(&mut self) -> &mut crate::quester::QuesterRetained {
+        &mut self.quester
     }
 }
 

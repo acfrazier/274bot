@@ -302,19 +302,21 @@ fn prepare(
 fn create(
     run: RunKey,
     config: Arc<PreparedConfig>,
-    _retained: &mut RetainedMemory,
+    retained: &mut RetainedMemory,
 ) -> Result<Box<dyn crate::native::Script>, StartError> {
     let prepared = config.get::<Prepared>().ok_or_else(|| {
         StartError::Config(ConfigError::new("", "config-identity", "not Quester"))
     })?;
-    Ok(Box::new(QueuedQuester::new_with_max_deaths(
+    let mut script = QueuedQuester::new_with_max_deaths(
         run,
         Arc::clone(&prepared.selected),
         Arc::clone(&prepared.quests),
         Arc::clone(&prepared.banks),
         prepared.queue.clone(),
         prepared.max_deaths,
-    )))
+    );
+    script.restore(retained.quester());
+    Ok(Box::new(script))
 }
 
 #[cfg(test)]

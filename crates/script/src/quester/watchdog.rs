@@ -1,4 +1,7 @@
-//! Compact `u64` no-progress watchdog (AIO WARN at 3, PARK at 8).
+//! Compact no-progress watchdog: warn at three unchanged step boundaries and
+//! park at eight. Unlike the slot's wall-clock wedge watchdog and Gatherer's
+//! gameplay-tick idle bound, this counts completed/failed Quester boundaries.
+//! Lifecycle freezes and releases discard the prior signature/count window.
 
 use api::selected::FactKey;
 use api::WorldTile;
