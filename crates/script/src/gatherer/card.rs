@@ -151,38 +151,39 @@ fn resolve_site(
             )),
         );
     }
-    let skill = settings.skill_kind().stat_name();
+    let skill = settings.skill_kind();
+    let skill_stat = skill.stat_name();
     let error = |message| {
         (
             None,
             Some(ConfigError::new("site", "invalid-site", message)),
         )
     };
-    let Some((index, site)) =
-        selected.gather_sites().iter().enumerate().find(|(_, row)| {
-            row.skill.eq_ignore_ascii_case(skill) && row.id.eq_ignore_ascii_case(id)
-        })
-    else {
+    let Some((index, site)) = selected.gather_sites().iter().enumerate().find(|(_, row)| {
+        row.skill.eq_ignore_ascii_case(skill_stat) && row.id.eq_ignore_ascii_case(id)
+    }) else {
         return error(
             if selected
                 .gather_sites()
                 .iter()
                 .any(|row| row.id.eq_ignore_ascii_case(id))
             {
-                format!("{id} is not a {skill} site")
+                format!("{id} is not a {} site", skill.name())
             } else {
                 format!("unknown {id}")
             },
         );
     };
     if !site.keys.iter().any(|key| {
-        selected.gather_option(skill, &key.key).is_some_and(|row| {
-            methods.iter().any(|&index| {
-                row.methods
-                    .iter()
-                    .any(|id| id == catalog.methods()[index].id.0.as_ref())
+        selected
+            .gather_option(skill_stat, &key.key)
+            .is_some_and(|row| {
+                methods.iter().any(|&index| {
+                    row.methods
+                        .iter()
+                        .any(|id| id == catalog.methods()[index].id.0.as_ref())
+                })
             })
-        })
     }) {
         return error(format!("{id} is not for the selected resources"));
     }
@@ -245,7 +246,7 @@ mod tests {
         for (site, message) in [
             ("", "Site location needs a named site"),
             ("gone", "unknown gone"),
-            ("fishing.catherby", "fishing.catherby is not a mining site"),
+            ("fishing.catherby", "fishing.catherby is not a Mining site"),
             (
                 "mining.varrock_east.se",
                 "mining.varrock_east.se is not for the selected resources",
