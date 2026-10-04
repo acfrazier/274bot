@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::quester::pair::QuestPairPort;
 use crate::shim::{InteractReq, ScriptPaint};
-use crate::{CompiledId, FindOptions, SettingDef};
+use crate::{CompiledId, SettingDef};
 use api::game_data::SelectedGameData;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
 use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin, Truth};
@@ -26,12 +26,88 @@ pub use ledger::{HostAction, HostAuthority, HostEffect, QuietReadOwner};
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
 
+/// A walk-local permission bit. Inherit uses the captured global and
+/// per-script settings; Allow can add permission and Forbid can narrow it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WalkBit {
+    #[default]
+    Inherit,
+    Allow,
+    Forbid,
+}
+
+impl WalkBit {
+    pub const fn resolve(self, global: bool, script: bool) -> bool {
+        match self {
+            Self::Inherit => global || script,
+            Self::Allow => true,
+            Self::Forbid => false,
+        }
+    }
+
+    pub(crate) const fn explicit(self) -> Option<bool> {
+        match self {
+            Self::Inherit => None,
+            Self::Allow => Some(true),
+            Self::Forbid => Some(false),
+        }
+    }
+}
+
+impl From<Option<bool>> for WalkBit {
+    fn from(value: Option<bool>) -> Self {
+        match value {
+            None => Self::Inherit,
+            Some(true) => Self::Allow,
+            Some(false) => Self::Forbid,
+        }
+    }
+}
+
+/// Native navigation permissions attached to one request. Native fetch is
+/// intentionally absent; it is not available to compiled scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WalkOptions {
+    pub allow_teleports: WalkBit,
+    pub allow_wilderness: WalkBit,
+    pub allow_danger_zones: WalkBit,
+}
+
+/// The validated, per-script permission bits frozen into a prepared card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WalkPermissions {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+    pub allow_danger_zones: bool,
+}
+
+impl WalkPermissions {
+    fn from_bag(card: CompiledId, bag: &SettingsBag) -> Self {
+        let (teleports, wilderness, danger_zones) = if card == CompiledId("Gatherer") {
+            ("allowTeleports", "allowWilderness", "allowDangerZones")
+        } else {
+            ("allow_teleports", "allow_wilderness", "allow_danger_zones")
+        };
+        let read = |key| {
+            bag.get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        };
+        Self {
+            allow_teleports: read(teleports),
+            allow_wilderness: read(wilderness),
+            allow_danger_zones: read(danger_zones),
+        }
+    }
+}
+
 /// A registry-prepared card-owned value. Only card preparers can construct it.
 pub struct PreparedConfig {
     card: CompiledId,
     schema: u16,
     revision: u64,
     bag: Arc<SettingsBag>,
+    walk_permissions: WalkPermissions,
     value: Option<Box<dyn Any + Send + Sync>>,
 }
 
@@ -43,11 +119,13 @@ impl PreparedConfig {
         bag: Arc<SettingsBag>,
         value: T,
     ) -> Arc<Self> {
+        let walk_permissions = WalkPermissions::from_bag(card, &bag);
         Arc::new(Self {
             card,
             schema,
             revision,
             bag,
+            walk_permissions,
             value: Some(Box::new(value)),
         })
     }
@@ -63,6 +141,9 @@ impl PreparedConfig {
     }
     pub fn bag(&self) -> &SettingsBag {
         &self.bag
+    }
+    pub fn walk_permissions(&self) -> WalkPermissions {
+        self.walk_permissions
     }
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.value.as_deref()?.downcast_ref()
@@ -370,7 +451,7 @@ pub struct WalkRequest {
     pub radius: u16,
     /// Destination settlement mode; `Reach` remains the default behavior.
     pub arrival: nav::arrival::ArrivalKind,
-    pub options: FindOptions,
+    pub options: WalkOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
     pub cross: Box<[Arc<str>]>,
@@ -514,6 +595,84 @@ mod preparation_drop_tests {
         assert!(
             discarded.is_ok(),
             "discarding stale settings unwound into the caller"
+        );
+    }
+}
+#[cfg(test)]
+mod walk_permission_tests {
+    use super::*;
+
+    #[test]
+    fn walk_bits_are_additive_except_for_a_walk_local_forbid() {
+        let cases = [
+            (WalkBit::Inherit, false, false, false),
+            (WalkBit::Inherit, true, false, true),
+            (WalkBit::Inherit, false, true, true),
+            (WalkBit::Allow, false, false, true),
+            (WalkBit::Allow, true, false, true),
+            (WalkBit::Forbid, false, false, false),
+            (WalkBit::Forbid, true, true, false),
+        ];
+        for (bit, global, script, expected) in cases {
+            assert_eq!(bit.resolve(global, script), expected);
+        }
+        assert_eq!(
+            WalkOptions::default(),
+            WalkOptions {
+                allow_teleports: WalkBit::Inherit,
+                allow_wilderness: WalkBit::Inherit,
+                allow_danger_zones: WalkBit::Inherit,
+            }
+        );
+    }
+
+    #[test]
+    fn prepared_permissions_are_frozen_from_the_native_settings_bag() {
+        let bag: SettingsBag = serde_json::from_value(serde_json::json!({
+            "allow_teleports": true,
+            "allow_wilderness": false,
+            "allow_danger_zones": true,
+        }))
+        .unwrap();
+        let roundtrip: SettingsBag =
+            serde_json::from_slice(&serde_json::to_vec(&bag).unwrap()).unwrap();
+        let config = PreparedConfig::new(
+            CompiledId("Receiver"),
+            1,
+            7,
+            Arc::new(roundtrip.clone()),
+            (),
+        );
+        assert_eq!(
+            config.walk_permissions(),
+            WalkPermissions {
+                allow_teleports: true,
+                allow_wilderness: false,
+                allow_danger_zones: true,
+            }
+        );
+        assert_eq!(config.bag(), &roundtrip);
+
+        let legacy = PreparedConfig::new(CompiledId("Receiver"), 1, 8, Arc::default(), ());
+        assert_eq!(legacy.walk_permissions(), WalkPermissions::default());
+    }
+
+    #[test]
+    fn gatherer_permissions_use_camel_case_keys() {
+        let bag: SettingsBag = serde_json::from_value(serde_json::json!({
+            "allowTeleports": true,
+            "allowWilderness": true,
+            "allowDangerZones": false,
+        }))
+        .unwrap();
+        let config = PreparedConfig::new(CompiledId("Gatherer"), 4, 1, Arc::new(bag), ());
+        assert_eq!(
+            config.walk_permissions(),
+            WalkPermissions {
+                allow_teleports: true,
+                allow_wilderness: true,
+                allow_danger_zones: false,
+            }
         );
     }
 }

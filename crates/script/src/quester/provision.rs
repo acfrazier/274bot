@@ -4,7 +4,7 @@ use super::compile::{CompiledItemKind, CompiledProvisioning, StepContext, StepPl
 use super::families::{self, AcquirePlan};
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
 use api::snapshot::{ItemView, WorldTile};
@@ -871,7 +871,7 @@ impl BankRun {
                             facts: Arc::clone(cx.banks),
                             from: from.value,
                             preferences: api::named_banks::BankPreferences::default(),
-                            allow_wilderness: false,
+                            options: WalkOptions::default(),
                             explicit: self.explicit.clone(),
                         },
                         &mut cx.tick.cx,
