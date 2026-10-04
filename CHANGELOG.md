@@ -27,9 +27,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   strength is your choice. A first run of `tui-play` with no `--user` now
   stops with "vault has no profiles" instead of seeding a `test` profile;
   pass `--user NAME` to create the first one.
-- **Navigation packs.** The pack format is now v14; packs you baked yourself
-  with an earlier version, including earlier 0.2.0 builds, are refused and
-  must be rebaked with `nav-pack`.
+- **Navigation packs.** The pack format is now v15; packs you baked yourself
+  with an earlier version, including earlier 0.2.0 builds, are refused with a
+  message to rebake them with `nav-pack`. The bundled pack is rebuilt for you.
+- **Local engines.** The bot no longer guesses where a local game engine is.
+  Give it with `--engine`, the `ENGINE_DIR` environment variable, or the
+  profile's `engine_dir` in `servers.json`; without one, a local profile stops
+  with a message saying how to set it. Public (rs2b2t) profiles need nothing.
 - **Graphics.** On Windows the panel tries Vulkan first and falls back to
   Direct3D 12. On every platform the window now prefers the power-saving GPU.
   `WGPU_BACKEND` and `WGPU_POWER_PREF` override this (see FIRST-START);
@@ -56,6 +60,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - A genie-lamp random event whose skill menu does not open is now rubbed
   again (up to three tries) instead of being given up on after one attempt,
   which left the lamp unredeemed.
+- When a random event drops a bot into the Maze, it gives up after twice the
+  event's own time limit instead of waiting there indefinitely. A script run
+  with random events turned off that finds itself trapped in the Maze stops
+  and says so, instead of standing there showing Working.
 
 ### Navigation
 
@@ -111,6 +119,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   replayed when you resume. Turn this off with "Pause script on manual
   movement" in Nav config (shared by the panel and the TUI). Pausing a script
   yourself, walking by hand and resuming still keeps the script's walk.
+- Boat and cart rides pay their real fares (including the Shilo Village cart).
+  A walk that can't afford a ride refuses before boarding and says how many
+  coins are missing; with bank fetch on it withdraws only what's missing.
+- Bots bank at the nearest bank they can actually walk to, and walk to its
+  public counter. This fixes bots at Edgeville, Seers' Village, Ardougne and
+  the Fishing Guild that aimed for the staff side and skipped the local bank.
+- A walk whose destination is inside a monster area enters that area only to
+  arrive, and a walk that starts inside one leaves it without coming back
+  through it.
 
 ### Profiles and fleet
 
@@ -150,10 +167,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   widens it; you can still drag it anywhere afterwards.
 - Tidier panel: thinner scrollbars, a centred game view, and a Profiles window
   that fits narrow screens without scrolling. Popups no longer balloon or
-  clip "Keep editing" when opened from a far-right Edit button. The Log
-  section can be detached into a floating in-app window (Detach log / Attach
-  log), the session-log setting shows the file being written, and Status
-  hides empty rows.
+  clip "Keep editing" when opened from a far-right Edit button. The Log can
+  also open as its own dockable tab (the **Log** button), sharing its filters
+  with the inline log, the session-log setting shows the file being written,
+  and Status hides empty rows. Script status changes, including why a script
+  stopped, are written to the log.
 - The panel no longer freezes ("Not Responding") at startup on Windows
   laptops with two graphics chips (see Upgrading).
 - On Linux (X11) the panel exits cleanly instead of crashing when its window
@@ -181,6 +199,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 - In the TUI browser, a card whose import cannot be resolved now shows the
   failing import instead of only dimming. `tui-play --help` prints usage and
   exits 0.
+- Option settings in the TUI: Space steps through the choices and Enter opens a
+  searchable list.
 
 ### Scripts
 
@@ -190,6 +210,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
   when you edit those settings again before the first save finishes. The start
   is not reported as a failure while it waits, and it does not run on the
   older settings.
+- A native script that can't continue (for example, out of a required supply
+  or unable to walk back to its spot) now stops and keeps the reason, shown as
+  "stopped (blocked)" in the panel and the TUI.
+- In native fights, prayers you turned on yourself stay on. When a fight ends
+  or you stop the script, only the prayers the bot switched on are turned off.
+  Protection prayers follow each attacker's actual attack style, and potion
+  sips and eating follow one shared rule.
+- Fixed several monsters being treated as switching attack style when you pray
+  against them (for example the Zamorak wizard).
+- Scripts using the classic dialogue helpers no longer press Continue twice on
+  the same page.
 
 ### Audio
 
@@ -213,12 +244,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.9` 
 These features are usable now and still growing; this list changes as they land.
 
 - **Quester** (revision 289): runs quests from built-in quest guides, reading
-  progress from the quest journal and picking up again after Stop/Start. More
-  quests, and fights handled by a shared combat machine, are being added
-  through 0.2.0.
-- **Gatherer**: woodcutting, mining and fishing from a start tile, a custom
-  area, or Auto, which searches outward for the nearest usable spots. Banking
-  trips, death recovery and self-defence are being added through 0.2.0.
+  progress from the quest journal and picking up again after Stop/Start. Pick
+  quests, skips and their order from lists. It recovers from up to two deaths
+  per run, like the Gatherer, returns to where it was working, and stops on a
+  third. More quests are being added through 0.2.0.
+- **Gatherer**: woodcutting, mining and fishing at a named place from the game
+  map (for example Catherby fishing or Varrock East mine), a start tile, a
+  custom area, or Auto, which searches outward for the nearest usable spots.
+  Resources, fishing methods (grouped by spot and tool) and food are picked
+  from lists. In Bank mode it banks everything except the tools for its next
+  trip at the nearest bank it can walk to, then walks back to the spot; in
+  Drop mode it drops them.
 
 ## [0.1.9.1] — 2026-09-28 — Alpha 4 patch
 
