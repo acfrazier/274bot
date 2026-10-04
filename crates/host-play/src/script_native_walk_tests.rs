@@ -2837,3 +2837,116 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     let (reach, _) = request.calculate();
     assert!(matches!(reach, RouteOutcome::NoPath));
 }
+
+#[test]
+fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
+    let mut rig = open_rig(false);
+    rig.slot().lock().unwrap().stop();
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests =
+        Arc::new(api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap());
+    let mut document: serde_json::Value = serde_json::from_str(include_str!(
+        "../../script/paths/289/fixtures/combat_melee_upkeep.json"
+    ))
+    .unwrap();
+    let args = &mut document["roles"][0]["sequences"][0]["steps"][0]["args"];
+    args["target"]["npc"] = serde_json::json!("ardougne_archer");
+    let path = script::quester::compile::compile_path(
+        &serde_json::to_vec(&document).unwrap(),
+        &selected,
+        &quests,
+    )
+    .unwrap();
+    let quester = script::quester::runner::Quester::new(
+        api::selected::RunKey {
+            slot: 0,
+            run: 0,
+            session: 0,
+        },
+        path,
+        Arc::clone(&selected),
+        quests,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+    );
+    rig.slot()
+        .lock()
+        .unwrap()
+        .start_test_script(Box::new(quester), Some(Arc::clone(&selected)))
+        .unwrap();
+    let here = WorldTile {
+        x: 2457,
+        z: 3302,
+        level: 0,
+    };
+    rig.rebuild_snapshot_at(here);
+    seed_protect_frame(&mut rig.snapshot, 43);
+    seed_prayer_widgets(&mut rig.snapshot);
+    seed_missile_launch(&mut rig.snapshot);
+    rig.snapshot.seed_chat_lines(Vec::new());
+    rig.snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Imp Catcher".into(),
+            component_id: 42,
+            colour: 0xf8f800,
+        }],
+        true,
+    );
+    let skin = selected.prayer_by_name("Thick Skin").unwrap();
+    let protect = selected.prayer_by_name("Protect from Missiles").unwrap();
+    let mut varps = rig.snapshot.varps().to_vec();
+    varps
+        .iter_mut()
+        .find(|row| row.index == skin.varp)
+        .unwrap()
+        .value = 1;
+    rig.snapshot.seed_varps(varps);
+    let raised_tick = (1..=20)
+        .find(|tick| {
+            rig.snapshot.seed_tick(*tick);
+            rig.observe_with_here(u64::from(*tick), here);
+            rig.driver
+                .if_button_components
+                .contains(&protect.button_com)
+        })
+        .expect("the real Combat must admit a protect raise");
+    // Stop before Combat polls that accepted receipt: ownership must include
+    // the host-accepted raise, not only the machine's last polled mask.
+    let before_stop = rig.driver.if_button_components.len();
+    let mut varps = rig.snapshot.varps().to_vec();
+    varps
+        .iter_mut()
+        .find(|row| row.index == protect.varp)
+        .unwrap()
+        .value = 1;
+    rig.snapshot.seed_varps(varps);
+    rig.slot().lock().unwrap().stop();
+    rig.snapshot.seed_tick(raised_tick + 1);
+    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    assert_eq!(
+        &rig.driver.if_button_components[before_stop..],
+        &[protect.button_com],
+        "Stop owes only Combat's accepted protect, never the user's Thick Skin"
+    );
+    rig.observe_with_here(u64::from(raised_tick + 1), here);
+    assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
+    assert_eq!(
+        rig.snapshot
+            .varps()
+            .iter()
+            .find(|row| row.index == skin.varp)
+            .unwrap()
+            .value,
+        1
+    );
+    let mut varps = rig.snapshot.varps().to_vec();
+    varps
+        .iter_mut()
+        .find(|row| row.index == protect.varp)
+        .unwrap()
+        .value = 0;
+    rig.snapshot.seed_varps(varps);
+    rig.snapshot.seed_tick(raised_tick + 2);
+    rig.observe_with_here(u64::from(raised_tick + 2), here);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    assert_eq!(rig.driver.if_button_components.len(), before_stop + 1);
+}

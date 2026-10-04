@@ -179,6 +179,8 @@ pub(crate) struct NavBot {
     pub(crate) walk_guard: Option<script::combat::WalkGuard>,
     /// Retired guard's bounded, observation-settled protect cleanup.
     pub(crate) walk_guard_off: Option<super::script_walk::WalkGuardOff>,
+    /// Accepted Combat raises retired by operator Stop.
+    pub(crate) combat_prayer_off: Option<super::script_walk::CombatPrayerOff>,
     /// Non-terminal protection warnings, drained to the correlated owner.
     pub(crate) walk_guard_events: Vec<(script::native::HostAuthority, script::native::WalkEvent)>,
     /// Latest terminal script generation whose navigation state was reset.

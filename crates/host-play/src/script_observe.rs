@@ -375,6 +375,26 @@ pub(crate) fn script_observe_cached_with_channels(
             break 'script_slot;
         };
         slot.observe_lifecycle();
+        let stop_prayers = slot.take_stop_prayer_cleanup();
+        let prayer_cleanup_hold = if let Some(snapshot) = snapshot.filter(|_| up) {
+            let mut bots = navs.lock().unwrap();
+            if !stop_prayers.is_empty() {
+                let bot = bots.entry(name.to_owned()).or_default();
+                super::script_walk::owe_combat_prayers_off(
+                    bot,
+                    stop_prayers,
+                    snapshot.tick() as u16,
+                );
+            }
+            if let Some(bot) = bots.get_mut(name) {
+                super::script_walk::finish_combat_prayers(driver, snapshot, bot, Some(name));
+                bot.combat_prayer_off.is_some()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         if matches!(
             slot.state(),
             script::RunState::Starting | script::RunState::Paused
@@ -643,7 +663,7 @@ pub(crate) fn script_observe_cached_with_channels(
             // Recovery hold is host-owned and must still reach the isolate so
             // loop/pump freeze, without being treated as that external freeze.
             let recovery_hold = slot.watchdog().holds_script_actions();
-            let isolate_hold = hold || recovery_hold;
+            let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
             if slot.load_active() {
                 let (
                     teleports_enabled,
@@ -1016,6 +1036,7 @@ pub(crate) fn script_observe_cached_with_channels(
             }
         } else if slot.state() == script::RunState::Running
             && !slot.watchdog().holds_script_actions()
+            && !prayer_cleanup_hold
         {
             let (update, reqs, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {

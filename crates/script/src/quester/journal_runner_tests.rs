@@ -531,6 +531,250 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
         );
     }
 }
+
+#[test]
+fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_hold() {
+    use api::snapshot::{
+        ActorKind, ActorTargetView, ChatLineView, NpcView, ProjectileView, StatView, VarpView,
+        WorldTile,
+    };
+
+    for (freeze, thaw) in [
+        (Interrupt::Pause, Interrupt::Resume),
+        (Interrupt::Hold(true), Interrupt::Hold(false)),
+    ] {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let path = super::super::compile::compile_path(
+            include_bytes!("../../paths/289/fixtures/combat_melee_food_only.json"),
+            &data,
+            &quests,
+        )
+        .unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            Arc::clone(&path),
+            Arc::clone(&data),
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        script.stage = Some(path.colour_not_started.clone());
+        script.needs_read = false;
+
+        let here = WorldTile {
+            x: 2458,
+            z: 3303,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(vec![], 28);
+        snapshot.seed_equipment(vec![]);
+        let mut local = super::super::families::tests::local_player(here);
+        local.player.actor.health = 40;
+        local.player.actor.total_health = 40;
+        local.player.actor.in_combat = true;
+        local.player.actor.target = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        });
+        snapshot.seed_local_player(local);
+        snapshot.seed_world(api::snapshot::WorldStateView::default());
+        snapshot.seed_players(vec![]);
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot.seed_chat_lines(vec![]);
+
+        let warlord = data.npc_by_config("khazard_warlord").unwrap();
+        snapshot.seed_npcs(vec![NpcView {
+            index: 7,
+            r#type: Some(warlord.id as usize),
+            name: warlord.display.clone(),
+            actions: vec![Some("Attack".into())],
+            tile: here,
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 8,
+            total_health: 8,
+            face_entity: -1,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 2,
+            size: 1,
+            network: here,
+            x: here.x,
+            z: here.z,
+            yaw: 0,
+        }]);
+        snapshot.seed_projectiles(vec![ProjectileView {
+            spotanim: 9,
+            level: 0,
+            src: here,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            t1: 0,
+            t2: 30,
+        }]);
+        let stats = |hitpoints| {
+            (0..25)
+                .map(|index| StatView {
+                    index,
+                    name: api::snapshot::stat_name(index as usize).into(),
+                    effective: if index == 3 {
+                        hitpoints
+                    } else if index == 5 {
+                        43
+                    } else {
+                        40
+                    },
+                    base: if index == 3 {
+                        hitpoints
+                    } else if index == 5 {
+                        43
+                    } else {
+                        40
+                    },
+                    xp: 0,
+                    used: api::snapshot::stat_used(index as usize),
+                })
+                .collect::<Vec<_>>()
+        };
+        snapshot.seed_stats(stats(40));
+
+        let skin = data.prayer_by_name("Thick Skin").unwrap();
+        let original = data.prayer_by_name("Protect from Melee").unwrap();
+        let raised = data.prayer_by_name("Protect from Missiles").unwrap();
+        let prayers = |protect_varp| {
+            data.prayers()
+                .iter()
+                .map(|row| VarpView {
+                    index: row.varp,
+                    value: i32::from(row.varp == skin.varp || row.varp == protect_varp),
+                })
+                .chain([VarpView {
+                    index: crate::combat::OPTION_NODEF,
+                    value: 0,
+                }])
+                .collect()
+        };
+        snapshot.seed_varps(prayers(original.varp));
+
+        let mut ledger = None;
+        assert_eq!(
+            drive(&mut script, &snapshot, &mut ledger, 1),
+            ScriptFlow::Continue
+        );
+        assert_eq!(
+            drive(&mut script, &snapshot, &mut ledger, 2),
+            ScriptFlow::Continue
+        );
+        let buttons: Vec<_> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
+                    Some(*component_id)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(buttons, vec![raised.button_com]);
+        assert!(matches!(
+            ack(&mut ledger, 2),
+            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                if component_id == raised.button_com
+        ));
+        assert!(script
+            .step
+            .as_ref()
+            .expect("production Quester tick starts Combat")
+            .prayer_cleanup()
+            .contains(raised.varp));
+
+        snapshot.seed_varps(prayers(-1));
+        snapshot.seed_stats(stats(0));
+        snapshot.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "Oh dear, you are dead!".into(),
+            sequence: 1,
+        }]);
+        assert_eq!(
+            drive(&mut script, &snapshot, &mut ledger, 3),
+            ScriptFlow::Continue
+        );
+        assert_eq!(script.deaths, 1, "the native DeathLatch detects death");
+        assert!(script.step.is_none(), "death cancels the live Combat step");
+
+        script.interrupt(freeze);
+        snapshot.seed_stats(stats(40));
+        snapshot.seed_chat_lines(vec![]);
+        let mut respawned = super::super::families::tests::local_player(here);
+        respawned.player.actor.health = 40;
+        respawned.player.actor.total_health = 40;
+        snapshot.seed_local_player(respawned);
+        snapshot.seed_varps(prayers(raised.varp));
+        script.interrupt(thaw);
+        drive(&mut script, &snapshot, &mut ledger, 4);
+        drive(&mut script, &snapshot, &mut ledger, 5);
+
+        assert!(
+            script.clear_prayers.is_none(),
+            "death must revoke any stale scoped clear before Resume"
+        );
+        assert!(!script.prayer_cleanup_pending);
+        assert_eq!(
+            snapshot
+                .varps()
+                .iter()
+                .find(|row| row.index == raised.varp)
+                .unwrap()
+                .value,
+            1,
+            "the user's prayer raised after respawn stays on"
+        );
+        assert!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .all(|action| !matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                        if *component_id == raised.button_com
+                )),
+            "resumption must not send the old Combat-owned prayer clear"
+        );
+    }
+}
+
 #[test]
 fn unknown_skip_never_dispatches_and_wait_is_bounded() {
     let (mut script, mut snapshot) = fixture(false);
