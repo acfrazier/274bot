@@ -2717,6 +2717,22 @@
           ],
           "description": "Optional sourced stand tile; `anchor` is accepted as an alias."
         },
+        "cross": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Danger-zone permissions for this step's return and abort walks.",
+          "default": []
+        },
+        "guard": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Use protect to enable WalkGuard protection on this step's own walks.",
+          "default": null
+        },
         "area": {
           "anyOf": [
             {

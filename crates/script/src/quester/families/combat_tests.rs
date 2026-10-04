@@ -1,6 +1,8 @@
 use super::*;
 use crate::native::WalkEnd;
-use crate::quester::compile::{compile_path, CompileContext, PredicateContext, StepOutcome};
+use crate::quester::compile::{
+    compile_path, decode_args, CompileContext, PredicateContext, StepOutcome,
+};
 use crate::quester::loadouts::LoadoutOverlay;
 use crate::quester::progress::CompiledProgress;
 use api::game_data::SelectedGameData;
@@ -117,13 +119,17 @@ fn combat_owned_walk_crossing_and_protection_compile_independently() {
             } else {
                 input.as_object_mut().unwrap().remove("guard");
             }
-            compile(&input, &cx).unwrap();
+            compile(decode_args::<CombatArgs>(&input).unwrap(), &cx).unwrap();
         }
     }
     let mut invalid = args;
     invalid["guard"] = serde_json::json!("off");
     assert_eq!(
-        compile(&invalid, &cx).err().unwrap().code.as_ref(),
+        compile(decode_args::<CombatArgs>(&invalid).unwrap(), &cx)
+            .err()
+            .unwrap()
+            .code
+            .as_ref(),
         "invalid-args"
     );
 }
