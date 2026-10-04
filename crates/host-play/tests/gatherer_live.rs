@@ -2875,18 +2875,13 @@ impl GatherSlot {
     }
 
     fn status_tool_id(&self, status: &script::native::ScriptStatus) -> Option<i32> {
-        let name = text_field(status, "tool")?;
-        self.snapshot
-            .inventory()
-            .iter()
-            .chain(self.snapshot.equipment())
-            .find(|item| {
-                item.def
-                    .name
-                    .as_deref()
-                    .is_some_and(|item_name| item_name.eq_ignore_ascii_case(name))
-            })
-            .map(|item| item.def.id)
+        // Gatherer renders this status field as an item id, optionally "(worn)".
+        let id = text_field(status, "tool")?
+            .split_whitespace()
+            .next()?
+            .parse::<i32>()
+            .ok()?;
+        (id >= 0).then_some(id)
     }
 
     fn native_deposit_ids(
