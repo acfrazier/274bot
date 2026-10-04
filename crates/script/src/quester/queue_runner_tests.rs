@@ -275,3 +275,41 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
         .any(|field| field.key == "deaths" && matches!(&field.value, StatusValue::Integer(3)));
     assert!(reported_deaths);
 }
+
+#[test]
+fn cached_path_does_not_share_account_choices_between_activations() {
+    use crate::quester::choices::{CrestGauntlets, QuestChoices};
+    let (mut cooking, mut snapshot) = fixture(cook_settings());
+    let (mut goldsmith, _) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    cooking.set_choices(QuestChoices {
+        crest_gauntlets: CrestGauntlets::Cooking,
+    });
+    goldsmith.set_choices(QuestChoices {
+        crest_gauntlets: CrestGauntlets::Goldsmith,
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        cooking.tick(native).unwrap();
+    });
+    let path = cooking.preparing.take().unwrap().join().unwrap().unwrap();
+    // The second account receives the very same compiled document.
+    goldsmith.active_index = Some(0);
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        cooking.activate(native, Arc::clone(&path));
+        goldsmith.activate(native, Arc::clone(&path));
+    });
+    let a = cooking.active.as_ref().unwrap();
+    let b = goldsmith.active.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&a.path, &b.path));
+    assert_eq!(a.choices.crest_gauntlets, CrestGauntlets::Cooking);
+    assert_eq!(b.choices.crest_gauntlets, CrestGauntlets::Goldsmith);
+}

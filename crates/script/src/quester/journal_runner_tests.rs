@@ -457,6 +457,7 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
                 required_after,
                 bank: &script.bank,
                 banks: &script.banks,
+                choices: &script.choices,
             };
             let run = super::super::families::combat::tests::policy_s2_run_for_runner(&mut cx);
             if wraps_recipe {
