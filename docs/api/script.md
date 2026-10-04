@@ -210,6 +210,18 @@ after every dose or meal; death resets those latches. Paths marked
 `owns_inventory` retain their authored inventory steps. Automatic coin funding
 is not provided.
 
+Path loadout headers use selected item aliases, such as `rune_scimitar` and
+`4doseprayerrestore`. Compilation resolves each worn and carried item once into
+the display-name rows consumed by Loadouts; operator overrides remain ordinary
+display-name Loadouts rows.
+Certificate aliases in either header section are rejected before that conversion;
+the shared display name must not erase a certificate's distinct item identity.
+
+Acquisition recipes can call other recipes with `acquire` steps. The compiler
+binds dependencies first and compiles each recipe once, independent of its
+declaration order. A chain can contain at most 32 recipes. A cycle returns
+`recipe-cycle` with the cycle's recipe names. A missing dependency remains
+`unresolved-recipe`; excess nesting returns `recipe-nesting-limit`.
 Native Quester and Gatherer bank selection chooses the eligible, routable bank
 with the lowest walking-route cost in ticks; teleport grants and held runes do
 not change that ranking. A bank must have usable packed or declared access.
@@ -261,6 +273,14 @@ chat-history ring line is not page progress. The host computes the shared native
 fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
+
+Selected `DialogueUiIds` provide only source-proven main `scroll` and `book`
+identities. Book forwarding resolves the script's forward handler separately
+from its last-page visibility marker; generic component names in revision 274
+are not guessed from their numeric ids. These facts are part of the pinned
+main asset and its source provenance, not the opt-in `DebugCatalog`.
+Message and object-box `mesbox` pages are chat surfaces and keep the ordinary
+chat continuation path.
 
 ### Quester expected combat handoff
 
@@ -703,10 +723,37 @@ the host's shared `nav::router::find` and the slot pump's
 `nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walks correlate
-host outcomes with their run, action and request owners. Authored Path `walk`
-steps may opt into hold-mode protection with `guard: "protect"` and name the
-protected-zone exemptions in `cross`; a nonempty `cross` without that guard is
-rejected during compilation.
+host outcomes with their run, action and request owners. Inherited walk options
+resolve against the current global grants and the instance's committed script
+permissions, captured at Start and when a settings revision becomes effective.
+Either may allow the walk, while a walk-local `false` forbids it even when a global or
+per-script setting allows it. Native script settings default off and use
+`allow_teleports`, `allow_wilderness` and `allow_danger_zones` (Gatherer
+exposes camelCase ids). Path `walk` steps accept the same three optional
+booleans, so omitted bits inherit and `true` opts in for only that step. Native
+script walking never exposes bank fetch.
+
+The panel Nav config and TUI settings share these global permissions in
+`panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
+walks. Danger is off by default; the map danger control opts in for this walk
+only while the global is off, and is replaced by a warning when it is on.
+Native scripts cannot use BankBudget, even when global bank fetch is enabled.
+Native bank selection ranks walking routes without teleports; the walk to the
+chosen bank may still use granted teleports. Compatibility scripts keep their
+existing option wiring, including always-enabled wilderness and bank fetch.
+All shared preference writers, including the TUI log pane, serialize through
+an in-process mutex and the `panel-ui.json.lock` advisory lock. Both frontends
+refresh a shared durable walk-permission projection for danger controls and
+inherited script rows, and refresh it again at manual admission. Missing or
+malformed preferences fail closed. A peer frontend's grant change therefore
+updates both the warning and the next walk's options.
+Danger grants permit a fallback crossing, not a shorter dangerous route:
+the router always tries the filtered safe pass first. Released Cook's
+Assistant mill walks inherit teleport permission, as their frozen callers do.
+
+Path `cross` names danger-zone exemptions for that walk; it is independent of
+`guard: "protect"`, which controls hold-mode protection. A named crossing may
+be used with or without that guard.
 
 The guard holds the selected protection prayer without attacking, eating or
 flicking. A Prayer-level shortfall, or zero points with no prayer potion, produces

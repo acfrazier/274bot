@@ -326,7 +326,7 @@ export type InteractReq =
   | { op: 'player'; name: string; action: string}
   | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; source_item_id?: number | null; source_item_slot?: number | null; target_item_id?: number | null; target_item_slot?: number | null}
   | { op: 'use-widget-on'; component_id: number; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null}
-  | { op: 'continue'}
+  | { op: 'continue'; component_id?: number}
   | { op: 'answer'; option: number}
   | { op: 'answer-count'; value: number}
   | { op: 'if-button'; component_id: number}
@@ -986,6 +986,12 @@ export interface GatherSettings {
   deathPolicy?: 'Stop' | 'Recover';
   /** 0..255, default 2 */
   maxDeaths?: number;
+  /** default false */
+  allowTeleports?: boolean;
+  /** default false */
+  allowWilderness?: boolean;
+  /** default false */
+  allowDangerZones?: boolean;
 }
 
 /** The Gatherer's published status, keyed exactly as the card publishes it (gatherer::status::KEYS). `xp_per_hour` is -1 below five minutes elapsed. */

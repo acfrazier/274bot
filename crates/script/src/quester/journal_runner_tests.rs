@@ -19,7 +19,7 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     step.kind = "wait".into();
     step.args = serde_json::json!({"until":{"All":[]},"max_ticks":10});
     step.skip_if = PredicateDocument::Any(vec![]);
-    step.advances = journal;
+    step.advances = Some(journal);
     step.settle = if journal {
         PredicateDocument::Fact {
             kind: "stage_in".into(),
@@ -894,12 +894,12 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
     let step = &mut Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0];
     step.plan = Arc::new(super::super::families::AcquirePlan {
         recipe: Arc::from("synthetic-journal"),
-        steps: vec![super::super::families::CompiledAcquireStep {
+        steps: Arc::from(vec![super::super::families::CompiledAcquireStep {
             advances: true,
             skip_if: Arc::clone(&step.skip_if),
             settle: Arc::clone(&step.settle),
             plan: Arc::clone(&step.plan),
-        }],
+        }]),
     });
     step.advances = false;
     let mut ledger = None;
@@ -1345,7 +1345,9 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog)
+            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+                component_id: None
+            })
         ));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);

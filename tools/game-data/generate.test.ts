@@ -14,6 +14,8 @@ import { familyBytes, familyInputs, generateSelected, revisions, requestedRevisi
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
+import './dialogue-ui.test.ts';
+import { extractKaramjaFacts } from './extractors/karamja.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -191,9 +193,22 @@ data=levelrequired,75
 data=maxhit,15
 data=members,true
 data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
 data=anim,^test_magic_seq
 data=staffanim,^test_magic_seq
 data=runesrequired,bloodrune,1,firerune,7,airrune,5
+data=spotanim_target,fire_impact,10
+data=continue_by_autocast,true
+[magic_spell_crumble_test]
+data=spellcom,crumble_button
+data=spell,^test_crumble
+data=levelrequired,39
+data=maxhit,8
+data=members,false
+data=wornrequired,staff_of_fire
+data=worn_reqmessage,"You need a fire staff."
+data=spotanim_target,crumble_test_impact,5
+data=runesrequired,chaosrune,1,airrune,2,earthrune,2
 data=continue_by_autocast,true
 `);
 fs.writeFileSync(path.join(magic, 'magic_staff.dbrow'), `[magic_staff_fire]
@@ -207,18 +222,27 @@ data=rune,earthrune
 data=staff,staff_of_air
 data=rune,airrune
 `);
+fs.writeFileSync(path.join(pack, 'interface.pack'), '3001=wind_strike_button\n3002=fire_wave_button\n3003=crumble_button\n');
+fs.writeFileSync(path.join(pack, 'spotanim.pack'), '5=spell_target\n6=fire_impact\n7=crumble_test_impact\n85=failedspell_impact\n');
+const autoCastDir = path.join(content, 'scripts/skill_combat/scripts/player');
+fs.mkdirSync(autoCastDir, { recursive: true });
+fs.writeFileSync(path.join(autoCastDir, 'auto_cast.rs2'), `[if_button,staff_spells:ssb0] @set_autocast_spell(^test_spell);\n[if_button,staff_spells:ssb1] @set_autocast_spell(^fire_wave);\n`);
+const magicInterfaces = path.join(content, 'scripts/skill_magic/interfaces');
+fs.mkdirSync(magicInterfaces, { recursive: true });
+fs.writeFileSync(path.join(magicInterfaces, 'magic.if'), `[test_spell]\naction=Wind strike\n[fire_wave]\naction=Fire wave\n[test_crumble]\naction=Crumble test\n`);
 const magicItems = [
     { id: 1, debugname: 'mindrune', name: 'Mind rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 2, debugname: 'airrune', name: 'Air rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 3, debugname: 'firerune', name: 'Fire rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 4, debugname: 'bloodrune', name: 'Blood rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 5, debugname: 'earthrune', name: 'Earth rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 9, debugname: 'chaosrune', name: 'Chaos rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 6, debugname: 'staff_of_fire', name: 'Staff of fire', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 7, debugname: 'lava_battlestaff', name: 'Lava battlestaff', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
     { id: 8, debugname: 'staff_of_air', name: 'Staff of air', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
 ];
 const magicFacts = extractMagicFacts(content, magicItems);
-assert.equal(magicFacts.spells.length, 2, 'unnamed autocast rows are not SPELL_DB');
+assert.equal(magicFacts.spells.length, 3, 'manual combat spells join the table; rows without a spell button stay out');
 assert.equal(magicFacts.spells[0].name, 'Wind Strike');
 assert.equal(magicFacts.spells[0].ssb, 0);
 assert.deepEqual(magicFacts.spells[0].runes.map((rune) => [rune.name, rune.count]), [['Mind rune', 1], ['Air rune', 1]]);
@@ -234,6 +258,24 @@ assert.equal(magicFacts.spells[1].spellcom, 'fire_wave_button');
 assert.equal(magicFacts.spells[1].maxhit, 15);
 assert.equal(magicFacts.spells[1].members, true);
 assert.equal(magicFacts.spells[1].wornrequired, 'staff_of_fire');
+assert.equal(magicFacts.spells[0].autocast_selectable, true);
+assert.equal(magicFacts.spells[0].component_id, 3001);
+assert.equal(magicFacts.spells[0].source_row, 'magic_spell_wind_strike');
+assert.equal(magicFacts.spells[1].autocast_selectable, true);
+assert.equal(magicFacts.spells[1].component_id, 3002);
+assert.equal(magicFacts.spells[0].impact_spotanim, 5);
+assert.equal(magicFacts.spells[1].impact_spotanim, 6);
+const crumble = magicFacts.spells.find((spell) => spell.source_row === 'magic_spell_crumble_test')!;
+assert.equal(crumble.name, 'Crumble test');
+assert.equal(crumble.autocast_selectable, false, 'the staff chooser excludes manual-only spells');
+assert.equal(crumble.ssb, -1);
+assert.equal(crumble.component_id, 3003);
+assert.equal(crumble.maxhit, 8);
+assert.equal(crumble.members, false);
+assert.deepEqual(crumble.runes.map((rune) => [rune.name, rune.count]), [['Chaos rune', 1], ['Air rune', 2], ['Earth rune', 2]]);
+assert.equal(crumble.worn_reqmessage, 'You need a fire staff.');
+assert.equal(crumble.impact_spotanim, 7);
+assert.equal(magicFacts.failed_spell_impact, 85, 'the miss splash is one selected scalar, not per-spell data');
 const npcSource = path.join(content, 'scripts/npc/config/combat.npc');
 const npcScriptDir = path.join(content, 'scripts/npc/scripts');
 fs.mkdirSync(path.dirname(npcSource), { recursive: true });
@@ -247,6 +289,7 @@ fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
     '1=arrow_launch', '2=arrow_travel', '3=spell_origin', '4=spell_projectile',
     '5=spell_target', '6=failedspell_impact', '7=firebreath_attack',
     '8=fireblast_travel', '9=fireblast_impact',
+    '10=fire_impact', '11=crumble_test_impact',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n');
 fs.writeFileSync(npcSource, `[test_npc]
@@ -267,15 +310,19 @@ param=proj_launch,arrow_launch
 param=proj_travel,arrow_travel
 [dragon_npc]
 name=Dragon NPC
+wanderrange=0
 op1=Attack
 hitpoints=60
 param=attackrate,4
 [zamorak_like]
 name=Zamorak Like
+wanderrange=6
+maxrange=0
 op1=Attack
 hitpoints=80
 [saradomin_like]
 name=Saradomin Like
+wanderrange=9
 op1=Attack
 hitpoints=120
 `);
@@ -385,7 +432,19 @@ fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
 const combatScripts = parseCombatScripts(content);
 assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
-const npcFacts = extractNpcNamesFacts(content, combatScripts);
+const npcFacts274 = extractNpcNamesFacts(content, 274, combatScripts);
+const npcFacts = extractNpcNamesFacts(content, 289, combatScripts);
+for (const [facts, expected] of [
+    [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
+    [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],
+] as const) {
+    for (const [config, wanderrange, maxrange] of expected) {
+        const row = facts.rows.find((entry) => entry.config === config)!;
+        assert.equal(row.wanderrange, wanderrange, `${config}: runtime wander default`);
+        assert.equal(row.maxrange, maxrange, `${config}: pinned runtime maxrange derivation/clamp`);
+    }
+}
+assert.throws(() => extractNpcNamesFacts(content, 275, combatScripts), /unsupported revision 275/);
 const testNpc = npcFacts.rows.find((row) => row.config === 'test_npc')!;
 assert.equal(testNpc.attackrate, 6);
 assert.equal(testNpc.headicon, 8);
@@ -408,13 +467,13 @@ const saradominLike = npcFacts.rows.find((row) => row.config === 'saradomin_like
 assert.equal(saradominLike.attack_kind, 'mixed');
 assert.equal(saradominLike.counter_protect, true);
 fs.writeFileSync(combatParamFile, combatParams.replace('default=0', 'default=7'));
-const changedDefaults = extractNpcNamesFacts(content, combatScripts);
+const changedDefaults = extractNpcNamesFacts(content, 289, combatScripts);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'dragon_npc')?.strengthbonus, 7);
 assert.equal(changedDefaults.rows.find((row) => row.config === 'test_npc')?.strengthbonus, 8, 'an explicit NPC bonus overrides the content default');
 fs.writeFileSync(combatParamFile, combatParams);
 const npcSourceBytes = fs.readFileSync(npcSource);
 fs.writeFileSync(npcSource, npcSourceBytes.toString().replace('param=attackrate,6', 'param=attackrate,300'));
-assert.throws(() => extractNpcNamesFacts(content, combatScripts), /attackrate is out of range/);
+assert.throws(() => extractNpcNamesFacts(content, 289, combatScripts), /attackrate is out of range/);
 fs.writeFileSync(npcSource, npcSourceBytes);
 // combat_axe is intentionally absent so a recognized but unresolved root must stay null.
 fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n900=combat_bow\n901=combat_heavysword\n902=combat_hacksword\n903=combat_stabsword\n904=combat_unarmed\n910=combat_crossbow\n911=combat_thrown\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n6700=duel_select_type:inv\n6701=duel_select_type:otherinv\n6500=duel_confirm:inv\n6501=duel_confirm:otherinv\n6676=duel_select_type:obstacles\n`);
@@ -3278,4 +3337,91 @@ const synFishNames = new Map([[9001, 'Testfish'], [9002, 'Secondfish']]);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
     assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0 });
 }
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-karamja-fixture-'));
+    const write = (relative: string, text: string) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    write('pack/loc.pack', '700=bananacrate\n701=bananatreefull\n702=bananatreeone\n703=bananatreeempty\n');
+    write('pack/npc.pack', '500=luthas\n');
+    write('scripts/areas/area_karamja/configs/plantation.loc', [
+        '[bananatreefull]', 'category=banana_tree', 'param=next_loc_stage,bananatreeone',
+        '[bananatreeone]', 'category=banana_tree', 'param=next_loc_stage,bananatreeempty',
+        '[bananatreeempty]',
+    ].join('\n'));
+    write('scripts/areas/area_karamja/scripts/banana_tree.rs2', [
+        '[oploc1,_banana_tree]',
+        'loc_change(loc_param(next_loc_stage), 500);',
+        'inv_add(inv, banana, 1);',
+        '[oploc1,bananatreeempty]',
+    ].join('\n'));
+    write('scripts/quests/quest_hunt/scripts/banana_crate.rs2', [
+        '[oploc1,bananacrate]',
+        'if (%crate_bananas = 0 & %crate_rum = 0) {',
+        '    mes("The crate is completely empty.");',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("The crate is full of bananas.");',
+        '}',
+    ].join('\n'));
+    const luthasPath = 'scripts/quests/quest_hunt/scripts/luthas.rs2';
+    const luthasScript = [
+        '[opnpc1,luthas]',
+        'if (testbit(%hunt_store_employed, ^hunt_not_started) = ^false) {',
+        '    @multi2("Offer employment?", luthas_employment, "Other choice", other);',
+        '}',
+        'if (%crate_bananas = 7) {',
+        '    mes("Luthas hands you 43 coins.");',
+        '    inv_add(inv, coins, 43);',
+        '    @multi4("Another crate?", again, "Thanks!", thanks, "Delivery?", delivery, "Other?", other);',
+        '}',
+        '@multi4("Repeat?", repeat, "Not yet.", incomplete, "Delivery?", delivery, "Other?", other);',
+    ].join('\n');
+    write(luthasPath, luthasScript);
+    write('maps/m45_49.jm2', [
+        '==== LOC ====',
+        '0 1 2: 700 10 0',
+        '0 4 5: 701 10 0',
+        '0 5 6: 702 10 0',
+        '==== NPC ====',
+    ].join('\n'));
+    execFileSync('git', ['init', '-q'], { cwd: content });
+    execFileSync('git', ['add', 'maps/m45_49.jm2'], { cwd: content });
+    const npcNames = { rows: [{ id: 500, config: 'luthas', display: 'Fixture Luthas', ops: ['Talk-to'] }] };
+    const locNames = { rows: [
+        { id: 700, config: 'bananacrate', display: 'Crate', ops: ['Search'] },
+        { id: 701, config: 'bananatreefull', display: 'Banana Tree', ops: ['Search'] },
+        { id: 702, config: 'bananatreeone', display: 'Banana Tree', ops: ['Search'] },
+        { id: 703, config: 'bananatreeempty', display: 'Banana Tree', ops: ['Search'] },
+    ] };
+    const npcPlacements = { rows: [{ npc_id: 500, x: 2882, z: 3139, plane: 0, mapsquare: 'm45_49' }] };
+    const result = extractKaramjaFacts(content, npcNames, locNames, npcPlacements);
+    assert.deepEqual(result.facts, {
+        luthas_spawn: { config: 'luthas', x: 2882, z: 3139, plane: 0 },
+        crate_spawn: { config: 'bananacrate', x: 2881, z: 3138, plane: 0 },
+        banana_tree_configs: ['bananatreefull', 'bananatreeone'],
+        banana_tree_spawns: [
+            { config: 'bananatreefull', x: 2884, z: 3141, plane: 0 },
+            { config: 'bananatreeone', x: 2885, z: 3142, plane: 0 },
+        ],
+        crate_capacity: 7,
+        coin_payout: 43,
+        dialogue: { employment: 'Offer employment?', paid: 'Thanks!', incomplete: 'Not yet.' },
+    });
+    assert(result.inputs.some((input) => input.path === 'maps/m45_49.jm2'), 'placement map is a family provenance input');
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, { rows: [] }),
+        /expected one Luthas NPC placement, got 0/,
+        'missing content placement refuses instead of guessing an anchor',
+    );
+    write(luthasPath, luthasScript.replace('inv_add(inv, coins, 43);', 'inv_add(inv, coins, 44);'));
+    assert.throws(
+        () => extractKaramjaFacts(content, npcNames, locNames, npcPlacements),
+        /Luthas coin message\/grant disagree \(43\/44\)/,
+        'the full-crate payout is the amount the content actually grants',
+    );
+}
+
 console.log('generate fixture passed');

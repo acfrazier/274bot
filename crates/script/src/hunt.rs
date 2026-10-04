@@ -650,7 +650,7 @@ impl<K: Kind> Hunt<K> {
                 };
                 self.walk(effect, kind == "walk", radius, cx);
             }
-            "continue" => cx.emit(InteractReq::ContinueDialog),
+            "continue" => cx.emit(InteractReq::ContinueDialog { component_id: None }),
             "if-button" => {
                 cx.emit(InteractReq::IfButton {
                     component_id: int(effect, "component_id"),

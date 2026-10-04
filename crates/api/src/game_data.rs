@@ -360,11 +360,19 @@ pub struct SpellRune {
     pub count: i32,
 }
 
-/// Named autocast combat spell from the selected cache.
+/// Named combat spell from the selected cache: the 16 autocast-selectable staff
+/// chooser spells plus manual-only damage spells (Crumble Undead, Iban Blast,
+/// god strikes). `ssb` is the staff_spells grid index for selectable spells and
+/// -1 otherwise; `component_id` is the manual magic-tab widget for UseWidgetOn.
+/// `impact_spotanim` is the selected `spotanim_target` cache id, -1 when unknown;
+/// the shared miss splash is a separate `failed_spell_impact` scalar, never a per-spell impact.
 #[derive(Debug, Deserialize)]
 pub struct SpellFact {
     pub name: String,
+    pub source_row: String,
     pub ssb: i32,
+    pub component_id: i32,
+    pub autocast_selectable: bool,
     pub level: i32,
     pub continue_by_autocast: bool,
     #[serde(default)]
@@ -375,6 +383,9 @@ pub struct SpellFact {
     pub members: bool,
     #[serde(default)]
     pub wornrequired: Option<String>,
+    #[serde(default)]
+    pub worn_reqmessage: Option<String>,
+    pub impact_spotanim: i32,
     pub runes: Vec<SpellRune>,
 }
 
@@ -869,7 +880,10 @@ pub struct NpcNameRow {
     pub display: Option<String>,
     pub ops: Vec<String>,
     pub size: i32,
+    /// Decoded wander range, including the pinned engines' five-tile default.
     pub wanderrange: i32,
+    /// Decoded tether range. Revision 274 defaults to seven; revision 289 derives
+    /// an absent value as `wanderrange + 2` and clamps it to at least `wanderrange`.
     pub maxrange: i32,
     pub attackrange: i32,
     pub huntrange: i32,
@@ -943,6 +957,41 @@ pub struct NpcPlacementRow {
 #[derive(Debug, Deserialize, Clone)]
 pub struct NpcPlacementFacts {
     pub rows: Vec<NpcPlacementRow>,
+}
+/// Selected-content facts used by the Karamja banana-plantation recovery.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaSpawn {
+    pub config: String,
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaDialogue {
+    pub employment: String,
+    pub paid: String,
+    pub incomplete: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct KaramjaFacts {
+    pub luthas_spawn: KaramjaSpawn,
+    pub crate_spawn: KaramjaSpawn,
+    pub banana_tree_configs: Vec<String>,
+    pub banana_tree_spawns: Vec<KaramjaSpawn>,
+    pub crate_capacity: i32,
+    pub coin_payout: i32,
+    pub dialogue: KaramjaDialogue,
+}
+
+impl KaramjaSpawn {
+    fn valid(&self) -> bool {
+        !self.config.is_empty() && self.x >= 0 && self.z >= 0 && (0..4).contains(&self.plane)
+    }
 }
 
 /// Revision coverage. Not an identity row and not a copied id.
@@ -1200,6 +1249,33 @@ pub struct GatherSiteKey {
     pub count: usize,
 }
 
+/// Source-proven identities for owned main scroll and book continuation.
+/// Chat message/objbox pages continue through the snapshot's chat controls.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueUiIds {
+    pub scroll_root: i32,
+    pub book_root: i32,
+    pub book_forward: i32,
+    pub book_close: i32,
+    pub book_forward_marker: i32,
+}
+
+impl DialogueUiIds {
+    fn available(&self) -> bool {
+        let ids = [
+            self.scroll_root,
+            self.book_root,
+            self.book_forward,
+            self.book_close,
+            self.book_forward_marker,
+        ];
+        ids.iter()
+            .enumerate()
+            .all(|(index, id)| *id > 0 && !ids[..index].contains(id))
+    }
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1214,11 +1290,15 @@ pub struct SelectedGameData {
     #[serde(default)]
     staves: Vec<StaffFact>,
     #[serde(default)]
+    failed_spell_impact: Option<i32>,
+    #[serde(default)]
     autocast: Option<AutocastControls>,
     #[serde(default)]
     duel: Option<DuelControls>,
     #[serde(default)]
     special: Option<SpecialControls>,
+    #[serde(default)]
+    dialogue_ui: Option<DialogueUiIds>,
     #[serde(default)]
     teleports: Vec<TeleportSpell>,
     #[serde(default)]
@@ -1257,6 +1337,8 @@ pub struct SelectedGameData {
     loc_names: Option<LocNameFacts>,
     #[serde(default)]
     npc_placements: Option<NpcPlacementFacts>,
+    #[serde(default)]
+    karamja: Option<KaramjaFacts>,
     #[serde(default)]
     trails: Option<TrailFacts>,
     #[serde(default)]
@@ -1407,6 +1489,42 @@ impl SelectedGameData {
                 "generated game data schema mismatch: expected {SCHEMA_VERSION}, got {}",
                 data.schema_version
             ));
+        }
+        if let Some(facts) = &data.karamja {
+            let npc = data.npc_by_config(&facts.luthas_spawn.config);
+            let crate_loc = data.loc_by_config(&facts.crate_spawn.config);
+            if !facts.luthas_spawn.valid()
+                || !facts.crate_spawn.valid()
+                || facts.crate_capacity <= 0
+                || facts.coin_payout <= 0
+                || facts.banana_tree_configs.is_empty()
+                || facts.banana_tree_configs.iter().any(|config| {
+                    config.is_empty()
+                        || data
+                            .loc_by_config(config)
+                            .is_none_or(|loc| loc.ops.is_empty())
+                })
+                || facts.banana_tree_spawns.is_empty()
+                || facts.banana_tree_spawns.iter().any(|spawn| {
+                    !spawn.valid()
+                        || !facts.banana_tree_configs.contains(&spawn.config)
+                        || data
+                            .loc_by_config(&spawn.config)
+                            .is_none_or(|loc| loc.ops.is_empty())
+                })
+                || facts.dialogue.employment.trim().is_empty()
+                || facts.dialogue.paid.trim().is_empty()
+                || facts.dialogue.incomplete.trim().is_empty()
+                || npc.is_none_or(|row| {
+                    row.display.as_deref().is_none_or(str::is_empty)
+                        || !row.ops.iter().any(|op| op.eq_ignore_ascii_case("Talk-to"))
+                })
+                || crate_loc.is_none_or(|loc| loc.ops.is_empty())
+            {
+                return Err(
+                    "karamja facts are incomplete or do not join selected content".to_string(),
+                );
+            }
         }
         if let Some(facts) = &data.bank_placements {
             if facts
@@ -1692,6 +1810,20 @@ impl SelectedGameData {
             .iter()
             .find(|item| item.alias.as_deref() == Some(alias))
     }
+    /// Resolve an item key by exact alias, then by case-insensitive display
+    /// name. Display-name collisions retain selected content order.
+    pub fn resolve_item_name(&self, value: &str) -> Option<&GameItem> {
+        if value.is_empty() {
+            return None;
+        }
+        self.item_by_alias(value).or_else(|| {
+            self.items.iter().find(|item| {
+                item.name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(value))
+            })
+        })
+    }
 
     /// Generated consumption rows, including source effect and next item stage.
     pub fn consumption_facts(&self) -> &[ConsumptionFact] {
@@ -1758,11 +1890,24 @@ impl SelectedGameData {
         &self.staves
     }
 
+    /// Selected `failedspell_impact` cache id for the shared miss splash.
+    /// `None` when the selected cache does not publish it. Per-spell
+    /// `impact_spotanim` excludes this shared splash, so consumers can distinguish
+    /// failed casts from successful spell impacts without a style-fact join.
+    pub fn failed_spell_impact(&self) -> Option<i32> {
+        self.failed_spell_impact
+    }
+
     /// Packed choose/grid/toggle identities from the selected cache.
     pub fn autocast_controls(&self) -> Option<&AutocastControls> {
         self.autocast
             .as_ref()
             .filter(|controls| controls.available())
+    }
+
+    /// Minimal selected main-dialogue controls; no opt-in debug catalog is loaded.
+    pub fn dialogue_ui(&self) -> Option<&DialogueUiIds> {
+        self.dialogue_ui.as_ref().filter(|ids| ids.available())
     }
 
     pub fn duel_controls(&self) -> Option<&DuelControls> {
@@ -1890,6 +2035,9 @@ impl SelectedGameData {
             .rows
             .iter()
             .find(|row| row.config == config)
+    }
+    pub fn karamja(&self) -> Option<&KaramjaFacts> {
+        self.karamja.as_ref()
     }
 
     /// Trail inventory and challenge answers. `None` is family absence, not an empty extract.
@@ -2081,7 +2229,8 @@ impl SelectedGameData {
         )
     }
 
-    /// Staff-spell grid component for a known autocast spell, otherwise -1.
+    /// Staff-spell grid component for a known autocast-selectable spell, otherwise -1.
+    /// Manual-only spells resolve through their own `component_id`, never this grid.
     /// Posted selected-cache `spell_grid_base` wins over the frozen 1830 audit.
     pub fn spell_button_com(&self, spell_name: &str) -> i32 {
         let base = self
@@ -2090,6 +2239,7 @@ impl SelectedGameData {
             .map(|controls| controls.spell_grid_base)
             .unwrap_or(STAFF_SPELLS_COM0);
         self.spell(spell_name)
+            .filter(|spell| spell.autocast_selectable)
             .map(|spell| base + spell.ssb)
             .unwrap_or(-1)
     }

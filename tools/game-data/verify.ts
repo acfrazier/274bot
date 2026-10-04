@@ -12,6 +12,7 @@ import { extractQuestIdentityFacts, questIdentityContentFiles } from './extracto
 import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
+import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -58,6 +59,25 @@ type PublishedTrioGiverRow = { alias: string; id: number; name: string; spawn?: 
 type PublishedTrioGiverCoverage = { class: string; family: string; alias: string; reason: string };
 /** The published trio_givers family object. */
 type PublishedTrioGivers = { rows: PublishedTrioGiverRow[]; coverage: PublishedTrioGiverCoverage[] };
+type PublishedCombatSpell = {
+    name: string; source_row: string; ssb: number; component_id: number;
+    autocast_selectable: boolean; level: number; impact_spotanim: number;
+    runes: { name: string; count: number }[];
+};
+function isPublishedCombatSpell(value: unknown): value is PublishedCombatSpell {
+    return typeof value === 'object' && value !== null
+        && 'name' in value && typeof value.name === 'string'
+        && 'source_row' in value && typeof value.source_row === 'string'
+        && 'ssb' in value && typeof value.ssb === 'number' && Number.isInteger(value.ssb)
+        && 'component_id' in value && typeof value.component_id === 'number' && Number.isInteger(value.component_id)
+        && 'autocast_selectable' in value && typeof value.autocast_selectable === 'boolean'
+        && 'level' in value && typeof value.level === 'number' && Number.isInteger(value.level)
+        && 'impact_spotanim' in value && typeof value.impact_spotanim === 'number' && Number.isInteger(value.impact_spotanim)
+        && 'runes' in value && Array.isArray(value.runes)
+        && value.runes.every((rune: unknown) => typeof rune === 'object' && rune !== null
+            && 'name' in rune && typeof rune.name === 'string'
+            && 'count' in rune && typeof rune.count === 'number' && Number.isInteger(rune.count));
+}
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
@@ -118,7 +138,7 @@ async function verifyRevision(revision: number) {
     const pinnedCommits = assertPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
-    const npcNames = extractNpcNamesFacts(pin.contentRoot);
+    const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
     const combatScripts = parseCombatScripts(pin.contentRoot);
     const expectedContentFiles = [...new Set([
         ...baseContentFiles,
@@ -128,6 +148,7 @@ async function verifyRevision(revision: number) {
     ])].sort();
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
+    assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
     assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
@@ -150,12 +171,18 @@ async function verifyRevision(revision: number) {
     const greenDrops = drops.find((row: any) => row.name === 'Green dragon');
     if (!greenDrops?.items.some((item: any) => item.alias === 'dragonhide_green' && item.id === 1753 && item.name === 'Dragonhide')) throw new Error(`${revision}: Green dragonhide alias/id evidence`);
     if (greenDrops.display_names.includes('Bones') || !greenDrops.display_names.includes('Dragonhide')) throw new Error(`${revision}: Green dragon invented Bones or missing Dragonhide`);
-    const spells = payload.spells ?? [];
-    if (spells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave') throw new Error(`${revision}: named autocast combat spells`);
-    const wind = spells.find((spell: any) => spell.name === 'Wind Strike');
-    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
-    const fireWave = spells.find((spell: any) => spell.name === 'Fire Wave');
-    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map((rune: any) => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
+    const spellInput: unknown = payload.spells ?? [];
+    if (!Array.isArray(spellInput) || !spellInput.every(isPublishedCombatSpell)) throw new Error(`${revision}: malformed combat spells`);
+    const spells: PublishedCombatSpell[] = spellInput;
+    const selectableSpells = spells.filter(spell => spell.autocast_selectable);
+    if (spells.length !== 21 || selectableSpells.length !== 16 || spells[0]?.name !== 'Wind Strike' || spells[15]?.name !== 'Fire Wave' || selectableSpells.some((spell, index) => spell.ssb !== index)) throw new Error(`${revision}: named combat spells and 16-row chooser`);
+    const manualSpells = spells.filter(spell => !spell.autocast_selectable);
+    if (JSON.stringify(manualSpells.map(spell => spell.source_row)) !== JSON.stringify(['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast']) || manualSpells.some(spell => spell.ssb !== -1 || spell.component_id < 0)) throw new Error(`${revision}: manual spell identities`);
+    if (payload.failed_spell_impact !== 85 || spells.some(spell => spell.impact_spotanim === payload.failed_spell_impact)) throw new Error(`${revision}: splash must remain distinct from successful spell impacts`);
+    const wind = spells.find(spell => spell.name === 'Wind Strike');
+    if (!wind || wind.ssb !== 0 || wind.level !== 1 || JSON.stringify(wind.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Mind rune', 1], ['Air rune', 1]])) throw new Error(`${revision}: Wind Strike runes`);
+    const fireWave = spells.find(spell => spell.name === 'Fire Wave');
+    if (!fireWave || fireWave.ssb !== 15 || JSON.stringify(fireWave.runes.map(rune => [rune.name, rune.count])) !== JSON.stringify([['Blood rune', 1], ['Fire rune', 7], ['Air rune', 5]])) throw new Error(`${revision}: Fire Wave runes`);
     const staves = payload.staves ?? [];
     if (staves.length !== 14) throw new Error(`${revision}: expected 14 staves`);
     const fireProviders = staves.filter((staff: any) => staff.runes.some((rune: any) => rune.name === 'Fire rune')).map((staff: any) => staff.name).sort();

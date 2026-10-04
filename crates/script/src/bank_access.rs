@@ -508,7 +508,12 @@ impl BankAccess {
                     } else {
                         AfterContinue::Next
                     };
-                    let press = Press::send(InteractReq::ContinueDialog, false, &chat, cx);
+                    let press = Press::send(
+                        InteractReq::ContinueDialog { component_id: None },
+                        false,
+                        &chat,
+                        cx,
+                    );
                     self.phase = Phase::Continue(attempt, press, after);
                     return Some(Step::Wait);
                 }
@@ -1017,7 +1022,10 @@ mod tests {
         observed::post(2, |post| {
             post.chat_modal_id(4882).chat_continue(true);
         });
-        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        assert_eq!(
+            tick(),
+            vec![InteractReq::ContinueDialog { component_id: None }]
+        );
         observed::post(3, |post| {
             post.chat_modal_id(-1).chat_continue(false);
         });
@@ -1136,7 +1144,10 @@ mod tests {
         observed::post(3, |post| {
             post.chat_modal_id(1).chat_continue(true);
         });
-        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        assert_eq!(
+            tick(),
+            vec![InteractReq::ContinueDialog { component_id: None }]
+        );
         observed::post(4, |post| {
             post.chat_modal_id(2)
                 .chat_continue(false)

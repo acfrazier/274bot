@@ -104,13 +104,10 @@ pub(super) const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 /// teleport hop per wizard, landing on the mine pad. The return is not
 /// packed — the mine exit portal's hop is synthesized per-slot from the
 /// traveller's [`crate::essence::EssenceSession`], so the mine is never
-/// a corridor between arbitrary overworld tiles. The gate is the quest
-/// journal's row name ("Rune Mysteries Quest", green at
-/// `%runemysteries >= ^runemysteries_complete`) — the same name
-/// `WorldState::from_snapshot` reads from the quest tab; the
-/// perm-scoped `%runemysteries` varp is never transmitted, so a
-/// `varp_req` gate could never pass live.
-pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
+/// a corridor between arbitrary overworld tiles. The gate is resolved from
+/// the quest journal's row for `%runemysteries` at its content completion
+/// threshold; the varp is never transmitted, so a `varp_req` cannot pass.
+pub(super) fn essence_mine_edges(graph: &mut TransportGraph, quest_name: &str) {
     for w in ESSENCE_WIZARDS {
         graph.edges.push(TransportEdge {
             takeoff: None,
@@ -128,7 +125,7 @@ pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
             item_req: vec![],
             consumed_req: vec![],
             item_returns: vec![],
-            quest_req: vec!["Rune Mysteries Quest".to_string()],
+            quest_req: vec![quest_name.to_string()],
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
@@ -207,7 +204,7 @@ pub(super) const ELKOY_ESCORTS: &[ElkoyEscort] = &[
 
 /// Elkoy escort edges from the fixed 2004 route table: one `Talk-to` edge
 /// per escort, keyed from the Elkoy NPC's tile.
-pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
+pub(super) fn elkoy_edges(graph: &mut TransportGraph, quest_name: &str) {
     for e in ELKOY_ESCORTS {
         graph.edges.push(TransportEdge {
             takeoff: None,
@@ -225,7 +222,7 @@ pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
             item_req: vec![],
             consumed_req: vec![],
             item_returns: vec![],
-            quest_req: vec!["Tree Gnome Village".to_string()],
+            quest_req: vec![quest_name.to_string()],
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,

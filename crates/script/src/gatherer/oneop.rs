@@ -70,7 +70,7 @@ impl OneOpArgs {
 
     pub fn continue_dialog() -> Self {
         Self {
-            request: InteractReq::ContinueDialog,
+            request: InteractReq::ContinueDialog { component_id: None },
             kind: OneOpKind::ContinueDialog,
             bound_ticks: 8,
         }

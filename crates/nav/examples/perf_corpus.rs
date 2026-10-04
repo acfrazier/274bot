@@ -166,12 +166,15 @@ fn parse_args() -> Result<(PathBuf, usize), String> {
 fn main() -> Result<(), String> {
     let (pack, iterations) = parse_args()?;
     let decode_started = (!counters_only()).then(Instant::now);
-    let world = NavWorld::load_pack(&pack).map_err(|error| format!("load pack: {error:?}"))?;
+    let mut world = NavWorld::load_pack(&pack).map_err(|error| format!("load pack: {error:?}"))?;
     let decode_ms = decode_started.map(|started| started.elapsed().as_secs_f64() * 1000.0);
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)?;
     world
         .bind_named_bank_facts(&game_data)
         .map_err(|error| format!("bind named bank facts: {error:?}"))?;
+    // The original FLOOR corpus predates zone policy. Keep those five
+    // controls zone-free rather than using a danger grant as a bypass.
+    let zones = world.graph.zones.take();
     let empty = WorldState::empty();
     let rich = rich_289_state();
     let legacy = FindOptions {
@@ -291,6 +294,7 @@ fn main() -> Result<(), String> {
         }
     });
 
+    world.graph.zones = zones;
     let mut zone_cases = Vec::new();
     for level in [126, 3] {
         let mut state = rich_289_state();
@@ -427,6 +431,69 @@ fn main() -> Result<(), String> {
             }
         },
     ));
+    let mut live = WorldState::empty();
+    live.map_members = true;
+    live.combat_level = Some(50);
+    live.inv.insert(995, 60);
+    for (name, from, to, opts, state) in [
+        (
+            "danger_live_off",
+            tile(2809, 3441, 0),
+            tile(3103, 3163, 2),
+            FindOptions::default(),
+            &live,
+        ),
+        (
+            "danger_live_grant",
+            tile(2809, 3441, 0),
+            tile(3103, 3163, 2),
+            legacy,
+            &live,
+        ),
+        (
+            "falador_lumbridge_zones_l3",
+            tile(2965, 3379, 0),
+            tile(3222, 3218, 0),
+            FindOptions::default(),
+            &low,
+        ),
+        (
+            "deep_zone_goal_teles_off",
+            tile(2895, 3450, 0),
+            tile(2852, 3493, 0),
+            FindOptions::default(),
+            &low,
+        ),
+        (
+            "deep_zone_goal_teles_on",
+            tile(2895, 3450, 0),
+            tile(2852, 3493, 0),
+            FindOptions {
+                allow_teleports: true,
+                ..FindOptions::default()
+            },
+            &low,
+        ),
+        (
+            "all_off_control",
+            tile(3222, 3218, 0),
+            tile(2965, 3379, 0),
+            FindOptions::default(),
+            &empty,
+        ),
+    ] {
+        zone_cases.push(measure_case(name, iterations, || {
+            let search = find_first_with(&world.collision, &world.graph, from, &[to], opts, state);
+            Observation {
+                outcome: format!(
+                    "{:?}",
+                    search.route().map(|route| (route.dest, route.ticks))
+                ),
+                settled: search.settled(),
+                scratch: search.scratch_capacities(),
+            }
+        }));
+    }
     let mut cases = vec![reachable, bank_pick, radius, teleport, unreachable];
     cases.extend(zone_cases);
 

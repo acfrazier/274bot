@@ -442,7 +442,7 @@ impl Dialog {
             );
             self.phase = Phase::WaitContinueAck;
             cx.clock().arm(PAGE_ACK_MS);
-            cx.emit(InteractReq::ContinueDialog);
+            cx.emit(InteractReq::ContinueDialog { component_id: None });
             return Step::Wait;
         }
         if !obs.options().is_empty() {
@@ -729,7 +729,10 @@ mod tests {
             "a paused drive neither continues nor chooses"
         );
         machine::on_resume();
-        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        assert_eq!(
+            tick(),
+            vec![InteractReq::ContinueDialog { component_id: None }]
+        );
         assert_eq!(machine::take(drive), Take::Pending);
     }
 
@@ -740,7 +743,10 @@ mod tests {
         observation.chat_continue = true;
         post(&observation);
         let drive = running(start("drive"));
-        assert_eq!(ops(), vec![InteractReq::ContinueDialog]);
+        assert_eq!(
+            ops(),
+            vec![InteractReq::ContinueDialog { component_id: None }]
+        );
         observation.tick = 5;
         // Same root and visible Continue: unchanged page content is no ack.
         post(&observation);

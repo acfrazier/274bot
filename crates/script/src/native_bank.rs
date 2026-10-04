@@ -10,7 +10,7 @@ use crate::bank::ops::{
     self, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec, NoteIntent, Progress,
     WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO, TRANSFER_BOUND,
 };
-use crate::native::{ActionContext, ActionError, NativeMachine};
+use crate::native::{ActionContext, ActionError, NativeMachine, WalkOptions};
 use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -150,7 +150,7 @@ pub struct BankPickRequest {
     pub facts: Arc<NamedBankFacts>,
     pub from: WorldTile,
     pub preferences: BankPreferences,
-    pub allow_wilderness: bool,
+    pub options: WalkOptions,
     /// Roster indices already proven eligible from this run's live facts.
     pub eligible: Arc<[u16]>,
     /// When present, no other eligible bank may be selected.
@@ -175,7 +175,7 @@ pub struct SelectArgs {
     pub facts: Arc<NamedBankFacts>,
     pub from: WorldTile,
     pub preferences: BankPreferences,
-    pub allow_wilderness: bool,
+    pub options: WalkOptions,
     pub explicit: Option<Arc<str>>,
 }
 
@@ -1303,7 +1303,7 @@ impl NativeMachine for Select {
                 facts: args.facts,
                 from: args.from,
                 preferences: args.preferences,
-                allow_wilderness: args.allow_wilderness,
+                options: args.options,
                 eligible,
                 explicit_bank,
             }),
@@ -1664,7 +1664,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 2),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(2, vec!["Second page".into()]);
@@ -1677,7 +1677,7 @@ mod tests {
         });
         assert!(matches!(
             acknowledge(&mut ledger, 4),
-            HostEffect::Interaction(InteractReq::ContinueDialog)
+            HostEffect::Interaction(InteractReq::ContinueDialog { component_id: None })
         ));
 
         snapshot.seed_chat_modal(3, vec!["Final page".into()]);
