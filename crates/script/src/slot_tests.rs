@@ -1392,6 +1392,16 @@ fn an_unheld_native_run_on_a_random_trap_square_blocks() {
         "{}",
         failure.message
     );
+    assert_eq!(
+        slot.state(),
+        RunState::Idle,
+        "the trapped run takes the Stop"
+    );
+    assert!(!slot.has_instance());
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.state),
+        Some(ScriptTerminalState::Failed)
+    );
 
     // The Mime stage is the other trap square.
     let mut slot = SlotScript::new();

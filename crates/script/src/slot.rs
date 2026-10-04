@@ -2359,7 +2359,6 @@ fn trapped_failure(ctx: &ScriptCtx<'_>) -> Option<ScriptFailure> {
             "trapped in the {event} random event at ({x}, {z}, {level}) and the host is not solving it"
         )
         .into(),
-        retryable: true,
     })
 }
 

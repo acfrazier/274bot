@@ -1461,6 +1461,9 @@ struct Witness {
     maze_resumed: bool,
     /// The Gatherer blocked while still on the Maze square.
     maze_blocked_inside: bool,
+    /// After that block, the slot took the terminal Stop: Idle, no
+    /// native run, and a `Failed` lifecycle receipt.
+    maze_stopped: bool,
     random_foreign_fresh_yield: bool,
     death_recovery_command_sent: u32,
     death_command_while_paused: bool,
@@ -5686,6 +5689,21 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                             receipt.state == script::ScriptTerminalState::Failed
                         });
             }
+            if case == LiveCase::MazeRandom
+                && slot.witness.maze_blocked_inside
+                && !slot.witness.maze_stopped
+                && play.script_state(&account) == script::RunState::Idle
+                && play.script_native_run(&account).is_none()
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Failed)
+            {
+                slot.witness.maze_stopped = true;
+                println!(
+                    "{}",
+                    json!({"phase": "maze-stopped", "state": "Idle", "receipt": "Failed"})
+                );
+            }
         }
         let (
             witness,
@@ -6615,11 +6633,13 @@ fn gatherer_maze_random() {
 
 /// The Maze teleport was observed, and the Gatherer either resumed
 /// gathering after the host's solver walked it out, or blocked while
-/// still trapped inside — never a held `Working` run inside the Maze.
+/// still trapped inside and took the terminal Stop — never a held
+/// `Working` run inside the Maze.
 fn maze_random_complete(witness: &Witness) -> bool {
     witness.maze_command_sent
         && witness.maze_entered
-        && ((witness.maze_exited && witness.maze_resumed) || witness.maze_blocked_inside)
+        && ((witness.maze_exited && witness.maze_resumed)
+            || (witness.maze_blocked_inside && witness.maze_stopped))
 }
 
 #[test]
