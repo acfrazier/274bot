@@ -843,6 +843,7 @@ fn path_bank_context<'a>(
         bank_required: required,
         bank_items: base.bank_items,
         loadouts: base.loadouts,
+        keep_ids: base.keep_ids,
     }
 }
 
@@ -1219,6 +1220,7 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids: &[],
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     };
     let plan = compile_use_on(&serde_json::json!({ "item": "grain", "target": {"loc": "hopper_lumbridge"}, "radius": 8, "settle_ms": 20000 }), &compile).unwrap();
@@ -1532,6 +1534,13 @@ fn test_progress() -> crate::quester::progress::CompiledProgress {
 }
 
 fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
+    compile_context_test_with_keep(&[], f)
+}
+
+fn compile_context_test_with_keep<R>(
+    keep_ids: &[i32],
+    f: impl FnOnce(&CompileContext<'_>) -> R,
+) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = FactKey::new("cook");
@@ -1547,8 +1556,44 @@ fn compile_context_test<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
         bank: None,
         bank_required: false,
         bank_items: &[],
+        keep_ids,
         loadouts: &crate::quester::loadouts::LoadoutOverlay::new(Arc::from([]), Arc::from([])),
     })
+}
+
+#[test]
+fn unequip_all_keeps_shared_protected_equipment() {
+    let protected_id = 7;
+    let plan = compile_context_test_with_keep(&[protected_id], |cx| {
+        super::s2::compile_unequip(&serde_json::json!({"all": true}), cx).unwrap()
+    });
+    let equipment = |id, name| ItemView {
+        def: def(id, name),
+        container: ItemContainer::Equipment,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count: 1,
+        actions: vec![],
+        component_id: 0,
+    };
+    let mut snapshot = ready();
+    snapshot.seed_equipment(vec![
+        equipment(protected_id, "Protected"),
+        equipment(42, "Other"),
+    ]);
+    let mut ledger = None;
+    let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| plan.begin(cx).unwrap())
+    });
+
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(matches!(
+        emitted(&ledger),
+        InteractReq::Unequip { name } if name == "Other"
+    ));
 }
 
 #[test]

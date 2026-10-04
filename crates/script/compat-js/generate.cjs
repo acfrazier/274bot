@@ -194,7 +194,15 @@ function overlayDeclarations(text) {
         ts.setTextRange(n, { pos: -1, end: -1 });
         ts.forEachChild(n, synthesize);
     }
-    for (const s of sf.statements) synthesize(s);
+    for (const s of sf.statements) {
+        for (const range of ts.getLeadingCommentRanges(text, s.getFullStart()) || []) {
+            const body = range.kind === ts.SyntaxKind.MultiLineCommentTrivia
+                ? text.slice(range.pos + 2, range.end - 2)
+                : text.slice(range.pos + 2, range.end);
+            ts.addSyntheticLeadingComment(s, range.kind, body, Boolean(range.hasTrailingNewLine));
+        }
+        synthesize(s);
+    }
     return [...sf.statements];
 }
 function apply(module, text) {
