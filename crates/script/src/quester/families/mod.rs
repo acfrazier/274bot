@@ -11,6 +11,7 @@ use super::compile::{
     StepPlan, StepRun,
 };
 use super::path::PredicateDocument;
+use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkEnd, WalkReceipt};
@@ -2061,6 +2062,8 @@ impl StepPlan for AcquirePlan {
             settle_deadline: Duration::ZERO,
             waiting_for_read: false,
             selection_since: None,
+            prayer_cleanup_owned: RaisedPrayers::empty(),
+            clear_prayers: None,
         }))
     }
 }
@@ -2074,13 +2077,54 @@ struct AcquireRun {
     settle_deadline: Duration,
     waiting_for_read: bool,
     selection_since: Option<Duration>,
+    prayer_cleanup_owned: RaisedPrayers,
+    clear_prayers: Option<ActionHandle<ClearPrayers>>,
+}
+impl AcquireRun {
+    fn poll_prayer_cleanup(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<(), ActionError>> {
+        if let Some(handle) = self.clear_prayers.as_ref() {
+            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {
+                    self.clear_prayers = None;
+                    self.prayer_cleanup_owned = RaisedPrayers::empty();
+                }
+            }
+        }
+        if self.prayer_cleanup_owned.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        let selected = api::game_data::for_revision(cx.tick.cx.pin.revision)
+            .map_err(|_| ActionError::Unavailable(Arc::from("prayer facts unavailable")))?;
+        match begin_clear_owned_prayers(&selected, self.prayer_cleanup_owned, cx.tick) {
+            Hygiene::Clean => {
+                self.prayer_cleanup_owned = RaisedPrayers::empty();
+                Poll::Ready(Ok(()))
+            }
+            Hygiene::Started(handle) => {
+                self.clear_prayers = Some(handle);
+                Poll::Pending
+            }
+            Hygiene::Deferred => Poll::Pending,
+            Hygiene::Failed(error) => Poll::Ready(Err(error)),
+        }
+    }
 }
 impl StepRun for AcquireRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if self.waiting_for_read {
-            return Poll::Pending;
-        }
         loop {
+            match self.poll_prayer_cleanup(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Ready(Ok(())) => {}
+            }
+            if self.waiting_for_read {
+                return Poll::Pending;
+            }
             if self.settling {
                 let truth = self.steps[self.index].settle.evaluate(&PredicateContext {
                     cx: &cx.tick.cx,
@@ -2145,6 +2189,8 @@ impl StepRun for AcquireRun {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(_)) => {
+                    self.prayer_cleanup_owned
+                        .merge(self.current.as_ref().unwrap().prayer_cleanup());
                     self.current = None;
                     self.settling = true;
                     self.settle_deadline =
@@ -2168,6 +2214,14 @@ impl StepRun for AcquireRun {
         if let Some(run) = &mut self.current {
             run.cancel(actions);
         }
+        self.clear_prayers = None;
+    }
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        let mut owned = self.prayer_cleanup_owned;
+        if let Some(run) = self.current.as_ref() {
+            owned.merge(run.prayer_cleanup());
+        }
+        owned
     }
     fn waiting_for(&self) -> Option<(&'static str, &Arc<str>)> {
         self.current.as_ref()?.waiting_for()

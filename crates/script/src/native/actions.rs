@@ -107,6 +107,7 @@ impl ActionContext<'_> {
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             });
         }
+        owner.set_latest_batch(first_id);
         Ok(first_id.get())
     }
 
@@ -440,6 +441,23 @@ impl<M: NativeMachine> Drop for ActionHandle<M> {
                 std::mem::forget(payload);
             }
         }
+    }
+}
+
+impl ActionHandle<crate::combat::Combat> {
+    pub(crate) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        let machine = self.machine.borrow();
+        let Some(combat) = machine.as_ref() else {
+            return crate::combat::RaisedPrayers::empty();
+        };
+        let plan_first_id = combat.prayer_plan_first_id();
+        let accepted_prefix = self
+            .owner
+            .latest_batch_receipt()
+            .filter(|(first_id, _)| *first_id == plan_first_id)
+            .map(|(_, accepted_prefix)| accepted_prefix)
+            .unwrap_or(0);
+        combat.prayer_cleanup(accepted_prefix)
     }
 }
 

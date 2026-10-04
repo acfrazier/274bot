@@ -14,6 +14,52 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+/// Prayer toggles successfully raised by Combat and therefore eligible for
+/// cancellation cleanup. Bits use selected overlay varp order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RaisedPrayers(u16);
+
+impl RaisedPrayers {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+
+    pub(crate) fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
+        let Some(bit) = Self::bit(varp) else {
+            return;
+        };
+        if on {
+            self.0 = (self.0 & !displaced) | bit;
+        } else {
+            self.0 &= !bit;
+        }
+    }
+
+    pub(crate) fn contains(self, varp: i32) -> bool {
+        Self::bit(varp).is_some_and(|bit| self.0 & bit != 0)
+    }
+
+    pub(crate) const fn mask(self) -> u16 {
+        self.0
+    }
+
+    fn bit(varp: i32) -> Option<u16> {
+        let index = varp.checked_sub(api::prayer::PRAYER_VARP0)?;
+        if !(0..PRAYER_COUNT as i32).contains(&index) {
+            return None;
+        }
+        Some(1_u16 << index)
+    }
+}
+
 /// One prayer varp's requested state, shared by toggle and clear operations.
 /// Its only caller is the `load` isolate's prayer machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,8 +229,8 @@ impl PrayerSweep {
     }
 }
 
-/// Driver-owned prayer hygiene. Callers that see prayers on with no live fight
-/// begin [`ClearPrayers`] through this helper; eat and protect stay in Combat.
+/// Result of admitting shared prayer hygiene. Scoped callers clear only
+/// accepted Combat raises; broad callers may clear all active prayers.
 #[allow(
     clippy::large_enum_variant,
     reason = "Hygiene is a return value, not stored beside Combat."
@@ -196,18 +242,41 @@ pub enum Hygiene {
     Failed(ActionError),
 }
 
-/// Observed-varp clear. `None` and host-busy errors defer; all-off is clean.
-pub fn begin_clear_prayers(selected: &Arc<SelectedGameData>, tick: &mut NativeTick<'_>) -> Hygiene {
-    let Some(active) = tick.cx.snapshot().prayers_active() else {
-        return Hygiene::Deferred;
-    };
-    if !active.value.iter().any(|on| *on) {
+/// Filter applied by `ClearPrayers`: `None` clears every observed prayer, while
+/// `Some` clears only the accepted Combat raises in that ownership mask.
+pub struct ClearPrayersArgs {
+    data: Arc<SelectedGameData>,
+    owned: Option<RaisedPrayers>,
+}
+
+impl ClearPrayersArgs {
+    pub fn broad(data: Arc<SelectedGameData>) -> Self {
+        Self { data, owned: None }
+    }
+
+    pub fn owned(data: Arc<SelectedGameData>, owned: RaisedPrayers) -> Self {
+        Self {
+            data,
+            owned: Some(owned),
+        }
+    }
+}
+
+/// Clear only accepted Combat raises. The machine remains scoped to this mask
+/// across observations and retries; no displaced prayer is restored.
+pub fn begin_clear_owned_prayers(
+    selected: &Arc<SelectedGameData>,
+    owned: RaisedPrayers,
+    tick: &mut NativeTick<'_>,
+) -> Hygiene {
+    if owned.is_empty() {
         return Hygiene::Clean;
     }
-    match tick
-        .actions
-        .begin::<ClearPrayers>(Arc::clone(selected), &mut tick.cx)
-    {
+    start_clear_prayers(ClearPrayersArgs::owned(Arc::clone(selected), owned), tick)
+}
+
+fn start_clear_prayers(args: ClearPrayersArgs, tick: &mut NativeTick<'_>) -> Hygiene {
+    match tick.actions.begin::<ClearPrayers>(args, &mut tick.cx) {
         Ok(handle) => Hygiene::Started(handle),
         Err(
             ActionError::Busy
@@ -225,6 +294,7 @@ pub fn begin_clear_prayers(selected: &Arc<SelectedGameData>, tick: &mut NativeTi
 /// accepted prefix, and each accepted varp has its own timeout.
 pub struct ClearPrayers {
     data: Arc<SelectedGameData>,
+    owned: Option<RaisedPrayers>,
     sweep: PrayerSweep,
     last_observation: Option<EvidenceStamp>,
     last_emit: Option<EvidenceStamp>,
@@ -297,12 +367,13 @@ impl ClearPrayers {
 }
 
 impl NativeMachine for ClearPrayers {
-    type Args = Arc<SelectedGameData>;
+    type Args = ClearPrayersArgs;
     type Output = PrayerSweepReport;
 
-    fn begin(data: Self::Args, _cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+    fn begin(args: Self::Args, _cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         Ok(Self {
-            data,
+            data: args.data,
+            owned: args.owned,
             sweep: PrayerSweep::new(),
             last_observation: None,
             last_emit: None,
@@ -353,6 +424,7 @@ impl NativeMachine for ClearPrayers {
         for click in self
             .sweep
             .candidates(&self.data, &observation)
+            .filter(|click| self.owned.is_none_or(|owned| owned.contains(click.varp)))
             .take(clicks.len())
         {
             clicks[len] = Some(click);
@@ -363,6 +435,14 @@ impl NativeMachine for ClearPrayers {
         }
         if len == 0 {
             if self.sweep.pending_mask() != 0 {
+                return Poll::Pending;
+            }
+            if self.owned.is_some_and(|owned| {
+                self.data
+                    .prayers()
+                    .iter()
+                    .any(|row| owned.contains(row.varp) && !observation.varp_observed(row.varp))
+            }) {
                 return Poll::Pending;
             }
             let report = self.sweep.report();
@@ -524,6 +604,73 @@ mod tests {
     }
 
     #[test]
+    fn policy_s2_scoped_clear_waits_for_missing_owned_row_and_preserves_user() {
+        let data = selected_data();
+        let skin = data.prayer_by_name("Thick Skin").unwrap();
+        let protect = data.prayer_by_name("Protect from Melee").unwrap();
+        let mut owned = RaisedPrayers::empty();
+        owned.accepted(protect.varp, true, 0);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_varps(vec![VarpView {
+            index: skin.varp,
+            value: 1,
+        }]);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 0, |tick| {
+            tick.actions
+                .begin::<ClearPrayers>(
+                    ClearPrayersArgs::owned(Arc::clone(&data), owned),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx).is_pending()
+        }));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        snapshot.seed_varps(vec![
+            VarpView {
+                index: skin.varp,
+                value: 1,
+            },
+            VarpView {
+                index: protect.varp,
+                value: 1,
+            },
+        ]);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx).is_pending()
+        }));
+        assert_eq!(
+            dispatch(&mut ledger, &[true], 2),
+            vec![InteractReq::IfButton {
+                component_id: protect.button_com
+            }]
+        );
+        snapshot.seed_varps(vec![
+            VarpView {
+                index: skin.varp,
+                value: 1,
+            },
+            VarpView {
+                index: protect.varp,
+                value: 0,
+            },
+        ]);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Ok(PrayerSweepReport {
+                clicked: 1,
+                timed_out: 0
+            }))
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
     fn clear_batches_ordered_offs_keep_failed_suffix_and_report_timeout() {
         let data = selected_data();
         assert!(data.prayers().len() >= 6);
@@ -534,7 +681,7 @@ mod tests {
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 0, |tick| {
             tick.actions
-                .begin::<ClearPrayers>(Arc::clone(&data), &mut tick.cx)
+                .begin::<ClearPrayers>(ClearPrayersArgs::broad(Arc::clone(&data)), &mut tick.cx)
                 .expect("begin prayer clear")
         });
 
