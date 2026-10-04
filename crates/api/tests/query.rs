@@ -82,6 +82,11 @@ fn fixture_npc(
 fn fixture_player(index: usize, combat_level: i32, skill_level: i32) -> PlayerView {
     PlayerView {
         index,
+        network: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
         actor: ActorView {
             name: Some("Player".into()),
             actions: vec![Some("Attack".into())],

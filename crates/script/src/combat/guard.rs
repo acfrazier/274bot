@@ -509,6 +509,7 @@ mod tests {
                 local: LocalPlayerView {
                     player: PlayerView {
                         index: 1,
+                        network: at,
                         actor: actor(at),
                         combat_level: 60,
                         skill_level: 0,

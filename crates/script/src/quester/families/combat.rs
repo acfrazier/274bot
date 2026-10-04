@@ -7,8 +7,8 @@ use super::super::path::PredicateDocument;
 use super::reach::{self, Reach, ReachArgs, ReachKind};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
-    Tactic, Target,
+    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, RangedMode,
+    Style, Tactic, Target,
 };
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
@@ -112,6 +112,8 @@ enum PickArg {
 struct TacticArgs {
     kind: String,
     style: String,
+    #[serde(default)]
+    ranged_style: RangedMode,
     engage_radius: u8,
     #[serde(default = "default_auto_retaliate")]
     auto_retaliate: bool,
@@ -121,6 +123,13 @@ struct TacticArgs {
 
 fn default_auto_retaliate() -> bool {
     true
+}
+
+fn validate_style_options(style: Style, melee_mode: Option<MeleeMode>) -> Result<(), CompileError> {
+    if style == Style::Ranged && melee_mode.is_some() {
+        return Err(CompileError::code("invalid-args"));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -180,6 +189,7 @@ pub(super) fn compile(
         "ranged" => Style::Ranged,
         _ => return Err(CompileError::code("unsupported-combat-style")),
     };
+    validate_style_options(style, args.melee_mode)?;
     if args.tactic.engage_radius == 0 || args.lost_radius == 0 {
         return Err(CompileError::code("invalid-combat-radius"));
     }
@@ -218,7 +228,7 @@ pub(super) fn compile(
         tactic: Tactic::Open,
         style,
         melee_mode: args.melee_mode,
-        ranged_style: Default::default(),
+        ranged_style: args.tactic.ranged_style,
         kit,
         spells: None,
         stand,
