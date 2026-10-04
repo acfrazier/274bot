@@ -37,7 +37,7 @@ fn client() -> Client {
 /// 10 coins, plus one requirement of each other kind so the gating
 /// test covers all five vectors.
 fn gated_edge() -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 3268,
@@ -421,7 +421,7 @@ fn worn_all_req_requires_every_item_to_be_equipped() {
 fn empty_state_allows_nothing_gated() {
     let e = gated_edge();
     assert!(!WorldState::empty().allows(&e));
-    let free = TransportEdge { skill_req: vec![],
+    let free = TransportEdge { takeoff: None, skill_req: vec![],
     item_req: vec![],
     consumed_req: vec![],
     quest_req: vec![],
@@ -553,7 +553,7 @@ fn from_snapshot_builds_inv_worn_stats_varps_and_quests() {
     // Gating through the built state: an edge the state proves (the
     // completed "Lost City", not the in-progress "Rune Mysteries")
     // passes; the same edge with a missing coin does not.
-    let e = TransportEdge { quest_req: vec!["Lost City".to_string()],
+    let e = TransportEdge { takeoff: None, quest_req: vec!["Lost City".to_string()],
     ..gated_edge() };
     assert!(s.allows(&e));
     let poor = WorldState {

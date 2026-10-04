@@ -57,7 +57,7 @@ pub(super) fn shortcut_edges(
                     bump(skipped, SKIP_DEST_OUTSIDE, 1);
                     continue;
                 }
-                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
+                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
                 player_delta: None,
                 at,
                 to,
@@ -250,7 +250,7 @@ pub(super) fn emit_island_rope_leaf(
     } else {
         vec![(SKILL_AGILITY, 10)]
     };
-    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
+    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::AgilityShortcut,
     player_delta: None,
     at: start,
     to: end,

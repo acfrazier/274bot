@@ -88,7 +88,7 @@ pub fn in_essence_mine(t: WorldTile) -> bool {
 /// teleporting to the entry wizard's overworld anchor. Synthesized by the
 /// router from the live session — never packed.
 pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::EssenceExit,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::EssenceExit,
     player_delta: None,
     at,
     to: session.return_tile,

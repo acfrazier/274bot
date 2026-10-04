@@ -5599,7 +5599,7 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
         legs: vec![],
         ticks: 0.0,
     };
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Boat,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Boat,
     player_delta: None,
     at,
     to: stand,
@@ -12005,7 +12005,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         level: 0,
     };
     let mut graph = TransportGraph::default();
-    graph.teleports.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    graph.teleports.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: WorldTile {
         x: 0,
@@ -12754,7 +12754,7 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 1,
@@ -22002,7 +22002,7 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
     c.npc_ids = vec![0];
     c.npc_count = 1;
 
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Npc,
     player_delta: None,
     at: WorldTile {
         x: 2,
@@ -22794,7 +22794,7 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     }
     plant_nav_footprint_loc(&mut client, booth.x, booth.z, 1, 1);
 
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 29,
@@ -23198,7 +23198,7 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     }
     flags[target.z as usize * SIZE + target.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
 
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 19,
@@ -23480,7 +23480,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         }
         mark(62, 50, CollisionFlag::SQ_BLOCKED);
     }
-    let door = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let door = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 59,
@@ -23594,7 +23594,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         let mut graph = TransportGraph::default();
         for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
             graph.at.entry(from).or_default().push(index);
-            graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+            graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
             player_delta: None,
             at: from,
             to: stand,
@@ -23704,7 +23704,7 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     }
     let mut graph = TransportGraph::default();
     graph.at.entry(from).or_default().push(0);
-    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: from,
     to: stand,
@@ -24062,7 +24062,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
 /// case 1); the group's sibling edges share `loc_id` + option and
 /// differ only in `to`, exactly as the bake emits them.
 fn glory_edge() -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Teleport,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Teleport,
     player_delta: None,
     at: WorldTile {
         x: 0,
@@ -24201,9 +24201,9 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         level: 0, // case 1
     };
     let glory = [
-        TransportEdge { to: edgeville,
+        TransportEdge { takeoff: None, to: edgeville,
         ..glory_edge() },
-        TransportEdge { to: karamja,
+        TransportEdge { takeoff: None, to: karamja,
         ..glory_edge() },
     ];
     let world = Some(Arc::new(NavWorld::from_parts(
@@ -24300,7 +24300,7 @@ fn toll_nav_world() -> NavWorld {
         flags[z * 5 + 1] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 5 + 2] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let edge = TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 1,

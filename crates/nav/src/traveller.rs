@@ -738,9 +738,12 @@ impl FollowRun {
                             }
                         }
                     } else {
-                        edge.at
+                        edge.takeoff.unwrap_or(edge.at)
                     };
-                    let needs_approach = if selected_npc_index.is_some() {
+                    let needs_approach = if let Some(takeoff) = edge.takeoff {
+                        here != takeoff
+                            || loc_transport_ready(snapshot, edge, here) != Some(true)
+                    } else if selected_npc_index.is_some() {
                         !find_transport_target_instance(snapshot, edge, selected_npc_index)
                             .is_some_and(|target| match target {
                                 TransportTarget::Npc(npc) => {
@@ -761,7 +764,7 @@ impl FollowRun {
                             return None;
                         }
                         self.settle_until = None;
-                        let Some(approach) = selected_stand.or_else(|| {
+                        let Some(approach) = edge.takeoff.or(selected_stand).or_else(|| {
                             if npc_backed(edge) {
                                 return None;
                             }

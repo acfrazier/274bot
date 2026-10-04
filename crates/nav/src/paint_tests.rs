@@ -31,7 +31,7 @@ fn bake(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollisi
 }
 
 fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind,
     player_delta: None,
     at,
     to,

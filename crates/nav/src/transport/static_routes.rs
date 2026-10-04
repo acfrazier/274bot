@@ -90,7 +90,7 @@ const UNGUARDED_BOARD_PLANKS: &[BoardPlank] = &[
 /// from the updated coordinate. `to` is the canonical landing from the loc
 /// anchor.
 fn gangplank_edge(loc_id: i32, at: WorldTile, to: WorldTile) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Ladder,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Ladder,
     player_delta: Some(WorldTile {
         x: (to.x - at.x).signum() * 3,
         z: (to.z - at.z).signum() * 3,
@@ -354,7 +354,7 @@ pub(super) fn boat_edges(
     for r in BOAT_ROUTES {
         gates.admit_edge(
             graph,
-            TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Boat,
+            TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Boat,
             player_delta: None,
             at: r.at,
             to: r.to,
@@ -479,7 +479,7 @@ pub(super) fn cart_fare(edge: &TransportEdge, id: i32, carried: i32) -> Option<i
 /// keyed from the cart driver NPC's tile.
 pub(super) fn cart_edges(graph: &mut TransportGraph) {
     for r in CART_ROUTES {
-        graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Npc,
+        graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Npc,
         player_delta: None,
         at: r.at,
         to: r.to,

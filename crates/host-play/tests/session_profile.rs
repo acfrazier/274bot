@@ -945,7 +945,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         flags: None,
     };
     let mut graph = TransportGraph::default();
-    graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: origin,
     to: adjacent,

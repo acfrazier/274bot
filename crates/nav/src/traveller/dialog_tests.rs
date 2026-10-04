@@ -5,7 +5,7 @@ fn tile(x: i32, z: i32) -> WorldTile {
 }
 
 fn edge(kind: TransportKind) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind,
     player_delta: None,
     at: tile(10, 10),
     to: tile(20, 20),

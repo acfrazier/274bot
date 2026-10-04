@@ -146,13 +146,10 @@ pub enum DoorDir {
     W,
 }
 
-/// One directed transport hop: stand on or near `at`, use `option` on the
-/// loc `loc_id`, arrive at `to` after `ticks`. `at` is the interact
-/// target — the loc tile (door/web/ladder/stairs/agility/glider) or the
-/// origin-leg NPC tile (boat); `to` is the arrival tile. `dir` is the
-/// crossing direction for doors and slashable webs (`None` for every
-/// other edge kind until steps 3/4 fill them); `open_loc_id` names the
-/// door's open leaf or the web's slashed loc.
+/// One directed transport hop. `at` remains the loc/NPC interaction anchor
+/// and `to` the resolved landing; optional `takeoff` pins conditional or
+/// multi-step content to its exact required game-plane starting tile. A
+/// pinned takeoff is the only admissible stand, rather than a nearby approach.
 /// Requirement vectors are `(skill id, level)` /
 /// `(item id, count)` pairs and spell/quest names and `(varp, value)` pairs,
 /// filled from what the source scripts/defs declare. `item_req` is a
@@ -171,6 +168,9 @@ pub struct TransportEdge {
     pub kind: TransportKind,
     pub at: WorldTile,
     pub to: WorldTile,
+    /// Exact required starting tile; `None` preserves radius/footprint
+    /// admission for existing transports.
+    pub takeoff: Option<WorldTile>,
     /// Content `movecoord(coord, ...)` displacement from the actual operable
     /// takeoff stand. `None` is an absolute landing. Packed in the kind byte's
     /// high bit; the canonical graph's `to - at` supplies the displacement.
@@ -275,8 +275,8 @@ impl TransportEdge {
     }
 }
 
-/// Transport edges indexed by operable footprint stands or radius-one
-/// interact anchors (`graph.at[tile]` lists indexes into `edges`).
+/// Transport edges indexed by exact pinned takeoff tiles, operable footprint
+/// stands, or radius-one interact anchors (`graph.at` lists edge indexes).
 #[derive(Debug, Default)]
 pub struct TransportGraph {
     pub edges: Vec<TransportEdge>,
@@ -311,6 +311,19 @@ impl TransportGraph {
         from: WorldTile,
     ) -> bool {
         let edge = &self.edges[index];
+        if let Some(takeoff) = edge.takeoff {
+            if from != takeoff || !collision.standable(from) || from.level != edge.at.level {
+                return false;
+            }
+            return match self.approaches.get(index).copied().flatten() {
+                Some(approach) => approach.can_operate(
+                    edge.at,
+                    from,
+                    collision.walkable_word(from.x, from.z, from.level) as i32,
+                ),
+                None => (from.x - edge.at.x).abs().max((from.z - edge.at.z).abs()) <= 1,
+            };
+        }
         if !collision.standable(from) || from.level != edge.at.level {
             return false;
         }
@@ -325,7 +338,11 @@ impl TransportGraph {
     }
 
     pub(crate) fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
-        let at = self.edges[index].at;
+        let edge = &self.edges[index];
+        if let Some(takeoff) = edge.takeoff {
+            return (takeoff, takeoff);
+        }
+        let at = edge.at;
         let approach = self.approaches.get(index).copied().flatten();
         (
             WorldTile {
@@ -341,11 +358,17 @@ impl TransportGraph {
         )
     }
 
-    /// Index footprint edges at their operable stands; other transports keep
-    /// their target anchor. This index is shared by all router callers.
+    /// Index pinned transports only at their exact admissible takeoff;
+    /// footprint edges use operable stands and the rest keep their anchor.
     pub fn rebuild_index(&mut self, collision: &WorldCollision) {
         self.at.clear();
         for (index, edge) in self.edges.iter().enumerate() {
+            if let Some(takeoff) = edge.takeoff {
+                if self.admissible_from(collision, index, takeoff) {
+                    self.at.entry(takeoff).or_default().push(index);
+                }
+                continue;
+            }
             if self.approaches.get(index).copied().flatten().is_none() {
                 self.at.entry(edge.at).or_default().push(index);
                 continue;
@@ -542,6 +565,7 @@ fn derive_transports_with_audit(
         content_root,
         &ids,
         &positions,
+        loc_defs,
         &mut graph,
         collision,
         &mut skipped,
@@ -614,6 +638,7 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
     fn rest(e: &TransportEdge) -> impl Ord + '_ {
         (
             tile(e.to),
+            e.takeoff.map(tile),
             (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
             (
                 &e.skill_req,

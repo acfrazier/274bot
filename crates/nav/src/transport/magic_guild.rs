@@ -70,7 +70,7 @@ pub(super) fn magicguild_door_edges(
                 let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
                     continue;
                 };
-                graph.edges.push(TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+                graph.edges.push(TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
                 player_delta: None,
                 at,
                 to,

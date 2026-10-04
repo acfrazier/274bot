@@ -450,7 +450,7 @@ queue(shantay_pass_enter, 0, 0);
 }
 
 fn members_check_edge(kind: TransportKind, loc_id: i32, option: i32) -> TransportEdge {
-    TransportEdge { worn_all_req: Vec::new(), kind,
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind,
     player_delta: None,
     at: WorldTile {
         x: 3200,
@@ -8069,7 +8069,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         "scripts/player/interfaces/questlist.if",
         "[grandtree]\ntext=The Grand Tree\n[blackarmgang]\ntext=Shield of Arrav\n",
     );
-    let edge = |loc_id, id, min| TransportEdge { worn_all_req: Vec::new(), kind: TransportKind::Door,
+    let edge = |loc_id, id, min| TransportEdge { takeoff: None, worn_all_req: Vec::new(), kind: TransportKind::Door,
     player_delta: None,
     at: WorldTile {
         x: 100,
