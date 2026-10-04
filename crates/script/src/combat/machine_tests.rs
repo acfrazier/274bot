@@ -344,6 +344,7 @@ impl Scene {
                     actor: actor(at),
                     combat_level: 60,
                     skill_level: 0,
+                    headicons: 0,
                     weapon: None,
                 },
                 energy: 100,
@@ -561,6 +562,7 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
         actor: actor(tile(2601, 3200)),
         combat_level: 60,
         skill_level: 0,
+        headicons: 0,
         weapon: None,
     };
     attacker.actor.name = Some("Alpha".into());
@@ -989,6 +991,7 @@ fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
+    scene.face_us();
     let prayers: Vec<_> = scene
         .data
         .prayers()
@@ -1004,12 +1007,18 @@ fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
         .map(|row| (row.varp, row.button_com))
         .collect();
     assert_eq!(prayers.len(), 3);
+    scene.refresh();
+    let raised = harness.pending_batch(&scene, 3);
+    assert_eq!(policy_s2_buttons(&raised).len(), prayers.len());
+    for (_, button) in &prayers {
+        assert!(policy_s2_buttons(&raised).contains(button));
+    }
     for (varp, _) in &prayers {
         scene.prayer(*varp, true);
     }
     scene.npcs[0].health = 0;
     scene.refresh();
-    let off = harness.pending_batch(&scene, 3);
+    let off = harness.pending_batch(&scene, 4);
     assert_len(&off, prayers.len());
     for (index, (_, button)) in prayers.iter().enumerate() {
         prayer_row(&off, index, *button);
@@ -1018,9 +1027,10 @@ fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
         scene.prayer(*varp, false);
     }
     scene.refresh();
-    let report = harness.ready(&scene, 4);
+    let report = harness.ready(&scene, 5);
     assert_eq!(report.end, CombatEnd::Killed);
-    assert_eq!(report.restorations, 0);
+    // The accepted raises restored once; terminal offs add no restoration.
+    assert_eq!(report.restorations, 1);
 }
 
 #[test]
@@ -1611,6 +1621,11 @@ fn counter_protect_saradomin_raises_magic_and_zamorak_is_magic() {
 fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
+    scene.stat(5, 43, 43);
+    scene.face_us();
+    scene.refresh();
+    let raised = harness.pending_batch(&scene, 3);
+    assert_eq!(policy_s2_buttons(&raised).len(), 3);
     scene.stat(5, 26, 43);
     scene.face_us();
     let on: Vec<_> = scene
@@ -1631,7 +1646,7 @@ fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
         scene.prayer(row.varp, true);
     }
     scene.refresh();
-    let mut tick = 3;
+    let mut tick = 4;
     let mut plans = 0_u8;
     while on.iter().any(|row| {
         row.name != "Protect from Melee"
@@ -1677,7 +1692,7 @@ fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
         tick += 1;
     }
     assert_len(&harness.pending_batch(&scene, tick), 0);
-    assert_eq!(harness.machine.counters.restorations, plans);
+    assert_eq!(harness.machine.counters.restorations, plans + 1);
     let protect = on
         .iter()
         .find(|row| row.name == "Protect from Melee")
@@ -2331,7 +2346,7 @@ fn case41_protect_on_ready_deadline_restores_swing_same_plan() {
 }
 
 #[test]
-fn case42_offensives_fill_five_events_and_defer_the_extra_click() {
+fn case42_offensives_fill_five_events_without_clearing_user_prayer() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 40, 43);
@@ -2389,10 +2404,12 @@ fn case42_offensives_fill_five_events_and_defer_the_extra_click() {
     scene.install();
     scene.refresh();
     let deferred = harness.pending_batch(&scene, 4);
-    assert_len(&deferred, 2);
-    prayer_row(&deferred, 0, extra.button_com);
-    attack_row(&deferred, 1);
-    assert_eq!(harness.machine.counters.multi, 2);
+    assert_len(&deferred, 0);
+    assert_eq!(harness.machine.counters.multi, 1);
+    assert!(scene
+        .varps
+        .iter()
+        .any(|row| row.index == extra.varp && row.value == 1));
 }
 
 #[test]
@@ -2431,7 +2448,7 @@ fn case46_retaliate_turns_on_before_the_fight_attack() {
 }
 
 #[test]
-fn case47_winddown_sweeps_six_prayers_after_a_drink_lock() {
+fn case47_winddown_preserves_six_unowned_prayers_after_a_drink_lock() {
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -2460,21 +2477,11 @@ fn case47_winddown_sweeps_six_prayers_after_a_drink_lock() {
     assert_eq!(harness.machine.counters.locked, 2);
     let obligated_before_cleanup = harness.machine.counters.restorations;
 
-    let first = harness.pending_batch(&scene, 6);
-    assert_len(&first, 5);
-    for (index, (_, button)) in prayers[..5].iter().enumerate() {
-        prayer_row(&first, index, *button);
-    }
-    for (varp, _) in &prayers[..5] {
-        scene.prayer(*varp, false);
-    }
-    scene.refresh();
-    let last = harness.pending_batch(&scene, 7);
-    assert_len(&last, 1);
-    prayer_row(&last, 0, prayers[5].1);
-    scene.prayer(prayers[5].0, false);
-    scene.refresh();
-    let report = harness.ready(&scene, 8);
+    let report = harness.ready(&scene, 6);
+    assert!(prayers.iter().all(|(varp, _)| scene
+        .varps
+        .iter()
+        .any(|row| row.index == *varp && row.value == 1)));
     assert_eq!(report.end, CombatEnd::Killed);
     assert_eq!(report.locked_ticks, 2);
     assert_eq!(report.restorations, obligated_before_cleanup);
@@ -3144,4 +3151,293 @@ fn user_input_ends_combat_leash_walk_without_retarget_or_rewalk() {
         Poll::Ready(Err(ActionError::UserInput))
     ));
     assert_len(&harness.drain(None), 0);
+}
+
+fn policy_s2_incoming(scene: &mut Scene, spotanim: i32) {
+    scene
+        .snapshot
+        .seed_projectiles(vec![api::snapshot::ProjectileView {
+            spotanim,
+            level: 0,
+            src: scene.npcs[0].tile,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: scene.local.player.index,
+            }),
+            t1: 0,
+            t2: 30,
+        }]);
+}
+
+fn policy_s2_buttons(batch: &DrainedBatch) -> Vec<i32> {
+    batch.effects[..batch.len()]
+        .iter()
+        .filter_map(|effect| match effect {
+            Some(HostEffect::Interaction(InteractReq::IfButton { component_id })) => {
+                Some(*component_id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn policy_s2_sweep_preserves_user_prayers_and_never_restores_displaced_protect() {
+    for switch_back in [false, true] {
+        let mut scene = Scene::new("imp");
+        scene.stat(5, 43, 43);
+        let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
+        let original = scene
+            .data
+            .prayer_by_name(if switch_back {
+                "Protect from Missiles"
+            } else {
+                "Protect from Melee"
+            })
+            .unwrap()
+            .clone();
+        let replacement = scene
+            .data
+            .prayer_by_name(if switch_back {
+                "Protect from Magic"
+            } else {
+                "Protect from Missiles"
+            })
+            .unwrap()
+            .clone();
+        scene.prayer(skin.varp, true);
+        scene.prayer(original.varp, true);
+        scene.face_us();
+        scene.refresh();
+        policy_s2_incoming(&mut scene, if switch_back { 88 } else { 9 });
+        let mut harness = Harness::new(&scene, scene.request());
+
+        let first = harness.pending_batch(&scene, 1);
+        assert_eq!(policy_s2_buttons(&first), vec![replacement.button_com]);
+        scene.install();
+        scene.prayer(original.varp, false);
+        scene.prayer(replacement.varp, true);
+        scene.refresh();
+        policy_s2_incoming(&mut scene, if switch_back { 88 } else { 9 });
+        assert!(policy_s2_buttons(&harness.pending_batch(&scene, 2)).is_empty());
+
+        let cleanup_prayer = if switch_back {
+            scene.refresh();
+            policy_s2_incoming(&mut scene, 9);
+            let back = harness.pending_batch(&scene, 3);
+            assert_eq!(policy_s2_buttons(&back), vec![original.button_com]);
+            scene.prayer(replacement.varp, false);
+            scene.prayer(original.varp, true);
+            scene.refresh();
+            original.clone()
+        } else {
+            replacement.clone()
+        };
+        scene.npcs[0].health = 0;
+        scene.refresh();
+        let cleanup = harness.pending_batch(&scene, 4);
+        assert_eq!(policy_s2_buttons(&cleanup), vec![cleanup_prayer.button_com]);
+        scene.prayer(cleanup_prayer.varp, false);
+        scene.refresh();
+        assert_eq!(harness.ready(&scene, 5).end, CombatEnd::Killed);
+        assert_eq!(
+            prayer_observation(
+                &Frame::borrow(api::snapshot::SnapshotView::new(
+                    Some(&scene.snapshot),
+                    harness.runtime.evidence.unwrap()
+                ))
+                .unwrap()
+            )
+            .varp(skin.varp),
+            1
+        );
+        assert_eq!(
+            scene
+                .varps
+                .iter()
+                .find(|row| row.index == original.varp)
+                .unwrap()
+                .value,
+            0,
+            "the displaced protect is not restored, including after a Combat-owned re-raise"
+        );
+    }
+}
+
+#[test]
+fn policy_s2_incomplete_baseline_emits_no_toggle_before_delayed_user_row() {
+    let mut scene = Scene::new("imp");
+    scene.stat(5, 43, 43);
+    let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
+    let protect = scene
+        .data
+        .prayer_by_name("Protect from Melee")
+        .unwrap()
+        .clone();
+    scene.varps.retain(|row| row.index != skin.varp);
+    scene.face_us();
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    assert!(policy_s2_buttons(&harness.pending_batch(&scene, 1)).is_empty());
+    scene.install();
+    scene.refresh();
+    assert!(policy_s2_buttons(&harness.pending_batch(&scene, 2)).is_empty());
+
+    scene.varps.push(VarpView {
+        index: skin.varp,
+        value: 1,
+    });
+    scene.refresh();
+    let ready = harness.pending_batch(&scene, 3);
+    assert_eq!(policy_s2_buttons(&ready), vec![protect.button_com]);
+    scene.prayer(protect.varp, true);
+    scene.npcs[0].health = 0;
+    scene.refresh();
+    let cleanup = harness.pending_batch(&scene, 4);
+    assert_eq!(policy_s2_buttons(&cleanup), vec![protect.button_com]);
+    scene.prayer(protect.varp, false);
+    scene.refresh();
+    assert_eq!(harness.ready(&scene, 5).end, CombatEnd::Killed);
+    assert_eq!(
+        scene
+            .varps
+            .iter()
+            .find(|row| row.index == skin.varp)
+            .unwrap()
+            .value,
+        1
+    );
+}
+
+#[test]
+fn policy_s2_offensive_tier_never_displaces_user_strength() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.stat(5, 43, 43);
+    let burst = scene
+        .data
+        .prayer_by_name("Burst of Strength")
+        .unwrap()
+        .clone();
+    let ultimate = scene
+        .data
+        .prayer_by_name("Ultimate Strength")
+        .unwrap()
+        .clone();
+    scene.prayer(burst.varp, true);
+    scene.face_us();
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    let first = harness.pending_batch(&scene, 1);
+    let mut buttons = policy_s2_buttons(&first);
+    for row in scene.data.prayers().to_vec() {
+        if buttons.contains(&row.button_com) {
+            scene.prayer(row.varp, true);
+        }
+    }
+    scene.install();
+    scene.refresh();
+    buttons.extend(policy_s2_buttons(&harness.pending_batch(&scene, 2)));
+    assert!(
+        !buttons.contains(&burst.button_com),
+        "user prayer must not be switched off"
+    );
+    assert!(
+        !buttons.contains(&ultimate.button_com),
+        "higher tier would displace the user prayer"
+    );
+    assert!(first.len() > 0, "the engaged machine still makes progress");
+}
+
+#[test]
+fn policy_s2_refused_switch_leaves_baseline_unowned_at_winddown() {
+    let mut scene = Scene::new("imp");
+    scene.stat(5, 43, 43);
+    let original = scene
+        .data
+        .prayer_by_name("Protect from Melee")
+        .unwrap()
+        .clone();
+    let replacement = scene
+        .data
+        .prayer_by_name("Protect from Missiles")
+        .unwrap()
+        .clone();
+    scene.prayer(original.varp, true);
+    scene.face_us();
+    scene.refresh();
+    policy_s2_incoming(&mut scene, 9);
+    let mut harness = Harness::new(&scene, scene.request());
+    let refused = harness.pending_with_refusal(&scene, 1, 0);
+    assert_eq!(policy_s2_buttons(&refused), vec![replacement.button_com]);
+    scene.npcs[0].health = 0;
+    scene.refresh();
+    assert_eq!(harness.ready(&scene, 2).end, CombatEnd::Killed);
+    assert_eq!(
+        scene
+            .varps
+            .iter()
+            .find(|row| row.index == original.varp)
+            .unwrap()
+            .value,
+        1
+    );
+}
+
+#[test]
+fn policy_s2_prayer_disallowed_preserves_user_overlays() {
+    let mut scene = Scene::new("imp");
+    let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
+    scene.prayer(skin.varp, true);
+    scene.refresh();
+    let mut request = scene.request();
+    request.allow.prayer = false;
+    let mut harness = Harness::new(&scene, request);
+    assert!(policy_s2_buttons(&harness.pending_batch(&scene, 1)).is_empty());
+    scene.npcs[0].health = 0;
+    scene.refresh();
+    assert_eq!(harness.ready(&scene, 2).end, CombatEnd::Killed);
+    assert_eq!(
+        scene
+            .varps
+            .iter()
+            .find(|row| row.index == skin.varp)
+            .unwrap()
+            .value,
+        1
+    );
+}
+
+#[test]
+fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() {
+    let mut scene = Scene::new("imp");
+    scene.stat(5, 43, 43);
+    scene.face_us();
+    scene.refresh();
+    let protect = scene
+        .data
+        .prayer_by_name("Protect from Melee")
+        .unwrap()
+        .clone();
+    let mut harness = Harness::new(&scene, scene.request());
+    assert_eq!(
+        policy_s2_buttons(&harness.pending_batch(&scene, 1)),
+        vec![protect.button_com]
+    );
+    scene.install();
+    scene.varps.retain(|row| row.index != protect.varp);
+    scene.refresh();
+    for tick in 2..=10 {
+        harness.pending_batch(&scene, tick);
+    }
+    assert!(harness.machine.prayer_cleanup(0).contains(protect.varp));
+    scene.varps.push(VarpView {
+        index: protect.varp,
+        value: 1,
+    });
+    scene.npcs[0].health = 0;
+    scene.refresh();
+    assert_eq!(
+        policy_s2_buttons(&harness.pending_batch(&scene, 11)),
+        vec![protect.button_com]
+    );
 }

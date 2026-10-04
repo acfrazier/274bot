@@ -402,8 +402,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
 }
 
 #[test]
-fn rejected_parameter_save_is_not_retried_on_later_frames() {
-    let mut f = native_fixture("parameter-save-rejected", &["alice"]);
+fn unknown_resource_save_survives_and_radius_remains_editable() {
+    let mut f = native_fixture("unknown-resource-radius", &["alice"]);
     let id = script::CompiledId("Gatherer");
     let selection = script::ScriptSel::Compiled(id);
     let setup = f
@@ -460,36 +460,88 @@ fn rejected_parameter_save_is_not_retried_on_later_frames() {
     );
     let op = match result {
         Ok(ParameterCommit::Submitted(op) | ParameterCommit::Pending(op)) => op,
-        Err(_) => f.core.last_operation().unwrap().id,
-        other => panic!("expected one rejected Save profile attempt, got {other:?}"),
+        other => panic!("expected one accepted Save profile attempt, got {other:?}"),
     };
     assert_ne!(Some(op), before);
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     let report = f.core.operation(op).unwrap();
     assert_eq!(report.action, ActionKind::SaveProfile);
-    assert!(
-        matches!(report.outcome("alice"), Some(Outcome::Failed(_))),
-        "expected invalid Gatherer settings to fail: {report:?}"
+    assert_eq!(
+        report.outcome("alice"),
+        Some(&Outcome::Completed),
+        "an unknown Gatherer resource remains a persistable value: {report:?}"
     );
-    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+    let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
 
     for _ in 0..4 {
         f.core.poll();
         f.scripts.poll(&mut f.core);
-        assert!(f
-            .scripts
-            .commit_parameter_value(
+        assert!(matches!(
+            f.scripts.commit_parameter_value(
                 &mut f.core,
                 &key,
                 &selection,
                 "miningResources",
                 json!(["coppe"]),
-                Some(json!(["copper", "tin"])),
-            )
-            .is_err());
+                Some(json!(["coppe"])),
+            ),
+            Ok(ParameterCommit::Unchanged)
+        ));
         assert_eq!(f.core.last_operation().map(|report| report.id), Some(op));
     }
+
+    let current_bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let current_radius = current_bag.get("radius").cloned().unwrap();
+    let radius_def = schema
+        .iter()
+        .find(|setting| setting.id == "radius")
+        .unwrap();
+    let radius_text = "13";
+    let initial_radius_text = script::format_setting_value(&current_radius);
+    let radius_buffer = f.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        "radius",
+        &initial_radius_text,
+        Some(current_radius.clone()),
+    );
+    radius_buffer.clear();
+    radius_buffer.push_str(radius_text);
+    let radius_value = f
+        .scripts
+        .validate_parameter_buffer_for(
+            Some("alice"),
+            &selection,
+            "radius",
+            (&initial_radius_text, Some(current_radius.clone())),
+            radius_def,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(radius_value, json!(13));
+    let radius_key = ParameterEditKey::new(Some("alice"), &selection, "radius");
+    let radius_result = f.scripts.commit_parameter_value(
+        &mut f.core,
+        &radius_key,
+        &selection,
+        "radius",
+        radius_value,
+        Some(current_radius),
+    );
+    let radius_op = match radius_result {
+        Ok(ParameterCommit::Submitted(op) | ParameterCommit::Pending(op)) => op,
+        other => panic!("expected radius Save profile attempt, got {other:?}"),
+    };
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let radius_report = f.core.operation(radius_op).unwrap();
+    assert_eq!(radius_report.action, ActionKind::SaveProfile);
+    assert_eq!(radius_report.outcome("alice"), Some(&Outcome::Completed));
+    let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
+    assert_eq!(saved.get("radius"), Some(&json!(13)));
 }
 fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
     pairs

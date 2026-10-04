@@ -61,6 +61,11 @@ impl Observation for Frame<'_> {
             }
         }
     }
+    fn moving(&self) -> Option<bool> {
+        self.snapshot
+            .local_player()
+            .map(|player| player.value.player.actor.moving)
+    }
 }
 
 impl NativeMachine for Walk {
@@ -147,18 +152,6 @@ impl NativeMachine for Walk {
             }));
         }
         match receipt {
-            Some(receipt)
-                if receipt.end == WalkEnd::RouteEnded
-                    && frame
-                        .snapshot
-                        .local_player()
-                        .is_some_and(|player| player.value.player.actor.moving) =>
-            {
-                // A host route terminal can precede the observed final step.
-                // Keep the owner until arrival, a stationary end, or the
-                // existing active deadline; do not widen the goal radius.
-                Poll::Pending
-            }
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
             None => Poll::Pending,
         }

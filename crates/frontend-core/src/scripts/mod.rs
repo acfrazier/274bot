@@ -20,7 +20,10 @@ mod reload;
 mod start_admit;
 mod start_tally;
 use parameter_edit::ParameterEdit;
-pub use parameter_edit::{parse_parameter_text, ParameterCommit, ParameterEditKey};
+pub use parameter_edit::{
+    parse_parameter_text, resolve_parameter_options, ParameterCommit, ParameterEditKey,
+    ParameterOptions,
+};
 
 mod sync;
 

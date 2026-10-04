@@ -36,6 +36,25 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
             .is_some()
     );
 }
+#[test]
+fn generated_npc_headicons_come_from_selected_content() {
+    let data = for_revision(ClientRevision::R289).expect("revision 289 data");
+
+    assert_eq!(
+        data.npc_by_config("kalphite_queen")
+            .and_then(|npc| npc.headicon),
+        Some(8)
+    );
+    assert_eq!(
+        data.npc_by_config("kalphite_flyingqueen")
+            .and_then(|npc| npc.headicon),
+        Some(3)
+    );
+    assert_eq!(
+        data.npc_by_config("hans").and_then(|npc| npc.headicon),
+        None
+    );
+}
 
 #[test]
 fn runtime_decoded_content_id_binds_while_deleted_packed_alias_stays_closed() {

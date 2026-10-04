@@ -22,6 +22,9 @@ use crate::traveller::{
 #[path = "traveller/npc_hop_tests.rs"]
 mod npc_hop_tests;
 
+#[path = "traveller/n1_tests.rs"]
+mod n1_tests;
+
 #[test]
 fn no_route_ticks_idle() {
     let mut t = Traveller::new();
@@ -4094,7 +4097,7 @@ fn follow_alkharid_toll_refuses_without_coins_instead_of_paying() {
     match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Blocked { detail, .. }) => {
             assert!(
-                detail.contains("coins"),
+                detail.contains(&TEST_TOLL_COIN_OBJ.to_string()) && detail.contains("10"),
                 "refusal must name the missing coins, got {detail}"
             );
         }
@@ -5269,8 +5272,8 @@ fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
     // Live `nav_tele` after mainlandAccount: `inv()` sees the cheated
     // ring (TYPE_INV fallback) so the router packs the rub, but
     // `inventory()` is empty until a Relog binds side tab 3. The hop
-    // must Wait, never OP_HELD, and Blocked with the loaded-scene
-    // message once the hop budget lapses.
+    // must Wait, never OP_HELD, and name the unbound charged-item control
+    // when the bounded wait ends.
     let mut c = scene_client();
     plant_inv_item_unbound_tab(&mut c, 2552);
     let mut snap = snap_at(&mut c, 0, 0);
@@ -5322,9 +5325,8 @@ fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
                 }
             );
             assert!(
-                detail.contains(
-                    "packed teleport to (3315, 3235, 0) never became workable in the loaded scene"
-                ),
+                detail.contains("charged teleport item 2552")
+                    && detail.contains("inventory control"),
                 "blocked detail: {detail}"
             );
         }
@@ -5441,6 +5443,7 @@ fn follow_spell_teleport_presses_the_spellbook_button_and_arrives() {
     // 2004 component id when the loaded scene carries no spellbook
     // text — never `::tele`.
     let mut c = scene_client();
+    n1_tests::spell_supply(&mut c, &varrock_spell_edge());
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
         route: Some((0, 0)),
@@ -5496,6 +5499,7 @@ fn follow_refused_spell_teleport_does_not_resend() {
     // recast. A later find from the same tile cannot pick that teleport
     // again (the packed cap is the same gate the server applied).
     let mut c = scene_client();
+    n1_tests::spell_supply(&mut c, &varrock_spell_edge());
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
         route: Some((0, 0)),
@@ -5559,6 +5563,7 @@ fn follow_spell_teleport_presses_the_live_spellbook_button_by_text() {
     // Lumbridge, so the edge must be the Lumbridge standard spell
     // (the `widget_search` match keys on the landing's dest word).
     let mut c = scene_client();
+    n1_tests::spell_supply(&mut c, &lumbridge_spell_edge());
     plant_spell_button(&mut c);
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -5841,16 +5846,10 @@ fn follow_approaches_a_transport_loc_before_interacting() {
 }
 
 #[test]
-fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
-    // A tick-perfect closer: the mock alternates the door loc's id
-    // (closed 1530 / open 1531) every tick, and the player only
-    // crosses when a walk is actually sent. The cheap one-interact
-    // hop can never cross within its budget, so `follow` must escalate
-    // on its own — no option flag — and troll the door: re-open it
-    // every tick and walk through in the same tick the door reads
-    // open, so the closer cannot slam it shut between the open and the
-    // walk. The edge carries the open leaf's id (`open_loc_id`), the
-    // id the troll's radius lookup matches when the door reads open.
+fn follow_auto_troll_keeps_the_spent_cheap_hop_budget() {
+    // A tick-perfect closer can outlast the cheap hop. The automatic
+    // fallback may attempt recovery, but cannot spend a second wait budget
+    // before reporting that the unchanged position's send was dropped.
     let mut c = scene_client();
     plant_door(&mut c, false, 1);
     let mut snap = snap_at(&mut c, 0, 0);
@@ -5884,22 +5883,23 @@ fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
     let mut crossed = false;
     loop {
         match t.follow(&mut rec, &snap, route.clone(), &mut options) {
-            Some(TravelOutcome::Arrived { at }) => {
+            Some(TravelOutcome::Stalled { at, why, .. }) => {
                 assert_eq!(
                     at,
                     WorldTile {
-                        x: 3203,
+                        x: 3200,
                         z: 3200,
                         level: 0
                     }
                 );
+                assert_eq!(why, HopFailure::Dropped);
                 break;
             }
-            Some(other) => panic!("expected Arrived, got {other:?}"),
+            Some(other) => panic!("expected bounded Stalled, got {other:?}"),
             None => {}
         }
         tick += 1;
-        assert!(tick < 200, "the automatic troll fallback never arrived");
+        assert!(tick <= 5, "the fallback extended the spent hop budget");
         // The closer slams the door shut each tick: alternate the
         // door's open/closed state, and only move the player once a
         // walk was actually sent (the troll's same-tick walk).
@@ -5911,22 +5911,13 @@ fn follow_auto_trolls_a_door_when_the_cheap_hop_lapses() {
         }
         bump_rebuild(&mut c, &mut snap);
     }
-    assert!(crossed, "the troll's same-tick walk never crossed the door");
-    assert!(
-        rec.loc_ops >= 2,
-        "the troll must re-open the door after the cheap hop lapses, got {} loc ops",
-        rec.loc_ops
-    );
-    assert!(
-        rec.walked.contains(&(3, 0)),
-        "the troll walks through the open door in the same tick"
-    );
+    assert!(!crossed, "the expired hop cannot wait for another crossing");
 }
 
 #[test]
 fn follow_troll_walks_an_open_door_without_closing_it() {
-    // OP_LOC1 on an open door is Close. After the cheap hop lapses the
-    // troll must walk through an already-open door and not click it.
+    // OP_LOC1 on an open door is Close. Exercise the troll with remaining
+    // budget; it must walk through an already-open door without clicking it.
     let mut c = scene_client();
     plant_door(&mut c, false, 1);
     let mut snap = snap_at(&mut c, 0, 0);
@@ -5955,18 +5946,13 @@ fn follow_troll_walks_an_open_door_without_closing_it() {
         ..TravelOptions::default()
     };
 
-    // Cheap hop: interact, then sit the budget out.
+    // Arm the cheap send, then exercise the recovery before its deadline.
     assert!(t
         .follow(&mut rec, &snap, route.clone(), &mut options)
         .is_none());
     let ops_after_cheap = rec.loc_ops;
     assert!(ops_after_cheap >= 1, "cheap hop sent OP_LOC1");
-    for _ in 0..3 {
-        bump_rebuild(&mut c, &mut snap);
-        assert!(t
-            .follow(&mut rec, &snap, route.clone(), &mut options)
-            .is_none());
-    }
+    t.follow.as_mut().unwrap().transport.as_mut().unwrap().troll = true;
 
     plant_door(&mut c, true, 1);
     bump_rebuild(&mut c, &mut snap);
@@ -6343,6 +6329,13 @@ fn follow_troll_finds_an_offset_door_loc_within_radius() {
         close_enough: 1,
         ..TravelOptions::default()
     };
+
+    // This lookup fixture starts recovery with unspent budget. Deadline
+    // escalation must not grant a fresh budget; that is covered separately.
+    assert!(t
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    t.follow.as_mut().unwrap().transport.as_mut().unwrap().troll = true;
 
     let mut tick = 0u32;
     let mut crossed = false;

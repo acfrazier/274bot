@@ -43,11 +43,13 @@ impl HostOutcome {
 }
 
 /// Facts are borrowed by the adapter for this call only. Arrival uses the
-/// adapter's scene predicate, never route-terminal success alone.
+/// adapter's scene predicate, never route-terminal success alone. `None`
+/// means motion is not authoritatively observable in this snapshot.
 pub trait Observation {
     fn outcome(&self) -> HostOutcome;
     fn cancelled(&self) -> bool;
     fn arrived(&self, key: WalkKey) -> bool;
+    fn moving(&self) -> Option<bool>;
 }
 
 struct Wait {
@@ -140,8 +142,10 @@ impl WalkSlot {
             }
         }
         if let Some(value) = wait.matched {
-            wait.settled = Some(value);
-            return true;
+            if !value || wait.blocked || observation.moving() == Some(false) {
+                wait.settled = Some(value);
+                return true;
+            }
         }
         false
     }
@@ -160,7 +164,7 @@ impl WalkSlot {
 }
 
 #[cfg(test)]
-mod tests {
+mod permission_tests {
     use super::*;
 
     fn key(allow_teleports: Option<bool>) -> WalkKey {
@@ -213,5 +217,106 @@ mod tests {
             outcome(Some(true)),
             &wait(Some(false))
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroU64;
+
+    struct Sample {
+        outcome: HostOutcome,
+        moving: Option<bool>,
+        arrived: bool,
+        cancelled: bool,
+    }
+
+    impl Observation for Sample {
+        fn outcome(&self) -> HostOutcome {
+            self.outcome
+        }
+
+        fn cancelled(&self) -> bool {
+            self.cancelled
+        }
+
+        fn arrived(&self, _key: WalkKey) -> bool {
+            self.arrived
+        }
+
+        fn moving(&self) -> Option<bool> {
+            self.moving
+        }
+    }
+
+    fn route_outcome(failed: bool, blocked: bool) -> HostOutcome {
+        HostOutcome {
+            seq: 1,
+            generation: 1,
+            request_id: 9,
+            failed,
+            blocked,
+            key: WalkKey {
+                tile: WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                radius: 0,
+                allow_teleports: Some(false),
+            },
+        }
+    }
+
+    fn slot(outcome: HostOutcome) -> WalkSlot {
+        let mut slot = WalkSlot::new();
+        slot.begin(
+            NonZeroU64::new(9).expect("test token is nonzero"),
+            outcome.key,
+            HostOutcome::empty(),
+        );
+        slot.observe_outcome(outcome);
+        slot
+    }
+
+    fn sample(outcome: HostOutcome, moving: Option<bool>) -> Sample {
+        Sample {
+            outcome,
+            moving,
+            arrived: false,
+            cancelled: false,
+        }
+    }
+
+    #[test]
+    fn route_terminal_waits_for_authoritative_stationarity() {
+        let outcome = route_outcome(false, false);
+        let mut slot = slot(outcome);
+        assert!(!slot.poll(9, &sample(outcome, Some(true))));
+        assert!(!slot.poll(9, &sample(outcome, None)));
+        assert!(slot.poll(9, &sample(outcome, Some(false))));
+        assert!(slot.value(9));
+    }
+
+    #[test]
+    fn failures_blocks_and_manual_movement_settle_without_motion_delay() {
+        let failed = route_outcome(true, false);
+        let mut failed_slot = slot(failed);
+        assert!(failed_slot.poll(9, &sample(failed, Some(true))));
+        assert!(!failed_slot.value(9));
+
+        let blocked = route_outcome(false, true);
+        let mut blocked_slot = slot(blocked);
+        assert!(blocked_slot.poll(9, &sample(blocked, Some(true))));
+        assert!(blocked_slot.value(9));
+        assert!(blocked_slot.blocked(9));
+
+        let outcome = route_outcome(false, false);
+        let mut slot = slot(outcome);
+        let mut manual = sample(outcome, Some(true));
+        manual.cancelled = true;
+        assert!(slot.poll(9, &manual));
+        assert!(!slot.value(9));
     }
 }

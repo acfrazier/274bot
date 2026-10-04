@@ -3,13 +3,13 @@
 # Bundles engine sources with cycle stubs, keeps real bzip2/wasm for pack loads.
 #
 # One canonical server root feeds source, modules, data, bzip2, config, and
-# receipt. Precedence: --server-root CLI > SERVER_ROOT > BOT_SERVER_ROOT >
-# default Server/engine. Missing --server-root value fail-closed.
+# receipt. Precedence: --server-root CLI > SERVER_ROOT > BOT_SERVER_ROOT.
+# No machine default: one of the three is required. Missing --server-root
+# value fail-closed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DEFAULT_ENG="/Users/acfrazier/experiments/Server/engine"
 
 # Parse --server-root from argv BEFORE any compile/link so CLI cannot disagree
 # with the engine tree esbuild bundles.
@@ -39,7 +39,7 @@ if [[ $expect_root_value -eq 1 ]]; then
   exit 2
 fi
 
-# Canonical selected root (CLI wins over env).
+# Canonical selected root (CLI wins over env). No default: fail naming the variables.
 if [[ -n "$CLI_ROOT" ]]; then
   ENG_CANDIDATE="$CLI_ROOT"
 elif [[ -n "${SERVER_ROOT:-}" ]]; then
@@ -47,15 +47,12 @@ elif [[ -n "${SERVER_ROOT:-}" ]]; then
 elif [[ -n "${BOT_SERVER_ROOT:-}" ]]; then
   ENG_CANDIDATE="$BOT_SERVER_ROOT"
 else
-  ENG_CANDIDATE="$DEFAULT_ENG"
-fi
-
-if [[ -z "$ENG_CANDIDATE" ]]; then
-  echo "error: server engine root empty (pass --server-root or set BOT_SERVER_ROOT)" >&2
+  echo "error: no server engine root (pass --server-root PATH or set SERVER_ROOT or BOT_SERVER_ROOT)" >&2
   exit 2
 fi
+
 if [[ ! -d "$ENG_CANDIDATE" ]]; then
-  echo "error: server engine root not found: $ENG_CANDIDATE (pass --server-root or set BOT_SERVER_ROOT)" >&2
+  echo "error: server engine root not found: $ENG_CANDIDATE (pass --server-root or set SERVER_ROOT or BOT_SERVER_ROOT)" >&2
   exit 2
 fi
 ENG="$(cd "$ENG_CANDIDATE" && pwd)"

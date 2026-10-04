@@ -212,6 +212,7 @@ impl Ledger {
         }
         let owner = self.owner.as_ref().expect("owner checked");
         if owner.batch_live(authority.request_id()) {
+            owner.record_batch_receipt(authority.request_id(), receipt.accepted);
             self.batch_receipts[self.next_batch_receipt] = Some(receipt);
             self.next_batch_receipt = (self.next_batch_receipt + 1) % self.batch_receipts.len();
             owner.cancel_interaction(authority.request_id());
