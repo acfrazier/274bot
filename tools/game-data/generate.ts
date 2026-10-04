@@ -2928,7 +2928,7 @@ async function generate(spec: Revision) {
     }
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
-    const npcNames = extractNpcNamesFacts(spec.content, combatScripts, spellMaxHits);
+    const npcNames = extractNpcNamesFacts(spec.content, spec.revision, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts);
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,

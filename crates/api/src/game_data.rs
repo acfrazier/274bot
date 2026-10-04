@@ -880,7 +880,10 @@ pub struct NpcNameRow {
     pub display: Option<String>,
     pub ops: Vec<String>,
     pub size: i32,
+    /// Decoded wander range, including the pinned engines' five-tile default.
     pub wanderrange: i32,
+    /// Decoded tether range. Revision 274 defaults to seven; revision 289 derives
+    /// an absent value as `wanderrange + 2` and clamps it to at least `wanderrange`.
     pub maxrange: i32,
     pub attackrange: i32,
     pub huntrange: i32,
