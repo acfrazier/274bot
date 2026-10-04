@@ -82,6 +82,20 @@ impl NavSettings {
             allow_danger_zones: self.allow_danger_zones,
         }
     }
+
+    pub fn refresh_walk_globals_at(&mut self, path: &std::path::Path) -> std::io::Result<()> {
+        let globals = host_play::WalkGlobals::read_at(path)?;
+        self.allow_teleports = globals.allow_teleports;
+        self.allow_wilderness = globals.allow_wilderness;
+        self.allow_bank_fetch = globals.allow_bank_fetch;
+        self.allow_danger_zones = globals.allow_danger_zones;
+        self.script_scope_notice_ack = frontend_core::nav_preference_at(
+            path,
+            frontend_core::NavPreference::ScriptScopeNoticeAck,
+            None,
+        )?;
+        Ok(())
+    }
 }
 /// Live harness overlay: when `live_force_layers`, force the paint-layer
 /// toggles on for this session without writing prefs. Teleports and

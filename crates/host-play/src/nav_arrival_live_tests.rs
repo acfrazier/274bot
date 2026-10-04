@@ -94,11 +94,7 @@ impl WalkSpec {
             radius: self.radius,
             arrival: nav::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,
-            options: script::FindOptions {
-                allow_teleports: false,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-            },
+            options: script::native::WalkOptions::default(),
             required_after,
             evidence: None,
             cross: Box::default(),
@@ -185,7 +181,7 @@ fn stamp_utc() -> String {
     )
 }
 
-fn absolute_env_path(name: &str) -> PathBuf {
+pub(super) fn absolute_env_path(name: &str) -> PathBuf {
     let path = PathBuf::from(
         std::env::var_os(name).unwrap_or_else(|| panic!("{name} must be explicitly supplied")),
     );
@@ -197,7 +193,7 @@ fn absolute_env_path(name: &str) -> PathBuf {
     path
 }
 
-fn required_directory(name: &str, evidence_root: &Path) -> PathBuf {
+pub(super) fn required_directory(name: &str, evidence_root: &Path) -> PathBuf {
     let supplied = absolute_env_path(name);
     let canonical = std::fs::canonicalize(&supplied)
         .unwrap_or_else(|error| panic!("resolve {name} {}: {error}", supplied.display()));
@@ -588,7 +584,7 @@ impl EvidenceContext<'_> {
 
 /// Writes a real rendered frame (when one is available) and its matching JSON
 /// before the caller performs the corresponding assertion.
-fn write_capture(
+pub(super) fn write_capture(
     run_dir: &Path,
     stamp: &str,
     step: &str,
@@ -657,7 +653,7 @@ fn write_capture(
     png_written
 }
 
-fn live_profile(name: String, password: String) -> Profile {
+pub(super) fn live_profile(name: String, password: String) -> Profile {
     Profile {
         username: name,
         password: password.into(),

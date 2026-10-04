@@ -447,11 +447,11 @@ fn foreign_quest_journal_refuses_busy_without_quiet_lease_or_click() {
 fn preparation_compile_refusal_preserves_specific_detail() {
     let reason = compile_error_reason(
         crate::quester::compile::CompileError::code("invalid-args")
-            .with_detail("walk: cross needs protected walk (combat slice)"),
+            .with_detail("walk: guard must be protect"),
     );
     assert_eq!(
         reason.as_ref(),
-        "failed:invalid-args: walk: cross needs protected walk (combat slice)"
+        "failed:invalid-args: walk: guard must be protect"
     );
 }
 

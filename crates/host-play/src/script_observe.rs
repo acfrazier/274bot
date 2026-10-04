@@ -844,6 +844,11 @@ pub(crate) fn script_observe_cached_with_channels(
                 wrote = true;
             }
         }
+        navs.lock()
+            .unwrap()
+            .entry(name.to_owned())
+            .or_default()
+            .native_permissions = slot.native_walk_permissions();
         emit_script_debug_logs(&mut slot, name);
         // Fold forwarded shim requests on running frames. Pause leaves the
         // isolate queue untouched so Resume can dispatch it; guardian hold
@@ -1093,6 +1098,11 @@ pub(crate) fn script_observe_cached_with_channels(
                     && slot.state() == script::RunState::Running
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
+                    navs.lock()
+                        .unwrap()
+                        .entry(name.to_owned())
+                        .or_default()
+                        .native_permissions = slot.native_walk_permissions();
                     let mut refused_batch = None;
                     while let Some(action) = slot.take_native_action() {
                         let batch = action.batch;

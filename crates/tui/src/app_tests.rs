@@ -588,10 +588,10 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
     let mut app = TuiApp::new("274bot headless");
     assert!(app.pause_script_on_manual_walk_abort);
     app.settings_state.open = true;
-    for _ in 0..6 {
+    for _ in 0..7 {
         assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     }
-    assert_eq!(app.settings_state.row, 6);
+    assert_eq!(app.settings_state.row, 7);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(!app.pause_script_on_manual_walk_abort);
     assert!(app.pause_script_on_manual_walk_abort_dirty);
@@ -600,8 +600,27 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 8,
+        app.settings_state.row, 9,
         "memory remains reachable at the last row"
+    );
+}
+
+#[test]
+fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
+    let mut app = TuiApp::new("274bot headless");
+    app.settings_state.open = true;
+    app.settings_state.row = 6;
+    let rows = draw(&mut app, 60, 14);
+    let (col, row) = find(&rows, "Route through danger zones:")
+        .expect("the selected global remains visible in a compact terminal");
+    app.on_click(col, row + 1);
+    assert!(
+        app.nav.allow_danger_zones,
+        "the wrapped continuation belongs to the danger setting"
+    );
+    assert!(
+        app.pause_script_on_manual_walk_abort,
+        "a continuation never activates the next setting"
     );
 }
 

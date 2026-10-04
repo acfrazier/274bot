@@ -66,7 +66,6 @@ pub fn nav_preference_at(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{nav_preference_at, NavPreference};

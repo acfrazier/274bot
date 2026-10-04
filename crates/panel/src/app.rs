@@ -3026,7 +3026,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 changed = true;
             }
             ui.set_item_tooltip(
-                "Routing through danger zones is independent of protected walking.",
+                "Allows routes past monsters that may kill your bot. Routing permission is independent of protected walking.",
             );
             ui.same_line();
             ui.text_disabled("Global — applies to every walk.");
@@ -3130,6 +3130,10 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             .is_some_and(|error| error.starts_with("Nav config: "))
                         {
                             session.error = None;
+                        }
+                        match session.ui.nav.refresh_walk_globals_at(&crate::ui_state::path()) {
+                            Ok(()) => session.core.set_walk_globals(session.ui.nav.walk_globals()),
+                            Err(error) => session.error = Some(format!("Nav config: {error}")),
                         }
                     }
                     (Err(error), _) | (_, Err(error)) => {
@@ -3419,7 +3423,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .and_then(|v| v.as_bool())
                     .unwrap_or_else(|| def.default.as_deref() == Some("true"));
                 if global == Some(true) {
-                    ui.text_wrapped(&format!(
+                    ui.text_wrapped(format!(
                         "{label}: On — inherited globally; this script cannot veto the permission."
                     ));
                 } else {

@@ -734,10 +734,8 @@ impl TuiApp {
     }
 
     fn settings_click(&mut self, col: u16, row: u16) -> AppAction {
-        let popup = SettingsPane::popup_rect(self.regions.area);
-        let first = popup.y + 1;
-        if contains(popup, col, row) && row >= first && row < popup.y + popup.height - 1 {
-            self.settings_state.row = usize::from(row - first).min(9);
+        if let Some(setting) = self.settings_state.row_at(col, row) {
+            self.settings_state.row = setting;
             return self.settings_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         AppAction::None

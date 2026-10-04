@@ -525,6 +525,8 @@ impl TuiSession {
         }
         let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         let mut core = OperatorSession::new(_instance);
+        #[cfg(not(test))]
+        core.set_walk_globals_store(host_play::panel_ui_path());
         let pause_manual_walk = frontend_core::nav_preference_at(
             &host_play::panel_ui_path(),
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
@@ -2116,15 +2118,11 @@ impl TuiSession {
                 frontend_core::NavPreference::AllowWilderness => app.nav.allow_wilderness,
                 frontend_core::NavPreference::AllowBankFetch => app.nav.allow_bank_fetch,
                 frontend_core::NavPreference::AllowDangerZones => app.nav.allow_danger_zones,
-                frontend_core::NavPreference::ScriptScopeNoticeAck => {
-                    app.script_scope_notice_ack
-                }
+                frontend_core::NavPreference::ScriptScopeNoticeAck => app.script_scope_notice_ack,
                 frontend_core::NavPreference::ShowSpecialAreas
                 | frontend_core::NavPreference::PauseScriptOnManualWalkAbort => continue,
             };
-            if let Err(error) =
-                frontend_core::nav_preference_at(&path, preference, Some(enabled))
-            {
+            if let Err(error) = frontend_core::nav_preference_at(&path, preference, Some(enabled)) {
                 failure = Some(format!("settings: walk permissions: {error}"));
             }
         }

@@ -19,8 +19,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
-use frontend_core::{MapBakeChoice, NavPreference};
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail};
+use frontend_core::{MapBakeChoice, NavPreference};
 use host_play::walk_map::{
     Catalogue, DisplayName, MapModel, ObservedService, Search, WalkSlotStatus,
 };
@@ -607,9 +607,8 @@ impl TuiApp {
             None,
         )
         .unwrap_or(true);
-        let read = |preference| {
-            frontend_core::nav_preference_at(&path, preference, None).unwrap_or(false)
-        };
+        let read =
+            |preference| frontend_core::nav_preference_at(&path, preference, None).unwrap_or(false);
         self.nav = NavFindSettings {
             allow_teleports: read(frontend_core::NavPreference::AllowTeleports),
             allow_wilderness: read(frontend_core::NavPreference::AllowWilderness),
@@ -1091,9 +1090,11 @@ impl TuiApp {
     /// Map options resolve the durable globals and the one-shot danger grant
     /// through the same host helper used by the panel.
     pub fn map_find_options(&self) -> FindOptions {
-        self.nav
-            .walk_globals()
-            .manual_options(self.map_route_through_zones)
+        let globals = self.shared_preferences_path.as_ref().map_or_else(
+            || self.nav.walk_globals(),
+            |path| host_play::WalkGlobals::read_at(path).unwrap_or_default(),
+        );
+        globals.manual_options(self.map_route_through_zones)
     }
 
     /// Shared model adapters may publish a ready catalogue after activation.
