@@ -169,6 +169,7 @@ pub(crate) fn test_full_pack_fixture(
             actor,
             combat_level: 3,
             skill_level: 1,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,

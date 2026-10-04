@@ -149,6 +149,7 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
             },
             combat_level: 3,
             skill_level: 1,
+            headicons: 0,
             weapon: None,
         },
         energy: 100,

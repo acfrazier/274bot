@@ -147,6 +147,8 @@ pub struct PlayerView {
     pub actor: ActorView,
     pub combat_level: i32,
     pub skill_level: i32,
+    /// Client appearance headicon bitmask (protect melee/missiles/magic are bits 3/4/5).
+    pub headicons: i32,
     /// Worn right-hand obj id decoded from appearance slot 3 when encoded
     /// as `0x200 + obj id`; unavailable appearance data is `None`.
     pub weapon: Option<i32>,
