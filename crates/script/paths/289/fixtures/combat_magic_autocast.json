@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../../path.schema.json",
+  "schema": 3,
   "id": "imp",
   "display_name": "Combat Magic Autocast Fixture",
   "required": [],
@@ -40,6 +41,7 @@
               "id": "fight-warlord",
               "kind": "combat",
               "version": 1,
+              "advances": false,
               "args": {
                 "target": { "npc": "khazard_warlord", "not_targeting_others": true, "pick": "nearest" },
                 "tactic": { "kind": "open", "style": "mage", "engage_radius": 6, "auto_retaliate": false },

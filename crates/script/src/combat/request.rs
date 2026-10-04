@@ -23,6 +23,7 @@ pub enum Style {
     Mage,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum MeleeMode {

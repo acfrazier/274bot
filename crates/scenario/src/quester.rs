@@ -8,7 +8,9 @@ use api::game_data::{QuestIdentityRow, SelectedGameData};
 use api::selected::SkillMinimum;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::skill::Skill;
-use script::quester::path::{LoadoutCarryDocument, PathDocument, QuestLoadoutDocument};
+use script::quester::path::{
+    LoadoutCarryDocument, PathDocument, QuestLoadoutDocument, QuestRequirementKindDocument,
+};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -69,6 +71,10 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
     },
     QuestFixtureProfile {
         quest: "priest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "vampire",
         profile: TestProfile::Base40,
     },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
@@ -304,33 +310,20 @@ fn stats_for(path: &PathDocument, profile: TestProfile) -> Result<Vec<SkillMinim
         .as_ref()
         .ok_or("qualification Path has no quest header")?;
     for requirement in &header.requirements {
-        // Serializing the typed document kind also works across schema 3's
-        // enum cutover; no duplicate Path decoder or schema is introduced.
-        let kind = serde_json::to_value(&requirement.kind).map_err(|error| error.to_string())?;
-        let Some(skill) = kind.get("Skill") else {
+        let QuestRequirementKindDocument::Skill { skill, level } = &requirement.kind else {
             continue;
         };
-        let index = if let Some(name) = skill.get("skill").and_then(Value::as_str) {
-            Skill::names
-                .iter()
-                .position(|candidate| candidate.eq_ignore_ascii_case(name))
-                .ok_or_else(|| format!("unknown fixture skill {name}"))? as u8
-        } else {
-            skill
-                .get("skill")
-                .and_then(Value::as_u64)
-                .filter(|index| *index < Skill::names.len() as u64)
-                .ok_or("malformed fixture Skill requirement")? as u8
-        };
-        let level = skill
-            .get("level")
-            .and_then(Value::as_u64)
-            .filter(|level| (1..=99).contains(level))
-            .ok_or("malformed fixture Skill level")? as u16;
+        let index = Skill::names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(skill))
+            .ok_or_else(|| format!("unknown fixture skill {skill}"))? as u8;
+        if !(1..=99).contains(level) {
+            return Err("malformed fixture Skill level".into());
+        }
         levels
             .entry(index)
-            .and_modify(|floor| *floor = (*floor).max(level))
-            .or_insert(level);
+            .and_modify(|floor| *floor = (*floor).max(*level))
+            .or_insert(*level);
     }
     Ok(levels
         .into_iter()
@@ -819,7 +812,10 @@ mod tests {
         let mut path = document();
         path.quest.as_mut().unwrap().requirements = vec![QuestRequirementDocument {
             id: FactKey::new("crafting"),
-            kind: json!({"Skill": {"skill": "crafting", "level": 31}}),
+            kind: QuestRequirementKindDocument::Skill {
+                skill: "crafting".into(),
+                level: 31,
+            },
             at: "Start".into(),
             source: "fixture regression".into(),
         }];

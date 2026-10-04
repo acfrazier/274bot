@@ -2595,6 +2595,107 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     assert!(session.walk_find_options().zones.is_all());
 }
 
+#[test]
+fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
+    let _isolated = IsolatedEnv::enter("manual-walk-permissions");
+    let mut session = Session::new();
+    let path = crate::ui_state::path();
+    session.ui.nav.allow_danger_zones = false;
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(true),
+    )
+    .unwrap();
+    let globally_allowed = session.walk_find_options();
+    assert_eq!(globally_allowed.zones, ZoneExempt::all());
+    assert!(session.ui.nav.allow_danger_zones);
+
+    session.route_through_zones = true;
+    assert_eq!(
+        session.walk_find_options().zones,
+        ZoneExempt::all(),
+        "the global projection and a one-shot request permit this admission"
+    );
+    assert!(
+        !session.route_through_zones,
+        "the global grant consumes the one-shot"
+    );
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+    assert!(!session.ui.nav.allow_danger_zones);
+
+    std::fs::write(&path, b"{corrupt").unwrap();
+    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+    assert!(!session.ui.nav.allow_danger_zones);
+}
+
+#[test]
+fn walk_permissions_projection_reads_only_after_peer_write() {
+    let dir = TestDir::new("walk-permissions-peer-refresh");
+    let path = dir.join("panel-ui.json");
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowTeleports,
+        Some(false),
+    )
+    .unwrap();
+
+    let mut stamp = super::walk_permissions_file_stamp_at(&path);
+    let initial = frontend_core::WalkGlobalsView::read_at(&path);
+    assert!(!initial.globals.allow_teleports);
+
+    let reads = std::cell::Cell::new(0);
+    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    });
+    assert!(unchanged.is_none());
+    assert_eq!(reads.get(), 0, "unchanged preferences must not be read");
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowTeleports,
+        Some(true),
+    )
+    .unwrap();
+    host_play::persist_panel_ui_value_at(
+        &path,
+        "peer_marker",
+        serde_json::json!("written by the other frontend"),
+    )
+    .unwrap();
+
+    let reloaded = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    })
+    .expect("a peer write changes the shared preferences stamp");
+    assert!(reloaded.globals.allow_teleports);
+    assert_eq!(reads.get(), 1);
+
+    let unchanged = super::read_walk_permissions_if_changed_at(&path, &mut stamp, |path| {
+        reads.set(reads.get() + 1);
+        frontend_core::WalkGlobalsView::read_at(path)
+    });
+    assert!(unchanged.is_none());
+    assert_eq!(reads.get(), 1, "the reloaded file stays cached");
+}
+
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);
@@ -3513,6 +3614,7 @@ fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
 
 #[test]
 fn picker_confirm_ignores_teles_until_allow_teleports() {
+    let _isolated = IsolatedEnv::enter("picker-teleport-permission");
     // world: origin cannot walk to dest; a teleport edge can.
     let mut session = Session::new();
     session.set_focus_for_test("alice");
@@ -3582,8 +3684,20 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         level: 0,
     };
     session.ui.nav.allow_teleports = false;
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowTeleports,
+        Some(false),
+    )
+    .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowTeleports,
+        Some(true),
+    )
+    .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let arm = session.travellers.lock().unwrap();
     let route = arm
@@ -3601,14 +3715,28 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
 
 #[test]
 fn picker_confirm_uses_find_with_options() {
+    let _isolated = IsolatedEnv::enter("picker-tele-wilderness-permissions");
     // The tele fixture moved to wildy-north coords, with the teleport
     // landing on a wilderness tile: the teleport edge is the only way
     // across the wall, and its landing is inside the zone. Neither
-    // flag alone may route — confirmation must pass both
-    // `ui.nav.allow_teleports` and `ui.nav.allow_wilderness` through
-    // to `find_with`.
+    // flag alone may route — confirmation must pass both durable
+    // allow_teleports and allow_wilderness grants through to find_with.
     let mut session = Session::new();
     session.set_focus_for_test("alice");
+    session.ui.nav.allow_teleports = false;
+    session.ui.nav.allow_wilderness = false;
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowTeleports,
+        Some(false),
+    )
+    .unwrap();
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowWilderness,
+        Some(false),
+    )
+    .unwrap();
     let mut flags = vec![0u32; 5 * 12];
     for z in 0..12 {
         flags[z * 5 + 1] |= CollisionFlag::W_E as u32;
@@ -3693,8 +3821,20 @@ fn picker_confirm_uses_find_with_options() {
     session.ui.nav.allow_wilderness = false;
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowTeleports,
+        Some(true),
+    )
+    .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_wilderness = true;
+    frontend_core::nav_preference_at(
+        &crate::ui_state::path(),
+        frontend_core::NavPreference::AllowWilderness,
+        Some(true),
+    )
+    .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let arm = session.travellers.lock().unwrap();
     let route = arm

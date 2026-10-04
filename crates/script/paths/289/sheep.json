@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "sheep",
   "display_name": "Sheep Shearer",
   "required": [],
@@ -82,6 +83,7 @@
           },
           {
             "id": "shear", "kind": "use_on", "version": 1,
+          "advances": false,
             "comment": "Escape text from 289 scripts/general_use/scripts/shear_sheep.rs2:11-14",
             "args": {
               "item": "shears", "target": { "npc": "sheepunsheered" },
@@ -103,6 +105,7 @@
           },
           {
             "id": "spin", "kind": "make", "version": 1,
+          "advances": false,
             "args": {
               "loc": { "name": "spinningwheel", "op": "Spin" },
               "anchor": { "tile": [2982, 3315, 0], "source": "289 maps/m46_51.jm2:5345 loc 2644 at [2981,3314,0]; adjacent ground-floor approach anchor; scripts/skill_crafting/configs/spinning/spinning_wheels.loc:5 forceapproach=south" },

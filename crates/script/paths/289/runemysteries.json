@@ -1,5 +1,6 @@
 {
-  "schema": 2,
+  "$schema": "../path.schema.json",
+  "schema": 3,
   "id": "runemysteries",
   "display_name": "Rune Mysteries",
   "required": [],
@@ -158,6 +159,7 @@
           },
           {
             "id": "recover-duke", "kind": "talk", "version": 1,
+            "advances": false,
             "args": {
               "npc": "duke_of_lumbridge",
               "anchor": { "tile": [3212, 3220, 1], "source": "A defs/runemysteries.ts:17,39" },

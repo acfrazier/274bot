@@ -1,0 +1,3349 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 3
+    },
+    "$schema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "$ref": "#/$defs/FactKey"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "required": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FactKey"
+      }
+    },
+    "tested_stats": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/SkillMinimum"
+      }
+    },
+    "partner": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartnerDeclaration"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "quest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QuestHeaderDocument"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Quest provisioning and eligibility input consumed during compilation.",
+      "default": null
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PathRoleDocument"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "display_name",
+    "required",
+    "roles"
+  ],
+  "title": "274bot Quester Path (schema 3)",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "FactKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "SkillMinimum": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "level": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "skill",
+        "level"
+      ]
+    },
+    "PartnerDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartnerRole"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "protocol",
+        "roles"
+      ]
+    },
+    "PartnerRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "gang": {
+          "$ref": "#/$defs/Gang"
+        }
+      },
+      "required": [
+        "id",
+        "gang"
+      ]
+    },
+    "Gang": {
+      "type": "string",
+      "enum": [
+        "Phoenix",
+        "BlackArm"
+      ]
+    },
+    "QuestHeaderDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "members": {
+          "type": "boolean"
+        },
+        "quest_points": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestRequirementDocument"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestItemDocument"
+          }
+        },
+        "acquire": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/StepDocument"
+            }
+          }
+        },
+        "bank": {
+          "$ref": "#/$defs/QuestBankDocument"
+        },
+        "coin_float": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "loadouts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/QuestLoadoutDocument"
+          }
+        },
+        "areas": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/NamedAreaDocument"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "owns_inventory": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "members",
+        "quest_points",
+        "requirements",
+        "items",
+        "acquire",
+        "bank",
+        "coin_float",
+        "loadouts",
+        "areas",
+        "tools",
+        "owns_inventory"
+      ]
+    },
+    "QuestRequirementDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "kind": {
+          "$ref": "#/$defs/QuestRequirementKindDocument"
+        },
+        "at": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "at",
+        "source"
+      ]
+    },
+    "QuestRequirementKindDocument": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "MembersWorld"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "QuestPoints": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "QuestPoints"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Skill": {
+              "type": "object",
+              "properties": {
+                "skill": {
+                  "type": "string"
+                },
+                "level": {
+                  "type": "integer",
+                  "format": "uint16",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "skill",
+                "level"
+              ]
+            }
+          },
+          "required": [
+            "Skill"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Quest": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Quest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Item": {
+              "type": "object",
+              "properties": {
+                "obj": {
+                  "type": "string"
+                },
+                "qty": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "obj",
+                "qty"
+              ]
+            }
+          },
+          "required": [
+            "Item"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "QuestItemDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string"
+        },
+        "qty": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/QuestItemKindDocument"
+        },
+        "acquire": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "obj",
+        "qty",
+        "kind"
+      ]
+    },
+    "QuestItemKindDocument": {
+      "type": "string",
+      "enum": [
+        "acquirable",
+        "must_have"
+      ]
+    },
+    "StepDocument": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/step.walk.v1"
+        },
+        {
+          "$ref": "#/$defs/step.talk.v1"
+        },
+        {
+          "$ref": "#/$defs/step.interact.v1"
+        },
+        {
+          "$ref": "#/$defs/step.use_on.v1"
+        },
+        {
+          "$ref": "#/$defs/step.acquire.v1"
+        },
+        {
+          "$ref": "#/$defs/step.wait.v1"
+        },
+        {
+          "$ref": "#/$defs/step.bank.v1"
+        },
+        {
+          "$ref": "#/$defs/step.buy.v1"
+        },
+        {
+          "$ref": "#/$defs/step.make.v1"
+        },
+        {
+          "$ref": "#/$defs/step.equip.v1"
+        },
+        {
+          "$ref": "#/$defs/step.unequip.v1"
+        },
+        {
+          "$ref": "#/$defs/step.loadout.v1"
+        },
+        {
+          "$ref": "#/$defs/step.combat.v1"
+        }
+      ]
+    },
+    "WalkArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Destination tile as x, z, level."
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for this authored destination.",
+          "default": ""
+        },
+        "radius": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Navigation radius in tiles; 0 means 1.",
+          "default": 0
+        },
+        "cross": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Named danger zones this movement may cross.",
+          "default": []
+        },
+        "guard": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional protected movement mode; currently `protect`.",
+          "default": null
+        },
+        "allow_teleports": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Override inherited teleport permission for this movement.",
+          "default": null
+        },
+        "allow_wilderness": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Override inherited Wilderness permission for this movement.",
+          "default": null
+        },
+        "allow_danger_zones": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Override inherited danger-zone permission for this movement.",
+          "default": null
+        }
+      },
+      "required": [
+        "tile"
+      ]
+    },
+    "PredicateDocument": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "All": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PredicateDocument"
+              }
+            }
+          },
+          "required": [
+            "All"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Any": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PredicateDocument"
+              }
+            }
+          },
+          "required": [
+            "Any"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Not": {
+              "$ref": "#/$defs/PredicateDocument"
+            }
+          },
+          "required": [
+            "Not"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Fact": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/fact.has_item.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.near.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.message.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.message_state.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.quest_colour.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.in_combat.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.npc_present.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.loc_present.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.ground_item_near.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.modal_open.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.item_count_at_least.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.worn.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.on_level.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.in_area.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.npc_absent.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.skill_at_least.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.hp_fraction_below.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.prayer_points_at_least.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.combat_end.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.stage_in.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.flag.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.bank_known.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.bank_has.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.loadout_ready.v1"
+                },
+                {
+                  "$ref": "#/$defs/fact.equipment_only.v1"
+                }
+              ]
+            }
+          },
+          "required": [
+            "Fact"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ObjArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic object config name resolved in selected game data."
+        }
+      },
+      "required": [
+        "obj"
+      ]
+    },
+    "fact.has_item.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "has_item"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/ObjArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "NearArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Observed target tile as x, z, level."
+        },
+        "radius": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Maximum distance in tiles."
+        }
+      },
+      "required": [
+        "tile",
+        "radius"
+      ]
+    },
+    "fact.near.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "near"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NearArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "MessageArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "any": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Case-insensitive chat substrings; any one match is true."
+        }
+      },
+      "required": [
+        "any"
+      ]
+    },
+    "fact.message.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "message"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/MessageArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "MessageStateArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "set": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Events which set the observed state."
+        },
+        "clear": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Events which clear the observed state."
+        }
+      },
+      "required": [
+        "set",
+        "clear"
+      ],
+      "description": "A recoverable observed state, unlike `message`'s post-step settle event.\nThe newest matching event in the available chat history wins; a clearing\nevent prevents a previous successful operation from being replayed forever."
+    },
+    "fact.message_state.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "message_state"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/MessageStateArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "ColourArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quest": {
+          "type": "string",
+          "description": "Symbolic quest config name."
+        },
+        "is": {
+          "$ref": "#/$defs/ColourIs",
+          "description": "Desired tab colour state."
+        }
+      },
+      "required": [
+        "quest",
+        "is"
+      ]
+    },
+    "ColourIs": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "complete"
+      ]
+    },
+    "fact.quest_colour.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "quest_colour"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/ColourArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "NoArgs": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "fact.in_combat.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "in_combat"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NoArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "NpcArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Symbolic NPC config name."
+        }
+      },
+      "required": [
+        "npc"
+      ]
+    },
+    "fact.npc_present.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "npc_present"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NpcArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "LocArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loc": {
+          "type": "string",
+          "description": "Symbolic location config name."
+        }
+      },
+      "required": [
+        "loc"
+      ]
+    },
+    "fact.loc_present.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "loc_present"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/LocArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "GroundArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic ground-item object config name."
+        },
+        "radius": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "description": "Maximum distance in tiles; omitted uses 12.",
+          "default": null
+        }
+      },
+      "required": [
+        "obj"
+      ]
+    },
+    "fact.ground_item_near.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "ground_item_near"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/GroundArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.modal_open.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "modal_open"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NoArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "CountArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic object config name counted in the inventory."
+        },
+        "qty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required quantity; omitted uses 1. A progress quantity reads the latest journal count."
+        }
+      },
+      "required": [
+        "obj"
+      ]
+    },
+    "QuantityDocument": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "Fixed item quantity; values below 1 are rejected by the compiler."
+        },
+        {
+          "$ref": "#/$defs/ProgressQuantityDocument",
+          "description": "Count of a declared journal flag, optionally reduced by held items."
+        }
+      ]
+    },
+    "ProgressQuantityDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "progress": {
+          "$ref": "#/$defs/ProgressCountDocument",
+          "description": "Journal flag which supplies the current item count."
+        },
+        "minus_item": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional held item subtracted from the journal count.",
+          "default": null
+        }
+      },
+      "required": [
+        "progress"
+      ]
+    },
+    "ProgressCountDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quest": {
+          "type": "string",
+          "description": "Symbolic quest key whose journal is read."
+        },
+        "flag": {
+          "type": "string",
+          "description": "Declared counted flag in that journal."
+        }
+      },
+      "required": [
+        "quest",
+        "flag"
+      ]
+    },
+    "fact.item_count_at_least.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "item_count_at_least"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/CountArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.worn.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "worn"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/ObjArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "LevelArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Skill or floor level to test."
+        }
+      },
+      "required": [
+        "level"
+      ]
+    },
+    "fact.on_level.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "on_level"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/LevelArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "AreaArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "area": {
+          "type": "string",
+          "description": "Named Path area whose boxes are tested."
+        }
+      },
+      "required": [
+        "area"
+      ]
+    },
+    "fact.in_area.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "in_area"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/AreaArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.npc_absent.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "npc_absent"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NpcArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "SkillArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "type": "string",
+          "description": "Case-insensitive skill name."
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Minimum base level required."
+        }
+      },
+      "required": [
+        "skill",
+        "level"
+      ]
+    },
+    "fact.skill_at_least.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "skill_at_least"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/SkillArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "FractionArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "below": {
+          "type": "number",
+          "format": "float",
+          "description": "Threshold fraction of current hitpoints divided by base hitpoints."
+        }
+      },
+      "required": [
+        "below"
+      ]
+    },
+    "fact.hp_fraction_below.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "hp_fraction_below"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/FractionArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.prayer_points_at_least.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "prayer_points_at_least"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/LevelArg"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "CombatEndArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/CombatEndName",
+          "description": "Combat outcome to match."
+        }
+      },
+      "required": [
+        "end"
+      ]
+    },
+    "CombatEndName": {
+      "type": "string",
+      "enum": [
+        "killed",
+        "target_gone",
+        "no_target",
+        "budget",
+        "died",
+        "aborted",
+        "aborted_unattackable"
+      ]
+    },
+    "fact.combat_end.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "combat_end"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/CombatEndArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "StageInArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quest": {
+          "type": "string",
+          "description": "Symbolic quest key whose journal progress is read."
+        },
+        "any": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Stage keys accepted as a match; this list must be non-empty."
+        }
+      },
+      "required": [
+        "quest",
+        "any"
+      ]
+    },
+    "fact.stage_in.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "stage_in"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/StageInArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "FlagArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quest": {
+          "type": "string",
+          "description": "Symbolic quest key whose journal progress is read."
+        },
+        "flag": {
+          "type": "string",
+          "description": "Declared progress flag to query."
+        },
+        "is": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Optional expected Boolean state.",
+          "default": null
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "description": "Optional exact count expected on a counted flag.",
+          "default": null
+        },
+        "at_least": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "description": "Optional minimum count expected on a counted flag.",
+          "default": null
+        }
+      },
+      "required": [
+        "quest",
+        "flag"
+      ]
+    },
+    "fact.flag.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "flag"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/FlagArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "fact.bank_known.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "bank_known"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/NoArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "BankHasArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name."
+        },
+        "qty": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Minimum count; omitted or below 1 uses 1.",
+          "default": 1
+        }
+      },
+      "required": [
+        "obj"
+      ]
+    },
+    "fact.bank_has.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "bank_has"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/BankHasArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "LoadoutArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loadout": {
+          "type": "string",
+          "description": "Name or Path-qualified name of the loadout to apply."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Bank selector: `quest_bank` or `nearest`.",
+          "default": null
+        },
+        "allow_lower_tier": {
+          "type": "boolean",
+          "description": "Allow lower-tier alternatives when resolving the loadout.",
+          "default": false
+        },
+        "strip": {
+          "type": "boolean",
+          "description": "Remove worn equipment that is not in the loadout.",
+          "default": false
+        },
+        "exclusive": {
+          "type": "boolean",
+          "description": "Require exactly the listed worn items; remove other worn items into inventory.",
+          "default": false
+        }
+      },
+      "required": [
+        "loadout"
+      ]
+    },
+    "fact.loadout_ready.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "loadout_ready"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/LoadoutArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "EquipmentOnlyArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Exact set of object aliases that must be worn; an empty list requires no equipment."
+        }
+      },
+      "required": [
+        "objs"
+      ]
+    },
+    "fact.equipment_only.v1": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "equipment_only"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/EquipmentOnlyArgs"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    "step.walk.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "walk"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/WalkArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "TalkArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Symbolic NPC config name to speak with."
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional authored approach anchor and source citation."
+        },
+        "leash": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Maximum NPC interaction distance; 0 or omitted means 1 tile.",
+          "default": 0
+        },
+        "prefer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Text fragments to prefer, checked in the given order.",
+          "default": []
+        },
+        "choose": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "description": "Optional 1-based dialogue option index.",
+          "default": null
+        },
+        "expect_combat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExpectedCombatArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Expected NPC opponent when dialogue deliberately hands control to combat."
+        }
+      },
+      "required": [
+        "npc"
+      ]
+    },
+    "AnchorArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Authored destination tile as x, z, level."
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for the authored destination; required by compilation.",
+          "default": ""
+        }
+      },
+      "required": [
+        "tile"
+      ]
+    },
+    "ExpectedCombatArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Symbolic NPC config name that must be the observed combat opponent."
+        }
+      },
+      "required": [
+        "npc"
+      ]
+    },
+    "step.talk.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "talk"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/TalkArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "InteractArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/InteractTarget",
+          "description": "Target selector; exactly one target field is required."
+        },
+        "op": {
+          "type": "string",
+          "description": "Interaction option offered by the selected target."
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional authored approach anchor and source citation."
+        },
+        "radius": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Maximum interaction distance; 0 or omitted means 1 tile.",
+          "default": 0
+        },
+        "wait_if_missing": {
+          "type": "boolean",
+          "description": "Wait for a temporarily missing target instead of failing immediately.",
+          "default": false
+        },
+        "settle_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 1,
+          "description": "Optional settle-window override in milliseconds; must be at least 1.",
+          "default": null
+        }
+      },
+      "required": [
+        "target",
+        "op"
+      ]
+    },
+    "InteractTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ground": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Ground-item config name; exactly one target selector is required.",
+          "default": null
+        },
+        "loc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Location config name; exactly one target selector is required.",
+          "default": null
+        },
+        "npc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "NPC config name; exactly one target selector is required.",
+          "default": null
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Display-name location selector; exactly one target selector is required.",
+          "default": null
+        }
+      }
+    },
+    "step.interact.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "interact"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/InteractArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "UseOnArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "type": "string",
+          "description": "Symbolic item config name used on the target."
+        },
+        "target": {
+          "$ref": "#/$defs/UseOnTarget",
+          "description": "NPC, location, or item target; exactly one is required."
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional authored approach anchor and source citation."
+        },
+        "radius": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Maximum interaction distance; 0 or omitted means 1 tile.",
+          "default": 0
+        },
+        "product": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional symbolic product item expected from the action.",
+          "default": null
+        },
+        "settle_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 1,
+          "description": "Optional settle-window override in milliseconds; must be at least 1.",
+          "default": null
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UseOnUntil"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional repeated-use goal, measured by an item count."
+        },
+        "no_product": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional predicate that can end the repeated use-on attempt.",
+          "default": null
+        }
+      },
+      "required": [
+        "item",
+        "target"
+      ]
+    },
+    "UseOnTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Symbolic NPC config name; exactly one target selector is required.",
+          "default": null
+        },
+        "loc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Symbolic location config name; exactly one target selector is required.",
+          "default": null
+        },
+        "item": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Symbolic item config name; exactly one target selector is required.",
+          "default": null
+        }
+      }
+    },
+    "UseOnUntil": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name whose count ends repetition."
+        },
+        "qty": {
+          "$ref": "#/$defs/QuantityDocument",
+          "description": "Fixed or journal-count-backed quantity to reach."
+        }
+      },
+      "required": [
+        "obj",
+        "qty"
+      ]
+    },
+    "step.use_on.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "use_on"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/UseOnArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "AcquireArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recipe": {
+          "type": "string",
+          "description": "Name of a recipe in the quest header's `acquire` table."
+        }
+      },
+      "required": [
+        "recipe"
+      ]
+    },
+    "step.acquire.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "acquire"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/AcquireArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "WaitArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "until": {
+          "$ref": "#/$defs/PredicateDocument",
+          "description": "Predicate evaluated against the latest cached evidence."
+        },
+        "max_ticks": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 1,
+          "description": "Maximum ticks to wait; must be at least 1."
+        }
+      },
+      "required": [
+        "until",
+        "max_ticks"
+      ]
+    },
+    "step.wait.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "wait"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/WaitArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "BankArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "$ref": "#/$defs/BankOp",
+          "description": "Bank action to perform."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Bank selector: `quest_bank` or `nearest`; omitted uses the Path bank.",
+          "default": null
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemQty"
+          },
+          "description": "Item quantities for withdraw/deposit operations."
+        },
+        "keep": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Symbolic items to retain on `deposit_all`.",
+          "default": []
+        },
+        "keep_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": "Raw item ids to retain on `deposit_all`.",
+          "default": []
+        },
+        "partial_ok": {
+          "type": "boolean",
+          "description": "Allow a partial result when requested bank operations cannot complete.",
+          "default": false
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "BankOp": {
+      "type": "string",
+      "enum": [
+        "scan",
+        "withdraw",
+        "deposit",
+        "deposit_all"
+      ]
+    },
+    "ItemQty": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name."
+        },
+        "qty": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Requested quantity; omitted uses 1 and values below 1 are rejected.",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "required": [
+        "obj"
+      ]
+    },
+    "step.bank.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "bank"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/BankArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "BuyArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shop": {
+          "$ref": "#/$defs/ShopArg",
+          "description": "Shopkeeper and approach location."
+        },
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name to buy."
+        },
+        "qty": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Number of items to buy; must be at least 1.",
+          "minimum": 1
+        },
+        "est_gp": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "description": "Estimated coin budget; currently informational.",
+          "default": 0
+        },
+        "option": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional shop menu choice; currently informational.",
+          "default": null
+        }
+      },
+      "required": [
+        "shop",
+        "obj",
+        "qty"
+      ]
+    },
+    "ShopArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "type": "string",
+          "description": "Symbolic shopkeeper NPC config name."
+        },
+        "anchor": {
+          "$ref": "#/$defs/AnchorArg",
+          "description": "Authored shop approach anchor and its source citation."
+        }
+      },
+      "required": [
+        "npc",
+        "anchor"
+      ]
+    },
+    "step.buy.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "buy"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/BuyArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "MakeArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loc": {
+          "$ref": "#/$defs/MakeLoc",
+          "description": "Location action used to start production."
+        },
+        "anchor": {
+          "$ref": "#/$defs/AnchorArg",
+          "description": "Authored approach anchor with a source citation."
+        },
+        "product": {
+          "type": "string",
+          "description": "Symbolic product item config name."
+        },
+        "menu": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MakeMenu"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional production menu choice."
+        },
+        "qty": {
+          "$ref": "#/$defs/QuantityDocument",
+          "description": "Fixed or journal-count-backed production quantity."
+        },
+        "make_x": {
+          "type": "boolean",
+          "description": "Use the game's make-X option when available.",
+          "default": false
+        }
+      },
+      "required": [
+        "loc",
+        "anchor",
+        "product",
+        "qty"
+      ]
+    },
+    "MakeLoc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Symbolic location config name."
+        },
+        "op": {
+          "type": "string",
+          "description": "Location operation used to start production."
+        }
+      },
+      "required": [
+        "name",
+        "op"
+      ]
+    },
+    "MakeMenu": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Symbolic item config name shown in the production menu."
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for the menu option."
+        }
+      },
+      "required": [
+        "obj",
+        "source"
+      ]
+    },
+    "step.make.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "make"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/MakeArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "EquipArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Symbolic item config name; omitted only when stripping all equipment.",
+          "default": null
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Strip all worn items when `obj` is omitted.",
+          "default": false
+        }
+      }
+    },
+    "step.equip.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "equip"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/EquipArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "step.unequip.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "unequip"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/EquipArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "step.loadout.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "loadout"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/LoadoutArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle"
+      ],
+      "additionalProperties": false
+    },
+    "CombatArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/TargetArgs",
+          "description": "Target selector; exactly one supported target mode is required."
+        },
+        "tactic": {
+          "$ref": "#/$defs/TacticArgs",
+          "description": "Combat action and style configuration."
+        },
+        "melee_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeleeMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional melee attack mode.",
+          "default": null
+        },
+        "loadout": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional named loadout for the encounter.",
+          "default": null
+        },
+        "spells": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Spell aliases; non-empty spell lists are currently unsupported.",
+          "default": null
+        },
+        "stand": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional sourced stand tile; `anchor` is accepted as an alias."
+        },
+        "area": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AreaArg2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional named or inline search area."
+        },
+        "lost_radius": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Maximum distance in tiles before the target is considered lost."
+        },
+        "kill_budget_ticks": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Maximum game ticks to spend on a combat attempt."
+        },
+        "loot": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Item config names to loot after a kill.",
+          "default": []
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional predicate that ends the combat loop when true.",
+          "default": null
+        },
+        "win": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional success predicate that ends the combat loop when true.",
+          "default": null
+        }
+      },
+      "required": [
+        "target",
+        "tactic",
+        "lost_radius",
+        "kill_budget_ticks"
+      ]
+    },
+    "TargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NpcArg2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "One or more NPC config names to target."
+        },
+        "attacker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttackerArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Select NPCs or players that are already attacking the player."
+        },
+        "player": {
+          "description": "Player targeting is represented in the wire format but is unsupported.",
+          "default": null
+        },
+        "not_targeting_others": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Require the chosen NPC not to be targeting another player.",
+          "default": null
+        },
+        "pick": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PickArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Policy used when choosing among matching targets."
+        }
+      }
+    },
+    "NpcArg2": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "A single NPC config name."
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Several alternative NPC config names."
+        }
+      ]
+    },
+    "AttackerArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "npcs": {
+          "type": "boolean",
+          "description": "Include NPC attackers."
+        },
+        "players": {
+          "type": "boolean",
+          "description": "Include player attackers."
+        }
+      },
+      "required": [
+        "npcs",
+        "players"
+      ]
+    },
+    "PickArg": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "nearest",
+          "description": "Choose the closest matching target."
+        },
+        {
+          "type": "string",
+          "const": "random",
+          "description": "Choose a matching target at random."
+        },
+        {
+          "type": "string",
+          "const": "lowest_health",
+          "description": "Choose the matching target with the lowest health."
+        }
+      ]
+    },
+    "TacticArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Combat opening mode; only `open` is currently supported."
+        },
+        "style": {
+          "type": "string",
+          "description": "Attack style; only `melee` is currently supported."
+        },
+        "engage_radius": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Maximum distance at which to engage a target."
+        },
+        "auto_retaliate": {
+          "type": "boolean",
+          "description": "Whether to enable auto-retaliation; defaults to true.",
+          "default": true
+        },
+        "fallback": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional fallback; only `abort` is currently supported.",
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "style",
+        "engage_radius"
+      ]
+    },
+    "MeleeMode": {
+      "type": "string",
+      "enum": [
+        "accurate",
+        "aggressive",
+        "defensive",
+        "controlled"
+      ]
+    },
+    "AreaArg2": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "Name of an area declared in the quest header."
+        },
+        {
+          "$ref": "#/$defs/InlineArea",
+          "description": "Inline one or more sourced region boxes."
+        }
+      ]
+    },
+    "InlineArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "box": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minItems": 5,
+          "maxItems": 5,
+          "description": "Optional single region box `[x1, z1, x2, z2, level]`.",
+          "default": null
+        },
+        "boxes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "minItems": 5,
+            "maxItems": 5
+          },
+          "description": "Optional list of region boxes `[x1, z1, x2, z2, level]`.",
+          "default": null
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for these authored region boxes."
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "step.combat.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "combat"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/CombatArgs"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "additionalProperties": false
+    },
+    "QuestBankDocument": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NearestBankDocument"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tile": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "source": {
+              "type": "string"
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "tile",
+            "source"
+          ]
+        }
+      ]
+    },
+    "NearestBankDocument": {
+      "type": "string",
+      "enum": [
+        "nearest"
+      ]
+    },
+    "QuestLoadoutDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "worn": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "carry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LoadoutCarryDocument"
+          },
+          "default": []
+        }
+      }
+    },
+    "LoadoutCarryDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "type": "string"
+        },
+        "qty": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "item",
+        "qty"
+      ]
+    },
+    "NamedAreaDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "boxes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "minItems": 5,
+            "maxItems": 5
+          }
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "boxes",
+        "source"
+      ]
+    },
+    "PathRoleDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "progress_binding": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProgressDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prelude": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StepDocument"
+          },
+          "default": []
+        },
+        "sequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SequenceDocument"
+          }
+        }
+      },
+      "required": [
+        "progress_binding",
+        "sequences"
+      ]
+    },
+    "ProgressDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "colour": {
+          "$ref": "#/$defs/ProgressColourDocument"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgressRuleDocument"
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgressFlagDocument"
+          }
+        },
+        "monotonic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "colour",
+        "rules",
+        "flags",
+        "monotonic"
+      ]
+    },
+    "ProgressColourDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "not_started": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "in_progress": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "complete": {
+          "$ref": "#/$defs/FactKey"
+        }
+      },
+      "required": [
+        "not_started",
+        "in_progress",
+        "complete"
+      ]
+    },
+    "ProgressRuleDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stage": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "all": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "any": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "not": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "varp": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        }
+      },
+      "required": [
+        "stage"
+      ]
+    },
+    "ProgressFlagDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flag": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "any": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "all": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "count": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "flag"
+      ]
+    },
+    "SequenceDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stage": {
+          "$ref": "#/$defs/FactKey"
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactKey"
+          }
+        },
+        "terminal": {
+          "type": "boolean"
+        },
+        "recovery_entry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StepDocument"
+          }
+        }
+      },
+      "required": [
+        "stage",
+        "required",
+        "terminal",
+        "steps"
+      ]
+    }
+  }
+}

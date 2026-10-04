@@ -4,7 +4,7 @@ use super::compile::{CompiledItemKind, CompiledProvisioning, StepContext, StepPl
 use super::families::{self, AcquirePlan};
 use crate::bank::{Open, OpenArgs, Select, SelectArgs};
 use crate::native::walk::Walk;
-use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions};
 use crate::native_bank::{BankAction, BankMachine, BankReceipt, BankRequest, Withdrawal};
 use api::named_banks::NamedBank;
 use api::snapshot::{ItemView, WorldTile};
@@ -239,7 +239,7 @@ impl Provisioner {
             self.set_status(ProvisionPhase::Ready, None, 0, 0, None, cx.bank.known());
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
-        let keep = Arc::clone(&plan.tool_ids);
+        let keep = Arc::clone(&plan.keep_ids);
         self.start_bank(
             cx,
             plan,
@@ -268,7 +268,7 @@ impl Provisioner {
         let inventory = inventory.value;
 
         if not_started && !self.freshened {
-            if !has_non_tool_item(inventory, &plan.tool_ids) {
+            if !has_unkept_item(inventory, &plan.keep_ids) {
                 self.freshened = true;
             } else if self.freshen_attempts < 3 {
                 self.freshen_attempts += 1;
@@ -276,7 +276,7 @@ impl Provisioner {
                     cx,
                     plan,
                     BankAction::DepositAll {
-                        keep: Arc::clone(&plan.tool_ids),
+                        keep: Arc::clone(&plan.keep_ids),
                     },
                     BankPurpose::Freshen,
                     ProvisionPhase::Freshening,
@@ -292,9 +292,7 @@ impl Provisioner {
         }
 
         if !self.spillover_done {
-            let keep = active_loadout
-                .and_then(|name| plan.loadout_spillover_keep.get(name))
-                .unwrap_or(&plan.base_spillover_keep);
+            let keep = &plan.base_spillover_keep;
             if !has_spillover(inventory, keep) {
                 self.spillover_done = true;
             } else {
@@ -330,8 +328,8 @@ impl Provisioner {
                     .acquire
                     .clone()
                     .map(MissingKind::Acquire)
-                    // Schema-2 Paths may acquire through their authored
-                    // sequence (Sheep), rather than a synthetic recipe.
+                    // Paths may acquire through their authored sequence
+                    // (Sheep), rather than a synthetic recipe.
                     .unwrap_or(MissingKind::Optional),
             };
             needs.require(&bank_item, target, kind, inventory, cx.bank)?;
@@ -440,7 +438,7 @@ impl Provisioner {
             };
             let acquire = AcquirePlan {
                 recipe: Arc::clone(&recipe.recipe),
-                steps: steps.to_vec(),
+                steps: Arc::clone(steps),
             };
             match acquire.begin(cx) {
                 Ok(run) => {
@@ -502,7 +500,7 @@ impl Provisioner {
                     Some(BankPurpose::Freshen) => {
                         let inventory = cx.tick.cx.snapshot().inventory();
                         if inventory.is_some_and(|inventory| {
-                            !has_non_tool_item(inventory.value, &plan.tool_ids)
+                            !has_unkept_item(inventory.value, &plan.keep_ids)
                         }) || self.freshen_attempts >= 3
                         {
                             self.freshened = true;
@@ -871,7 +869,7 @@ impl BankRun {
                             facts: Arc::clone(cx.banks),
                             from: from.value,
                             preferences: api::named_banks::BankPreferences::default(),
-                            allow_wilderness: false,
+                            options: WalkOptions::default(),
                             explicit: self.explicit.clone(),
                         },
                         &mut cx.tick.cx,
@@ -1001,10 +999,10 @@ fn count_item(inventory: &[ItemView], id: i32) -> i32 {
         .sum()
 }
 
-fn has_non_tool_item(inventory: &[ItemView], tools: &[i32]) -> bool {
+fn has_unkept_item(inventory: &[ItemView], keep: &[i32]) -> bool {
     inventory
         .iter()
-        .any(|row| row.count > 0 && !tools.contains(&row.def.id))
+        .any(|row| row.count > 0 && !keep.contains(&row.def.id))
 }
 
 fn has_spillover(inventory: &[ItemView], keep: &[i32]) -> bool {
@@ -1131,12 +1129,11 @@ mod tests {
             bank_required: false,
             items: Arc::from(items),
             tools: Arc::from(Vec::new()),
-            tool_ids: Arc::from(Vec::new()),
+            keep_ids: Arc::from(Vec::new()),
             coin_float: 0,
             coin: None,
             loadout_carry: HashMap::new(),
             base_spillover_keep: Arc::from(keep),
-            loadout_spillover_keep: HashMap::new(),
             recipes: HashMap::new(),
             memo_ids: Arc::from(memo_ids),
         }
@@ -1676,8 +1673,6 @@ mod tests {
                 latch_index: 0,
             }]),
         );
-        plan.loadout_spillover_keep
-            .insert(Arc::from("provision-test/food"), Arc::from(vec![10, 42]));
         let first = ready_snapshot(vec![
             item_view(10, "Coins", 100, ItemContainer::Inventory),
             item_view(42, "Food", 3, ItemContainer::Inventory),
@@ -1732,7 +1727,7 @@ mod tests {
     }
 
     #[test]
-    fn retreat_deposits_extras_keeps_tools_and_completes_once() {
+    fn retreat_deposits_extras_and_keeps_every_protected_id() {
         let path_bank = NamedBank::new(
             "Test path bank",
             WorldTile {
@@ -1746,11 +1741,16 @@ mod tests {
             id: 7,
             name: Arc::from("Tool"),
         }]);
-        plan.tool_ids = Arc::from(vec![7]);
-        plan.base_spillover_keep = Arc::from(vec![7]);
+        plan.keep_ids = Arc::from(vec![7, 8]);
+        plan.base_spillover_keep = Arc::from(vec![7, 8]);
         let junk_inventory = item_view(42, "Junk", 1, ItemContainer::Inventory);
         let tool_inventory = item_view(7, "Tool", 1, ItemContainer::Inventory);
-        let mut snapshot = ready_snapshot(vec![junk_inventory.clone(), tool_inventory.clone()]);
+        let protected_inventory = item_view(8, "Protected kit", 1, ItemContainer::Inventory);
+        let mut snapshot = ready_snapshot(vec![
+            protected_inventory.clone(),
+            junk_inventory.clone(),
+            tool_inventory.clone(),
+        ]);
         let side_row = |id, name, slot| ItemView {
             slot,
             component_id: 2006,
@@ -1761,7 +1761,11 @@ mod tests {
             1,
             1,
             Some(Vec::new()),
-            vec![side_row(42, "Junk", 0), side_row(7, "Tool", 1)],
+            vec![
+                side_row(42, "Junk", 0),
+                side_row(7, "Tool", 1),
+                side_row(8, "Protected kit", 2),
+            ],
         );
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
@@ -1825,13 +1829,21 @@ mod tests {
                 )
             })
         }));
+        assert!(!ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.iter().any(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: 8, .. })
+                )
+            })
+        }));
 
-        snapshot.seed_inventory(vec![tool_inventory.clone()], 28);
+        snapshot.seed_inventory(vec![tool_inventory.clone(), protected_inventory], 28);
         snapshot.seed_bank_observation(
             1,
             2,
             Some(vec![item_view(42, "Junk", 1, ItemContainer::Bank)]),
-            vec![side_row(7, "Tool", 1)],
+            vec![side_row(7, "Tool", 1), side_row(8, "Protected kit", 2)],
         );
         assert!(matches!(
             poll_once(

@@ -1040,7 +1040,10 @@ impl Script for TellerScript {
                             use_mage_bank: true,
                             use_zanaris_bank: false,
                         },
-                        allow_wilderness: true,
+                        options: script::native::WalkOptions {
+                            allow_wilderness: script::native::WalkBit::Allow,
+                            ..Default::default()
+                        },
                         explicit: Some(Arc::from(MAGE_BANK_NAME)),
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {

@@ -1101,7 +1101,7 @@ fn native_pick_action(
                 facts: Arc::new(NamedBankFacts::from_banks(banks)),
                 from,
                 preferences: BankPreferences::default(),
-                allow_wilderness: false,
+                options: script::native::WalkOptions::default(),
                 explicit: explicit.map(Arc::from),
             }),
             handle: None,
@@ -1674,7 +1674,45 @@ fn native_bank_pick_forbids_granted_falador_teleport_with_runes_held() {
     let (slot, action) = native_pick_action(banks.clone(), tile(4, 4), None);
     let navs = navs(banks);
     let gate = Controlled::new();
-    start_native_pick(&navs, world, action, opts, state);
+    navs.lock().unwrap().get_mut("test").unwrap().walk_globals =
+        Some(Arc::new(Mutex::new(crate::WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_danger_zones: true,
+            allow_bank_fetch: true,
+        })));
+    let authority = action.authority();
+    let script::native::HostEffect::BankPick(request) = action.effect else {
+        panic!("expected bank pick");
+    };
+    queue_native_bank_pick(
+        &navs,
+        "test",
+        &Some(world),
+        Some(state),
+        request,
+        authority.clone(),
+        EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        },
+    );
+    let composed = navs.lock().unwrap()["test"]
+        .bank_pick
+        .current
+        .as_ref()
+        .unwrap()
+        .job
+        .request
+        .opts;
+    assert!(
+        !composed.allow_teleports,
+        "bank ranking forbids even globally granted teles"
+    );
+    assert!(composed.allow_wilderness);
+    assert!(composed.zones.is_all());
+    assert!(!composed.allow_bank_fetch);
     await_native_search(&navs, &gate);
     gate.0.release();
     gate.0.wait(4);
