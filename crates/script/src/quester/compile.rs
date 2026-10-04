@@ -1101,6 +1101,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_forward_and_shared_dependencies_resolve() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-forward");
         let mut document = decode_cook().unwrap();
         let header = document.quest.as_mut().unwrap();
         let mut leaf = header.acquire["acquire:egg"][0].clone();
@@ -1123,6 +1124,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_cycle_names_the_cycle() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-cycle");
         let error = compile_err(|document| {
             let recipes = &mut document.quest.as_mut().unwrap().acquire;
             recipes.insert(
@@ -1144,6 +1146,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_missing_dependency_stays_unresolved_recipe() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-missing");
         let error = compile_err(|document| {
             document.quest.as_mut().unwrap().acquire.insert(
                 "acquire:root".into(),
@@ -1155,6 +1158,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_depth_limit_is_order_independent() {
+        let _home = crate::IsolatedEnv::enter("quester-recipe-depth");
         let data = selected();
         let quests = quests(&data);
         for leaf_first in [true, false] {
