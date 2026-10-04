@@ -7,7 +7,7 @@ use frontend_core::{FormNotice, MapBakeChoice};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
-use tui::app::NavFindSettings;
+use host_play::WalkGlobals;
 use tui::settings::{SettingsPane, SettingsState};
 use vault::ProfileSettings;
 
@@ -59,7 +59,7 @@ fn events() -> usize {
 /// screen it drew.
 fn draw(notice: Option<&FormNotice>, area: Rect) -> (usize, Buffer) {
     let mut settings = ProfileSettings::default();
-    let mut nav = NavFindSettings::default();
+    let mut nav = WalkGlobals::default();
     let mut bake = MapBakeChoice::Ask;
     let mut state = SettingsState {
         open: true,

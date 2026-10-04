@@ -13,8 +13,8 @@ use script::{
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParamsState {
     pub open: bool,
-    /// Global permissions captured for display when the params popup opens.
-    pub walk_globals: Option<host_play::WalkGlobals>,
+    /// Latest durable permission view for inherited setting rows.
+    pub walk_permissions: frontend_core::WalkGlobalsView,
     pub cursor: usize,
     pub scroll: usize,
     pub editing: bool,
@@ -68,27 +68,6 @@ pub struct ParamsPane<'a> {
     pub state: &'a mut ParamsState,
 }
 
-fn is_walk_permission_id(id: &str) -> bool {
-    matches!(
-        id,
-        "allow_teleports"
-            | "allow_wilderness"
-            | "allow_danger_zones"
-            | "allowTeleports"
-            | "allowWilderness"
-            | "allowDangerZones"
-    )
-}
-
-fn walk_permission_global(globals: Option<host_play::WalkGlobals>, id: &str) -> Option<bool> {
-    let globals = globals?;
-    match id {
-        "allow_teleports" | "allowTeleports" => Some(globals.allow_teleports),
-        "allow_wilderness" | "allowWilderness" => Some(globals.allow_wilderness),
-        "allow_danger_zones" | "allowDangerZones" => Some(globals.allow_danger_zones),
-        _ => None,
-    }
-}
 
 impl<'a> ParamsPane<'a> {
     pub fn visible_rows(&self) -> Vec<&'a SettingDef> {
@@ -306,7 +285,12 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::None;
         };
         if def.ty == "boolean" {
-            if walk_permission_global(self.state.walk_globals, &def.id) == Some(true) {
+            if self
+                .state
+                .walk_permissions
+                .permission_enabled(&def.id)
+                == Some(true)
+            {
                 return ParamsKey::None;
             }
             let cur = self
@@ -581,7 +565,12 @@ impl Widget for ParamsPane<'_> {
         } else {
             let mut last_group: Option<&str> = None;
             for (i, def) in rows.iter().enumerate() {
-                let group = if is_walk_permission_id(&def.id) {
+                let group = if self
+                    .state
+                    .walk_permissions
+                    .permission_enabled(&def.id)
+                    .is_some()
+                {
                     Some("Walk permissions")
                 } else {
                     def.group.as_deref()
@@ -604,8 +593,10 @@ impl Widget for ParamsPane<'_> {
                 let mark = if i == self.state.cursor { "> " } else { "  " };
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
-                } else if let Some(global) =
-                    walk_permission_global(self.state.walk_globals, &def.id)
+                } else if let Some(global) = self
+                    .state
+                    .walk_permissions
+                    .permission_enabled(&def.id)
                 {
                     if global {
                         "On (inherited globally; script cannot veto)".into()
@@ -812,12 +803,16 @@ mod tests {
         assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(false)));
         let mut state = ParamsState {
             open: true,
-            walk_globals: Some(host_play::WalkGlobals {
-                allow_teleports: true,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-                allow_danger_zones: false,
-            }),
+            cursor: 0,
+            walk_permissions: frontend_core::WalkGlobalsView {
+                globals: host_play::WalkGlobals {
+                    allow_teleports: true,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    allow_danger_zones: false,
+                },
+                ..Default::default()
+            },
             ..Default::default()
         };
         {
@@ -869,12 +864,15 @@ mod tests {
             "{text:?}"
         );
 
-        state.walk_globals = Some(host_play::WalkGlobals {
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            allow_danger_zones: false,
-        });
+        state.walk_permissions = frontend_core::WalkGlobalsView {
+            globals: host_play::WalkGlobals {
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                allow_danger_zones: false,
+            },
+            ..Default::default()
+        };
         let outcome = {
             let mut pane = ParamsPane {
                 schema: &schema,

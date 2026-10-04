@@ -2099,42 +2099,40 @@ impl TuiSession {
             }
         }
     }
-    /// Publish routing globals to the shared session and persist each
-    /// preference changed by Settings.
+    /// Persist only user-changed globals and publish the latest durable
+    /// projection to the session on every pump.
     fn project_walk_globals(&mut self, app: &mut TuiApp) {
-        self.core.set_walk_globals(app.nav.walk_globals());
+        let before = app.walk_permissions;
+        let after = frontend_core::WalkGlobalsView {
+            globals: app.nav,
+            script_scope_notice_ack: app.script_scope_notice_ack,
+        };
         let preferences = std::mem::take(&mut app.nav_preferences_dirty);
-        if preferences.is_empty() || !self.persist_ui {
-            return;
-        }
         let path = app
             .shared_preferences_path()
             .map(Path::to_path_buf)
             .unwrap_or_else(host_play::panel_ui_path);
-        let mut failure = None;
-        for preference in preferences {
-            let enabled = match preference {
-                frontend_core::NavPreference::AllowTeleports => app.nav.allow_teleports,
-                frontend_core::NavPreference::AllowWilderness => app.nav.allow_wilderness,
-                frontend_core::NavPreference::AllowBankFetch => app.nav.allow_bank_fetch,
-                frontend_core::NavPreference::AllowDangerZones => app.nav.allow_danger_zones,
-                frontend_core::NavPreference::ScriptScopeNoticeAck => app.script_scope_notice_ack,
-                frontend_core::NavPreference::ShowSpecialAreas
-                | frontend_core::NavPreference::PauseScriptOnManualWalkAbort => continue,
-            };
-            if let Err(error) = frontend_core::nav_preference_at(&path, preference, Some(enabled)) {
-                failure = Some(format!("settings: walk permissions: {error}"));
+        self.core.set_walk_globals_store(path.clone());
+
+        if !preferences.is_empty() && self.persist_ui {
+            match frontend_core::WalkGlobalsView::persist_changed_at(&path, before, after) {
+                Ok(()) => {
+                    if app
+                        .error
+                        .as_deref()
+                        .is_some_and(|error| error.starts_with("settings: walk permissions:"))
+                    {
+                        app.error = None;
+                    }
+                }
+                Err(error) => {
+                    app.error = Some(format!("settings: walk permissions: {error}"));
+                }
             }
         }
-        if let Some(error) = failure {
-            app.error = Some(error);
-        } else if app
-            .error
-            .as_deref()
-            .is_some_and(|error| error.starts_with("settings: walk permissions:"))
-        {
-            app.error = None;
-        }
+
+        app.refresh_walk_permissions();
+        self.core.set_walk_globals(app.walk_permissions.globals);
     }
 
     /// Persist the shared manual-walk pause preference and apply it to the

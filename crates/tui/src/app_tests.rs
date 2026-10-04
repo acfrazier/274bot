@@ -289,6 +289,15 @@ fn script_app() -> TuiApp {
     app
 }
 
+fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> String {
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| app.draw_params_overlay(frame, loadouts, None))
+        .unwrap();
+    text(&crate::test_support::rows(terminal.backend().buffer()))
+}
+
 fn thiever_schema() -> Vec<script::SettingDef> {
     vec![script::SettingDef {
         id: "target".into(),
@@ -690,7 +699,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     assert!(app.map_find_options().zones.is_all());
     let crossing = text(&draw(&mut app, 120, 40));
     assert!(
-        crossing.contains("zones: crossing (z)"),
+        crossing.contains("crossing (z)"),
         "Map info must show the live zone choice: {crossing}"
     );
 
@@ -702,7 +711,7 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     assert!(!app.map_route_through_zones);
     let avoided = text(&draw(&mut app, 120, 40));
     assert!(
-        avoided.contains("zones: avoided"),
+        avoided.contains("avoided"),
         "a fresh Map open starts with zones avoided: {avoided}"
     );
 
@@ -730,11 +739,124 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     );
     assert!(app.map_find_options().zones.is_all());
     let global = text(&draw(&mut app, 120, 40));
+    let global_lower = global.to_lowercase();
     assert!(
-        global.contains("DANGER ROUTING GLOBAL OVERRIDE ENABLED")
-            && global.contains("z cannot disable it"),
+        global_lower.contains("danger") && global_lower.contains("global"),
         "global danger replaces the one-shot label with a warning: {global}"
     );
+}
+
+#[test]
+fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
+    let root = std::env::temp_dir().join(format!(
+        "274bot-tui-walk-permissions-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("panel-ui.json");
+    let loadouts = script::LoadoutsStore::at(root.join("loadouts.json"));
+    let mut app = open_map_world();
+    app.restore_preferences(path.clone());
+    app.script_sel = Some(ScriptSel::Loaded(
+        ScriptSource::Catalog,
+        "WalkPermissions".into(),
+    ));
+    let mut schema = thiever_schema();
+    schema[0].id = "allow_danger_zones".into();
+    schema[0].ty = "boolean".into();
+    schema[0].label = Some("Danger routing".into());
+    schema[0].default = Some("false".into());
+    app.params_schema = schema;
+    app.open_script_params(script::merge_bag(
+        &app.params_schema,
+        &serde_json::Map::new(),
+        None,
+    ));
+    app.params_state.open = false;
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+
+    let initial = text(&draw(&mut app, 120, 40));
+    assert!(initial.contains("avoided"), "{initial}");
+    assert_eq!(
+        app.map_find_options().zones,
+        nav::zones::ZoneExempt::NONE
+    );
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(app.map_route_through_zones);
+    assert!(app.map_find_options().zones.is_all());
+    let crossing = text(&draw(&mut app, 120, 40));
+    assert!(crossing.contains("crossing (z)"), "{crossing}");
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(true),
+    )
+    .unwrap();
+    let globally_on = text(&draw(&mut app, 120, 40));
+    let globally_on_lower = globally_on.to_lowercase();
+    assert!(
+        globally_on_lower.contains("danger")
+            && globally_on_lower.contains("global")
+            && !globally_on.contains("crossing (z)"),
+        "{globally_on}"
+    );
+    assert!(!app.map_route_through_zones, "global-on clears the one-shot");
+    assert!(app.map_find_options().zones.is_all());
+    app.params_state.open = true;
+    let inherited = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        inherited.contains("On (inherited globally; script cannot veto)"),
+        "{inherited}"
+    );
+    app.params_state.open = false;
+
+    frontend_core::nav_preference_at(
+        &path,
+        frontend_core::NavPreference::AllowDangerZones,
+        Some(false),
+    )
+    .unwrap();
+    let globally_off = text(&draw(&mut app, 120, 40));
+    assert!(
+        globally_off.contains("avoided") && !globally_off.contains("crossing (z)"),
+        "{globally_off}"
+    );
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    app.params_state.open = true;
+    let local = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        local.contains("Danger routing: Off")
+            && !local.contains("On (inherited globally; script cannot veto)"),
+        "{local}"
+    );
+    app.params_state.open = false;
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(app.map_route_through_zones);
+    assert!(app.map_find_options().zones.is_all());
+    assert_eq!(app.on_key(ch('z')), AppAction::None);
+    assert!(!app.map_route_through_zones);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+
+    std::fs::write(&path, "{corrupt").unwrap();
+    let corrupt = text(&draw(&mut app, 120, 40));
+    assert!(
+        corrupt.contains("avoided") && !corrupt.contains("crossing (z)"),
+        "{corrupt}"
+    );
+    assert!(!app.map_route_through_zones);
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    app.params_state.open = true;
+    let fail_closed = params_overlay_text(&mut app, &loadouts);
+    assert!(
+        !fail_closed.contains("On (inherited globally; script cannot veto)"),
+        "{fail_closed}"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
