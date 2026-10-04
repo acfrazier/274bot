@@ -132,9 +132,13 @@ inherit built-in facts. Local supported facts additionally verify their selected
 source inputs. Unknown client content remains unavailable/rejected, never guessed.
 
 The `tools/game-data` generator and verifier are offline `tsx` tools. Build
-`cargo build -p nav --bin cache-content-id` first; set `GAME_DATA_IDENTITY_BIN`
-(or `CARGO_TARGET_DIR`) and `GAME_DATA_274_SNAPSHOTS` /
-`GAME_DATA_289_SNAPSHOTS` when overriding their defaults. The Rust codec verifies
+`cargo build -p nav --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
+`GAME_DATA_274_CONTENT`, `GAME_DATA_289_ENGINE`, `GAME_DATA_289_CONTENT`,
+`RS2B0T`, `GAME_DATA_274_SNAPSHOTS` and `GAME_DATA_289_SNAPSHOTS` are all
+required and name explicit roots — an unset variable fails closed and names
+itself, with no machine default. `GAME_DATA_IDENTITY_BIN` (or
+`CARGO_TARGET_DIR`) still selects a non-default `cache-content-id` binary.
+The Rust codec verifies
 actual pinned assets before generation. This does not relax e2e exact resume
 provenance. Neither build nor runtime accepts a persistent decoded-identity
 sidecar solely because input sizes match.
@@ -405,11 +409,38 @@ families do not force resource tracking.
 Backward carried-gate proofs relax only when a returning hop is initially
 usable; unreachable charge families do not widen those proofs.
 
+The two Shilo↔Brimhaven carts use the native content's live fare:
+`floor(carried_coins * 5 / 100)`, clamped to 10–200 coins. Their packed
+consumptive requirement is the minimum 10, not a fixed 200-coin debit.
+Route labels evaluate it against the balance after earlier payments;
+missing-supply diagnostics invert that same rule across the remaining route.
+
+Danger-zone permission is scoped to the route. Named `FindOptions.zones`
+exemptions (and the explicit all-zone permission) apply to the whole walk.
+An origin may move continuously within and escape its active zones, but
+cannot re-enter them. Safe routes are tried first. Only when none exists
+may a route enter and move within an active zone containing its selected
+goal; it cannot then leave that zone to use it as transit. Inactive portions
+of a level-rule zone do not grant permission across its active portions.
+These rules also apply to transport and teleport landings and to each
+candidate's own completion in first/all-target searches.
+
+Refusal diagnosis requires a strict `NoPath` and an all-zone-exempt route
+that still satisfies the same hard gates. It reports active zone-blocked
+transitions on the source-reachable frontier, including separately blocked
+alternatives, rather than naming only a shortest relaxed witness. It does
+not claim a minimal cut; incomplete or budget-limited frontier searches
+return no diagnosis.
+
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, Al Kharid toll dialogue, and teles.
-NPC-backed hops use the live NPC tile (search radius 8). A paid Al Kharid
-toll Door hop returns `Blocked` when the packed `consumed_req` is short at the
-gate. Glider landings settle Chebyshev 1.
+NPC-backed hops use the live NPC tile (search radius 8). Paid Al Kharid
+toll, Boat and Npc affirmative fare choices recheck current carried supply
+before clicking. Glider landings settle Chebyshev 1. Spell buttons and charged
+jewellery operations recheck live skill/item requirements before sending;
+an unbound control waits within the hop budget and identifies the missing
+control on expiry. Adult spirit-tree gate choices follow the live
+“Where can I go?” label even when only one packed destination survives.
 Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.
@@ -474,10 +505,15 @@ loc-observed scene, the walk instead settles through the plain tile predicate
 so its caller can reselect a target. Off-scene targets still defer.
 Exact tile walks are unchanged.
 
-Native walks retain their action when a correlated host `RouteEnded` arrives
-before the observed player finishes moving. They settle on observed arrival
-or a stationary route end, bounded by the existing active walk deadline.
-This does not relax the requested radius.
+Native callers accept only an `Arrived` receipt as arrival proof. A
+correlated successful terminal route receipt is held while authoritative
+local-actor motion is still moving; failed, blocked, evidence-required and
+cancelled receipts surface promptly. Motion is carried explicitly through
+the isolate snapshot; old snapshots report it unavailable, not stationary.
+The existing active walk deadline bounds the wait, without relaxing reach.
+`NeedsEvidence` preserves its typed quest gates through native walk adapters.
+Quester Stops with a `needs-evidence` failure and retains those gates for its
+caller through `unresolved_walk_gates()`.
 
 Manual movement takes ownership before frontend or script follow. A matching
 native walk completes once with the normal `WalkEnd::UserInput` receipt
@@ -491,10 +527,6 @@ owner, and live route-less walking composers stop through the shared intent
 sequence. Already operator-paused or reconnect-carried script work keeps its
 existing Resume behavior.
 
-Native walks retain their action when a correlated host `RouteEnded` arrives
-before the observed player finishes moving. They settle on observed arrival
-or a stationary route end, bounded by the existing active walk deadline.
-This does not relax the requested radius.
 The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” defaults to ON. It gates only
 the pause of the script that owns the cancelled walk; it never gates intent
@@ -574,6 +606,10 @@ on_leg, troll_doors }`.
 
 - **Default door leg:** interact the door transport's menu option, then
   settle `arrived(to, close_enough)` — cheap, no per-tick door polling.
+  Escalating a slammed door to the troll strategy retains the elapsed hop
+  budget; an approach escalation retains its elapsed wait too. Losing the
+  connection reports `Dropped` only if the attempt made no tile progress;
+  otherwise the exhausted hop is `Expired`.
 - **`troll_doors = true` (non-default, expensive):** per tick, read the
   door's open/closed state from the snapshot's `locs()`; when the door
   reads open, `op_loc` (re-open) and `walk` through in the **same tick**

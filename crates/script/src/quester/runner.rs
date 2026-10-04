@@ -9,7 +9,7 @@ use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
-use crate::combat::ClearPrayers;
+use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
@@ -20,7 +20,7 @@ use crate::CompiledId;
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{JournalRead, QuestProgress};
-use api::selected::{FactKey, Knowledge, RunKey, Truth};
+use api::selected::{FactKey, Knowledge, QuestGate, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use api::{DetectedRandom, RandomClaim};
 use std::num::NonZeroU32;
@@ -43,6 +43,7 @@ enum QuesterFailureKind {
     Other,
     ManualMovement,
     MaxDeaths,
+    NeedsEvidence,
 }
 
 pub struct Quester {
@@ -64,6 +65,7 @@ pub struct Quester {
     step: Option<Box<dyn StepRun>>,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
+    prayer_cleanup_owned: RaisedPrayers,
     last_outcome: Option<StepOutcome>,
     /// Latest Combat family receipt, kept after later non-combat steps begin
     /// so Path `combat_end` skip_if can still select the caller walk-out
@@ -85,8 +87,9 @@ pub struct Quester {
     park_reason: &'static str,
     last_error: Option<Arc<str>>,
     last_error_kind: QuesterFailureKind,
+    pending_walk_gates: Option<Arc<[QuestGate]>>,
     waiting: Option<(&'static str, Arc<str>)>,
-    deaths: u8,
+    deaths: u16,
     prior_deaths: u16,
     max_deaths: u8,
     attempts: u8,
@@ -96,6 +99,7 @@ pub struct Quester {
     dirty: bool,
     watchdog: Watchdog,
     death: DeathLatch,
+    anchor: Option<api::WorldTile>,
     provisioner: Provisioner,
     active_loadout: Option<Arc<str>>,
     retreat_completed: bool,
@@ -368,7 +372,8 @@ impl Quester {
             step_index: 0,
             step: None,
             clear_prayers: None,
-            prayer_cleanup_pending: true,
+            prayer_cleanup_pending: false,
+            prayer_cleanup_owned: RaisedPrayers::empty(),
             last_outcome: None,
             last_combat: None,
             published_receipt: None,
@@ -387,6 +392,7 @@ impl Quester {
             park_reason: "no progress",
             last_error: None,
             last_error_kind: QuesterFailureKind::Other,
+            pending_walk_gates: None,
             waiting: None,
             deaths: 0,
             max_deaths: default_max_deaths(),
@@ -398,6 +404,7 @@ impl Quester {
             dirty: true,
             watchdog: Watchdog::default(),
             death: DeathLatch::default(),
+            anchor: None,
             provisioner: Provisioner::new(),
             active_loadout: None,
             retreat_completed: false,
@@ -455,7 +462,11 @@ impl Quester {
                 self.record_failure(ActionError::Blocked(item));
                 false
             }
-            Poll::Ready(Err(error @ (ActionError::Blocked(_) | ActionError::UserInput))) => {
+            Poll::Ready(Err(
+                error @ (ActionError::Blocked(_)
+                | ActionError::NeedsEvidence(_)
+                | ActionError::UserInput),
+            )) => {
                 self.parked = true;
                 self.record_failure(error);
                 false
@@ -485,7 +496,7 @@ impl Quester {
         self.journal_opened
     }
 
-    pub fn deaths(&self) -> u8 {
+    pub fn deaths(&self) -> u16 {
         self.deaths
     }
 
@@ -501,6 +512,12 @@ impl Quester {
         self.last_read.as_deref()
     }
 
+    /// Authoritative gates required by the last blocked walk. The caller
+    /// can acquire evidence without parsing a display diagnostic.
+    pub fn unresolved_walk_gates(&self) -> &[QuestGate] {
+        self.pending_walk_gates.as_deref().unwrap_or(&[])
+    }
+
     fn progress_slice(&self) -> &[QuestProgress] {
         self.progress
             .as_deref()
@@ -513,6 +530,7 @@ impl Quester {
             code: Arc::from(match self.last_error_kind {
                 QuesterFailureKind::ManualMovement => "manual-movement",
                 QuesterFailureKind::MaxDeaths => "max-deaths",
+                QuesterFailureKind::NeedsEvidence => "needs-evidence",
                 QuesterFailureKind::Other => "parked",
             }),
             message: self
@@ -525,16 +543,26 @@ impl Quester {
     fn clear_last_error(&mut self) {
         self.last_error = None;
         self.last_error_kind = QuesterFailureKind::Other;
+        self.pending_walk_gates = None;
     }
 
     fn set_last_error(&mut self, kind: QuesterFailureKind, message: Arc<str>) {
         self.last_error = Some(message);
         self.last_error_kind = kind;
+        self.pending_walk_gates = None;
         self.dirty = true;
     }
 
     fn record_failure(&mut self, error: ActionError) {
         let (kind, message) = match error {
+            ActionError::NeedsEvidence(gates) => {
+                self.set_last_error(
+                    QuesterFailureKind::NeedsEvidence,
+                    Arc::from("walk needs authoritative quest-gate evidence"),
+                );
+                self.pending_walk_gates = Some(gates);
+                return;
+            }
             ActionError::UserInput => (
                 QuesterFailureKind::ManualMovement,
                 super::families::manual_movement_message(),
@@ -598,7 +626,9 @@ impl Quester {
                 || (phase == NativePhase::Blocked
                     && !matches!(
                         self.last_error_kind,
-                        QuesterFailureKind::ManualMovement | QuesterFailureKind::MaxDeaths
+                        QuesterFailureKind::ManualMovement
+                            | QuesterFailureKind::MaxDeaths
+                            | QuesterFailureKind::NeedsEvidence
                     ))) {
             NativePhase::Working
         } else {
@@ -911,13 +941,22 @@ impl Quester {
         });
     }
 
+    fn capture_prayer_cleanup(&mut self) {
+        let raised = self
+            .step
+            .as_ref()
+            .map_or_else(RaisedPrayers::empty, |step| step.prayer_cleanup());
+        self.prayer_cleanup_owned.merge(raised);
+        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+    }
+
     fn cancel_step(&mut self, tick: &mut NativeTick<'_>) {
+        self.capture_prayer_cleanup();
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
         self.provisioner.cancel();
         self.clear_prayers = None;
-        self.prayer_cleanup_pending = true;
         self.last_outcome = None;
         self.journal = None;
         self.advances = false;
@@ -1168,7 +1207,6 @@ impl Quester {
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
-        self.prayer_cleanup_pending = true;
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -1186,6 +1224,9 @@ impl Quester {
             }
         }
         let tile = tick.cx.snapshot().here().map(|obs| obs.value);
+        if tile.is_some() {
+            self.anchor = tile;
+        }
         let xp = tick
             .cx
             .snapshot()
@@ -1212,12 +1253,14 @@ impl Script for Quester {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if tick.cx.run() != self.run {
             self.run = tick.cx.run();
+            self.watchdog = Watchdog::default();
             self.cancel_step(tick);
             self.last_combat = None;
             self.needs_read = true;
             self.progress = None;
         }
         if !tick.cx.eligible {
+            self.watchdog = Watchdog::default();
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
@@ -1225,14 +1268,25 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.dirty = true;
         }
-        if self.death.observe(tick.cx.snapshot()) {
+        if self.anchor.is_none() {
+            self.anchor = tick.cx.snapshot().here().map(|here| here.value);
+        }
+        let died = self.death.observe(tick.cx.snapshot());
+        {
+            let retained = tick.cx.retained().quester();
+            retained.anchor = self.anchor;
+            retained.death_seq = self.death.watermark();
+        }
+        if died {
             let exceeded = death_cap_exceeded(
-                self.prior_deaths.saturating_add(u16::from(self.deaths)),
+                self.prior_deaths.saturating_add(self.deaths),
                 self.max_deaths,
             );
+            self.watchdog = Watchdog::default();
             self.cancel_step(tick);
             self.last_combat = None;
             self.deaths = self.deaths.saturating_add(1);
+            tick.cx.retained().quester().deaths = self.prior_deaths.saturating_add(self.deaths);
             self.provisioner.reset(tick.actions);
             self.active_loadout = None;
             self.retreat_completed = false;
@@ -1249,6 +1303,17 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
             }
         }
+        if !self.parked
+            && crate::native::death::hitpoints_zero(
+                tick.cx.snapshot().stats().map(|stats| stats.value),
+            )
+        {
+            // Damage precedes the content's death message. Do not poll a live
+            // dialogue/step into a combat failure while that message is owed.
+            self.watchdog = Watchdog::default();
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
         if let Some(result) = self
             .clear_prayers
             .as_ref()
@@ -1262,7 +1327,7 @@ impl Script for Quester {
                 Poll::Ready(Ok(report)) => {
                     self.clear_prayers = None;
                     if report.timed_out != 0 {
-                        self.prayer_cleanup_pending = true;
+                        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                         self.parked = true;
                         self.record_failure(ActionError::Blocked(Arc::from(
                             "prayer cleanup timed out",
@@ -1270,6 +1335,7 @@ impl Script for Quester {
                         self.publish(tick.output);
                         return Ok(ScriptFlow::Blocked(self.blocked_failure()));
                     }
+                    self.prayer_cleanup_owned = RaisedPrayers::empty();
                     self.prayer_cleanup_pending = false;
                 }
                 Poll::Ready(Err(
@@ -1280,7 +1346,7 @@ impl Script for Quester {
                     | ActionError::BudgetExhausted,
                 )) => {
                     self.clear_prayers = None;
-                    self.prayer_cleanup_pending = true;
+                    self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                     self.publish(tick.output);
                     return Ok(ScriptFlow::Continue);
                 }
@@ -1294,39 +1360,27 @@ impl Script for Quester {
             }
         }
         if self.prayer_cleanup_pending && self.step.is_none() && !self.settling {
-            let Some(active) = tick.cx.snapshot().prayers_active() else {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            };
-            if active.value.iter().any(|on| *on) {
-                match tick
-                    .actions
-                    .begin::<ClearPrayers>(Arc::clone(&self.selected), &mut tick.cx)
-                {
-                    Ok(handle) => {
-                        self.clear_prayers = Some(handle);
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    Err(
-                        ActionError::Busy
-                        | ActionError::Held
-                        | ActionError::Stale
-                        | ActionError::Cancelled
-                        | ActionError::BudgetExhausted,
-                    ) => {
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    Err(error) => {
-                        self.parked = true;
-                        self.record_failure(error);
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
-                    }
+            match begin_clear_owned_prayers(&self.selected, self.prayer_cleanup_owned, tick) {
+                Hygiene::Clean => {
+                    self.prayer_cleanup_owned = RaisedPrayers::empty();
+                    self.prayer_cleanup_pending = false;
+                }
+                Hygiene::Started(handle) => {
+                    self.clear_prayers = Some(handle);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Deferred => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Failed(error) => {
+                    self.parked = true;
+                    self.record_failure(error);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
                 }
             }
-            self.prayer_cleanup_pending = false;
         }
         if self.parked {
             self.publish(tick.output);
@@ -1569,7 +1623,7 @@ impl Script for Quester {
                     });
                 }
                 self.last_outcome = Some(outcome);
-                self.prayer_cleanup_pending = true;
+                self.capture_prayer_cleanup();
                 self.dirty = true;
                 if self.advances {
                     self.needs_read = true;
@@ -1582,7 +1636,11 @@ impl Script for Quester {
                         .map(|step| step.plan.settle_timeout())
                         .unwrap_or_default();
             }
-            Poll::Ready(Err(error @ (ActionError::Blocked(_) | ActionError::UserInput))) => {
+            Poll::Ready(Err(
+                error @ (ActionError::Blocked(_)
+                | ActionError::NeedsEvidence(_)
+                | ActionError::UserInput),
+            )) => {
                 if let Some(outcome) = self
                     .step
                     .as_ref()
@@ -1599,9 +1657,10 @@ impl Script for Quester {
                         receipt: outcome.receipt.clone(),
                     });
                 }
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.last_outcome = None;
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.parked = true;
                 self.record_failure(error);
                 self.update_wait();
@@ -1609,9 +1668,9 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
             }
             Poll::Ready(Err(error)) => {
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.last_outcome = None;
-                self.prayer_cleanup_pending = true;
                 self.record_step_failure(error, tick);
             }
         }
@@ -1621,12 +1680,15 @@ impl Script for Quester {
     }
 
     fn interrupt(&mut self, event: Interrupt) {
+        self.watchdog = Watchdog::default();
+        self.dirty = true;
         match event {
             Interrupt::Resume | Interrupt::SessionReady => {
+                self.capture_prayer_cleanup();
                 self.needs_read = true;
                 self.step = None;
                 self.provisioner.cancel();
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.settling = false;
@@ -1641,9 +1703,10 @@ impl Script for Quester {
                 self.waiting = None;
             }
             Interrupt::SessionEnded => {
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.provisioner.cancel();
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
@@ -1659,13 +1722,14 @@ impl Script for Quester {
         }
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+        self.watchdog = Watchdog::default();
         // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.capture_prayer_cleanup();
         self.step = None;
         self.provisioner.cancel();
         self.clear_prayers = None;
         self.journal = None;
         self.needs_read = true;
-        self.prayer_cleanup_pending = true;
         self.last_outcome = None;
         self.last_combat = None;
         self.advances = false;
@@ -1696,6 +1760,10 @@ impl Script for Quester {
         self.last_combat = None;
     }
 
+    fn recovery_anchor(&self) -> Option<api::WorldTile> {
+        self.anchor
+    }
+
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
         self.read_requested = true;
         self.dirty = true;
@@ -1717,6 +1785,7 @@ pub struct QueuedQuester {
     completed: u16,
     deaths: u16,
     max_deaths: u8,
+    anchor: Option<api::WorldTile>,
     retreats: u16,
     last_retreat: Option<Arc<str>>,
     fields: Arc<[StatusField]>,
@@ -1756,6 +1825,7 @@ impl QueuedQuester {
             completed: 0,
             deaths: 0,
             max_deaths,
+            anchor: None,
             retreats: 0,
             last_retreat: None,
             fields: Arc::from([]),
@@ -1765,6 +1835,24 @@ impl QueuedQuester {
         };
         this.refresh_fields();
         this
+    }
+
+    pub(super) fn restore(&mut self, retained: &super::QuesterRetained) {
+        self.anchor = retained.anchor;
+        self.deaths = retained.deaths;
+        self.completed = retained.completed;
+        self.retreats = retained.retreats;
+        self.last_retreat = retained.last_retreat.clone();
+        self.refresh_fields();
+    }
+
+    fn sync_retained(&self, tick: &mut NativeTick<'_>) {
+        let retained = tick.cx.retained().quester();
+        retained.anchor = self.anchor;
+        retained.deaths = self.deaths;
+        retained.completed = self.completed;
+        retained.retreats = self.retreats;
+        retained.last_retreat.clone_from(&self.last_retreat);
     }
 
     fn refresh_fields(&mut self) {
@@ -1945,6 +2033,8 @@ impl QueuedQuester {
                 );
                 active.prior_deaths = self.deaths;
                 active.max_deaths = self.max_deaths;
+                active.anchor = self.anchor;
+                active.death = DeathLatch::from_watermark(tick.cx.retained().quester().death_seq);
                 active.required_vs_live = skill_status_fields(&result.skill_gates);
                 active.tested_stats_warning = match active.path.tested_stats.as_deref() {
                     None => Arc::from("No qualified stats recorded"),
@@ -1991,11 +2081,24 @@ impl Script for QueuedQuester {
             self.refresh_fields();
         }
         if !tick.cx.eligible {
+            if let Some(active) = self.active.as_mut() {
+                active.watchdog = Watchdog::default();
+            }
             self.publish(tick.output, NativePhase::Waiting);
             return Ok(ScriptFlow::Continue);
         }
+        // Baseline old chat once at Start, before the off-pump Path compile.
+        // A recreated card instead keeps the prior watermark, including deaths
+        // received while its old instance was absent.
+        if tick.cx.retained().quester().death_seq.is_none() {
+            let mut baseline = DeathLatch::default();
+            baseline.observe(tick.cx.snapshot());
+            tick.cx.retained().quester().death_seq = baseline.watermark();
+        }
         if let Some(active) = self.active.as_mut() {
             let flow = active.tick(tick)?;
+            self.anchor = active.anchor;
+            tick.cx.retained().quester().anchor = self.anchor;
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
                 ScriptFlow::Blocked(failure)
@@ -2006,11 +2109,12 @@ impl Script for QueuedQuester {
                 ScriptFlow::Complete | ScriptFlow::Blocked(_) => {
                     let active = self.active.take().expect("active quest");
                     let index = self.active_index.expect("active queue row");
-                    self.deaths = self.deaths.saturating_add(u16::from(active.deaths));
+                    self.deaths = self.deaths.saturating_add(active.deaths);
                     match flow {
                         ScriptFlow::Complete => {
                             self.queue.mark_done(index);
                             self.completed = self.completed.saturating_add(1);
+                            self.anchor = None;
                             if active.retreat_completed {
                                 self.retreats = self.retreats.saturating_add(1);
                                 self.last_retreat = Some(Arc::clone(&active.path.id.0));
@@ -2023,6 +2127,7 @@ impl Script for QueuedQuester {
                         ScriptFlow::Continue => unreachable!(),
                     }
                     self.refresh_fields();
+                    self.sync_retained(tick);
                 }
             }
         }
@@ -2113,6 +2218,9 @@ impl Script for QueuedQuester {
         self.dirty = true;
         if self.queue.all_done() {
             self.publish(tick.output, NativePhase::Complete);
+            // Completion ends the allowance just like Stop. A later operator
+            // Start can reuse the slot, but must not inherit this finished run.
+            *tick.cx.retained().quester() = super::QuesterRetained::default();
             Ok(ScriptFlow::Complete)
         } else {
             self.publish(tick.output, NativePhase::Blocked);
@@ -2136,6 +2244,13 @@ impl Script for QueuedQuester {
         self.active
             .as_mut()
             .map_or(RandomClaim::Host, |active| active.on_random(event))
+    }
+
+    fn recovery_anchor(&self) -> Option<api::WorldTile> {
+        self.active
+            .as_ref()
+            .and_then(|active| active.recovery_anchor())
+            .or(self.anchor)
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
@@ -2656,7 +2771,7 @@ mod tests {
         );
     }
 
-    fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
+    pub(super) fn fixture() -> (Quester, api::snapshot::GameSnapshot) {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
         // These tests isolate runner/dialogue transitions. Provisioning has its own
@@ -2681,6 +2796,17 @@ mod tests {
             ),
             s,
         )
+    }
+
+    #[test]
+    fn quester_preserves_walk_evidence_for_the_caller_and_reports_a_block() {
+        let (mut script, _) = fixture();
+        let gates: Arc<[QuestGate]> = Arc::from([QuestGate::Complete(FactKey::new("test-quest"))]);
+        script.record_failure(ActionError::NeedsEvidence(Arc::clone(&gates)));
+        assert!(std::ptr::eq(script.unresolved_walk_gates(), gates.as_ref()));
+        assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
+        script.clear_last_error();
+        assert!(script.unresolved_walk_gates().is_empty());
     }
 
     #[test]
@@ -3133,3 +3259,7 @@ mod journal_tests;
 #[cfg(test)]
 #[path = "queue_runner_tests.rs"]
 mod queue_tests;
+
+#[cfg(test)]
+#[path = "recovery_runner_tests.rs"]
+mod recovery_tests;

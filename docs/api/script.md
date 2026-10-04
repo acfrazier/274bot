@@ -147,6 +147,35 @@ maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
 
+Quester uses the Gatherer's slot-retained recovery lifecycle: watchdog
+recreation and reconnect preserve its death count, consumed chat watermark,
+last quest stand, completion count and bank-retreat receipts. An old death
+message does not count again; a new one received during recreation still does.
+The shared slot watchdog walks a displaced Quester back to that stand without
+recreating its instance. If it must recreate the card, Quester rereads server
+quest evidence instead of treating its discarded local step cursor as progress.
+Operator Stop releases retained run memory; Stop/Start begins a fresh budget.
+
+The Quester's no-progress window counts unchanged step boundaries (warn at
+three, block at eight), not time spent paused or held. Pause/Resume, guardian
+holds, reconnect and death reset that window, including ineligible frames
+without an explicit hold callback. This remains distinct from the shared slot's
+wall-clock wedge clock and Gatherer's eligible-gameplay-tick idle bound.
+
+All Rust-native cards observe death through the shared death-chat latch.
+Quester and Sherlock temporarily suppress work at zero HP while the content's
+delayed death message or restored HP is awaited. HP alone neither spends a
+death allowance nor terminates a clue; lethal damage must not turn an active
+Quester dialogue into a living-player combat interruption. Sherlock cancels
+the current clue without counting it as solved on a new death message, even
+if HP has already been restored. Compat clue death arguments retain their
+existing semantics.
+
+Running Load cards can exempt explicitly named random events through their
+cached `ignoredRandoms()` list. The event is still published, but the guardian
+does not act or hold for that event. Unlisted events and inactive cards retain
+host guardian handling; this is not a general-purpose decline hook.
+
 Eligibility publishes DONE, READY, or BLOCKED with the requirement's reason.
 Item requirements gate a new quest, not an in-progress quest whose hand-ins
 already consumed them. An unread bank is unknown, not an empty bank.
@@ -574,6 +603,33 @@ A bank-side backpack is posted only while the bank's side modal root is up
 (`modals().side`, sent to compatibility scripts as `side_modal_id`): an open
 main bank whose side root is still down has no side observation, even with an
 empty list, while a raised root with no rows is a posted empty pack.
+
+## Native combat prayer ownership
+
+Combat waits for one complete observation of all 15 prayer overlay varps before
+emitting any prayer toggle. Missing rows are unknown, not inactive prayers.
+Prayers already on in that observation belong to the user: Combat preserves
+them during the fight and at wind-down, and does not replace a user's offensive
+tier with a stronger one.
+
+Protection is the exception because the game permits only one protect at a
+time. An accepted Combat switch relinquishes the displaced prayer. If Combat
+raises that style again later, it owns the new activation and clears it when
+the fight ends. It never restores a displaced protect. Planned, pending and
+refused clicks do not change ownership.
+
+Quester and Sherlock carry the accepted-raise cleanup obligation across a
+cancelled fight or Pause and clear only those prayers before continuing.
+Scoped cleanup waits for missing owned prayer rows rather than treating them
+as off. Accepted dispatches are included even when cancellation occurs before
+Combat's next poll.
+Sherlock retires that obligation when death clears prayers, so a later Pause
+does not turn off prayers the user activates after respawn.
+Quester recipe substeps retain that obligation when a combat child completes,
+and finish scoped cleanup before settling or starting the next recipe child.
+Cancellation revokes the fight's action authority and emits no compensating
+click. A completed fight does not trigger another clear merely because user
+prayers remain on. Explicit `Prayer.clear` retains its broad all-prayers meaning.
 
 ## Nav vs scripts
 

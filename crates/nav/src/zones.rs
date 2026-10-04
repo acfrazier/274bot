@@ -723,22 +723,24 @@ impl Iterator for ZoneAt<'_> {
     }
 }
 
-/// Per-search whole-walk exemptions and the original activity predicate.
+/// Per-search named exemptions and endpoint context for the original activity predicate.
 pub struct ZoneFilter<'a> {
     table: &'a ZoneTable,
     combat: i32,
     mask: Box<[u64]>,
+    origin: Option<WorldTile>,
+    destination: Option<WorldTile>,
     all: bool,
 }
 
 impl<'a> ZoneFilter<'a> {
-    /// Build a search mask from the selected endpoints and named zone/group
-    /// keys. Endpoint masking uses geometric table membership, independent of
-    /// whether a level-rule zone is active on that endpoint's tile.
+    /// Build named whole-walk exemptions and retain the selected endpoints.
+    /// Origin permission is continuous and one-way. A destination's active
+    /// zones permit entry and movement to the goal, but not exit for transit.
     pub fn new(
         table: &'a ZoneTable,
         combat_level: Option<i32>,
-        exempt_tiles: &[WorldTile],
+        endpoints: &[WorldTile],
         exempt: &ZoneExempt,
     ) -> Self {
         if exempt.is_all() {
@@ -746,15 +748,12 @@ impl<'a> ZoneFilter<'a> {
                 table,
                 combat: combat_level.unwrap_or(0),
                 mask: Box::new([]),
+                origin: endpoints.first().copied(),
+                destination: endpoints.get(1).copied(),
                 all: true,
             };
         }
         let mut mask = vec![0u64; table.zones.len().div_ceil(64)];
-        for tile in exempt_tiles {
-            for zone in table.at(*tile) {
-                mask[usize::from(zone) >> 6] |= 1u64 << (zone & 63);
-            }
-        }
         for packed in exempt.keys() {
             if packed & 0x8000 != 0 {
                 let group = usize::from(packed & 0x7fff);
@@ -771,40 +770,112 @@ impl<'a> ZoneFilter<'a> {
             table,
             combat: combat_level.unwrap_or(0),
             mask: mask.into_boxed_slice(),
+            origin: endpoints.first().copied(),
+            destination: endpoints.get(1).copied(),
             all: false,
         }
     }
 
-    /// Whether at least one unmasked zone active under the exact route
-    /// predicate contains this tile.
+    pub(crate) fn select_destination(&mut self, goal: Option<WorldTile>) {
+        self.destination = goal;
+    }
+
+    /// Whether an unexempted zone active under the exact route predicate
+    /// contains this tile. This context-free query applies named whole-walk
+    /// exemptions only; use [`Self::blocking_transition_at`] for endpoint
+    /// rules.
     #[inline]
     pub fn blocks(&self, wilderness: &WildernessRules, tile: WorldTile) -> bool {
         self.blocking_at(wilderness, tile).next().is_some()
     }
 
-    /// All matching unmasked zones active under the same predicate as
-    /// [`Self::blocks`]. Overlapping zones are independent: exempting Z1 never
-    /// grants passage through an unexempted active Z2 in their overlap.
+    /// All matching zones active under the same predicate as [`Self::blocks`].
+    /// Named exemptions apply throughout the route; endpoint exemptions
+    /// require transition context and are not applied here.
     #[inline]
     pub fn blocking_at<'b>(
         &'b self,
         wilderness: &'b WildernessRules,
         tile: WorldTile,
     ) -> impl Iterator<Item = u16> + 'b {
-        self.table.at(tile).filter(move |index| {
-            if self.all || self.masked(*index) {
+        self.table
+            .at(tile)
+            .filter(move |&index| !self.whole_masked(index) && self.active(index, wilderness, tile))
+    }
+
+    /// Zones that block entering `tile` from `previous`, or leaving an active
+    /// destination zone. Origin escape is continuous and cannot be reentered.
+    pub(crate) fn blocking_transition_at<'b>(
+        &'b self,
+        wilderness: &'b WildernessRules,
+        previous: WorldTile,
+        tile: WorldTile,
+        is_goal: bool,
+    ) -> impl Iterator<Item = u16> + 'b {
+        let entering = self.table.at(tile).filter(move |&index| {
+            if self.whole_masked(index) || !self.active(index, wilderness, tile) {
                 return false;
             }
-            let zone = &self.table.zones[usize::from(*index)];
-            zone.class == ZoneClass::Always
-                || self.combat <= i32::from(zone.cap)
-                || wilderness.contains(tile)
+            if self.origin_active(wilderness, index) {
+                return !(self.table.zone_contains(index, previous)
+                    && self.active(index, wilderness, previous));
+            }
+            !self.destination_active(wilderness, index) && !is_goal
+        });
+        let leaving = self.table.at(previous).filter(move |&index| {
+            !self.whole_masked(index)
+                && self.active(index, wilderness, previous)
+                && self.destination_active(wilderness, index)
+                && (!self.table.zone_contains(index, tile) || !self.active(index, wilderness, tile))
+        });
+        entering.chain(leaving)
+    }
+
+    /// A safe-pass goal reached only through its exact-tile permission is
+    /// terminal. Completion passes may continue within their selected zone.
+    pub(crate) fn destination_only_at(
+        &self,
+        wilderness: &WildernessRules,
+        tile: WorldTile,
+    ) -> bool {
+        self.table.at(tile).any(|index| {
+            !self.whole_masked(index)
+                && self.active(index, wilderness, tile)
+                && !self.origin_active(wilderness, index)
+                && !self.destination_active(wilderness, index)
         })
     }
 
-    /// Whether a zone index is exempt for this search.
+    pub(crate) fn origin_active(&self, wilderness: &WildernessRules, index: u16) -> bool {
+        self.origin.is_some_and(|origin| {
+            self.table.zone_contains(index, origin) && self.active(index, wilderness, origin)
+        })
+    }
+
+    fn destination_active(&self, wilderness: &WildernessRules, index: u16) -> bool {
+        self.destination.is_some_and(|goal| {
+            self.table.zone_contains(index, goal) && self.active(index, wilderness, goal)
+        })
+    }
+
+    /// Whether a zone is exempt for the search's whole walk or geometrically
+    /// contains its origin. Transition rules still restrict origin escape.
     #[inline]
     pub fn masked(&self, zone: u16) -> bool {
+        if self.whole_masked(zone) {
+            return true;
+        }
+        self.origin
+            .is_some_and(|origin| self.table.zone_contains(zone, origin))
+    }
+
+    /// Number of allocated 64-bit words in the named exemption mask.
+    pub fn mask_words(&self) -> usize {
+        self.mask.len()
+    }
+
+    #[inline]
+    fn whole_masked(&self, zone: u16) -> bool {
         if self.all {
             return true;
         }
@@ -814,9 +885,12 @@ impl<'a> ZoneFilter<'a> {
             .is_some_and(|word| word & (1u64 << (index & 63)) != 0)
     }
 
-    /// Number of allocated 64-bit words in the exemption mask.
-    pub fn mask_words(&self) -> usize {
-        self.mask.len()
+    #[inline]
+    fn active(&self, index: u16, wilderness: &WildernessRules, tile: WorldTile) -> bool {
+        let zone = &self.table.zones[usize::from(index)];
+        zone.class == ZoneClass::Always
+            || self.combat <= i32::from(zone.cap)
+            || wilderness.contains(tile)
     }
 }
 

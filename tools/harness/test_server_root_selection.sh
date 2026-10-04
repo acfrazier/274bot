@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-# Regression: CLI --server-root must select source+pack+receipt, not env/default.
-# Root A = env/default 274 Server engine; root B = isolated 289 engine.
-# Fails closed if B is missing or if CLI is ignored (mixed serializer/pack).
+# Regression: CLI --server-root must select source+pack+receipt, not env.
+# Root A = TEST_ROOT_A (274 engine); root B = TEST_ROOT_B (isolated 289 engine).
+# Fails closed if either is missing or if CLI is ignored (mixed serializer/pack).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER="$SCRIPT_DIR/run_write_player_fixture.sh"
 CHECKER="$SCRIPT_DIR/check_server_root_selection.py"
 
-ROOT_A="${TEST_ROOT_A:-/Users/acfrazier/experiments/Server/engine}"
-ROOT_B="${TEST_ROOT_B:-}"
-if [[ -z "$ROOT_B" ]]; then
-  if [[ -d /tmp/274bot-r018-engine.aYl8li/src/engine/entity ]]; then
-    ROOT_B=/tmp/274bot-r018-engine.aYl8li
-  elif [[ -d /Users/acfrazier/experiments/lostcity-289/engine/src/engine/entity ]]; then
-    ROOT_B=/Users/acfrazier/experiments/lostcity-289/engine
-  else
-    echo "error: no isolated 289 engine (set TEST_ROOT_B)" >&2
-    exit 2
-  fi
+if [[ -z "${TEST_ROOT_A:-}" ]]; then
+  echo "error: set TEST_ROOT_A to the 274 engine root" >&2
+  exit 2
 fi
+if [[ -z "${TEST_ROOT_B:-}" ]]; then
+  echo "error: set TEST_ROOT_B to the isolated 289 engine root" >&2
+  exit 2
+fi
+ROOT_A="$TEST_ROOT_A"
+ROOT_B="$TEST_ROOT_B"
 
 for label in A:"$ROOT_A" B:"$ROOT_B"; do
   name="${label%%:*}"

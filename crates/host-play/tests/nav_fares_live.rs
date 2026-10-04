@@ -1,4 +1,4 @@
-//! Seeded revision-289 manual WalkTo: two fares require both payments upfront.
+//! Seeded revision-289 manual WalkTo: chained tolls and native Shilo cart fares.
 //! Uses only per-account setup cheats; never changes shared engine content.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,6 +15,30 @@ use nav::router::{FindOptions, Leg};
 use nav::tile::Tile;
 use nav::WorldState;
 use serde_json::{json, Value};
+
+fn live_profile_options() -> ProfileOptions {
+    ProfileOptions {
+        profile: Some("local-289".into()),
+        revision: Some("289".into()),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
+        port: Some(44594),
+        http_port: Some(1080),
+        cache_dir: Some(PathBuf::from(
+            std::env::var_os("BOT_CACHE_DIR").expect("disposable cache"),
+        )),
+        unpack_dir: Some(PathBuf::from(
+            std::env::var_os("NAV_FARES_SNAPSHOT_ROOT").expect("explicit snapshot root"),
+        )),
+        engine_dir: Some(PathBuf::from(
+            std::env::var_os("WORLD_ENGINE_DIR").expect("explicit engine"),
+        )),
+        nav_pack: Some(PathBuf::from(
+            std::env::var_os("WORLD_NAV_PACK").expect("explicit pack"),
+        )),
+        ..ProfileOptions::default()
+    }
+}
 
 const ORIGIN: Tile = Tile {
     x: 2663,
@@ -95,31 +119,11 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
     let evidence =
         PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
     std::fs::create_dir_all(&evidence).unwrap();
-    let profile = ProfileOptions {
-        profile: Some("local-289".into()),
-        revision: Some("289".into()),
-        host: Some("127.0.0.1".into()),
-        asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
-        cache_dir: Some(PathBuf::from(
-            std::env::var_os("BOT_CACHE_DIR").expect("disposable cache"),
-        )),
-        unpack_dir: Some(PathBuf::from(
-            std::env::var_os("NAV_FARES_SNAPSHOT_ROOT").expect("explicit snapshot root"),
-        )),
-        engine_dir: Some(PathBuf::from(
-            std::env::var_os("WORLD_ENGINE_DIR").expect("explicit engine"),
-        )),
-        nav_pack: Some(PathBuf::from(
-            std::env::var_os("WORLD_NAV_PACK").expect("explicit pack"),
-        )),
-        ..ProfileOptions::default()
-    }
-    .resolve(None)
-    .unwrap()
-    .bind()
-    .unwrap();
+    let profile = live_profile_options()
+        .resolve(None)
+        .unwrap()
+        .bind()
+        .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let world = template.world().expect("explicit pack world");
     let identity = profile.nav_identity().unwrap();
@@ -353,4 +357,197 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         assert_eq!(coins(&snapshot, coin_id), 0, "{receipt}");
         client.logout();
     }
+}
+
+#[test]
+#[ignore = "LIVE=1, BOT_CPU=1, disposable HOME, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_FARES_SNAPSHOT_ROOT and NAV_FARES_EVIDENCE required"]
+fn live_shilo_cart_ten_coins_to_zero() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
+    let evidence_root =
+        PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
+    let profile = live_profile_options()
+        .resolve(None)
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let world = template.world().expect("explicit pack world");
+    let identity = profile.nav_identity().unwrap();
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    world.bind_named_bank_facts(&data).unwrap();
+    let coin_id = data.item_by_alias("coins").expect("content coin alias").id;
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("explicit name prefix");
+    assert_eq!(prefix, "n1");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        % 100_000_000;
+    let account = format!("{prefix}{stamp}");
+    let evidence = evidence_root.join(format!("shilo-cart-{account}-{stamp}"));
+    std::fs::create_dir_all(&evidence).unwrap();
+    let mut client = template.prepare_client(1, true).unwrap();
+    client.draw = false;
+    client.maininit();
+    assert!(!client.error_loading);
+    assert!(interact::login(&mut client, &account, &account, false));
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame() && s.attached() && s.scene_state() == 2
+    });
+    interact::mainland_hop(&mut client);
+    assert!(interact::cheat(&mut client, "getvar tutorial").is_sent());
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.chat_lines()
+            .iter()
+            .any(|line| line.text.contains("get tutorial: 1000"))
+    });
+    let ifaces = Arc::clone(&client.ifaces);
+    assert!(interact::logout(&mut client, &ifaces));
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| !s.ingame());
+    assert!(interact::login(&mut client, &account, &account, false));
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame() && s.attached() && s.scene_state() == 2
+    });
+    assert_eq!(
+        coins(&snapshot, coin_id),
+        0,
+        "fresh account has unexpected coins"
+    );
+    assert!(interact::cheat(&mut client, "give coins 10").is_sent());
+    let origin = Tile {
+        x: 2834,
+        z: 2953,
+        level: 0,
+    };
+    let destination = Tile {
+        x: 2776,
+        z: 3214,
+        level: 0,
+    };
+    interact::seed_at(&mut client, origin.level, origin.x, origin.z);
+    wait_for(&mut client, &mut snapshot, &mut pump, |s| {
+        s.ingame()
+            && s.scene_state() == 2
+            && s.tile() == Some((origin.x, origin.z, origin.level))
+            && coins(s, coin_id) == 10
+    });
+    let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
+    let context = MapContext {
+        focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
+        nav: Digest::from_hex(&identity.nav_sha256).unwrap(),
+        overlay: None,
+        generation: 1,
+    };
+    let mut model = MapModel::default();
+    model.bind(context);
+    model.select_tile(&world, destination);
+    let command = model
+        .confirm(
+            ActionKind::Walk,
+            &context,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    let arms = WalkArms::default();
+    let route = command
+        .walk_on(&world, &context, &account, &state, &[], &arms)
+        .expect("native cart fare is ten coins");
+    let carts: Vec<_> = route
+        .legs
+        .iter()
+        .filter_map(|leg| match leg {
+            Leg::Transport { edge } if edge.kind == nav::transport::TransportKind::Npc => {
+                Some(edge.loc_id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(carts, [511], "must take the real Vigroy cart: {route:?}");
+    save_frame(
+        &mut client,
+        &snapshot,
+        &evidence,
+        "00-shilo-ten",
+        json!({
+            "account":account, "route":format!("{route:?}"), "pack_sha256":identity.nav_sha256,
+        }),
+    );
+    let arm = Arc::clone(&arms.lock().unwrap()[&account]);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut last_tick = None;
+    let mut observations = Vec::new();
+    let mut last = None;
+    loop {
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        let observed = (
+            snapshot.tile(),
+            coins(&snapshot, coin_id),
+            snapshot.scene_state(),
+        );
+        if last != Some(observed) {
+            observations.push(json!({"tick":snapshot.tick(),"tile":observed.0,"coins":observed.1,"scene":snapshot.scene_state()}));
+            last = Some(observed);
+        }
+        if last_tick != Some(snapshot.tick()) {
+            last_tick = Some(snapshot.tick());
+            if let Some(here) = snapshot.tile() {
+                let mut arm = arm.lock().unwrap();
+                host_play::step_walk_arm_follow(
+                    &mut client,
+                    &snapshot,
+                    &mut arm,
+                    Some(&world),
+                    here,
+                    profile.map_members(),
+                    Some(&account),
+                );
+                if arm.route.is_none() && snapshot.scene_state() == 2 {
+                    break;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            save_frame(
+                &mut client,
+                &snapshot,
+                &evidence,
+                "FAIL-cart-timeout",
+                json!({"account":account,"observations":observations}),
+            );
+            panic!("cart timed out: {:?}", snapshot.tile());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let receipt = json!({
+        "account":account,"initial_coins":10,"final_coins":coins(&snapshot,coin_id),
+        "final_tile":snapshot.tile(),"ingame":snapshot.ingame(),"scene_state":snapshot.scene_state(),
+        "carts":carts,"observations":observations,"pack_format":nav::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,
+    });
+    save_frame(
+        &mut client,
+        &snapshot,
+        &evidence,
+        "01-brimhaven-zero",
+        receipt.clone(),
+    );
+    std::fs::write(
+        evidence.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot.tile(),
+        Some((destination.x, destination.z, destination.level)),
+        "{receipt}"
+    );
+    assert_eq!(coins(&snapshot, coin_id), 0, "{receipt}");
+    assert!(
+        snapshot.ingame() && snapshot.scene_state() == 2,
+        "{receipt}"
+    );
+    client.logout();
 }

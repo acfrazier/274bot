@@ -3295,8 +3295,20 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             }
         }
         let label = def.label.as_deref().unwrap_or(&def.id).to_string();
-        let resolved =
-            script::resolve_setting_options_with_labels(def, &session.loadouts, game_data_ref);
+        let resolved = frontend_core::scripts::resolve_parameter_options(
+            def,
+            &bag,
+            &session.loadouts,
+            game_data_ref,
+        );
+        if def.options_from.is_some() && resolved.is_empty() {
+            if def.options_from.as_deref() == Some("loadouts") {
+                ui.text_disabled(format!("{label} (no loadouts available)"));
+            } else {
+                ui.text_disabled(format!("{label} (options unavailable)"));
+            }
+            continue;
+        }
         match def.ty.as_str() {
             "boolean" => {
                 let mut value = bag
@@ -3322,12 +3334,12 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             "string" if !resolved.is_empty() => {
                 ui.text(&label);
                 let opts = &resolved.values;
-                let current = bag
+                let stored = bag
                     .get(&def.id)
                     .and_then(|v| v.as_str())
                     .or(def.default.as_deref())
-                    .unwrap_or("")
-                    .to_string();
+                    .unwrap_or("");
+                let current = resolved.value_for(stored);
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
                 let preview = resolved.label_for(&current);
@@ -3338,17 +3350,16 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 ) {
                     for opt in opts {
                         let selected = opt == &current;
-                        // Two options can share a label (e.g. two fishing methods that
-                        // catch the same fish); the value keeps their ImGui IDs apart.
                         let shown = format!("{}##{opt}", resolved.label_for(opt));
                         if ui.selectable_config(&shown).selected(selected).build() {
+                            let value = resolved.value_for(opt);
                             persist_profile_setting(
                                 session,
                                 &selection,
                                 &def.id,
-                                serde_json::json!(opt),
+                                serde_json::json!(value),
                             );
-                            bag.insert(def.id.clone(), serde_json::json!(opt));
+                            bag.insert(def.id.clone(), serde_json::json!(value));
                         }
                     }
                 }
@@ -3358,26 +3369,31 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 let opts = &resolved.values;
                 let mut selected: Vec<String> = bag
                     .get(&def.id)
-                    .and_then(|v| v.as_array())
+                    .and_then(|value| value.as_array())
                     .map(|items| {
                         items
                             .iter()
-                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .filter_map(|item| item.as_str().map(str::to_owned))
                             .collect()
                     })
                     .unwrap_or_default();
                 let mut changed = false;
                 for opt in opts {
-                    let mut on = selected.iter().any(|s| s == opt);
+                    let mut on = selected
+                        .iter()
+                        .any(|value| resolved.matches_option(value, opt));
                     let shown = resolved.label_for(opt);
                     if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
                         changed = true;
                         if on {
-                            if !selected.iter().any(|s| s == opt) {
+                            if !selected
+                                .iter()
+                                .any(|value| resolved.matches_option(value, opt))
+                            {
                                 selected.push(opt.clone());
                             }
                         } else {
-                            selected.retain(|s| s != opt);
+                            selected.retain(|value| !resolved.matches_option(value, opt));
                         }
                     }
                 }

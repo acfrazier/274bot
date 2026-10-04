@@ -950,7 +950,11 @@ impl FollowRun {
                 Poll::Terminal(TravelOutcome::Stalled {
                     at: here,
                     aiming: hop.to,
-                    why: HopFailure::Dropped,
+                    why: if hop.sent_tile == Some(here) {
+                        HopFailure::Dropped
+                    } else {
+                        HopFailure::Expired
+                    },
                     tries: hop.tries.max(1),
                 })
             }
@@ -982,7 +986,6 @@ impl FollowRun {
                     );
                     if door_leg && !hop.troll {
                         hop.troll = true;
-                        hop.ticks_waited = 0;
                         // The troll arms its own probe when it sends Open.
                         hop.open_sent_tick = None;
                         self.transport = Some(hop);
@@ -1073,7 +1076,11 @@ impl FollowRun {
                 Poll::Terminal(TravelOutcome::Stalled {
                     at: here,
                     aiming: approach.tile,
-                    why: HopFailure::Dropped,
+                    why: if hop.sent_tile == Some(here) {
+                        HopFailure::Dropped
+                    } else {
+                        HopFailure::Expired
+                    },
                     tries: hop.tries.max(1),
                 })
             }
@@ -1096,7 +1103,7 @@ impl FollowRun {
                     if door_leg && !hop.troll {
                         hop.troll = true;
                         hop.approach = None;
-                        hop.ticks_waited = 0;
+                        hop.ticks_waited = approach.ticks_waited;
                         Poll::Watching
                     } else {
                         let why = if hop.sent_tile == Some(here) {

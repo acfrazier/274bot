@@ -121,12 +121,13 @@ impl ResourceBudget {
         // before budgeting gates; otherwise absent passes and charge families
         // force a metered search even with ample supply for every usable hop.
         let can_carry = |edge: &TransportEdge, returned: &[i32]| {
-            edge.item_req
-                .iter()
-                .chain(&edge.consumed_req)
-                .all(|&(id, count)| {
-                    state.inv.get(&id).copied().unwrap_or(0) >= count || returned.contains(&id)
-                })
+            edge.item_req.iter().all(|&(id, count)| {
+                state.inv.get(&id).copied().unwrap_or(0) >= count || returned.contains(&id)
+            }) && edge.consumed_req.iter().all(|&(id, packed_count)| {
+                let carried = state.inv.get(&id).copied().unwrap_or(0);
+                carried >= edge.consumption_count(id, packed_count, carried)
+                    || returned.contains(&id)
+            })
         };
         let mut possible_returns = Vec::new();
         loop {
@@ -159,7 +160,8 @@ impl ResourceBudget {
             } else {
                 1
             };
-            for &(id, count) in &edge.consumed_req {
+            for &(id, packed_count) in &edge.consumed_req {
+                let count = edge.consumption_count(id, packed_count, i32::MAX);
                 let total = totals.entry(id).or_default();
                 *total = total.saturating_add(i64::from(count).saturating_mul(multiplicity));
                 ids.push(id);
@@ -244,10 +246,11 @@ impl Budget for ResourceBudget {
         if edge.consumed_req.is_empty() && edge.item_returns.is_empty() {
             return Ok(Some(key));
         }
-        for &(id, count) in &edge.consumed_req {
+        for &(id, packed_count) in &edge.consumed_req {
             let Ok(index) = self.ids.binary_search(&id) else {
                 return Ok(None);
             };
+            let count = edge.consumption_count(id, packed_count, balance[index]);
             if balance[index] < count {
                 return Ok(None);
             }

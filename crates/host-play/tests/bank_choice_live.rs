@@ -4,7 +4,7 @@
 //! origin, and captures real CpuPix3D frames with matching JSON receipts.
 //!
 //! Run against the shared local 289 engine with a throwaway HOME, for example:
-//! `env HOME="$(mktemp -d)" LIVE=1 BOT_LIVE_NAME_PREFIX=bc BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_NAV_PACK=/absolute/path/to/274bot.navpack WORLD_ENGINE_DIR=/absolute/path/to/engine RS2B0T=/absolute/path/to/rs2b0t BOT_CACHE_DIR=/absolute/path/to/cache LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/BANK-CHOICE-1 cargo test --locked -p host-play --features live-harness --test bank_choice_live -- --ignored --nocapture --test-threads=1`
+//! `env HOME="$(mktemp -d)" LIVE=1 BOT_LIVE_NAME_PREFIX=bc BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_NAV_PACK=/absolute/path/to/274bot.navpack WORLD_ENGINE_DIR=/absolute/path/to/engine RS2B0T=/absolute/path/to/rs2b0t BOT_CACHE_DIR=/absolute/path/to/cache LIVE_EVIDENCE_DIR=/absolute/path/to/evidence cargo test --locked -p host-play --features live-harness --test bank_choice_live -- --ignored --nocapture --test-threads=1`
 
 #![cfg(feature = "live-harness")]
 
@@ -605,20 +605,23 @@ impl BankChoiceState {
     }
 }
 
-fn make_cook_scenario(origin: Origin) -> Result<(Scenario, Map<String, Value>), String> {
+fn make_cook_scenario(
+    origin: Origin,
+    fixture: &str,
+) -> Result<(Scenario, Map<String, Value>), String> {
     let mut scenario =
-        scenario::get("quester_cook").ok_or("scenario registry has no quester_cook")?;
-    if scenario.name != "quester_cook" || scenario.settings.start_script != Some("Quester") {
+        scenario::get(fixture).ok_or_else(|| format!("scenario registry has no {fixture}"))?;
+    if scenario.name != fixture || scenario.settings.start_script != Some("Quester") {
         return Err(format!(
-            "quester_cook must start Quester, got name={} start={:?}",
+            "{fixture} must start Quester, got name={} start={:?}",
             scenario.name, scenario.settings.start_script
         ));
     }
     let settings = scenario::settings_inject_map(scenario.settings.script_settings_inject)
-        .ok_or("quester_cook has no compiled Start settings")?;
+        .ok_or("Cook fixture has no compiled Start settings")?;
     if settings.len() != 1 || settings.get("quests") != Some(&json!(["cook"])) {
         return Err(format!(
-            "quester_cook must select only the authored Cook Path, got {settings:?}"
+            "Cook fixture must select only the authored Cook Path, got {settings:?}"
         ));
     }
 
@@ -757,7 +760,7 @@ fn run_origin(
     password: String,
     evidence_root: &Path,
 ) -> Result<(), String> {
-    let (scenario, start_settings) = make_cook_scenario(origin)?;
+    let (scenario, start_settings) = make_cook_scenario(origin, "quester_cook")?;
     let scenario_deadline = scenario.settings.deadline;
     let output_serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1013,24 +1016,26 @@ fn run_bank_choice_live() -> Result<(), String> {
 #[test]
 fn cook_fixture_establishes_origin_after_last_relog_before_start() {
     for &origin in ORIGINS {
-        let (scenario, _) = make_cook_scenario(origin).unwrap();
-        let last_relog = scenario
-            .steps
-            .iter()
-            .rposition(|step| matches!(step.kind, StepKind::Relog))
-            .unwrap();
-        let stand = scenario
-            .steps
-            .iter()
-            .position(|step| step.name == "stand at the quest start")
-            .unwrap();
-        let start = scenario
-            .steps
-            .iter()
-            .position(|step| matches!(step.kind, StepKind::StartScript))
-            .unwrap();
-        assert!(last_relog < stand);
-        assert_eq!(stand + 1, start);
+        for fixture in ["quester_cook", "quester_cook_resume"] {
+            let (scenario, _) = make_cook_scenario(origin, fixture).unwrap();
+            let last_relog = scenario
+                .steps
+                .iter()
+                .rposition(|step| matches!(step.kind, StepKind::Relog))
+                .unwrap();
+            let stand = scenario
+                .steps
+                .iter()
+                .position(|step| step.name == "stand at the quest start")
+                .unwrap();
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            assert!(last_relog < stand);
+            assert_eq!(stand + 1, start);
+        }
     }
 }
 
@@ -1038,4 +1043,305 @@ fn cook_fixture_establishes_origin_after_last_relog_before_start() {
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=bc, BOT_CPU=1, BOT_NAV_BUILD=skip, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR/LIVE_EVIDENCE_DIR and local 289 engine"]
 fn quester_cook_local_bank_choice() {
     run_bank_choice_live().unwrap();
+}
+
+/// Same authored Cook fixture and real CPU capture path, with one per-account
+/// death after quest progress. No teleport or item/XP injection occurs after Start.
+#[derive(Default)]
+struct RecoveryWitness {
+    latest_status: Option<Arc<ScriptStatus>>,
+    latest_tile: Option<WorldTile>,
+    latest_hitpoints: Option<i32>,
+    death_sent: bool,
+    death_observed: bool,
+    respawn_observed: bool,
+    captures: Vec<PathBuf>,
+    error: Option<String>,
+}
+
+fn run_quester_recovery_live() -> Result<(), String> {
+    if std::env::var("LIVE").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("r2")
+        || std::env::var("BOT_CPU").as_deref() != Ok("1")
+        || std::env::var("BOT_NAV_BUILD").as_deref() != Ok("skip")
+    {
+        return Err("Quester recovery requires prefix r2, BOT_CPU=1 and BOT_NAV_BUILD=skip".into());
+    }
+    let isolated = script::IsolatedEnv::enter("quester-recovery-r2");
+    let nav_pack = required_path("WORLD_NAV_PACK")?;
+    let engine_dir = required_path("WORLD_ENGINE_DIR")?;
+    let catalog_root = required_path("RS2B0T")?;
+    let cache_dir = required_path("BOT_CACHE_DIR")?;
+    let evidence_root = required_path("LIVE_EVIDENCE_DIR")?;
+    validate_inputs(
+        &nav_pack,
+        &engine_dir,
+        &catalog_root,
+        &cache_dir,
+        &evidence_root,
+        &isolated.home,
+    )?;
+    isolated.set_rs2b0t(&catalog_root);
+    let temp = TempRoot::new("quester-recovery-r2")?;
+    let (profile, template) =
+        selected_profile(nav_pack, engine_dir, catalog_root, cache_dir, temp.path())?;
+    let names = host_play::mint_live_names(1);
+    let account = names.first().ok_or("no recovery account")?.clone();
+    let entries = host_play::mint_live_entries(&names);
+    let password = entries.first().ok_or("no recovery credential")?.1.clone();
+    let directory = evidence_root.join(format!(
+        "quester_recovery_{}_{}Z",
+        account,
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs()
+    ));
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let (scenario, start_settings) = make_cook_scenario(
+        Origin {
+            name: "recovery",
+            start: WorldTile {
+                x: 3209,
+                z: 3215,
+                level: 0,
+            },
+            bank: WorldTile {
+                x: 3208,
+                z: 3220,
+                level: 2,
+            },
+            bank_name: "Lumbridge Castle",
+        },
+        "quester_cook_resume",
+    )?;
+    let deadline = Instant::now() + scenario.settings.deadline + Duration::from_secs(15);
+    let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_map_members(profile.map_members());
+    runner.set_live_names(&names);
+    runner.set_shot_sink(Box::new(|_, _| {}));
+    let runner = Arc::new(Mutex::new(runner));
+    let witness = Arc::new(Mutex::new(RecoveryWitness::default()));
+    let start_handle = Arc::new(Mutex::new(None::<ScriptStartHandle>));
+    let start_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let frame_runner = Arc::clone(&runner);
+    let frame_witness = Arc::clone(&witness);
+    let frame_handle = Arc::clone(&start_handle);
+    let frame_count = Arc::clone(&start_count);
+    let frame_account = account.clone();
+    let frame_directory = directory.clone();
+    let frame_snapshot = Mutex::new((GameSnapshot::new(), Pump::new()));
+    let mut play = host_play::run_with_template(
+        Arc::clone(&template),
+        true,
+        vec![],
+        |_| (None, None),
+        move |client, username, hold| {
+            if username != frame_account {
+                return;
+            }
+            let mut frame_snapshot = frame_snapshot.lock().unwrap();
+            let (snapshot, pump) = &mut *frame_snapshot;
+            host::publish_snapshot(snapshot, client, pump.drain_client(client));
+            let mut runner = frame_runner.lock().unwrap();
+            let mut witness = frame_witness.lock().unwrap();
+            witness.latest_tile = observed_tile(snapshot);
+            witness.latest_hitpoints = snapshot
+                .stats()
+                .iter()
+                .find(|stat| stat.name == "hitpoints")
+                .map(|stat| stat.effective);
+            if runner.on_start_script()
+                && frame_count.load(std::sync::atomic::Ordering::Relaxed) == 0
+            {
+                let result = frame_handle
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .ok_or_else(|| "recovery Start handle not installed".to_owned())
+                    .and_then(|handle| {
+                        handle.start_compiled(
+                            &frame_account,
+                            script::CompiledId("Quester"),
+                            start_settings.clone(),
+                        )
+                    });
+                match result {
+                    Ok(()) => {
+                        frame_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    Err(error) => witness.error = Some(error),
+                }
+            }
+            if !matches!(
+                runner.status(),
+                RunnerStatus::Passed | RunnerStatus::Failed(_)
+            ) {
+                runner.tick_with_hold(client, hold.hold);
+            }
+            if !client.ingame || client.scene_state != 2 {
+                return;
+            }
+            let progress = witness.latest_status.as_ref().is_some_and(|status| {
+                text_field(status, "quest_id") == Some("cook")
+                    && text_field(status, "colour") == Some("in_progress")
+            }) && snapshot
+                .inventory()
+                .iter()
+                .any(|item| item.def.id == 1944 && item.count > 0);
+            let label = if progress && !witness.death_sent && !hold.hold {
+                if interact::cheat(client, "~death").is_sent() {
+                    witness.death_sent = true;
+                    Some("01-death-after-quest-progress")
+                } else {
+                    None
+                }
+            } else if witness.death_sent
+                && !witness.death_observed
+                && snapshot
+                    .chat_lines()
+                    .iter()
+                    .any(|line| script::native::death::is_death_line(&line.text))
+            {
+                witness.death_observed = true;
+                Some("02-death-chat")
+            } else if witness.death_observed
+                && !witness.respawn_observed
+                && observed_tile(snapshot)
+                    .is_some_and(|tile| script::native::death::RESPAWN_SQUARE.contains(tile))
+                && snapshot
+                    .stats()
+                    .iter()
+                    .any(|stat| stat.name == "hitpoints" && stat.effective > 0)
+            {
+                witness.respawn_observed = true;
+                Some("03-respawn")
+            } else if witness.respawn_observed
+                && witness.captures.len() == 3
+                && matches!(runner.status(), RunnerStatus::Passed)
+            {
+                Some("04-completed-after-recovery")
+            } else {
+                None
+            };
+            if let Some(label) = label {
+                let receipt = json!({
+                    "request": "RECOVERY-R2-1",
+                    "account": frame_account,
+                    "step": label,
+                    "tile": tile_json(observed_tile(snapshot)),
+                    "native_status": witness.latest_status.as_ref().map(|status| status_json(status)),
+                    "death_sent": witness.death_sent,
+                    "death_observed": witness.death_observed,
+                    "respawn_observed": witness.respawn_observed,
+                    "quest_statuses": format!("{:?}", snapshot.quest_statuses()),
+                    "inventory": format!("{:?}", snapshot.inventory()),
+                    "stats": format!("{:?}", snapshot.stats()),
+                    "chat": format!("{:?}", snapshot.chat_lines()),
+                    "scenario_status": format!("{:?}", runner.status()),
+                });
+                let sequence = witness.captures.len() as u32 + 1;
+                match save_live_capture(client, &frame_directory, label, sequence, receipt) {
+                    Ok(path) => witness.captures.push(path),
+                    Err(error) => witness.error = Some(error),
+                }
+            }
+        },
+    )?;
+    runner.lock().unwrap().set_obj_names(play.obj_names());
+    *start_handle.lock().unwrap() = Some(play.script_start_handle());
+    play.try_spawn_slot(mint_profile(&account, &password, 1)?, None, None, None)?;
+    play.focus(&account);
+    let result = loop {
+        let status = play.script_native_status(&account);
+        let run_state = play.script_state(&account);
+        let mut runner = runner.lock().unwrap();
+        let mut witness = witness.lock().unwrap();
+        if status.is_some() {
+            witness.latest_status = status.clone();
+        }
+        if let Some(error) = witness.error.as_ref() {
+            break Err(error.clone());
+        }
+        if let Some(error) = play.script_last_error(&account) {
+            break Err(error);
+        }
+        if status
+            .as_ref()
+            .is_some_and(|status| status.phase == NativePhase::Blocked)
+        {
+            break Err(format!("Quester blocked during recovery: {status:?}"));
+        }
+        if run_state == script::RunState::Running {
+            runner.observe_script_running();
+        }
+        match runner.status() {
+            RunnerStatus::Failed(error) => break Err(error),
+            RunnerStatus::Passed if witness.captures.len() == 4 => {
+                let deaths = witness.latest_status.as_ref().and_then(|status| {
+                    status
+                        .fields
+                        .iter()
+                        .find_map(|field| (field.key == "deaths").then_some(&field.value))
+                });
+                let completed = play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Completed);
+                if witness.death_sent
+                    && witness.death_observed
+                    && witness.respawn_observed
+                    && deaths == Some(&StatusValue::Integer(1))
+                    && start_count.load(std::sync::atomic::Ordering::Relaxed) == 1
+                    && run_state == script::RunState::Idle
+                    && completed
+                {
+                    break Ok(());
+                }
+            }
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            break Err(format!(
+                "Quester recovery timed out: {:?}, status={status:?}",
+                runner.status()
+            ));
+        }
+        drop(runner);
+        drop(witness);
+        std::thread::sleep(POLL_INTERVAL);
+    };
+    let witness = witness.lock().unwrap();
+    let receipt = json!({
+        "request": "RECOVERY-R2-1",
+        "result": format!("{result:?}"),
+        "account": account,
+        "game_port": profile.client().game_port(),
+        "nav_pack": profile.nav_pack(),
+        "start_count": start_count.load(std::sync::atomic::Ordering::Relaxed),
+        "death_sent": witness.death_sent,
+        "death_observed": witness.death_observed,
+        "respawn_observed": witness.respawn_observed,
+        "last_tile": tile_json(witness.latest_tile),
+        "last_hitpoints": witness.latest_hitpoints,
+        "captures": witness.captures,
+        "native_status": witness.latest_status.as_ref().map(|status| status_json(status)),
+        "lifecycle": format!("{:?}", play.script_lifecycle_receipt(&account)),
+    });
+    drop(witness);
+    std::fs::write(
+        directory.join("receipt.json"),
+        serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    println!("{receipt}");
+    play.stop_slot(&account);
+    result
+}
+
+#[test]
+#[ignore = "requires LIVE=1, prefix r2, BOT_CPU=1, explicit nav/engine/catalog/cache/evidence paths and shared 289 engine"]
+fn quester_death_recovery_r2() {
+    run_quester_recovery_live().unwrap();
 }
