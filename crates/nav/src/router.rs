@@ -793,25 +793,38 @@ fn first_search(
     {
         return merged;
     }
-    for (_, (preferred, fallbacks)) in partitions {
-        let endpoint = preferred
-            .first()
-            .or_else(|| fallbacks.first())
-            .expect("a completion partition is nonempty");
-        let completion = zone_filter(graph, state, &[from, *endpoint], &opts.zones);
-        merged.completion_partitions += 1;
-        let mut result = run(&preferred, &fallbacks, completion.as_ref());
-        // The shared mask remains live while this completion runs.
-        result.capacities.zone_mask_words += filter.mask_words();
-        merged.settled += result.settled;
-        merged.capacities.include(result.capacities);
-        choose_route(&mut merged.route, result.route);
-        if let Some(answer) = result.fallback {
-            merge_fallback(&mut merged.fallback, answer);
+    for exemptions in [ZoneExempt::NONE, opts.zones]
+        .into_iter()
+        .take(1 + usize::from(opts.zones != ZoneExempt::NONE))
+    {
+        for (key, (preferred, fallbacks)) in &partitions {
+            if key.is_empty() && exemptions == ZoneExempt::NONE {
+                continue;
+            }
+            let endpoint = preferred
+                .first()
+                .or_else(|| fallbacks.first())
+                .expect("a completion partition is nonempty");
+            let completion = zone_filter(graph, state, &[from, *endpoint], &exemptions);
+            merged.completion_partitions += 1;
+            let mut result = run(preferred, fallbacks, completion.as_ref());
+            // The shared mask remains live while this completion runs.
+            result.capacities.zone_mask_words += filter.mask_words();
+            merged.settled += result.settled;
+            merged.capacities.include(result.capacities);
+            choose_route(&mut merged.route, result.route);
+            if let Some(answer) = result.fallback {
+                merge_fallback(&mut merged.fallback, answer);
+            }
         }
-    }
-    if merged.route.is_ok() {
-        merged.fallback = None;
+        // Goal entry never requires granting unrelated danger-zone transit.
+        if merged.route.is_ok() {
+            merged.fallback = None;
+            break;
+        }
+        if matches!(merged.fallback.as_ref(), Some(FallbackRoute::Routed(_))) {
+            break;
+        }
     }
     merged
 }
@@ -1052,6 +1065,7 @@ impl RoutesToTargets<'_> {
         let tree = self
             .completions
             .iter()
+            .rev()
             .find(|(indices, _)| indices.contains(&target_index))
             .map_or(&self.came_from, |(_, tree)| tree);
         let (legs, ticks) = reconstruct(
@@ -1168,49 +1182,58 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     };
     let mut retained_capacity = shared_tree.capacity();
     let mut completions = Vec::with_capacity(partitions.len());
-    for (_, indices) in partitions {
-        let indices: Vec<_> = indices
-            .into_iter()
-            .filter(|&index| {
-                matches!(
-                    results[index],
-                    Err(TargetError::NoPath | TargetError::BudgetExhausted)
-                )
-            })
-            .collect();
-        if indices.is_empty() {
-            continue;
+    for exemptions in [ZoneExempt::NONE, opts.zones]
+        .into_iter()
+        .take(1 + usize::from(opts.zones != ZoneExempt::NONE))
+    {
+        for (key, partition) in &partitions {
+            if key.is_empty() && exemptions == ZoneExempt::NONE {
+                continue;
+            }
+            let indices: Vec<_> = partition
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    matches!(
+                        results[index],
+                        Err(TargetError::NoPath | TargetError::BudgetExhausted)
+                    )
+                })
+                .collect();
+            if indices.is_empty() {
+                continue;
+            }
+            let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
+            let completion = zone_filter(graph, state, &[from, goals[0]], &exemptions);
+            let pass = many_search(
+                collision,
+                graph,
+                from,
+                &goals,
+                opts,
+                state,
+                avoid,
+                budget,
+                deadline,
+                completion.as_ref(),
+            );
+            for (&index, &result) in indices.iter().zip(&pass.results) {
+                results[index] = result;
+            }
+            settled += pass.settled;
+            complete &= pass.complete;
+            let mut peak = pass.capacities;
+            peak.predecessors += retained_capacity;
+            peak.zone_mask_words += filter.mask_words();
+            capacities.include(peak);
+            let tree = if pass.results.iter().any(Result::is_ok) {
+                retained_capacity += pass.came_from.capacity();
+                pass.came_from
+            } else {
+                Predecessors::empty()
+            };
+            completions.push((indices, tree));
         }
-        let goals: Vec<_> = indices.iter().map(|&index| targets[index]).collect();
-        let completion = zone_filter(graph, state, &[from, goals[0]], &opts.zones);
-        let pass = many_search(
-            collision,
-            graph,
-            from,
-            &goals,
-            opts,
-            state,
-            avoid,
-            budget,
-            deadline,
-            completion.as_ref(),
-        );
-        for (&index, &result) in indices.iter().zip(&pass.results) {
-            results[index] = result;
-        }
-        settled += pass.settled;
-        complete &= pass.complete;
-        let mut peak = pass.capacities;
-        peak.predecessors += retained_capacity;
-        peak.zone_mask_words += filter.mask_words();
-        capacities.include(peak);
-        let tree = if pass.results.iter().any(Result::is_ok) {
-            retained_capacity += pass.came_from.capacity();
-            pass.came_from
-        } else {
-            Predecessors::empty()
-        };
-        completions.push((indices, tree));
     }
     RoutesToTargets {
         targets,
@@ -2671,21 +2694,36 @@ fn find_bounded_impl(
         .proof
             == ReverseProof::Unreachable
     });
-    let result = if safe_impossible {
+    let mut result = if safe_impossible {
         Err(RouteError::NoPath)
     } else {
         run(zones.as_ref())
     };
-    if result.is_err()
-        && zones.as_ref().is_some_and(|filter| {
-            exemptions != ZoneExempt::NONE
-                || filter
-                    .blocking_at(&graph.wilderness, to)
-                    .any(|index| !filter.origin_active(&graph.wilderness, index))
-        })
-    {
-        let completion = zone_filter(graph, state, &[from, to], &exemptions);
-        return run(completion.as_ref());
+    if let Some(filter) = zones.as_ref().filter(|_| {
+        matches!(
+            result,
+            Err(RouteError::NoPath | RouteError::BudgetExhausted)
+        )
+    }) {
+        let goal_completion = filter
+            .blocking_at(&graph.wilderness, to)
+            .any(|index| !filter.origin_active(&graph.wilderness, index));
+        for granted in [ZoneExempt::NONE, exemptions]
+            .into_iter()
+            .take(1 + usize::from(exemptions != ZoneExempt::NONE))
+        {
+            if granted == ZoneExempt::NONE && !goal_completion {
+                continue;
+            }
+            let completion = zone_filter(graph, state, &[from, to], &granted);
+            result = run(completion.as_ref());
+            if !matches!(
+                result,
+                Err(RouteError::NoPath | RouteError::BudgetExhausted)
+            ) {
+                break;
+            }
+        }
     }
     result
 }
