@@ -251,6 +251,17 @@ fingerprint and sends one `u64` in the existing FlatBuffer snapshot, rather than
 copying modal text into JavaScript. An unchanged page times out without repeating
 the action.
 
+### Quester magic combat arguments
+
+The combat family accepts `tactic.style: "mage"`. Root `spells: null` (or
+omission) keeps native strongest-castable selection; an explicit non-empty
+`spells: ["fire_bolt", "Wind Strike"]` list resolves against the selected
+spell facts and preserves its order for manual casting. Empty, unknown or
+over-255-entry orders fail compilation. `fallback_spells: false` is the default;
+`true` permits the native strongest-castable fallback when the fixed order is
+exhausted. Spell-specific refusal and rune evidence still belong to the native
+combat core.
+
 ### Quester journal reads
 
 Native Quester dialogue completion requires four observed game ticks with

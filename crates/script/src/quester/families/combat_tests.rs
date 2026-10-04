@@ -70,6 +70,68 @@ fn open_tactic_defaults_auto_retaliate_on() {
     assert!(!args.auto_retaliate);
 }
 
+#[test]
+fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:mage_mapper"),
+        role: None,
+        colour_not_started: FactKey::new("mage_mapper:0"),
+        colour_in_progress: FactKey::new("mage_mapper:1"),
+        colour_complete: FactKey::new("mage_mapper:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("mage_mapper");
+    let cx = fixture_compile_context(
+        &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+    );
+    let mut args = serde_json::json!({
+        "target": {"npc": "delrith", "pick": "nearest", "not_targeting_others": true},
+        "tactic": {"kind": "open", "style": "mage", "engage_radius": 6},
+        "lost_radius": 12,
+        "kill_budget_ticks": 100,
+        "spells": ["fire_bolt", "Wind Strike"],
+        "fallback_spells": true
+    });
+    compile(&args, &cx).unwrap();
+    let plan = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert_eq!(plan.request.style, Style::Mage);
+    assert!(plan.request.fallback_spells);
+    let order = plan.request.spells.as_ref().unwrap();
+    assert_eq!(order.len(), 2);
+    assert_eq!(order[0].alias.as_ref(), "magic_spell_fire_bolt");
+    assert_eq!(order[1].alias.as_ref(), "magic_spell_wind_strike");
+
+    args["spells"] = serde_json::Value::Null;
+    args.as_object_mut().unwrap().remove("fallback_spells");
+    let automatic = compile_plan(serde_json::from_value(args.clone()).unwrap(), &cx).unwrap();
+    assert!(automatic.request.spells.is_none());
+    assert!(!automatic.request.fallback_spells);
+    args["spells"] = serde_json::json!([]);
+    assert_eq!(
+        compile(&args, &cx).err().unwrap().code,
+        "invalid-combat-spells"
+    );
+    args["spells"] = serde_json::json!(["not_a_selected_spell"]);
+    assert_eq!(
+        compile(&args, &cx).err().unwrap().code,
+        "unresolved-combat-spell"
+    );
+    args["spells"] = serde_json::json!(["fire_bolt"]);
+    args["tactic"]["style"] = serde_json::json!("melee");
+    assert_eq!(
+        compile(&args, &cx).err().unwrap().code,
+        "unsupported-combat-spells"
+    );
+}
+
 fn fixture_compile_context<'a>(
     data: &'a SelectedGameData,
     quests: &'a QuestCatalog,
