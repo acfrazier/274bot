@@ -21,6 +21,19 @@ pub use area::{AreaMode, WorkArea};
 pub use card::CARD;
 pub use runner::Gatherer;
 pub use settings::{GathererSettings, Skill};
+/// Test-only view of the inventory rows Gatherer will deposit at a bank.
+///
+/// The host-play conservation gate uses this accessor so its "needed item"
+/// boundary stays identical to the native Gatherer deposit policy.
+#[cfg(feature = "test-hooks")]
+pub fn test_bank_deposit_ids(
+    config: &crate::native::PreparedConfig,
+    tool_id: i32,
+    inventory: &[api::snapshot::ItemView],
+) -> Option<std::sync::Arc<[i32]>> {
+    let prepared = config.get::<std::sync::Arc<card::Prepared>>()?;
+    Some(supply::bank_deposit_ids(prepared, tool_id, inventory))
+}
 
 #[cfg(test)]
 pub(crate) fn test_full_pack_fixture(
