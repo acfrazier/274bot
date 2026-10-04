@@ -2703,8 +2703,13 @@
           "items": {
             "type": "string"
           },
-          "description": "Spell aliases; non-empty spell lists are currently unsupported.",
+          "description": "Selected spell aliases in explicit manual order; null uses native selection.",
           "default": null
+        },
+        "fallback_spells": {
+          "type": "boolean",
+          "description": "Permit native selection after the explicit manual order is exhausted.",
+          "default": false
         },
         "stand": {
           "anyOf": [

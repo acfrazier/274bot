@@ -4766,25 +4766,33 @@ fn preemptive_manual_protect_rejects_never_on_and_after_hit_activation() {
         json!({
             "kind": "interaction", "tick": 8, "batch": 1, "accepted": true,
             "request": {"op": "use-widget-on", "kind": "npc", "index": 7}
-        })
+        }),
     ];
-    let frame = |tick, on, hp| json!({
-        "tick": tick, "self_slot": 1,
-        "stats": [{"name": "hitpoints", "base": 40, "effective": hp}],
-        "prayer_varps": [{"index": 97, "value": on}],
-        "nearby_npcs": [{
-            "name": "Khazard warlord", "index": 7, "animation": 401,
-            "in_combat": true, "target": {"kind": "Player", "index": 1}
-        }]
-    });
+    let frame = |tick, on, hp| {
+        json!({
+            "tick": tick, "self_slot": 1,
+            "stats": [{"name": "hitpoints", "base": 40, "effective": hp}],
+            "prayer_varps": [{"index": 97, "value": on}],
+            "nearby_npcs": [{
+                "name": "Khazard warlord", "index": 7, "animation": 401,
+                "in_combat": true, "target": {"kind": "Player", "index": 1}
+            }]
+        })
+    };
     capture.frames = vec![frame(10, 1, 40), frame(12, 1, 40)];
-    assert!(protection_timing_ok(&capture), "preemptive manual Cast is valid");
+    assert!(
+        protection_timing_ok(&capture),
+        "preemptive manual Cast is valid"
+    );
     capture.frames = vec![frame(10, 0, 40), frame(12, 0, 31)];
     assert!(!protection_timing_ok(&capture), "protect never turned on");
     capture.actions[0]["tick"] = json!(13);
     capture.actions[1]["tick"] = json!(13);
     capture.frames.push(frame(13, 1, 31));
-    assert!(!protection_timing_ok(&capture), "activation after the hit at12 is late");
+    assert!(
+        !protection_timing_ok(&capture),
+        "activation after the hit at12 is late"
+    );
 }
 
 #[test]
