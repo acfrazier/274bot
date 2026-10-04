@@ -2,6 +2,7 @@
 use super::families::{self, CompiledAcquireStep};
 use super::path::{PathDocument, QuestItemDocument, QuestRequirementDocument, StepDocument};
 pub use super::progress::CompiledProgress;
+use crate::combat::RaisedPrayers;
 use crate::native::{ActionContext, ActionError, NativeActions, NativeTick};
 use crate::native_bank::BankItem;
 use api::game_data::SelectedGameData;
@@ -187,6 +188,10 @@ pub trait StepPlan: Send + Sync {
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
+    /// Combat raises retained for a cancellation/error hygiene handoff.
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        RaisedPrayers::empty()
+    }
     /// Recipe steps delegate journal ownership to the runner while remaining
     /// alive; no family opens a second journal transaction.
     fn needs_progress_read(&self) -> bool {

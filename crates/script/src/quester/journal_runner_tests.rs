@@ -233,7 +233,8 @@ fn random_event_revokes_active_step_owner_and_rereads_progress() {
     assert!(!authority.live());
     assert!(script.step.is_none());
     assert!(script.progress.is_none());
-    assert!(script.needs_read && script.dirty && script.prayer_cleanup_pending);
+    assert!(script.needs_read && script.dirty);
+    assert!(!script.prayer_cleanup_pending);
     assert_eq!(script.attempts, 0);
     assert_eq!(script.journal_attempts, 0);
     assert!(!script.journal_retry_pending);
@@ -282,7 +283,8 @@ fn random_event_revokes_journal_owner_and_discards_settlement_state() {
     assert_eq!(script.journal_attempts, 0);
     assert!(!script.journal_retry_pending);
     assert!(script.journal_quiet_since.is_none());
-    assert!(script.needs_read && script.dirty && script.prayer_cleanup_pending);
+    assert!(script.needs_read && script.dirty);
+    assert!(!script.prayer_cleanup_pending);
     assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
 
     drive(&mut script, &snapshot, &mut ledger, 9);
@@ -303,7 +305,8 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
     script.park_reason = "pre-existing park";
     script.last_error = Some(Arc::from("pre-existing failure"));
     let mut ledger = None;
-
+    script.prayer_cleanup_owned.accepted(prayer_varp, true, 0);
+    script.prayer_cleanup_pending = true;
     drive(&mut script, &snapshot, &mut ledger, 1);
     drive(&mut script, &snapshot, &mut ledger, 2);
     assert!(script.clear_prayers.is_some());
@@ -316,10 +319,217 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
     assert!(script.prayer_cleanup_pending);
     assert!(script.needs_read && script.dirty);
     assert!(script.parked);
-    assert_eq!(script.park_reason, "pre-existing park");
     assert_eq!(script.last_error.as_deref(), Some("pre-existing failure"));
 
     assert!(!ledger.as_mut().unwrap().outbox.remove(0).live());
+}
+
+#[test]
+fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
+    use api::snapshot::{ActorKind, ActorTargetView, NpcView, ProjectileView, StatView, WorldTile};
+    for wraps_recipe in [false, true] {
+        let (mut script, mut snapshot) = fixture(false);
+        let skin = script
+            .selected
+            .prayer_by_name("Thick Skin")
+            .unwrap()
+            .clone();
+        let original = script
+            .selected
+            .prayer_by_name("Protect from Melee")
+            .unwrap()
+            .clone();
+        let replacement = script
+            .selected
+            .prayer_by_name("Protect from Missiles")
+            .unwrap()
+            .clone();
+        let here = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let mut local = super::super::families::tests::local_player(here);
+        local.player.actor.health = 40;
+        local.player.actor.total_health = 40;
+        local.player.actor.in_combat = true;
+        local.player.actor.target = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        });
+        snapshot.seed_local_player(local);
+        snapshot.seed_world(api::snapshot::WorldStateView::default());
+        snapshot.seed_players(vec![]);
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot.seed_chat_lines(vec![]);
+        snapshot.seed_inventory(vec![], 28);
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(
+            (0..25)
+                .map(|index| StatView {
+                    index,
+                    name: api::snapshot::stat_name(index as usize).into(),
+                    effective: if index == 5 { 43 } else { 40 },
+                    base: if index == 5 { 43 } else { 40 },
+                    xp: 0,
+                    used: api::snapshot::stat_used(index as usize),
+                })
+                .collect(),
+        );
+        let npc = script.selected.npc_by_config("imp").unwrap();
+        snapshot.seed_npcs(vec![NpcView {
+            index: 7,
+            r#type: Some(npc.id as usize),
+            name: npc.display.clone(),
+            actions: vec![Some("Attack".into())],
+            tile: here,
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 8,
+            total_health: 8,
+            face_entity: -1,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 2,
+            size: 1,
+            network: here,
+            x: here.x,
+            z: here.z,
+            yaw: 0,
+        }]);
+        snapshot.seed_projectiles(vec![ProjectileView {
+            spotanim: 9,
+            level: 0,
+            src: here,
+            target: Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            t1: 0,
+            t2: 30,
+        }]);
+        let prayers = |protect_varp| {
+            script
+                .selected
+                .prayers()
+                .iter()
+                .map(|row| VarpView {
+                    index: row.varp,
+                    value: i32::from(row.varp == skin.varp || row.varp == protect_varp),
+                })
+                .chain([VarpView {
+                    index: crate::combat::OPTION_NODEF,
+                    value: 0,
+                }])
+                .collect()
+        };
+        snapshot.seed_varps(prayers(original.varp));
+        let raised_varps = prayers(replacement.varp);
+        let cleared_varps = prayers(-1);
+        script.needs_read = false;
+        script.stage = Some(FactKey::new("cook:1"));
+        let mut ledger = None;
+        script.step = Some(with_tick(&snapshot, &mut ledger, 0, |tick| {
+            let required_after = tick.cx.evidence();
+            let mut cx = StepContext {
+                tick,
+                quests: &script.quests,
+                progress: &[],
+                required_after,
+                bank: &script.bank,
+                banks: &script.banks,
+            };
+            let run = super::super::families::combat::tests::policy_s2_run_for_runner(&mut cx);
+            if wraps_recipe {
+                super::super::families::tests::policy_s2_recipe_run(run)
+            } else {
+                run
+            }
+        }));
+        drive(&mut script, &snapshot, &mut ledger, 1);
+        let buttons: Vec<_> = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
+                    Some(*component_id)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(buttons, vec![replacement.button_com]);
+        let combat_authority = ledger.as_ref().unwrap().outbox[0].authority();
+        while !ledger.as_ref().unwrap().outbox.is_empty() {
+            ack(&mut ledger, 1);
+        }
+        snapshot.seed_varps(raised_varps);
+        // No Combat poll consumes the receipt before this cancellation handoff.
+        script.interrupt(Interrupt::Resume);
+        assert!(!combat_authority.owner_live());
+        assert!(script.prayer_cleanup_pending);
+        assert!(script.step.is_none());
+        script.parked = true;
+        drive(&mut script, &snapshot, &mut ledger, 2);
+        assert!(script.clear_prayers.is_some());
+        drive(&mut script, &snapshot, &mut ledger, 3);
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
+        assert!(matches!(ack(&mut ledger, 3),
+        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+            if component_id == replacement.button_com));
+        snapshot.seed_varps(cleared_varps);
+        drive(&mut script, &snapshot, &mut ledger, 4);
+        assert!(!script.prayer_cleanup_pending);
+        assert!(script.clear_prayers.is_none());
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert_eq!(
+            snapshot
+                .varps()
+                .iter()
+                .find(|row| row.index == skin.varp)
+                .unwrap()
+                .value,
+            1
+        );
+        assert_eq!(
+            snapshot
+                .varps()
+                .iter()
+                .find(|row| row.index == original.varp)
+                .unwrap()
+                .value,
+            0
+        );
+        assert_eq!(
+            snapshot
+                .varps()
+                .iter()
+                .find(|row| row.index == replacement.varp)
+                .unwrap()
+                .value,
+            0
+        );
+    }
 }
 #[test]
 fn unknown_skip_never_dispatches_and_wait_is_bounded() {

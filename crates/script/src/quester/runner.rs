@@ -9,7 +9,7 @@ use super::provision::{ProvisionEvent, ProvisionMode, Provisioner};
 use super::queue::QueueStatus;
 use super::select::{select, sequence_for_stage, SelectionDecision};
 use super::watchdog::{Watchdog, WatchdogAction};
-use crate::combat::ClearPrayers;
+use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::native::death::{death_cap_exceeded, default_max_deaths, DeathLatch};
 use crate::native::{
     ActionError, ActionHandle, Interrupt, NativeOutput, NativePhase, NativeTick, Script,
@@ -64,6 +64,7 @@ pub struct Quester {
     step: Option<Box<dyn StepRun>>,
     clear_prayers: Option<ActionHandle<ClearPrayers>>,
     prayer_cleanup_pending: bool,
+    prayer_cleanup_owned: RaisedPrayers,
     last_outcome: Option<StepOutcome>,
     /// Latest Combat family receipt, kept after later non-combat steps begin
     /// so Path `combat_end` skip_if can still select the caller walk-out
@@ -368,7 +369,8 @@ impl Quester {
             step_index: 0,
             step: None,
             clear_prayers: None,
-            prayer_cleanup_pending: true,
+            prayer_cleanup_pending: false,
+            prayer_cleanup_owned: RaisedPrayers::empty(),
             last_outcome: None,
             last_combat: None,
             published_receipt: None,
@@ -911,13 +913,22 @@ impl Quester {
         });
     }
 
+    fn capture_prayer_cleanup(&mut self) {
+        let raised = self
+            .step
+            .as_ref()
+            .map_or_else(RaisedPrayers::empty, |step| step.prayer_cleanup());
+        self.prayer_cleanup_owned.merge(raised);
+        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
+    }
+
     fn cancel_step(&mut self, tick: &mut NativeTick<'_>) {
+        self.capture_prayer_cleanup();
         if let Some(mut step) = self.step.take() {
             step.cancel(tick.actions);
         }
         self.provisioner.cancel();
         self.clear_prayers = None;
-        self.prayer_cleanup_pending = true;
         self.last_outcome = None;
         self.journal = None;
         self.advances = false;
@@ -1168,7 +1179,6 @@ impl Quester {
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
-        self.prayer_cleanup_pending = true;
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -1262,7 +1272,7 @@ impl Script for Quester {
                 Poll::Ready(Ok(report)) => {
                     self.clear_prayers = None;
                     if report.timed_out != 0 {
-                        self.prayer_cleanup_pending = true;
+                        self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                         self.parked = true;
                         self.record_failure(ActionError::Blocked(Arc::from(
                             "prayer cleanup timed out",
@@ -1270,6 +1280,7 @@ impl Script for Quester {
                         self.publish(tick.output);
                         return Ok(ScriptFlow::Blocked(self.blocked_failure()));
                     }
+                    self.prayer_cleanup_owned = RaisedPrayers::empty();
                     self.prayer_cleanup_pending = false;
                 }
                 Poll::Ready(Err(
@@ -1280,7 +1291,7 @@ impl Script for Quester {
                     | ActionError::BudgetExhausted,
                 )) => {
                     self.clear_prayers = None;
-                    self.prayer_cleanup_pending = true;
+                    self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                     self.publish(tick.output);
                     return Ok(ScriptFlow::Continue);
                 }
@@ -1294,39 +1305,27 @@ impl Script for Quester {
             }
         }
         if self.prayer_cleanup_pending && self.step.is_none() && !self.settling {
-            let Some(active) = tick.cx.snapshot().prayers_active() else {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            };
-            if active.value.iter().any(|on| *on) {
-                match tick
-                    .actions
-                    .begin::<ClearPrayers>(Arc::clone(&self.selected), &mut tick.cx)
-                {
-                    Ok(handle) => {
-                        self.clear_prayers = Some(handle);
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    Err(
-                        ActionError::Busy
-                        | ActionError::Held
-                        | ActionError::Stale
-                        | ActionError::Cancelled
-                        | ActionError::BudgetExhausted,
-                    ) => {
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    Err(error) => {
-                        self.parked = true;
-                        self.record_failure(error);
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Blocked(self.blocked_failure()));
-                    }
+            match begin_clear_owned_prayers(&self.selected, self.prayer_cleanup_owned, tick) {
+                Hygiene::Clean => {
+                    self.prayer_cleanup_owned = RaisedPrayers::empty();
+                    self.prayer_cleanup_pending = false;
+                }
+                Hygiene::Started(handle) => {
+                    self.clear_prayers = Some(handle);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Deferred => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                }
+                Hygiene::Failed(error) => {
+                    self.parked = true;
+                    self.record_failure(error);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
                 }
             }
-            self.prayer_cleanup_pending = false;
         }
         if self.parked {
             self.publish(tick.output);
@@ -1569,7 +1568,7 @@ impl Script for Quester {
                     });
                 }
                 self.last_outcome = Some(outcome);
-                self.prayer_cleanup_pending = true;
+                self.capture_prayer_cleanup();
                 self.dirty = true;
                 if self.advances {
                     self.needs_read = true;
@@ -1599,9 +1598,10 @@ impl Script for Quester {
                         receipt: outcome.receipt.clone(),
                     });
                 }
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.last_outcome = None;
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.parked = true;
                 self.record_failure(error);
                 self.update_wait();
@@ -1609,9 +1609,9 @@ impl Script for Quester {
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
             }
             Poll::Ready(Err(error)) => {
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.last_outcome = None;
-                self.prayer_cleanup_pending = true;
                 self.record_step_failure(error, tick);
             }
         }
@@ -1623,10 +1623,11 @@ impl Script for Quester {
     fn interrupt(&mut self, event: Interrupt) {
         match event {
             Interrupt::Resume | Interrupt::SessionReady => {
+                self.capture_prayer_cleanup();
                 self.needs_read = true;
                 self.step = None;
                 self.provisioner.cancel();
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.settling = false;
@@ -1641,9 +1642,10 @@ impl Script for Quester {
                 self.waiting = None;
             }
             Interrupt::SessionEnded => {
+                self.capture_prayer_cleanup();
                 self.step = None;
                 self.provisioner.cancel();
-                self.prayer_cleanup_pending = true;
+                self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.last_outcome = None;
                 self.last_combat = None;
                 self.journal = None;
@@ -1660,12 +1662,12 @@ impl Script for Quester {
     }
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.capture_prayer_cleanup();
         self.step = None;
         self.provisioner.cancel();
         self.clear_prayers = None;
         self.journal = None;
         self.needs_read = true;
-        self.prayer_cleanup_pending = true;
         self.last_outcome = None;
         self.last_combat = None;
         self.advances = false;

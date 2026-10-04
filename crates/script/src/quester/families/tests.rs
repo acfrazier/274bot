@@ -188,6 +188,30 @@ pub(crate) fn local_player(tile: WorldTile) -> api::snapshot::LocalPlayerView {
         weight: 0,
     }
 }
+
+pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> {
+    Box::new(AcquireRun {
+        steps: vec![CompiledAcquireStep {
+            advances: false,
+            skip_if: Arc::new(AnyPlan { items: vec![] }),
+            settle: Arc::new(AllPlan { items: vec![] }),
+            plan: Arc::new(WaitPlan {
+                until: Arc::new(AllPlan { items: vec![] }),
+                max_ticks: 2,
+            }),
+        }],
+        current: Some(child),
+        index: 0,
+        chat_since: 0,
+        settling: false,
+        settle_deadline: Duration::ZERO,
+        waiting_for_read: false,
+        selection_since: None,
+        prayer_cleanup_owned: crate::combat::RaisedPrayers::empty(),
+        clear_prayers: None,
+    })
+}
+
 pub(crate) fn post_user_input_walk_receipt(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
@@ -1119,6 +1143,89 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
         with_tick(&s, &mut ledger, 5003, |t| with_step(t, |cx| run.poll(cx))),
         Poll::Ready(Ok(_))
     ));
+}
+
+#[test]
+fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
+    struct CompletedChild(RaisedPrayers);
+    impl StepRun for CompletedChild {
+        fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+            Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            }))
+        }
+        fn cancel(&mut self, _: &mut NativeActions) {}
+        fn prayer_cleanup(&self) -> RaisedPrayers {
+            self.0
+        }
+    }
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let skin = data.prayer_by_name("Thick Skin").unwrap();
+    let protect = data.prayer_by_name("Protect from Melee").unwrap();
+    let mut owned = RaisedPrayers::empty();
+    owned.accepted(protect.varp, true, 0);
+    let varps = |raised| {
+        data.prayers()
+            .iter()
+            .map(|row| api::snapshot::VarpView {
+                index: row.varp,
+                value: i32::from(row.varp == skin.varp || (raised && row.varp == protect.varp)),
+            })
+            .collect()
+    };
+    let mut snapshot = ready();
+    snapshot.seed_varps(varps(true));
+    let mut ledger = None;
+    let mut run = policy_s2_recipe_run(Box::new(CompletedChild(owned)));
+    assert!(with_tick(&snapshot, &mut ledger, 1, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    assert!(run.prayer_cleanup().contains(protect.varp));
+    assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_step(tick, |cx| run.poll(cx))
+    })
+    .is_pending());
+    let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+    assert!(matches!(
+        &action.effect,
+        HostEffect::Interaction(InteractReq::IfButton { component_id })
+            if *component_id == protect.button_com
+    ));
+    let authority = action.authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick: 3,
+                sequence: 3,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    snapshot.seed_varps(varps(false));
+    assert!(matches!(
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        }),
+        Poll::Ready(Ok(_))
+    ));
+    assert!(run.prayer_cleanup().is_empty());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert_eq!(
+        snapshot
+            .varps()
+            .iter()
+            .find(|row| row.index == skin.varp)
+            .unwrap()
+            .value,
+        1
+    );
 }
 
 #[test]

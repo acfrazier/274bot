@@ -7,7 +7,8 @@ use super::super::path::PredicateDocument;
 use super::reach::{self, Reach, ReachArgs, ReachKind};
 use crate::combat::{
     AbortReason, Allowances, Combat, CombatEnd, CombatReport, CombatRequest, CombatTables,
-    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, Style, Tactic, Target,
+    CompiledKit, Fallback, IntruderPolicy, MeleeMode, Pick, PrayerMode, RaisedPrayers, Style,
+    Tactic, Target,
 };
 use crate::loadouts_store::WORN_SLOTS;
 use crate::native::walk::Walk;
@@ -476,6 +477,7 @@ impl StepPlan for CombatPlan {
             last_report: None,
             last_outcome: None,
             target_gone_restarts: 0,
+            raised_prayers: RaisedPrayers::empty(),
             walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
         };
         run.begin_combat(cx)?;
@@ -530,6 +532,7 @@ struct CombatRun {
     last_report: Option<CombatReport>,
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
+    raised_prayers: RaisedPrayers,
     walk_outcome_seq_at_begin: u64,
 }
 
@@ -551,6 +554,19 @@ fn user_walk_cancelled(_seq: u64) -> bool {
 }
 
 impl CombatRun {
+    fn capture_prayer_cleanup(&mut self) {
+        if let Some(Action::Combat(handle)) = self.action.as_ref() {
+            self.raised_prayers = handle.prayer_cleanup();
+        }
+    }
+
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        match self.action.as_ref() {
+            Some(Action::Combat(handle)) => handle.prayer_cleanup(),
+            _ => self.raised_prayers,
+        }
+    }
+
     fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
         let current_seq = cx.tick.cx.observed_walk_outcome_seq;
         if current_seq == self.walk_outcome_seq_at_begin {
@@ -709,6 +725,7 @@ impl CombatRun {
         cx: &mut StepContext<'_, '_>,
     ) -> Poll<Result<StepOutcome, ActionError>> {
         self.action = None;
+        self.raised_prayers = RaisedPrayers::empty();
         self.last_report = Some(report);
         self.refresh_outcome();
         match report.end {
@@ -872,6 +889,7 @@ impl CombatRun {
 
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        self.capture_prayer_cleanup();
         if self.user_interrupted_since_begin(cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
@@ -918,7 +936,10 @@ impl StepRun for CombatRun {
                     Poll::Ready(Err(ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED))))
                 }
             }
-            ActionPoll::Failed(error) => Poll::Ready(Err(error)),
+            ActionPoll::Failed(error) => {
+                self.action = None;
+                Poll::Ready(Err(error))
+            }
             ActionPoll::Combat(report) => self.on_combat_report(report, cx),
             ActionPoll::Walk(receipt) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
                 self.on_abort_walk(receipt)
@@ -946,7 +967,11 @@ impl StepRun for CombatRun {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        self.capture_prayer_cleanup();
         self.action = None;
+    }
+    fn prayer_cleanup(&self) -> RaisedPrayers {
+        CombatRun::prayer_cleanup(self)
     }
 
     fn in_flight_outcome(&self) -> Option<&StepOutcome> {
