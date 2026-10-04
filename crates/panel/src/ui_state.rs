@@ -206,6 +206,61 @@ fn replacement_path(p: &Path) -> PathBuf {
     name.push(".new");
     PathBuf::from(name)
 }
+const MERGED_NAV_KEYS: &[&str] = &[
+    "allow_teleports",
+    "allow_wilderness",
+    "allow_bank_fetch",
+    "allow_danger_zones",
+    "script_scope_notice_ack",
+];
+
+fn merge_saved_panel_state(
+    document: &mut serde_json::Value,
+    file_exists: bool,
+    corrupt_json: bool,
+    replacement: &serde_json::Value,
+    path: &Path,
+) -> std::io::Result<Option<PathBuf>> {
+    if file_exists
+        && (corrupt_json || serde_json::from_value::<PanelUiState>(document.clone()).is_err())
+    {
+        let sibling = replacement_path(path);
+        *document = replacement.clone();
+        prefs_log(
+            Level::Warn,
+            format!(
+                "preserved invalid panel preferences {}; wrote current preferences to {}",
+                path.display(),
+                sibling.display()
+            ),
+        );
+        return Ok(Some(sibling));
+    }
+
+    let previous_nav = document
+        .get("nav")
+        .and_then(serde_json::Value::as_object);
+    let replacement_nav = replacement
+        .get("nav")
+        .and_then(serde_json::Value::as_object)
+        .expect("serialized PanelUiState always has a nav object")
+        .clone();
+    let mut merged_nav = replacement_nav;
+    for key in MERGED_NAV_KEYS {
+        let enabled = previous_nav
+            .and_then(|nav| nav.get(*key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        merged_nav.insert((*key).into(), serde_json::Value::Bool(enabled));
+    }
+    let mut replacement = replacement.clone();
+    replacement
+        .as_object_mut()
+        .expect("serialized PanelUiState is always an object")
+        .insert("nav".into(), serde_json::Value::Object(merged_nav));
+    *document = replacement;
+    Ok(None)
+}
 
 pub fn save_at(p: &Path, state: &PanelUiState) {
     let _ = save_at_checked(p, state);
@@ -225,11 +280,11 @@ pub fn save_checked(state: &PanelUiState) -> std::io::Result<()> {
     }
 }
 
-/// Persist preferences at an explicit path, preserving corrupt-file
-/// protections while returning failures to the caller.
+/// Persist preferences at an explicit path through the same serialized
+/// read/merge/write transaction as shared nested preference updates.
 pub fn save_at_checked(p: &Path, state: &PanelUiState) -> std::io::Result<()> {
-    let data = match serde_json::to_vec_pretty(state) {
-        Ok(data) => data,
+    let replacement = match serde_json::to_value(state) {
+        Ok(replacement) => replacement,
         Err(error) => {
             prefs_log(
                 Level::Error,
@@ -238,45 +293,9 @@ pub fn save_at_checked(p: &Path, state: &PanelUiState) -> std::io::Result<()> {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
         }
     };
-    match std::fs::read(p) {
-        Ok(existing) if serde_json::from_slice::<PanelUiState>(&existing).is_err() => {
-            let sibling = replacement_path(p);
-            match vault::write_private_file(&sibling, &data) {
-                Ok(()) => {
-                    prefs_log(
-                        Level::Warn,
-                        format!(
-                            "preserved invalid panel preferences {}; wrote current preferences to {}",
-                            p.display(),
-                            sibling.display()
-                        ),
-                    );
-                    return Ok(());
-                }
-                Err(error) => {
-                    prefs_log(
-                        Level::Error,
-                        format!(
-                            "preserved invalid panel preferences {} but refused replacement {}: {error}",
-                            p.display(),
-                            sibling.display()
-                        ),
-                    );
-                    return Err(error);
-                }
-            }
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            prefs_log(
-                Level::Error,
-                format!("refused to save panel preferences {}: {error}", p.display()),
-            );
-            return Err(error);
-        }
-        Err(_) => {}
-    }
-    match vault::write_private_file(p, &data) {
+    match host_play::update_panel_ui_at(p, |document, file_exists, corrupt_json| {
+        merge_saved_panel_state(document, file_exists, corrupt_json, &replacement, p)
+    }) {
         Ok(()) => Ok(()),
         Err(error) => {
             prefs_log(
@@ -296,7 +315,9 @@ thread_local! {
 
 #[cfg(test)]
 mod tests {
-    use super::{load, load_at, path, pick_focus, save, save_at, NavSettings, PanelUiState};
+    use super::{
+        load, load_at, path, pick_focus, save, save_at, save_at_checked, NavSettings, PanelUiState,
+    };
     use crate::test_support::TestDir;
     use std::collections::HashMap;
 
@@ -422,6 +443,115 @@ mod tests {
             loaded.nav.show_special_areas,
             "panel's typed save preserves TUI's special-area preference"
         );
+    }
+
+    #[test]
+    fn overlapping_panel_save_and_single_key_nav_writer_keep_both_edits() {
+        let dir = TestDir::new("ui-nav-overlap");
+        let path = dir.join("panel-ui.json");
+        save_at_checked(
+            &path,
+            &PanelUiState {
+                last_focus: Some("before".into()),
+                ..PanelUiState::default()
+            },
+        )
+        .unwrap();
+        let panel_state = PanelUiState {
+            last_focus: Some("panel-save".into()),
+            capture: true,
+            nav: NavSettings {
+                show_nav_path: true,
+                ..NavSettings::default()
+            },
+            ..PanelUiState::default()
+        };
+        let nav = serde_json::json!({
+            "allow_teleports": true,
+            "allow_wilderness": false,
+            "allow_bank_fetch": false,
+            "allow_danger_zones": false,
+            "script_scope_notice_ack": false,
+            "show_nav_path": true
+        });
+        // Reproduce the stale panel snapshot deterministically before the
+        // concurrent stress loop: a single-key writer lands, then the panel
+        // saves its older in-memory state.
+        host_play::persist_panel_ui_value_at(&path, "nav", nav.clone()).unwrap();
+        let after_writer: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after_writer["last_focus"], "before");
+        assert_eq!(after_writer["nav"]["allow_teleports"], true);
+        assert_eq!(after_writer["nav"]["allow_wilderness"], false);
+        assert_eq!(after_writer["nav"]["show_nav_path"], true);
+
+        save_at_checked(&path, &panel_state).unwrap();
+        let after_panel_save: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after_panel_save["last_focus"], "panel-save");
+        assert_eq!(after_panel_save["capture"], true);
+        assert_eq!(after_panel_save["nav"]["show_nav_path"], true);
+        assert_eq!(after_panel_save["nav"]["allow_teleports"], true);
+        assert_eq!(after_panel_save["nav"]["allow_wilderness"], false);
+        assert_eq!(after_panel_save["nav"]["allow_bank_fetch"], false);
+        assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
+        assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
+        let nav = serde_json::json!({
+            "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": true,
+            "allow_danger_zones": true,
+            "script_scope_notice_ack": true,
+            "show_nav_path": true
+        });
+        host_play::persist_panel_ui_value_at(&path, "nav", nav.clone()).unwrap();
+        let after_second_writer: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after_second_writer["last_focus"], "panel-save");
+        assert_eq!(after_second_writer["capture"], true);
+        assert_eq!(after_second_writer["nav"]["show_nav_path"], true);
+        assert_eq!(after_second_writer["nav"]["allow_teleports"], false);
+        assert_eq!(after_second_writer["nav"]["allow_wilderness"], true);
+        assert_eq!(after_second_writer["nav"]["allow_bank_fetch"], true);
+        assert_eq!(after_second_writer["nav"]["allow_danger_zones"], true);
+        assert_eq!(after_second_writer["nav"]["script_scope_notice_ack"], true);
+
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let panel_path = path.clone();
+        let panel_barrier = std::sync::Arc::clone(&barrier);
+        let panel = std::thread::spawn(move || {
+            for _ in 0..32 {
+                panel_barrier.wait();
+                save_at_checked(&panel_path, &panel_state).unwrap();
+            }
+        });
+        let nav_path = path.clone();
+        let nav_barrier = std::sync::Arc::clone(&barrier);
+        let writer = std::thread::spawn(move || {
+            for _ in 0..32 {
+                nav_barrier.wait();
+                host_play::persist_panel_ui_value_at(
+                    &nav_path,
+                    "nav",
+                    nav.clone(),
+                )
+                .unwrap();
+            }
+        });
+        panel.join().unwrap();
+        writer.join().unwrap();
+
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(document["last_focus"], "panel-save");
+        assert_eq!(document["capture"], true);
+        assert_eq!(document["nav"]["show_nav_path"], true);
+        assert_eq!(document["nav"]["allow_teleports"], false);
+        assert_eq!(document["nav"]["allow_wilderness"], true);
+        assert_eq!(document["nav"]["allow_bank_fetch"], true);
+        assert_eq!(document["nav"]["allow_danger_zones"], true);
+        assert_eq!(document["nav"]["script_scope_notice_ack"], true);
     }
 
     #[test]

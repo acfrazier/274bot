@@ -9,14 +9,16 @@
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct NavSettings {
+    /// Durable global permission for every walk to use teleports.
     pub allow_teleports: bool,
+    /// Durable global permission for every walk to enter the wilderness.
     pub allow_wilderness: bool,
-    /// BankBudget execute (0.1.5): when set, a fail-closed `find` that
-    /// misses only on item/worn reqs starts a deposit-withdraw-wear
-    /// session (booth or NPC teller). Planned from the **open** bank;
-    /// a closed bank has no inventory for fetch, so WalkTo reports no
-    /// path rather than guessing banked items. Default false.
+    /// Durable global permission for manual WalkTo to use BankBudget fetch.
     pub allow_bank_fetch: bool,
+    /// Durable global permission for every walk to enter danger zones.
+    pub allow_danger_zones: bool,
+    /// The shared one-time explanation was dismissed.
+    pub script_scope_notice_ack: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,
     /// 11px default; the settings UI clamps writes to 8..=28.
@@ -48,6 +50,8 @@ impl Default for NavSettings {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_danger_zones: false,
+            script_scope_notice_ack: false,
             show_nav_path: false,
             hop_labels: true,
             hop_label_px: 11,
@@ -65,6 +69,17 @@ impl Default for NavSettings {
             show_special_areas: false,
             camera_follow: false,
             pause_script_on_manual_walk_abort: true,
+        }
+    }
+}
+
+impl NavSettings {
+    pub fn walk_globals(&self) -> host_play::WalkGlobals {
+        host_play::WalkGlobals {
+            allow_teleports: self.allow_teleports,
+            allow_wilderness: self.allow_wilderness,
+            allow_bank_fetch: self.allow_bank_fetch,
+            allow_danger_zones: self.allow_danger_zones,
         }
     }
 }

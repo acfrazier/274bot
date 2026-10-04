@@ -2097,8 +2097,50 @@ impl TuiSession {
             }
         }
     }
-    /// Persist a changed global nav toggle and apply it to current and future
-    /// slots through the shared operator session.
+    /// Publish routing globals to the shared session and persist each
+    /// preference changed by Settings.
+    fn project_walk_globals(&mut self, app: &mut TuiApp) {
+        self.core.set_walk_globals(app.nav.walk_globals());
+        let preferences = std::mem::take(&mut app.nav_preferences_dirty);
+        if preferences.is_empty() || !self.persist_ui {
+            return;
+        }
+        let path = app
+            .shared_preferences_path()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(host_play::panel_ui_path);
+        let mut failure = None;
+        for preference in preferences {
+            let enabled = match preference {
+                frontend_core::NavPreference::AllowTeleports => app.nav.allow_teleports,
+                frontend_core::NavPreference::AllowWilderness => app.nav.allow_wilderness,
+                frontend_core::NavPreference::AllowBankFetch => app.nav.allow_bank_fetch,
+                frontend_core::NavPreference::AllowDangerZones => app.nav.allow_danger_zones,
+                frontend_core::NavPreference::ScriptScopeNoticeAck => {
+                    app.script_scope_notice_ack
+                }
+                frontend_core::NavPreference::ShowSpecialAreas
+                | frontend_core::NavPreference::PauseScriptOnManualWalkAbort => continue,
+            };
+            if let Err(error) =
+                frontend_core::nav_preference_at(&path, preference, Some(enabled))
+            {
+                failure = Some(format!("settings: walk permissions: {error}"));
+            }
+        }
+        if let Some(error) = failure {
+            app.error = Some(error);
+        } else if app
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: walk permissions:"))
+        {
+            app.error = None;
+        }
+    }
+
+    /// Persist the shared manual-walk pause preference and apply it to the
+    /// current and future slots.
     fn project_manual_walk_pause(&mut self, app: &mut TuiApp) {
         self.core
             .set_pause_script_on_manual_walk_abort(app.pause_script_on_manual_walk_abort);
@@ -2128,7 +2170,6 @@ impl TuiSession {
             }
         }
     }
-
     /// Set the global pause policy before binding or arming a TUI live run.
     pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
         self.core.set_pause_script_on_manual_walk_abort(enabled);
@@ -2148,6 +2189,7 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {

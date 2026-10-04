@@ -114,7 +114,8 @@ impl TuiApp {
                 &mut self.map_bake,
                 &mut self.settings_state,
             )
-            .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort);
+            .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+            .script_scope_notice_ack(&mut self.script_scope_notice_ack);
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;

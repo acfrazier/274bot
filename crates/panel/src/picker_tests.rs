@@ -424,6 +424,44 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
     }
 }
 
+#[test]
+fn global_danger_replaces_the_one_shot_route_checkbox() {
+    let _guard = crate::test_support::imgui_context_guard();
+    assert_eq!(
+        super::GLOBAL_DANGER_WARNING,
+        "Global danger-zone override is enabled."
+    );
+    let mut ctx = dear_imgui_rs::Context::create();
+    let world = open_world(3, 3);
+
+    super::note_closed();
+    let mut manual = Session::new();
+    manual.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut manual, &world, [0.0, 0.0], false);
+    let checkbox = super::last_picker_layout().route_zones_rect;
+    let checkbox = [
+        (checkbox[0][0] + checkbox[1][0]) * 0.5,
+        (checkbox[0][1] + checkbox[1][1]) * 0.5,
+    ];
+
+    super::note_closed();
+    let mut global = Session::new();
+    global.ui.nav.allow_danger_zones = true;
+    global.walkto_open = true;
+    picker_click_frame(&mut ctx, &mut global, &world, [0.0, 0.0], false);
+    assert_eq!(
+        super::last_picker_layout().route_zones_rect,
+        [[0.0, 0.0], [0.0, 0.0]],
+        "the global warning has no checkbox hitbox"
+    );
+    picker_click_frame(&mut ctx, &mut global, &world, checkbox, true);
+    picker_click_frame(&mut ctx, &mut global, &world, checkbox, false);
+    assert!(
+        !global.route_through_zones,
+        "clicking the old checkbox position cannot set a one-shot grant"
+    );
+}
+
 fn picker_click_frame(
     ctx: &mut dear_imgui_rs::Context,
     session: &mut Session,

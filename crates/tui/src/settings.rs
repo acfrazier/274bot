@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::app::NavFindSettings;
-use frontend_core::{FormNotice, MapBakeChoice, MemoryNotice, NOTHING_SAVED};
+use frontend_core::{FormNotice, MapBakeChoice, MemoryNotice, NavPreference, NOTHING_SAVED};
 use vault::ProfileSettings;
 
 /// The popup's title while no profile is bound to it.
@@ -41,8 +41,8 @@ pub const LAMP_SKILLS: [&str; 7] = [
 pub struct SettingsState {
     pub open: bool,
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=teleports,
-    /// 4=wilderness, 5=bank fetch, 6=manual-walk pause, 7=map bake,
-    /// 8=memory.
+    /// 4=wilderness, 5=bank fetch, 6=danger zones, 7=manual-walk pause,
+    /// 8=map bake, 9=memory.
     pub row: usize,
 }
 
@@ -51,9 +51,13 @@ pub struct SettingsState {
 pub enum SettingsKey {
     /// A profile setting value changed — persist [`ProfileSettings`] back.
     Changed,
-    /// The remembered map-bake choice changed — persist it to the shared
+    /// The remembered map-bake choice changed; persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
+    /// A durable global walk permission changed.
+    WalkGlobal(NavPreference),
+    /// The one-time script-scope notice was dismissed.
+    ScriptScopeNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
     /// Relog the bound member now to apply the entire queued memory mode.
@@ -77,6 +81,7 @@ pub struct SettingsPane<'a> {
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
+    pub script_scope_notice_ack: Option<&'a mut bool>,
     pub title: &'a str,
     pub notice: Option<&'a FormNotice>,
     pub memory: Option<MemoryNotice>,
@@ -98,7 +103,13 @@ impl<'a> SettingsPane<'a> {
             notice: None,
             memory: None,
             pause_script_on_manual_walk_abort: None,
+            script_scope_notice_ack: None,
         }
+    }
+    /// Bind the shared script-scope acknowledgement.
+    pub fn script_scope_notice_ack(mut self, value: &'a mut bool) -> Self {
+        self.script_scope_notice_ack = Some(value);
+        self
     }
 
     /// Bind the shared global pause preference to the settings row.
@@ -107,34 +118,43 @@ impl<'a> SettingsPane<'a> {
         self
     }
     /// One key while the popup is open. Up/Down move the row; Enter/Space
-    /// toggle the row's setting (the random toggle flips `random_events`,
-    /// lamp auto flips `lamp_auto`, lamp skill cycles [`LAMP_SKILLS`], nav
-    /// rows flip session find opt-ins, the map-bake row flips ask / always,
-    /// the memory row flips highmem / lowmem); `r` relogs the bound member
-    /// only while its login mode differs and no relog is already queued;
-    /// Esc closes.
+    /// toggles settings, `d` dismisses the one-time script-scope notice,
+    /// `r` relogs the bound member only while its login mode differs and no
+    /// relog is already queued; Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         match key.code {
             KeyCode::Char('r') if self.memory.is_some_and(MemoryNotice::can_relog) => {
                 SettingsKey::MemoryRelog
             }
             KeyCode::Char('r') => SettingsKey::Consumed,
+            KeyCode::Char('d')
+                if self
+                    .script_scope_notice_ack
+                    .as_deref()
+                    .is_some_and(|ack| !*ack) =>
+            {
+                SettingsKey::ScriptScopeNoticeAck
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.state.row = self.state.row.saturating_sub(1);
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(8);
+                self.state.row = (self.state.row + 1).min(9);
                 SettingsKey::Consumed
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.activate();
                 match self.state.row {
-                    0..=2 | 8 => SettingsKey::Changed,
-                    6 if self.pause_script_on_manual_walk_abort.is_some() => {
+                    0..=2 | 9 => SettingsKey::Changed,
+                    3 => SettingsKey::WalkGlobal(NavPreference::AllowTeleports),
+                    4 => SettingsKey::WalkGlobal(NavPreference::AllowWilderness),
+                    5 => SettingsKey::WalkGlobal(NavPreference::AllowBankFetch),
+                    6 => SettingsKey::WalkGlobal(NavPreference::AllowDangerZones),
+                    7 if self.pause_script_on_manual_walk_abort.is_some() => {
                         SettingsKey::PauseScriptOnManualWalkAbort
                     }
-                    7 => SettingsKey::MapBake,
+                    8 => SettingsKey::MapBake,
                     _ => SettingsKey::Consumed,
                 }
             }
@@ -145,7 +165,6 @@ impl<'a> SettingsPane<'a> {
             _ => SettingsKey::Ignored,
         }
     }
-
     /// The focused row's toggle/cycle.
     fn activate(&mut self) {
         match self.state.row {
@@ -162,20 +181,21 @@ impl<'a> SettingsPane<'a> {
             3 => self.nav.allow_teleports = !self.nav.allow_teleports,
             4 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
             5 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
-            6 => {
+            6 => self.nav.allow_danger_zones = !self.nav.allow_danger_zones,
+            7 => {
                 if let Some(pause) = self.pause_script_on_manual_walk_abort.as_mut() {
                     **pause = !**pause;
                 }
             }
-            7 => *self.map_bake = self.map_bake.toggled(),
+            8 => *self.map_bake = self.map_bake.toggled(),
             _ => self.settings.lowmem = !self.settings.lowmem,
         }
     }
 
-    /// The popup rect: centered, sized to the nine rows.
+    /// The popup rect: centered, sized to the ten rows.
     pub fn popup_rect(area: Rect) -> Rect {
-        let w = area.width.min(44);
-        let h = 11.min(area.height);
+        let w = area.width.min(76);
+        let h = 12.min(area.height);
         Rect {
             x: area.x + area.width.saturating_sub(w) / 2,
             y: area.y + area.height.saturating_sub(h) / 2,
@@ -185,10 +205,14 @@ impl<'a> SettingsPane<'a> {
     }
 
     /// The drawn popup: [`Self::popup_rect`] grown down (and widened when
-    /// its text needs it) for the memory note and the save notice under
-    /// the rows. The rows keep their place, so a click still lands on the
-    /// row it points at.
-    fn drawn_rect(area: Rect, notice: Option<&FormNotice>, memory_note: Option<&str>) -> Rect {
+    /// its text needs it) for the memory note, one-time scope notice and save
+    /// notice. The rows keep their place, so a click still lands on its row.
+    fn drawn_rect(
+        area: Rect,
+        notice: Option<&FormNotice>,
+        memory_note: Option<&str>,
+        show_scope_notice: bool,
+    ) -> Rect {
         let rows = Self::popup_rect(area);
         let (text, extra) = match notice {
             Some(notice) => match notice.error() {
@@ -201,6 +225,11 @@ impl<'a> SettingsPane<'a> {
         if let Some(note) = memory_note {
             wide = wide.max(Span::raw(note).width());
         }
+        if show_scope_notice {
+            wide = wide
+                .max(Span::raw(SCOPE_NOTICE_TEXT).width())
+                .max(Span::raw("[d] dismiss this notice").width());
+        }
         if wide == 0 {
             return rows;
         }
@@ -211,6 +240,9 @@ impl<'a> SettingsPane<'a> {
         let mut lines = wrapped_rows(text, inner) + wrapped_rows(extra, inner);
         if let Some(note) = memory_note {
             lines += wrapped_rows(note, inner);
+        }
+        if show_scope_notice {
+            lines += wrapped_rows(SCOPE_NOTICE_TEXT, inner) + 1;
         }
         Rect {
             x: area.x + (area.width - width) / 2,
@@ -231,9 +263,18 @@ impl Widget for SettingsPane<'_> {
                 .filter(|n| n.differs())
                 .map_or(MemoryNotice::NEXT_LOGIN_NOTE, |n| n.notice_text()),
         );
+        let show_scope_notice = self
+            .script_scope_notice_ack
+            .as_deref()
+            .is_some_and(|ack| !*ack);
         let memory_value =
             MemoryNotice::status_text(self.settings.lowmem, self.memory).into_owned();
-        let popup = Self::drawn_rect(area, self.notice, memory_note);
+        let popup = Self::drawn_rect(
+            area,
+            self.notice,
+            memory_note,
+            show_scope_notice,
+        );
         Clear.render(popup, buf);
         let block = Block::default().borders(Borders::ALL).title(self.title);
         let inner = block.inner(popup);
@@ -242,9 +283,22 @@ impl Widget for SettingsPane<'_> {
             ("random events", format!("{}", self.settings.random_events)),
             ("lamp skill", self.settings.lamp_skill.clone()),
             ("lamp auto", format!("{}", self.settings.lamp_auto)),
-            ("allow teleports", format!("{}", self.nav.allow_teleports)),
-            ("allow wilderness", format!("{}", self.nav.allow_wilderness)),
-            ("bank fetch", format!("{}", self.nav.allow_bank_fetch)),
+            (
+                "allow teleports",
+                format!("{} · Global — applies to every walk.", self.nav.allow_teleports),
+            ),
+            (
+                "allow wilderness",
+                format!("{} · Global — applies to every walk.", self.nav.allow_wilderness),
+            ),
+            (
+                "bank fetch",
+                format!("{} · Global — applies to every walk.", self.nav.allow_bank_fetch),
+            ),
+            (
+                "Route through danger zones",
+                format!("{} · Global — applies to every walk.", self.nav.allow_danger_zones),
+            ),
             (
                 "Pause script on manual movement",
                 format!(
@@ -269,6 +323,11 @@ impl Widget for SettingsPane<'_> {
         if let Some(note) = memory_note {
             lines.push(Line::styled(note, Style::default().fg(Color::Yellow)));
         }
+        if show_scope_notice {
+            let yellow = Style::default().fg(Color::Yellow);
+            lines.push(Line::styled(SCOPE_NOTICE_TEXT, yellow));
+            lines.push(Line::styled("[d] dismiss this notice", yellow));
+        }
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(inner, buf);
@@ -278,7 +337,15 @@ impl Widget for SettingsPane<'_> {
                 + ROWS
                 + memory_note.map_or(0, |note| {
                     wrapped_rows(note, usize::from(inner.width).max(1))
-                });
+                })
+                + if show_scope_notice {
+                    wrapped_rows(
+                        SCOPE_NOTICE_TEXT,
+                        usize::from(inner.width).max(1),
+                    ) + 1
+                } else {
+                    0
+                };
             match notice.error() {
                 Some(reason) => {
                     let red = Style::default().fg(Color::Red);
@@ -294,9 +361,11 @@ impl Widget for SettingsPane<'_> {
     }
 }
 
-/// opt-ins, the pause toggle, the map-bake choice and memory. Notices start
-/// under the nine rows.
-const ROWS: u16 = 9;
+/// One-time scope-change copy required when manual opt-ins widen to scripts.
+const SCOPE_NOTICE_TEXT: &str = "Teleports and wilderness in Nav config now apply to every walk, including scripts. Bank fetch still applies only to manual WalkTo. Danger is new (default off). rs2b0t-compatible scripts always allow wilderness and bank fetch.";
+
+/// Settings rows; memory/save/scope notices start below this count.
+const ROWS: u16 = 10;
 
 /// The width in columns of one character, as [`Span`] measures it.
 fn char_width(text: &str, at: usize, ch: char) -> usize {
@@ -360,8 +429,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use frontend_core::MapBakeChoice;
-    use frontend_core::MemoryNotice;
+    use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
     use vault::ProfileSettings;
 
     use crate::app::NavFindSettings;
@@ -439,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_toggles_bank_fetch_without_marking_profile_dirty() {
+    fn popup_toggles_bank_fetch_and_requests_single_key_persistence() {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
@@ -448,8 +516,71 @@ mod tests {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
-        assert_eq!(key, SettingsKey::Consumed, "nav rows are session-only");
+        assert_eq!(
+            key,
+            SettingsKey::WalkGlobal(NavPreference::AllowBankFetch)
+        );
         assert!(nav.allow_bank_fetch, "bank fetch toggles on");
+    }
+
+    #[test]
+    fn each_permission_row_requests_its_global_preference() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
+        for (row, preference) in [
+            (3, NavPreference::AllowTeleports),
+            (4, NavPreference::AllowWilderness),
+            (5, NavPreference::AllowBankFetch),
+            (6, NavPreference::AllowDangerZones),
+        ] {
+            let mut state = SettingsState {
+                open: true,
+                row,
+            };
+            let outcome = {
+                let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+                pane.on_key(key(KeyCode::Enter))
+            };
+            assert_eq!(outcome, SettingsKey::WalkGlobal(preference));
+        }
+        assert!(nav.allow_teleports);
+        assert!(nav.allow_wilderness);
+        assert!(nav.allow_bank_fetch);
+        assert!(nav.allow_danger_zones);
+    }
+
+    #[test]
+    fn script_scope_notice_is_dismissible_and_stays_hidden_after_ack() {
+        let mut settings = ProfileSettings::default();
+        let mut nav = NavFindSettings::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState { open: true, row: 0 };
+        let mut acknowledged = false;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut acknowledged),
+            100,
+            24,
+        );
+        assert!(
+            text.contains("Teleports and wilderness in Nav config"),
+            "the unacknowledged notice is shown: {text:?}"
+        );
+        let outcome = {
+            let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut acknowledged);
+            pane.on_key(key(KeyCode::Char('d')))
+        };
+        assert_eq!(outcome, SettingsKey::ScriptScopeNoticeAck);
+        acknowledged = true;
+        let text = render(
+            SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
+                .script_scope_notice_ack(&mut acknowledged),
+            100,
+            24,
+        );
+        assert!(!text.contains("Teleports and wilderness in Nav config"));
     }
 
     #[test]
@@ -508,10 +639,10 @@ mod tests {
             {
                 let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state)
                     .pause_script_on_manual_walk_abort(&mut pause);
-                for _ in 0..6 {
+                for _ in 0..7 {
                     assert_eq!(pane.on_key(key(KeyCode::Down)), SettingsKey::Consumed);
                 }
-                assert_eq!(pane.state.row, 6);
+                assert_eq!(pane.state.row, 7);
                 assert_eq!(
                     pane.on_key(key(KeyCode::Enter)),
                     SettingsKey::PauseScriptOnManualWalkAbort
@@ -535,8 +666,7 @@ mod tests {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 8 };
-        assert!(settings.lowmem, "profiles start lowmem");
+        let mut state = SettingsState { open: true, row: 9 };
         let outcome = {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
@@ -585,7 +715,7 @@ mod tests {
         };
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 8 };
+        let mut state = SettingsState { open: true, row: 9 };
         let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
         pane.memory = Some(MemoryNotice {
             login_lowmem: true,
@@ -607,14 +737,14 @@ mod tests {
         let mut settings = ProfileSettings::default();
         let mut nav = NavFindSettings::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState { open: true, row: 6 };
+        let mut state = SettingsState { open: true, row: 7 };
         let (moved, flipped) = {
             let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
             let moved = pane.on_key(key(KeyCode::Down));
             (moved, pane.on_key(key(KeyCode::Enter)))
         };
         assert_eq!(moved, SettingsKey::Consumed);
-        assert_eq!(state.row, 7, "the map-bake row follows the pause toggle");
+        assert_eq!(state.row, 8, "the map-bake row follows the pause toggle");
         assert_eq!(flipped, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Always);
         assert!(!nav.allow_bank_fetch, "the bank row is untouched");

@@ -4,7 +4,51 @@
 
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static PANEL_UI_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+fn panel_ui_write_lock() -> std::sync::MutexGuard<'static, ()> {
+    PANEL_UI_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn preserve_corrupt_panel_ui(path: &Path, error: &str) -> io::Result<()> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
+    eprintln!(
+        "host-play: refusing to clobber invalid {}; moving it to {}",
+        path.display(),
+        backup.display()
+    );
+    if backup.exists() {
+        eprintln!(
+            "host-play: refusing to overwrite existing corrupt backup {}",
+            backup.display()
+        );
+        return Err(io::Error::new(
+            ErrorKind::AlreadyExists,
+            format!("corrupt panel-ui backup already exists: {}", backup.display()),
+        ));
+    }
+    if let Err(rename_error) = std::fs::rename(path, &backup) {
+        eprintln!(
+            "host-play: could not preserve invalid {} as {}: {rename_error}",
+            path.display(),
+            backup.display()
+        );
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
+        ));
+    }
+    Ok(())
+}
 
 use crate::Play;
 
@@ -130,63 +174,60 @@ pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result
     persist_panel_ui_value_at(&panel_ui_path(), key, value)
 }
 
+/// Run a read/merge/write update of `panel-ui.json` under the shared in-process
+/// writer lock. `merge` receives the parsed document, whether a file existed,
+/// and whether its JSON was malformed; it may return an alternate destination
+/// to preserve an incompatible panel state beside the original.
+pub fn update_panel_ui_at(
+    path: &Path,
+    merge: impl FnOnce(&mut serde_json::Value, bool, bool) -> io::Result<Option<PathBuf>>,
+) -> io::Result<()> {
+    let _write = panel_ui_write_lock();
+    let (mut document, file_exists, corrupt_json) = match std::fs::read(path) {
+        Ok(data) => match serde_json::from_slice(&data) {
+            Ok(document) => (document, true, None),
+            Err(error) => (serde_json::json!({}), true, Some(error.to_string())),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            (serde_json::json!({}), false, None)
+        }
+        Err(error) => return Err(error),
+    };
+    let alternate = merge(&mut document, file_exists, corrupt_json.is_some())?;
+    if document.as_object().is_none() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "panel-ui.json is not an object",
+        ));
+    }
+    if alternate.is_none() {
+        if let Some(error) = corrupt_json.as_deref() {
+            preserve_corrupt_panel_ui(path, error)?;
+        }
+    }
+    let data = serde_json::to_vec_pretty(&document)
+        .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+    vault::write_private_file(alternate.as_deref().unwrap_or(path), &data)
+}
+
+/// Set one top-level key of `panel-ui.json`, preserving every other key.
+pub fn persist_panel_ui_value(key: &str, value: serde_json::Value) -> io::Result<()> {
+    persist_panel_ui_value_at(&panel_ui_path(), key, value)
+}
+
 /// Set one top-level key in an explicitly supplied preference store.
 pub fn persist_panel_ui_value_at(
     path: &Path,
     key: &str,
     value: serde_json::Value,
 ) -> io::Result<()> {
-    let mut document = match std::fs::read(path) {
-        Ok(data) => match serde_json::from_slice(&data) {
-            Ok(document) => document,
-            Err(error) => {
-                let stamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let backup = path.with_file_name(format!("panel-ui.json.corrupt-{stamp}"));
-                eprintln!(
-                    "host-play: refusing to clobber invalid {}; moving it to {}",
-                    path.display(),
-                    backup.display()
-                );
-                if backup.exists() {
-                    eprintln!(
-                        "host-play: refusing to overwrite existing corrupt backup {}",
-                        backup.display()
-                    );
-                    return Err(io::Error::new(
-                        ErrorKind::AlreadyExists,
-                        format!(
-                            "corrupt panel-ui backup already exists: {}",
-                            backup.display()
-                        ),
-                    ));
-                }
-                if let Err(rename_error) = std::fs::rename(path, &backup) {
-                    eprintln!(
-                        "host-play: could not preserve invalid {} as {}: {rename_error}",
-                        path.display(),
-                        backup.display()
-                    );
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        format!("invalid panel-ui.json ({error}); backup failed: {rename_error}"),
-                    ));
-                }
-                serde_json::json!({})
-            }
-        },
-        Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(e),
-    };
-    let obj = document
-        .as_object_mut()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object"))?;
-    obj.insert(key.into(), value);
-    let data = serde_json::to_vec_pretty(&document)
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
-    vault::write_private_file(path, &data)
+    update_panel_ui_at(path, |document, _, _| {
+        let object = document.as_object_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::InvalidData, "panel-ui.json is not an object")
+        })?;
+        object.insert(key.into(), value);
+        Ok(None)
+    })
 }
 
 #[cfg(test)]
