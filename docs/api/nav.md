@@ -412,15 +412,28 @@ consumptive requirement is the minimum 10, not a fixed 200-coin debit.
 Route labels evaluate it against the balance after earlier payments;
 missing-supply diagnostics invert that same rule across the remaining route.
 
-Danger-zone permission is scoped to the route. Named `FindOptions.zones`
-exemptions (and the explicit all-zone permission) apply to the whole walk.
+Danger-zone permission is scoped to the route. Every search first applies
+the zone filter without named or all-zone grants. If that pass finds a route,
+it wins even when a granted crossing would be cheaper. Only a `NoPath` or
+`BudgetExhausted` result enables the second pass, which applies the requested
+named or all-zone grants and destination-completion permission. Hard transport,
+item, skill, quest and wilderness gates remain unchanged.
+Safety also outranks preferred-versus-fallback target priority. If any acceptable
+target routes safely, preferred targets win within that safe set, followed by
+safe fallback targets. Only when neither class yields a safe route may the
+exempt pass run; preferred targets then win within the exempt set.
 An origin may move continuously within and escape its active zones, but
-cannot re-enter them. Safe routes are tried first. Only when none exists
-may a route enter and move within an active zone containing its selected
-goal; it cannot then leave that zone to use it as transit. Inactive portions
-of a level-rule zone do not grant permission across its active portions.
-These rules also apply to transport and teleport landings and to each
-candidate's own completion in first/all-target searches.
+cannot re-enter them without a grant. Without a whole-walk grant, completion
+may enter and move within an active zone containing its selected goal but
+cannot leave it for transit. Inactive portions of a level-rule zone do not
+grant permission across its active portions. The same transition predicate
+applies to walking, transport and teleport landings.
+
+A goal-side reverse proof uses that predicate for deep zone goals, capped at
+64 reverse expansions. A closed proof skips the impossible safe pass; an
+open or abandoned proof retains the normal forward-search budget. Thus a
+deep-zone goal need not exhaust the safe-reachable world, and exhausting
+the safe budget does not suppress its permitted completion pass.
 
 Refusal diagnosis requires a strict `NoPath` and an all-zone-exempt route
 that still satisfies the same hard gates. It reports active zone-blocked

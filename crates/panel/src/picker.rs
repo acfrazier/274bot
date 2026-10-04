@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use frontend_core::{
-    DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MapBakePrompt, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+    MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
 use host_play::walk_map::{
     select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,

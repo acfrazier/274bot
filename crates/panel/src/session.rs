@@ -1280,10 +1280,7 @@ fn publish_frontend_slot(
     publication.session_boundary
 }
 
-fn apply_walk_permissions_to_nav(
-    nav: &mut NavSettings,
-    view: frontend_core::WalkGlobalsView,
-) {
+fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::WalkGlobalsView) {
     nav.allow_teleports = view.globals.allow_teleports;
     nav.allow_wilderness = view.globals.allow_wilderness;
     nav.allow_bank_fetch = view.globals.allow_bank_fetch;
@@ -1485,9 +1482,7 @@ impl Session {
         let view = frontend_core::WalkGlobalsView::read_at(&self.walk_permissions_path);
         self.walk_permissions = view;
         apply_walk_permissions_to_nav(&mut self.ui.nav, view);
-        if view.globals.allow_danger_zones {
-            self.route_through_zones = false;
-        }
+        self.route_through_zones = view.danger_this_walk(self.route_through_zones);
         self.core.set_walk_globals(view.globals);
     }
 

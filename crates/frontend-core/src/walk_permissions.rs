@@ -39,8 +39,8 @@ pub struct WalkGlobalsView {
 }
 
 impl WalkGlobalsView {
-    /// Read the `nav` object once. A missing or malformed document, nav object,
-    /// or individual value grants nothing and leaves the notice unacknowledged.
+    /// Read the `nav` object once. Missing or malformed grant data grants
+    /// nothing; a missing or malformed notice acknowledgement remains off.
     pub fn read_at(path: &Path) -> Self {
         let Some(nav) = host_play::panel_ui_value_at(path, "nav") else {
             return Self::default();
@@ -73,9 +73,7 @@ impl WalkGlobalsView {
         match id {
             "allow_teleports" | "allowTeleports" => Some(self.globals.allow_teleports),
             "allow_wilderness" | "allowWilderness" => Some(self.globals.allow_wilderness),
-            "allow_danger_zones" | "allowDangerZones" => {
-                Some(self.globals.allow_danger_zones)
-            }
+            "allow_danger_zones" | "allowDangerZones" => Some(self.globals.allow_danger_zones),
             _ => None,
         }
     }
@@ -177,7 +175,10 @@ mod tests {
     #[test]
     fn projection_reads_globals_and_fails_closed_for_missing_or_corrupt_files() {
         let store = TempStore::new("read");
-        assert_eq!(WalkGlobalsView::read_at(store.path()), WalkGlobalsView::default());
+        assert_eq!(
+            WalkGlobalsView::read_at(store.path()),
+            WalkGlobalsView::default()
+        );
 
         std::fs::write(
             store.path(),
@@ -206,7 +207,10 @@ mod tests {
         assert_eq!(view.permission_enabled("unrelated"), None);
 
         std::fs::write(store.path(), b"{truncated").unwrap();
-        assert_eq!(WalkGlobalsView::read_at(store.path()), WalkGlobalsView::default());
+        assert_eq!(
+            WalkGlobalsView::read_at(store.path()),
+            WalkGlobalsView::default()
+        );
     }
 
     #[test]
@@ -224,16 +228,18 @@ mod tests {
         assert!(once.allow_wilderness);
         assert!(once.allow_bank_fetch);
         assert_eq!(once.zones, ZoneExempt::all());
-        assert!(!view.manual_options(view.danger_this_walk(false)).zones.is_all());
+        assert!(!view
+            .manual_options(view.danger_this_walk(false))
+            .zones
+            .is_all());
 
-        std::fs::write(
-            store.path(),
-            r#"{"nav":{"allow_danger_zones":true}}"#,
-        )
-        .unwrap();
+        std::fs::write(store.path(), r#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
         let global = WalkGlobalsView::read_at(store.path());
         assert!(!global.danger_this_walk(true));
-        assert_eq!(global.manual_options(global.danger_this_walk(true)).zones, ZoneExempt::all());
+        assert_eq!(
+            global.manual_options(global.danger_this_walk(true)).zones,
+            ZoneExempt::all()
+        );
     }
 
     #[test]
@@ -245,10 +251,9 @@ mod tests {
         )
         .unwrap();
         let before = WalkGlobalsView::read_at(store.path());
-        let mut external = serde_json::from_slice::<serde_json::Value>(
-            &std::fs::read(store.path()).unwrap(),
-        )
-        .unwrap();
+        let mut external =
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
+                .unwrap();
         external["nav"]["allow_wilderness"] = serde_json::Value::Bool(true);
         external["nav"]["show_nav_path"] = serde_json::Value::Bool(false);
         std::fs::write(store.path(), serde_json::to_vec(&external).unwrap()).unwrap();
@@ -261,16 +266,15 @@ mod tests {
             script_scope_notice_ack: true,
         };
         WalkGlobalsView::persist_changed_at(store.path(), before, after).unwrap();
-        let persisted = serde_json::from_slice::<serde_json::Value>(
-            &std::fs::read(store.path()).unwrap(),
-        )
-        .unwrap();
+        let persisted =
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
+                .unwrap();
         assert_eq!(persisted["unrelated"]["keep"], true);
         assert_eq!(persisted["nav"]["custom"], "keep");
         assert_eq!(persisted["nav"]["allow_teleports"], true);
         assert_eq!(persisted["nav"]["allow_wilderness"], true);
-        assert_eq!(persisted["nav"]["allow_bank_fetch"], false);
-        assert_eq!(persisted["nav"]["allow_danger_zones"], false);
+        assert!(persisted["nav"].get("allow_bank_fetch").is_none());
+        assert!(persisted["nav"].get("allow_danger_zones").is_none());
         assert_eq!(persisted["nav"]["script_scope_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 

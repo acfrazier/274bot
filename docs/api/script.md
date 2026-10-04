@@ -625,9 +625,15 @@ Native scripts cannot use BankBudget, even when global bank fetch is enabled.
 Native bank selection ranks walking routes without teleports; the walk to the
 chosen bank may still use granted teleports. Compatibility scripts keep their
 existing option wiring, including always-enabled wilderness and bank fetch.
-Both preference writers serialize through an in-process mutex and the
-`panel-ui.json.lock` advisory lock. New admissions reread the durable globals,
-including when the user permits two frontends to run on the same HOME.
+All shared preference writers, including the TUI log pane, serialize through
+an in-process mutex and the `panel-ui.json.lock` advisory lock. Both frontends
+refresh a shared durable walk-permission projection for danger controls and
+inherited script rows, and refresh it again at manual admission. Missing or
+malformed preferences fail closed. A peer frontend's grant change therefore
+updates both the warning and the next walk's options.
+Danger grants permit a fallback crossing, not a shorter dangerous route:
+the router always tries the filtered safe pass first. Released Cook's
+Assistant mill walks inherit teleport permission, as their frozen callers do.
 
 Path `cross` names danger-zone exemptions for that walk; it is independent of
 `guard: "protect"`, which controls hold-mode protection. A named crossing may

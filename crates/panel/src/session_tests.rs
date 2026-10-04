@@ -2625,7 +2625,10 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
         ZoneExempt::all(),
         "the global projection and a one-shot request permit this admission"
     );
-    assert!(!session.route_through_zones, "the global grant consumes the one-shot");
+    assert!(
+        !session.route_through_zones,
+        "the global grant consumes the one-shot"
+    );
 
     frontend_core::nav_preference_at(
         &path,

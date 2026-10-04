@@ -2930,7 +2930,6 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         });
 }
 
-
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Preference edits write `session.ui.nav`
 /// through the checked shared-preferences writer; the pause toggle also
@@ -3070,11 +3069,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     globals: session.ui.nav.walk_globals(),
                     script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
                 };
-                if !previous_permissions.globals.allow_danger_zones
-                    && after_permissions.globals.allow_danger_zones
-                {
-                    session.route_through_zones = false;
-                }
+                session.route_through_zones =
+                    after_permissions.danger_this_walk(session.route_through_zones);
                 if previous_pause_script_on_manual_walk_abort
                     != session.ui.nav.pause_script_on_manual_walk_abort
                 {

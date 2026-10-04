@@ -290,8 +290,7 @@ fn script_app() -> TuiApp {
 }
 
 fn params_overlay_text(app: &mut TuiApp, loadouts: &script::LoadoutsStore) -> String {
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| app.draw_params_overlay(frame, loadouts, None))
         .unwrap();
@@ -781,10 +780,7 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
 
     let initial = text(&draw(&mut app, 120, 40));
     assert!(initial.contains("avoided"), "{initial}");
-    assert_eq!(
-        app.map_find_options().zones,
-        nav::zones::ZoneExempt::NONE
-    );
+    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
     assert_eq!(app.on_key(ch('z')), AppAction::None);
     assert!(app.map_route_through_zones);
     assert!(app.map_find_options().zones.is_all());
@@ -805,7 +801,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
             && !globally_on.contains("crossing (z)"),
         "{globally_on}"
     );
-    assert!(!app.map_route_through_zones, "global-on clears the one-shot");
+    assert!(
+        !app.map_route_through_zones,
+        "global-on clears the one-shot"
+    );
     assert!(app.map_find_options().zones.is_all());
     app.params_state.open = true;
     let inherited = params_overlay_text(&mut app, &loadouts);
