@@ -5,11 +5,11 @@ use nav::world::NavWorld;
 
 use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
-/// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`): `tick, here,
-/// ingame, inv, stats, booths, banks, bank, bank_side, bank_open,
-/// bank_loaded, hold, ours` — the exact fields the shim
-/// Game/Inventory/Skills/Bank/Banking/EventSignal read, and nothing else
-/// (no World clone). `here` is the local player's tile `{x, z, level}`
+/// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`) carries the
+/// shim-readable fields (`tick, here, ingame, inv, stats, booths, banks,
+/// bank, bank_side, bank_open, bank_loaded, hold, ours`) plus compact native
+/// fact pages such as projectiles and prayer varps. It is not a `World` clone.
+/// `here` is the local player's tile `{x, z, level}`
 /// (absent when the body decoded none); `inv` rows carry the obj's
 /// resolved name (`None` when the shared table has none — a name a script
 /// queries never matches); `stats` rows carry the snapshot's stat
@@ -95,6 +95,22 @@ fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 
         .map(|d| d.certificate_link)
         .filter(|&c| c >= 0)
         .unwrap_or(-1)
+}
+
+/// Bank and bank-side ops keep their 1-based slots on the wire: a native
+/// action hole posts as an empty label, so a compat `InvButton` op index
+/// names the slot the native row does. Trailing holes name no op and are
+/// left off.
+fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
+    let len = item
+        .actions
+        .iter()
+        .rposition(Option::is_some)
+        .map_or(0, |last| last + 1);
+    item.actions[..len]
+        .iter()
+        .map(|action| action.as_deref().unwrap_or_default().to_owned())
+        .collect()
 }
 pub(super) struct PackedReach {
     pub(super) view: Arc<api::query::ReachQueryView>,
@@ -458,16 +474,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     });
     let bank_ops_store: Vec<Vec<String>>;
     let bank: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        bank_ops_store = s
-            .bank()
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
+        bank_ops_store = s.bank().iter().map(positional_ops).collect();
         s.bank()
             .iter()
             .enumerate()
@@ -490,16 +497,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     };
     let bank_side_ops_store: Vec<Vec<String>>;
     let bank_side: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        bank_side_ops_store = s
-            .bank_side()
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
+        bank_side_ops_store = s.bank_side().iter().map(positional_ops).collect();
         s.bank_side()
             .iter()
             .enumerate()
@@ -1522,6 +1520,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         api_gather: None,
         api_gather_outcome: None,
         api_progress: None,
+        side_modal_id: Some(modals.map_or(-1, |m| m.side)),
+        projectiles: snapshot.map(|snapshot| snapshot.projectiles()),
     };
     f(&input, native)
 }

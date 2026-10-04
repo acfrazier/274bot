@@ -1766,6 +1766,7 @@ fn tick_loop(
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
+                crate::bank_op::on_reset();
                 super::reach_query::on_reset();
                 if !keep_work {
                     crate::cake_stall::on_reset();

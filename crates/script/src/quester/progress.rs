@@ -656,6 +656,7 @@ mod tests {
                 path: FactKey::new("synthetic"),
                 owns_inventory: true,
                 bank: None,
+                bank_required: false,
                 items: Arc::from(Vec::new()),
                 tools: Arc::from(Vec::new()),
                 tool_ids: Arc::from(Vec::new()),

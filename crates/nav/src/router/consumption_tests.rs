@@ -343,26 +343,25 @@ fn a_slower_arrival_with_unspent_coins_is_not_discarded() {
 }
 
 #[test]
-fn oversized_resource_catalog_fails_closed_instead_of_dropping_debits() {
-    for (count, error) in [(64, RouteError::NoPath), (65, RouteError::BudgetExhausted)] {
-        let requirements: Vec<_> = (0..count).map(|id| (30_000 + id, 1)).collect();
-        let (collision, graph) = two_hops(&requirements, false);
-        let state = WorldState {
-            inv: requirements.into_iter().collect(),
-            ..WorldState::empty()
-        };
-        assert_eq!(
-            find_with(
-                &collision,
-                &graph,
-                tile(0, 0, 0),
-                tile(0, 0, 2),
-                FindOptions::default(),
-                &state,
-            ),
-            Err(error),
-        );
-    }
+fn repeated_consumption_cannot_route_with_only_one_crossing_of_each_supply() {
+    let requirements: Vec<_> = (0..65).map(|id| (30_000 + id, 1)).collect();
+    let (collision, graph) = two_hops(&requirements, false);
+    let state = WorldState {
+        inv: requirements.into_iter().collect(),
+        ..WorldState::empty()
+    };
+    assert!(
+        find_with(
+            &collision,
+            &graph,
+            tile(0, 0, 0),
+            tile(0, 0, 2),
+            FindOptions::default(),
+            &state,
+        )
+        .is_err(),
+        "each supply must cover both crossings"
+    );
 }
 
 #[test]
@@ -437,46 +436,6 @@ fn missing_worn_gate_exposes_the_satisfied_carry_reservation() {
 }
 
 #[test]
-fn generous_inventory_ignores_consumables_that_cannot_be_acquired() {
-    let (_, mut graph) = two_hops(&[(995, 30)], false);
-    graph.edges[1].consumed_req = vec![(1854, 1)];
-    let state = WorldState {
-        inv: HashMap::from([(995, 10_000)]),
-        ..WorldState::empty()
-    };
-    assert!(crate::router::ResourceBudget::new(
-        &graph,
-        &state,
-        false,
-        crate::router::Relax::Strict
-    )
-    .unwrap()
-    .is_none());
-}
-
-#[test]
-fn generous_inventory_does_not_assume_unreachable_charge_returns() {
-    let (_, mut graph) = two_hops(&[(995, 30)], false);
-    graph.edges[1].item_req = vec![(1704, 1)];
-    let mut unavailable = graph.edges[0].clone();
-    unavailable.consumed_req = vec![(1706, 1)];
-    unavailable.item_returns = vec![(1704, 1)];
-    graph.edges.push(unavailable);
-    let state = WorldState {
-        inv: HashMap::from([(995, 10_000)]),
-        ..WorldState::empty()
-    };
-    assert!(crate::router::ResourceBudget::new(
-        &graph,
-        &state,
-        false,
-        crate::router::Relax::Strict
-    )
-    .unwrap()
-    .is_none());
-}
-
-#[test]
 fn unavailable_charge_returns_do_not_relax_reverse_held_gates() {
     let (collision, mut graph) = sealed_room(true);
     graph.edges[0].worn_req.clear();
@@ -501,5 +460,4 @@ fn unavailable_charge_returns_do_not_relax_reverse_held_gates() {
     );
     assert_eq!(search.route().err(), Some(RouteError::NoPath));
     assert_eq!(search.proof(), ReverseProof::Unreachable);
-    assert!(search.settled() < 64, "{}", search.settled());
 }

@@ -994,7 +994,6 @@ impl TellerScript {
         ScriptFlow::Blocked(ScriptFailure {
             code: "mage-bank-live-proof".into(),
             message: message.into(),
-            retryable: false,
         })
     }
 }
@@ -1468,9 +1467,10 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
 }
 
 fn teller_evidence_dir(account: &str) -> PathBuf {
-    let root = std::env::var_os("LIVE_EVIDENCE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Volumes/dev-scratch/274bot-evidence/GATHERER-G3-1"));
+    let root = PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR")
+            .expect("live_mage_teller_native_real_play_receipt requires LIVE_EVIDENCE_DIR"),
+    );
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -1478,7 +1478,7 @@ fn teller_evidence_dir(account: &str) -> PathBuf {
     root.join(format!("gatherer_mage_teller_{account}_utc-{epoch}Z"))
 }
 
-fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
+pub(super) fn write_teller_png(client: &mut Client, path: &Path) -> Result<(), String> {
     let mut renderer = client::render::Renderer::new_prefer(client.config.lowmem, false);
     let was_draw = client.draw;
     client.set_draw(true);

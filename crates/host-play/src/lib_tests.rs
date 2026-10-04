@@ -7102,6 +7102,209 @@ fn bank_client() -> Client {
     c
 }
 
+/// One R289 server frame, applied the way the slot drain applies it.
+fn dispatch_289(c: &mut Client, opcode: i32, bytes: Vec<u8>) {
+    c.psize = bytes.len() as i32;
+    let mut packet = Packet::new(bytes);
+    packet.set_frame_end(c.psize as usize);
+    c.handle_packet(opcode, &mut packet);
+    assert_eq!(packet.pos, c.psize as usize);
+    assert!(c.ingame, "fixture frame must not T2/logout");
+}
+
+/// An R289 client with the bank's two roots defined but closed: main 600
+/// wrapping withdraw grid 601, side 700 wrapping deposit grid 701 whose
+/// ops have a hole before the bulk op.
+fn bank_client_289() -> Client {
+    let mut c = Client::new_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    c.ingame = true;
+    c.scene_state = 2;
+    for (layer, grid, ops) in [
+        (
+            600,
+            601,
+            [
+                Some("Withdraw-1".into()),
+                Some("Withdraw-5".into()),
+                Some("Withdraw-10".into()),
+                Some("Withdraw-All".into()),
+                Some("Withdraw-X".into()),
+            ],
+        ),
+        (
+            700,
+            701,
+            [
+                Some("Deposit-1".into()),
+                None,
+                Some("Deposit-All".into()),
+                None,
+                None,
+            ],
+        ),
+    ] {
+        c.set_iface(
+            layer,
+            IfType {
+                id: layer as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![grid as i32]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            grid,
+            IfType {
+                id: grid as i32,
+                layer_id: layer as i32,
+                r#type: ComponentType::TYPE_INV,
+                iop: ops,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            grid,
+            IfTypeMut {
+                link_obj_type: Some(vec![0; 28]),
+                link_obj_number: Some(vec![0; 28]),
+                ..Default::default()
+            },
+        );
+    }
+    c
+}
+
+/// P-side through the real packet order and the isolate IPC: the side
+/// inventory arrives before the one main+side packet (a drain may stop in
+/// between), a genuinely empty side posts as `Some(&[])`, and a close or a
+/// main-only reopen is `None` even though the leftover list is empty. The
+/// native accessor and the decoded isolate rows agree, with op positions
+/// (the hole before Deposit-All) preserved.
+#[test]
+fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
+    use client::io::ServerProt289;
+    use script::bank::ops;
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut c = bank_client_289();
+    let mut snap = GameSnapshot::new();
+    let mut last = None;
+    let mut tick = 0;
+    script::observed::on_reset();
+    // One host frame: rebuild, post the IPC delta, apply it in the isolate.
+    // Returns (native side, isolate side) as `None` / row count, plus the
+    // sweep op each representation chooses for the first side row.
+    let mut frame = |c: &Client, snap: &mut GameSnapshot| {
+        snap.rebuild(c);
+        tick += 1;
+        let (bytes, fp) = script_snapshot_fb(
+            last.as_ref(),
+            false,
+            tick,
+            None,
+            true,
+            None,
+            Some(snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        last = Some(fp);
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        script::observed::apply(&view);
+        let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
+            .bank_side()
+            .map(|side| {
+                (
+                    side.value.len(),
+                    side.value.first().and_then(ops::sweep_op),
+                    side.value
+                        .first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            });
+        let isolate = script::observed::with(|scene| {
+            let session = scene.since_login();
+            ops::side_observation(
+                session.bank_open().unwrap_or(false),
+                session.side_modal_id().unwrap_or(-1),
+                session.bank_side().map(Vec::as_slice).unwrap_or_default(),
+            )
+            .map(|side| {
+                (
+                    side.len(),
+                    side.first().and_then(ops::sweep_op),
+                    side.first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            })
+        });
+        (native, isolate)
+    };
+
+    // The side inventory lands first; the drain stops before the modal.
+    dispatch_289(
+        &mut c,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 1, 0, 2, 3],
+    );
+    assert_eq!(frame(&c, &mut snap), (None, None), "no root, no side");
+    // The one main+side packet raises both roots together.
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let click = ops::DepositClick {
+        id: 1,
+        slot: 0,
+        component: 701,
+        operation: 3,
+    };
+    let posted = Some((1, Some(3), Some(click)));
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+    // An unchanged delta keeps the posted root.
+    assert_eq!(frame(&c, &mut snap), (posted, posted));
+
+    // Close: both roots drop; the side is not posted, not empty.
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    // A genuinely empty side update, then the modal: posted empty.
+    dispatch_289(&mut c, ServerProt289::UPDATE_INV_FULL, vec![2, 189, 0, 0]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    let empty = Some((0, None, None));
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+
+    // Close, then a main-only reopen: a new session whose side root is
+    // still down reads `None` although the leftover list is empty.
+    let before = snap.bank_session_generation();
+    dispatch_289(&mut c, ServerProt289::IF_CLOSE, Vec::new());
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN, vec![2, 88]);
+    assert_eq!(frame(&c, &mut snap), (None, None));
+    assert!(snap.bank_session_generation() > before);
+    assert!(snap.bank_component_id() >= 0, "the main bank is open");
+    assert!(snap.bank_side().is_empty(), "the leftover list is empty");
+    dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
+    assert_eq!(frame(&c, &mut snap), (empty, empty));
+    script::observed::on_reset();
+}
+
 /// Task 7 — the shim's interact requests dispatch through the slot
 /// Driver: the booth Use-quickly op at the loc tile, the bank-side
 /// Deposit-All for a matching name, the bank withdraw op, and close.
@@ -7628,6 +7831,17 @@ export default class T extends LoopingBot {
         .expect("withdraw-X isolate starts");
 
     let mut c = bank_fetch_client();
+    // The pack is the explicit posted inventory below: the isolate settles
+    // the whole request from the same rows the host settles each click on.
+    c.set_iface_mut(
+        500,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 28]),
+            link_obj_number: Some(vec![0; 28]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
@@ -14988,15 +15202,13 @@ fn script_observe_drains_queued_cheat_onto_driver() {
     );
 }
 
-// Task 9b — the posted blob is FlatBuffers (schema:
-// crates/script/schema/isolate.fbs) and carries exactly the fields the
-// shim Game/Inventory/Skills/EventSignal read: inv rows carry resolved
-// obj names (None when the table has none), stats rows the stat
-// index/name/xp/base/effective, bank flags from the snapshot, and
-// hold/ours pass through for EventSignal.pending(). No World clone —
-// only these fields. Round-trips through the script crate's decoder.
+// Task 9b — the posted FlatBuffer (schema: crates/script/schema/isolate.fbs)
+// carries the shim fields plus compact native facts such as projectiles;
+// inv rows carry resolved obj names, stats rows index/name/xp/base/effective,
+// and bank flags plus hold/ours pass through. No World clone — round-trip
+// through the script crate's decoder.
 #[test]
-fn script_snapshot_fb_carries_observed_fields_only() {
+fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     let mut c = prepare_client(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -15015,8 +15227,25 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     c.stat_base_level[7] = 35;
     c.stat_xp[7] = 1300;
     c.bump_gens(ServerProt::UPDATE_STAT);
+    c.self_slot = 1;
+    c.bump_gens(ServerProt::PLAYER_INFO);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
+    snap.seed_projectiles(vec![api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: 0,
+        src: api::WorldTile {
+            x: 3201,
+            z: 3200,
+            level: 0,
+        },
+        target: Some(api::snapshot::ActorTargetView {
+            kind: api::snapshot::ActorKind::Player,
+            index: 1,
+        }),
+        t1: 1,
+        t2: 2,
+    }]);
     let mut objs = vec![client::config::ObjType::default(); 2];
     objs[1].id = 1;
     objs[1].name = "Bones".into();
@@ -15042,6 +15271,9 @@ fn script_snapshot_fb_carries_observed_fields_only() {
     let here = view.here().expect("here posted");
     assert_eq!((here.x(), here.z(), here.level()), (3200, 3200, 0));
     assert!(view.ingame());
+    let projectile = view.projectiles().expect("native projectile page").get(0);
+    assert_eq!(projectile.spotanim(), 9);
+    assert_eq!(projectile.target_player_index(), Some(1));
     assert!(view.has_inv(), "keyframe carries inv");
     let inv = view.inv().expect("inventory rows");
     assert_eq!(inv.len(), 2);
@@ -24555,21 +24787,32 @@ mod read_journal_tests {
     use super::*;
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
 
-    struct ParkedRead {
+    struct PendingRead {
         requested: bool,
         panic_on_read: bool,
+        terminal_block: bool,
     }
 
-    impl Script for ParkedRead {
-        fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+    impl Script for PendingRead {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
             if self.requested {
                 Ok(ScriptFlow::Complete)
-            } else {
+            } else if self.terminal_block {
                 Ok(ScriptFlow::Blocked(ScriptFailure {
                     code: "journal-no-match".into(),
                     message: "no journal rule matched".into(),
-                    retryable: true,
                 }))
+            } else {
+                tick.output.status(script::native::ScriptStatus {
+                    run: tick.cx.run(),
+                    card: script::CompiledId("test"),
+                    phase: script::native::NativePhase::Waiting,
+                    active_settings: 1,
+                    pending_settings: None,
+                    fields: Arc::from([]),
+                    failure: None,
+                });
+                Ok(ScriptFlow::Continue)
             }
         }
 
@@ -24580,7 +24823,7 @@ mod read_journal_tests {
         }
     }
 
-    fn play(panic_on_read: bool) -> (Play, ScriptSlot) {
+    fn play(panic_on_read: bool, terminal_block: bool) -> (Play, ScriptSlot) {
         let play = crate::run_with_io(
             &crate::PlayOptions {
                 host: "127.0.0.1".into(),
@@ -24598,9 +24841,10 @@ mod read_journal_tests {
         slot.lock()
             .unwrap()
             .start_test_script(
-                Box::new(ParkedRead {
+                Box::new(PendingRead {
                     requested: false,
                     panic_on_read,
+                    terminal_block,
                 }),
                 None,
             )
@@ -24624,12 +24868,12 @@ mod read_journal_tests {
     }
 
     #[test]
-    fn host_read_journal_restarts_blocked_dispatch_and_finishes_the_read() {
-        let (play, slot) = play(false);
+    fn host_read_journal_dispatches_a_live_wait_and_finishes_the_read() {
+        let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
             slot.lock().unwrap().native_status().unwrap().phase,
-            script::native::NativePhase::Blocked
+            script::native::NativePhase::Waiting
         );
         play.script_native_read_journal("alice", run).unwrap();
         assert_eq!(
@@ -24647,7 +24891,7 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_refuses_every_stale_run_key_dimension() {
-        let (play, slot) = play(false);
+        let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         for stale in [
             api::selected::RunKey {
@@ -24669,13 +24913,13 @@ mod read_journal_tests {
             );
             assert_eq!(
                 slot.lock().unwrap().native_status().unwrap().phase,
-                script::native::NativePhase::Blocked
+                script::native::NativePhase::Waiting
             );
         }
         tick(&slot, 2);
         assert_eq!(
             slot.lock().unwrap().native_status().unwrap().phase,
-            script::native::NativePhase::Blocked
+            script::native::NativePhase::Waiting
         );
         play.script_native_read_journal("alice", run).unwrap();
         tick(&slot, 3);
@@ -24683,8 +24927,29 @@ mod read_journal_tests {
     }
 
     #[test]
+    fn host_read_journal_cannot_restart_a_terminal_blocked_run() {
+        let (play, slot) = play(false, true);
+        let status = slot.lock().unwrap().native_status().unwrap();
+        assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
+        assert!(slot.lock().unwrap().native_run().is_none());
+        assert_eq!(status.phase, script::native::NativePhase::Blocked);
+        assert_eq!(
+            status.failure.as_ref().unwrap().code.as_ref(),
+            "journal-no-match"
+        );
+        assert_eq!(
+            play.script_native_read_journal("alice", status.run),
+            Err("stale native run".into())
+        );
+        tick(&slot, 2);
+        let slot = slot.lock().unwrap();
+        assert_eq!(slot.state(), script::RunState::Idle);
+        assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
+    }
+
+    #[test]
     fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
-        let (play, slot) = play(true);
+        let (play, slot) = play(true, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
             play.script_native_read_journal("alice", run),

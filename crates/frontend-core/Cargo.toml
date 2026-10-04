@@ -25,6 +25,7 @@ client = { workspace = true }
 # Integration tests use the fixture seams behind this crate's test-support.
 frontend-core = { path = ".", features = ["test-support"] }
 host-play = { path = "../host-play", features = ["test-support"] }
+scenario = { path = "../scenario" }
 
 [features]
 # Test-only lifecycle fixtures (arm-only spawns). Enabled from front-end

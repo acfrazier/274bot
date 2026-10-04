@@ -7,7 +7,8 @@
 //! frozen order; without one the count is `Inventory.count(name)` read from
 //! the posted backpack. Pack-full is read from the scene.
 
-use crate::bank_op::{js_number, same_name, BankView, Closing, Op, Sent};
+use crate::bank::ops::same_name;
+use crate::bank_op::{js_number, BankView, Closing, Op, Sent};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
 use crate::observed::{self, Scene};
 use serde::Deserialize;
@@ -275,7 +276,11 @@ impl Family for WithdrawTo {
                     }
                 }
                 Phase::AwaitX { before, need } => {
-                    let Some(ok) = self.waiting.and_then(|w| w.poll(&BankView::now())) else {
+                    let Some(ok) = self
+                        .waiting
+                        .as_mut()
+                        .and_then(|w| w.poll(&BankView::now(), cx))
+                    else {
                         return Step::Wait;
                     };
                     self.waiting = None;
@@ -296,7 +301,8 @@ impl Family for WithdrawTo {
                 Phase::AwaitOp { before } => {
                     if self
                         .waiting
-                        .and_then(|w| w.poll(&BankView::now()))
+                        .as_mut()
+                        .and_then(|w| w.poll(&BankView::now(), cx))
                         .is_none()
                     {
                         return Step::Wait;
@@ -460,6 +466,8 @@ mod tests {
                 .bank_generation(3)
                 .bank_op_result_seq(seq)
                 .bank_op_result(true)
+                .withdraw_x_result_seq(seq)
+                .withdraw_x_result(true)
                 .inv_size(28)
                 .inv(inv)
                 .bank(bank);
@@ -531,30 +539,31 @@ mod tests {
         );
     }
 
-    /// A Withdraw-X the bank row cannot take (no X op) falls back to the
-    /// labelled Withdraw-10, as frozen does when `withdrawX` answers false.
+    /// The Withdraw-X chunk is frozen `withdrawX`, now the shared kernel:
+    /// a bank row without an X op is served by its fixed ladder (native
+    /// wins), clicking Withdraw-10 until the whole chunk has landed.
     #[test]
-    fn a_refused_withdraw_x_falls_back_to_the_labelled_ten() {
+    fn a_fixed_only_row_serves_the_withdraw_x_chunk_by_the_ladder() {
+        let fixed = ["Withdraw-1", "Withdraw-5", "Withdraw-10"];
+        let ten = InteractReq::WithdrawX {
+            name: "Lobster".into(),
+            count: 10,
+            bank_item_id: 379,
+            lands_as_id: 379,
+            action: "Withdraw-10".into(),
+            bank_generation: 3,
+        };
         observed::on_reset();
-        post(1, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 2, 0, 0);
+        post(1, &fixed, 2, 0, 0);
         let handle = running(start(22));
+        assert_eq!(tick(), vec![ten.clone()]);
+        post(2, &fixed, 12, 0, 1);
         assert_eq!(
             tick(),
-            vec![InteractReq::Withdraw {
-                name: "Lobster".into(),
-                action: "Withdraw-10".into(),
-            }]
+            vec![ten],
+            "one landed click is not the 20 the chunk asked for"
         );
-        post(2, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 12, 0, 1);
-        assert_eq!(
-            tick(),
-            vec![InteractReq::Withdraw {
-                name: "Lobster".into(),
-                action: "Withdraw-10".into(),
-            }],
-            "landed: the next round needs 10"
-        );
-        post(3, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 22, 0, 2);
+        post(3, &fixed, 22, 0, 2);
         assert!(tick().is_empty());
         assert_eq!(
             machine::take(handle),

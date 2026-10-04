@@ -20,6 +20,7 @@
 //! The per-slot last-post [`SnapshotFingerprint`] is compared by value
 //! (equality, not a hash) once per slot per tick.
 
+use api::snapshot::{ActorKind, ProjectileView, MAX_PROJECTILES_PER_SNAPSHOT};
 use flatbuffers::{
     root_with_opts, FlatBufferBuilder, InvalidFlatbuffer, VerifierOptions, WIPOffset,
 };
@@ -32,10 +33,10 @@ pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand, Booth, Carry,
-    ChatLine, ChatOption, Collision, CombatStyle, InspectHop, Interact, InteractBatch,
-    MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow, PuzzleBoard,
-    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface, Snapshot,
-    Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
+    ChatLine, ChatOption, Collision, CombatProjectile, CombatStyle, InspectHop, Interact,
+    InteractBatch, MainModalTexts, MakeButton, MakeProduct, NearestBooth, NpcBox, ProgressFlagRow,
+    PuzzleBoard, QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SettingRow, SideTabIface,
+    Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason, WidgetText,
 };
 
 fn isolate_verify_opts() -> VerifierOptions {
@@ -201,7 +202,7 @@ pub struct ChatOptionInput<'a> {
     pub com_id: i32,
 }
 
-/// One inv/bank/equipment row posted from `ItemView`.
+/// One inv/bank/equipment row posted from the live snapshot.
 #[derive(Clone, Copy)]
 pub struct ItemRowInput<'a> {
     pub name: Option<&'a str>,
@@ -470,8 +471,16 @@ pub struct NativeFactsInput<'a> {
     /// Bank item packet generation (`-1` while closed), not the open/close
     /// session identity. `None` omits the slot and keeps the last value.
     pub bank_snapshot_generation: Option<i64>,
+    /// Live projectiles from the observed snapshot. `None` omits the page;
+    /// `Some(&[])` explicitly clears it. Encoding keeps at most
+    /// `MAX_PROJECTILES_PER_SNAPSHOT` projectiles targeted at `self_slot`.
+    pub projectiles: Option<&'a [ProjectileView]>,
     /// Host-published native fingerprint for the current chat modal page.
     pub chat_page_fingerprint: u64,
+    /// `modals().side` (`-1` none). With `bank_open` it is the posted-side
+    /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
+    /// last root.
+    pub side_modal_id: Option<i32>,
 }
 
 /// A terminal select-only result. Its ordinal is resolved against Start's
@@ -791,6 +800,7 @@ impl<'a> Snapshot<'a> {
         has_api_gather_outcome => VT_API_GATHER_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
+        has_side_modal_id => VT_SIDE_MODAL_ID,
     }
 
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
@@ -1079,6 +1089,50 @@ impl From<&crate::api_gather::GatherPage> for ApiGatherFp {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct ProjectileFingerprintRow {
+    spotanim: i32,
+    target_player_index: i32,
+}
+
+/// Allocation-free fingerprint for the optional bounded projectile page.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectilePageFingerprint {
+    len: usize,
+    rows: [ProjectileFingerprintRow; MAX_PROJECTILES_PER_SNAPSHOT],
+}
+
+impl ProjectilePageFingerprint {
+    fn from_input(rows: &[ProjectileView], local_player_slot: i32) -> Self {
+        let mut page = Self::default();
+        for projectile in local_target_projectiles(rows, local_player_slot) {
+            let index = page.len;
+            page.rows[index] = ProjectileFingerprintRow {
+                spotanim: projectile.spotanim,
+                target_player_index: local_player_slot,
+            };
+            page.len = index + 1;
+        }
+        page
+    }
+}
+
+fn local_target_projectiles<'a>(
+    rows: &'a [ProjectileView],
+    local_player_slot: i32,
+) -> impl Iterator<Item = &'a ProjectileView> + 'a {
+    let local_slot = usize::try_from(local_player_slot).ok();
+    rows.iter()
+        .filter(move |projectile| {
+            local_slot.is_some_and(|slot| {
+                projectile
+                    .target
+                    .is_some_and(|target| target.kind == ActorKind::Player && target.index == slot)
+            })
+        })
+        .take(MAX_PROJECTILES_PER_SNAPSHOT)
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -1171,6 +1225,8 @@ pub struct SnapshotFingerprint {
     /// nothing — one family, so a delta cannot post one half.
     pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
+    /// `(spotanim, target player slot)` — only policy-relevant projectile facts.
+    pub projectiles: Option<ProjectilePageFingerprint>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
     pub user_move_intent_seq: u64,
 
@@ -1202,6 +1258,7 @@ pub struct SnapshotFingerprint {
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
     pub chat_page_fingerprint: u64,
+    pub side_modal_id: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -1463,6 +1520,9 @@ impl SnapshotFingerprint {
                 generation: board.generation,
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
+            projectiles: native
+                .projectiles
+                .map(|rows| ProjectilePageFingerprint::from_input(rows, input.self_slot)),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
             user_move_intent_seq: input.user_move_intent_seq,
             walk_outcome_seq: native.walk_outcome_seq,
@@ -1494,6 +1554,7 @@ impl SnapshotFingerprint {
             api_gather_outcome: native.api_gather_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
+            side_modal_id: native.side_modal_id,
         }
     }
 }
@@ -1575,6 +1636,7 @@ pub struct DeltaMask {
     pub ours: bool,
     pub npcs: bool,
     pub locs: bool,
+    pub projectiles: bool,
     pub players: bool,
     pub ground: bool,
     pub equipment: bool,
@@ -1653,6 +1715,8 @@ pub struct DeltaMask {
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
     pub chat_page_fingerprint: bool,
+    /// The side modal root; written only when supplied.
+    pub side_modal_id: bool,
 }
 
 impl DeltaMask {
@@ -1686,6 +1750,7 @@ impl DeltaMask {
             players: true,
             ground: true,
             equipment: true,
+            projectiles: true,
             chat_open: true,
             chat_continue: true,
             chat_text: true,
@@ -1749,6 +1814,7 @@ impl DeltaMask {
             api_gather_outcome: true,
             api_progress: true,
             chat_page_fingerprint: true,
+            side_modal_id: true,
         }
     }
 
@@ -1789,6 +1855,7 @@ impl DeltaMask {
             ours: next.ours != last.ours,
             npcs: next.npcs != last.npcs,
             locs: next.locs != last.locs,
+            projectiles: next.projectiles != last.projectiles,
             players: next.players != last.players,
             ground: next.ground != last.ground,
             equipment: next.equipment != last.equipment,
@@ -1871,6 +1938,7 @@ impl DeltaMask {
                 && next.api_gather_outcome != last.api_gather_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
+            side_modal_id: next.side_modal_id != last.side_modal_id,
         }
     }
 }
@@ -2453,6 +2521,19 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let projectiles_off = if mask.projectiles {
+        native.projectiles.map(|rows| {
+            let mut offsets = [WIPOffset::new(0); MAX_PROJECTILES_PER_SNAPSHOT];
+            let mut len = 0;
+            for projectile in local_target_projectiles(rows, input.self_slot) {
+                offsets[len] = combat_projectile_off(b, projectile);
+                len += 1;
+            }
+            b.create_vector(&offsets[..len])
+        })
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -2807,8 +2888,14 @@ fn encode_snapshot_masked_into(
     if let Some(off) = api_progress_slot {
         table.add_api_progress(off);
     }
+    if let Some(off) = projectiles_off {
+        table.add_projectiles(off);
+    }
     if mask.chat_page_fingerprint {
         table.add_chat_page_fingerprint(native.chat_page_fingerprint);
+    }
+    if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
+        table.add_side_modal_id(side);
     }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
@@ -2821,6 +2908,22 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'
     table.add_x(t.x);
     table.add_z(t.z);
     table.add_level(t.level);
+    table.finish()
+}
+fn combat_projectile_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    projectile: &ProjectileView,
+) -> WIPOffset<CombatProjectile<'b>> {
+    let mut table = CombatProjectileBuilder::new(b);
+    table.add_spotanim(projectile.spotanim);
+    if let Some(target) = projectile
+        .target
+        .filter(|target| target.kind == ActorKind::Player)
+    {
+        if let Ok(index) = i32::try_from(target.index) {
+            table.add_target_player_index(index);
+        }
+    }
     table.finish()
 }
 /// The largest encoded settings vector admitted for `gather-run`.
@@ -3186,23 +3289,18 @@ fn api_gather_outcome_off<'b>(
     outcome: &crate::api_gather::GatherEnd,
 ) -> WIPOffset<ApiGatherOutcome<'b>> {
     use crate::api_gather::GatherEnd;
-    let (end, code, message, retryable, counts) = match outcome {
-        GatherEnd::Stopped { counts, .. } => (1, None, None, false, *counts),
+    let (end, code, message, counts) = match outcome {
+        GatherEnd::Stopped { counts, .. } => (1, None, None, *counts),
         GatherEnd::Blocked {
             failure, counts, ..
         } => (
             2,
             Some(failure.code.as_ref()),
             Some(failure.message.as_ref()),
-            failure.retryable,
             *counts,
         ),
-        GatherEnd::Refused { reason, .. } => {
-            (3, None, Some(reason.as_ref()), false, Default::default())
-        }
-        GatherEnd::Failed { reason, counts, .. } => {
-            (4, None, Some(reason.as_ref()), false, *counts)
-        }
+        GatherEnd::Refused { reason, .. } => (3, None, Some(reason.as_ref()), Default::default()),
+        GatherEnd::Failed { reason, counts, .. } => (4, None, Some(reason.as_ref()), *counts),
     };
     let code = code.map(|value| b.create_string(value));
     let message = message.map(|value| b.create_string(value));
@@ -3215,7 +3313,6 @@ fn api_gather_outcome_off<'b>(
     if let Some(message) = message {
         table.add_message(message);
     }
-    table.add_retryable(retryable);
     table.add_yielded(counts.yielded);
     table.add_dropped(counts.dropped);
     table.add_deposited(counts.deposited);
@@ -4961,6 +5058,7 @@ fn interact_off<'b>(
 pub(crate) mod tests {
     use super::*;
     use crate::shim::InteractReq;
+    use api::snapshot::{ActorTargetView, WorldTile};
 
     pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
@@ -5037,6 +5135,21 @@ pub(crate) mod tests {
             widgets: &[],
             user_move_intent_seq: 0,
             walk_outcome_cancel_reason: Default::default(),
+        }
+    }
+
+    fn projectile(spotanim: i32, target: Option<ActorTargetView>, t1: i32) -> ProjectileView {
+        ProjectileView {
+            spotanim,
+            level: 0,
+            src: WorldTile {
+                x: t1,
+                z: 20,
+                level: 0,
+            },
+            target,
+            t1,
+            t2: t1 + 10,
         }
     }
 
@@ -5192,6 +5305,93 @@ pub(crate) mod tests {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
             assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
         });
+    }
+
+    /// `side_modal_id` is an appended delta scalar: present on the
+    /// keyframe, omitted (and retained) while unchanged, an explicit `-1`
+    /// on close, never leaked across a login, and absent on old buffers.
+    #[test]
+    fn side_modal_id_round_trips_as_a_delta_scalar() {
+        let native = |side| NativeFactsInput {
+            side_modal_id: Some(side),
+            ..NativeFactsInput::default()
+        };
+        let side = |scene: &crate::observed::Scene| {
+            (
+                scene.latest().side_modal_id(),
+                scene.since_login().side_modal_id(),
+            )
+        };
+        crate::observed::on_reset();
+        let mut input = empty_input(1);
+        input.bank_open = true;
+        let (keyframe_bytes, fp) =
+            encode_snapshot_delta_with_native(None, &input, native(700), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert!(keyframe.has_side_modal_id());
+        assert_eq!(keyframe.side_modal_id(), 700);
+        crate::observed::apply(&keyframe);
+        assert_eq!(crate::observed::with(side), (Some(700), Some(700)));
+
+        input.tick = 2;
+        let (unchanged_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged");
+        assert!(
+            !unchanged.has_side_modal_id(),
+            "an unchanged root is omitted"
+        );
+        assert_eq!(
+            unchanged.side_modal_id(),
+            -1,
+            "the reader default is absent"
+        );
+        crate::observed::apply(&unchanged);
+        assert_eq!(
+            crate::observed::with(side),
+            (Some(700), Some(700)),
+            "omission retains the posted root, not -1"
+        );
+
+        input.tick = 3;
+        input.bank_open = false;
+        let (closed_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(-1), false);
+        let closed = decode_snapshot(&closed_bytes).expect("closed");
+        assert!(closed.has_side_modal_id(), "-1 is an explicit close");
+        assert_eq!(closed.side_modal_id(), -1);
+        crate::observed::apply(&closed);
+        assert_eq!(crate::observed::with(side), (Some(-1), Some(-1)));
+
+        input.tick = 4;
+        input.bank_open = true;
+        let (open_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        crate::observed::apply(&decode_snapshot(&open_bytes).expect("reopen"));
+        input.tick = 5;
+        input.ingame = false;
+        let (logout_bytes, fp) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        crate::observed::apply(&decode_snapshot(&logout_bytes).expect("logout"));
+        input.tick = 6;
+        input.ingame = true;
+        let (login_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
+        let login = decode_snapshot(&login_bytes).expect("login");
+        assert!(!login.has_side_modal_id());
+        crate::observed::apply(&login);
+        assert_eq!(
+            crate::observed::with(side),
+            (Some(700), None),
+            "a prior session's root is not this session's observation"
+        );
+
+        // A caller that supplies no root writes none, and an old buffer
+        // without the slot reads absent.
+        let (old_bytes, _) = encode_snapshot_delta(None, &empty_input(7), false);
+        let old = decode_snapshot(&old_bytes).expect("old");
+        assert!(!old.has_side_modal_id());
+        assert_eq!(old.side_modal_id(), -1);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.
@@ -5583,6 +5783,173 @@ pub(crate) mod tests {
         let old = decode_snapshot(&old).expect("old");
         assert!(!old.has_self_anim());
         assert_eq!(old.self_anim(), -1);
+    }
+
+    #[test]
+    fn projectile_encoder_filters_to_self_and_ignores_irrelevant_changes() {
+        let mut input = empty_input(5);
+        input.self_slot = 4;
+        let local = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 4,
+        });
+        let other = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 3,
+        });
+        let npc = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        });
+        let initial = [
+            projectile(91, other, 10),
+            projectile(92, npc, 20),
+            projectile(93, None, 30),
+            projectile(44, local, 40),
+        ];
+        let native = NativeFactsInput {
+            projectiles: Some(&initial),
+            ..NativeFactsInput::default()
+        };
+        let (keyframe, fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native, false);
+        let page = decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .projectiles()
+            .expect("present projectile page");
+        assert_eq!(page.len(), 1);
+        assert_eq!(page.get(0).spotanim(), 44);
+        assert_eq!(page.get(0).target_player_index(), Some(4));
+
+        // Other actors and source/timing changes are not consumed by policy.
+        let irrelevant_changes = [
+            projectile(191, other, 110),
+            projectile(192, npc, 120),
+            projectile(193, None, 130),
+            projectile(44, local, 140),
+        ];
+        let native = NativeFactsInput {
+            projectiles: Some(&irrelevant_changes),
+            ..NativeFactsInput::default()
+        };
+        let (delta, next_fingerprint) =
+            encode_snapshot_delta_with_native(Some(&fingerprint), &input, native, false);
+        assert!(decode_snapshot(&delta)
+            .expect("unchanged delta")
+            .projectiles()
+            .is_none());
+
+        let relevant_change = [projectile(45, local, 140)];
+        let native = NativeFactsInput {
+            projectiles: Some(&relevant_change),
+            ..NativeFactsInput::default()
+        };
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&next_fingerprint), &input, native, false);
+        let page = decode_snapshot(&delta)
+            .expect("changed delta")
+            .projectiles()
+            .expect("changed projectile page");
+        assert_eq!(page.len(), 1);
+        assert_eq!(page.get(0).spotanim(), 45);
+    }
+
+    #[test]
+    fn projectile_encoder_caps_filtered_synthetic_rows() {
+        let mut input = empty_input(5);
+        input.self_slot = 4;
+        let local = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 4,
+        });
+        let other = Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: 3,
+        });
+        let npc = Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: 7,
+        });
+        let mut rows = Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT + 3);
+        rows.extend([
+            projectile(1, other, 1),
+            projectile(2, npc, 2),
+            projectile(3, None, 3),
+        ]);
+        for index in 0..MAX_PROJECTILES_PER_SNAPSHOT + 5 {
+            let index = i32::try_from(index).expect("small capped test index");
+            rows.push(projectile(700 + index, local, index));
+            rows.push(projectile(900 + index, other, index));
+        }
+
+        let native = NativeFactsInput {
+            projectiles: Some(&rows),
+            ..NativeFactsInput::default()
+        };
+        let (keyframe, _) = encode_snapshot_delta_with_native(None, &input, native, false);
+        let page = decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .projectiles()
+            .expect("present projectile page");
+        assert_eq!(page.len(), MAX_PROJECTILES_PER_SNAPSHOT);
+        for index in 0..MAX_PROJECTILES_PER_SNAPSHOT {
+            let spotanim = 700 + i32::try_from(index).expect("small capped test index");
+            assert_eq!(page.get(index).spotanim(), spotanim);
+            assert_eq!(page.get(index).target_player_index(), Some(4));
+        }
+    }
+
+    #[test]
+    fn projectile_empty_vector_delta_clears_but_none_omits() {
+        let input = empty_input(5);
+        let rows = [projectile(
+            44,
+            Some(ActorTargetView {
+                kind: ActorKind::Player,
+                index: 0,
+            }),
+            40,
+        )];
+        let native = NativeFactsInput {
+            projectiles: Some(&rows),
+            ..NativeFactsInput::default()
+        };
+        let (keyframe, fingerprint) =
+            encode_snapshot_delta_with_native(None, &input, native, false);
+        assert_eq!(
+            decode_snapshot(&keyframe)
+                .expect("keyframe")
+                .projectiles()
+                .expect("present page")
+                .len(),
+            1
+        );
+
+        let (omitted, omitted_fingerprint) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &input,
+            NativeFactsInput::default(),
+            false,
+        );
+        assert!(decode_snapshot(&omitted)
+            .expect("omitted delta")
+            .projectiles()
+            .is_none());
+
+        let native = NativeFactsInput {
+            projectiles: Some(&[]),
+            ..NativeFactsInput::default()
+        };
+        let (clear, _) =
+            encode_snapshot_delta_with_native(Some(&omitted_fingerprint), &input, native, false);
+        assert_eq!(
+            decode_snapshot(&clear)
+                .expect("empty-page delta")
+                .projectiles()
+                .expect("explicit clear page")
+                .len(),
+            0
+        );
     }
 
     #[test]

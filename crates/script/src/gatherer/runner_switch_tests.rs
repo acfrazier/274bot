@@ -1,8 +1,10 @@
 use super::*;
 use crate::quester::families::tests::with_tick;
 use api::gather_methods::{known_rows, TargetClass};
+use api::named_banks::{NamedBank, NamedBankFacts};
 use api::selected::{EntityId, FamilyPreparation};
 use api::snapshot::GameSnapshot;
+use api::snapshot::WorldTile;
 
 fn fixture() -> (Gatherer, GameSnapshot) {
     let (config, mut snapshot) = FamilyPreparation::run(|families| {
@@ -30,6 +32,88 @@ fn fixture() -> (Gatherer, GameSnapshot) {
         GatherRetained::default(),
     );
     (gatherer, snapshot)
+}
+
+fn bank_fixture(bank_choice: Option<&'static str>) -> (Gatherer, GameSnapshot) {
+    let bank_tile = WorldTile {
+        x: 3245,
+        z: 3423,
+        level: 0,
+    };
+    let (config, snapshot) = FamilyPreparation::run(move |families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let banks = Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+            "Varrock East",
+            bank_tile,
+        )]));
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("disposition".into(), serde_json::json!("Bank"));
+        if let Some(bank) = bank_choice {
+            settings.insert("bank".into(), serde_json::json!(bank));
+        }
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks,
+            families,
+        };
+        let config = super::super::card::prepare(&mut cx, 1, Arc::new(settings)).unwrap();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        }));
+        (config, snapshot)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&config),
+        Arc::clone(config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained::default(),
+    );
+    (gatherer, snapshot)
+}
+
+fn gatherer_bank_pick(bank_choice: Option<&'static str>) -> crate::native_bank::BankPickRequest {
+    let (mut gatherer, snapshot) = bank_fixture(bank_choice);
+    let mut ledger = None;
+    gatherer.trip = TripStep::Select;
+    with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+    with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
+    ledger
+        .as_ref()
+        .and_then(|ledger| {
+            ledger
+                .outbox
+                .iter()
+                .find_map(|action| match &action.effect {
+                    crate::native::HostEffect::BankPick(request) => Some(request.clone()),
+                    _ => None,
+                })
+        })
+        .expect("the bank trip must submit a selection request")
+}
+
+#[test]
+fn gatherer_nearest_bank_setting_emits_no_explicit_bank() {
+    assert!(gatherer_bank_pick(None).explicit_bank.is_none());
+}
+
+#[test]
+fn gatherer_named_bank_setting_remains_an_explicit_pick() {
+    assert_eq!(
+        gatherer_bank_pick(Some("Varrock East")).explicit_bank,
+        Some(0)
+    );
 }
 
 fn assert_target_handoff(depleted: bool) {

@@ -1,5 +1,6 @@
 use super::arbiter::{self, PlanRow, RowKind, TickPlan};
 use super::frame::Frame;
+use super::policy;
 use super::prayer::PrayerSweep;
 use super::request::*;
 use super::schedule::{elapsed, reached, Interaction, OpKind, Schedule};
@@ -1332,7 +1333,7 @@ impl Combat {
             .allow
             .prayer
             .then(|| {
-                select::wanted_protect(
+                policy::wanted_protect(
                     &self.threats,
                     frame,
                     &self.tables,
@@ -1510,8 +1511,10 @@ impl Combat {
             }
             return Ok(plan);
         }
-        let floor = prayer_floor(base);
-        if self.request.allow.prayer && (protection_wanted || prayers != 0) && points <= floor {
+        if self.request.allow.prayer
+            && (protection_wanted || prayers != 0)
+            && policy::prayer_sip_due(points, base)
+        {
             self.drink_or_recover(
                 &mut plan,
                 PotionKind::Prayer,
@@ -1548,7 +1551,7 @@ impl Combat {
             && self.request.allow.prayer
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
             && points > 0
-            && (points > floor
+            && (points > policy::prayer_sip_floor(base)
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
         if offense {
             for role in [PrayerRole::Strength, PrayerRole::Attack] {
@@ -2006,9 +2009,6 @@ fn potion_kind(code: u8) -> PotionKind {
         6 => PotionKind::Antifire,
         _ => unreachable!("planned potion kind"),
     }
-}
-pub(super) fn prayer_floor(base: i32) -> i32 {
-    (base - (7 + base / 4)).max(3)
 }
 
 fn unavailable(reason: &'static str) -> ActionError {
