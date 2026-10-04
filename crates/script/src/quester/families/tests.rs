@@ -1592,7 +1592,11 @@ fn compile_context_test_with_keep<R>(
 fn unequip_all_keeps_shared_protected_equipment() {
     let protected_id = 7;
     let plan = compile_context_test_with_keep(&[protected_id], |cx| {
-        super::s2::compile_unequip(&serde_json::json!({"all": true}), cx).unwrap()
+        super::s2::compile_unequip(
+            test_args::<s2::EquipArgs>(serde_json::json!({"all": true})),
+            cx,
+        )
+        .unwrap()
     });
     let equipment = |id, name| ItemView {
         def: def(id, name),
@@ -4229,10 +4233,10 @@ fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
             ),
         ] {
             let plan = compile_talk(
-                &serde_json::json!({
+                test_args::<TalkArgs>(serde_json::json!({
                     "npc":"desertminingcaptain",
                     "expect_combat":{"npc":"desertminingcaptain"}
-                }),
+                })),
                 compile,
             )
             .unwrap();
@@ -4310,7 +4314,9 @@ fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
 fn talk_expected_combat_rejects_unknown_npc_config() {
     compile_context_test(|cx| {
         let result = compile_talk(
-            &serde_json::json!({"npc":"desertminingcaptain","expect_combat":{"npc":"missing"}}),
+            test_args::<TalkArgs>(
+                serde_json::json!({"npc":"desertminingcaptain","expect_combat":{"npc":"missing"}}),
+            ),
             cx,
         );
         assert!(
