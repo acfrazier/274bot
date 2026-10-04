@@ -22365,7 +22365,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
-                                options: script::FindOptions::default(),
+                                options: script::native::WalkOptions::default(),
                                 required_after: tick.cx.evidence(),
                                 evidence: None,
                                 cross: Box::default(),

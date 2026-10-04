@@ -3840,6 +3840,7 @@ fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
     let plan = WalkPlan {
         tile: tile(3200, 3200),
         radius: 1,
+        options: crate::native::WalkOptions::default(),
         cross: Box::default(),
         protect: true,
     };
@@ -4025,6 +4026,68 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         .outbox
         .iter()
         .all(|action| { matches!(&action.effect, HostEffect::Walk(_)) }));
+}
+#[test]
+fn path_walk_permissions_decode_as_tri_state_options() {
+    let inherited = super::parse_walk_plan(&serde_json::json!({
+        "tile": [3224, 3200, 0],
+        "source": "walk opt-in test",
+        "radius": 1,
+    }))
+    .unwrap();
+    assert_eq!(inherited.options, crate::native::WalkOptions::default());
+
+    let explicit = super::parse_walk_plan(&serde_json::json!({
+        "tile": [3224, 3200, 0],
+        "source": "walk opt-in test",
+        "radius": 1,
+        "allow_teleports": true,
+        "allow_wilderness": false,
+    }))
+    .unwrap();
+    assert_eq!(
+        explicit.options,
+        crate::native::WalkOptions {
+            allow_teleports: crate::native::WalkBit::Allow,
+            allow_wilderness: crate::native::WalkBit::Forbid,
+            allow_danger_zones: crate::native::WalkBit::Inherit,
+        }
+    );
+}
+
+#[test]
+fn path_walk_crossing_and_protection_are_independent() {
+    compile_context_test(|cx| {
+        for protect in [false, true] {
+            let mut args = serde_json::json!({
+                "tile": [3224, 3200, 0],
+                "source": "walk opt-in test",
+                "radius": 1,
+            });
+            if protect {
+                args["guard"] = serde_json::json!("protect");
+            } else {
+                args["cross"] = serde_json::json!(["death-plateau-throwers"]);
+            }
+            let plan = super::compile_walk(&args, cx).unwrap();
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3100, 3200)));
+            let mut ledger = None;
+            let _run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            let HostEffect::Walk(request) = &ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the compiled Path must emit a real native walk");
+            };
+            assert_eq!(request.protect, protect);
+            if protect {
+                assert!(request.cross.is_empty());
+            } else {
+                assert_eq!(request.cross.len(), 1);
+                assert_eq!(&*request.cross[0], "death-plateau-throwers");
+            }
+        }
+    });
 }
 
 #[test]

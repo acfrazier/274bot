@@ -79,6 +79,7 @@ mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod walk_arm;
+mod walk_permissions;
 mod walk_plan;
 pub use map_bind::{
     bake_shipped_map_images, load_navpois, map_demand_manager, map_profile_descriptor, map_ready,
@@ -94,6 +95,7 @@ pub use walk_arm::{
     arm_walk_on, cancel_walk_arm, cancel_walk_arm_on_manual_input, step_walk_arm_bank_fetch,
     step_walk_arm_follow, walk_arm_bank_fetch_freezes_follow, NoPath, WalkArm, WalkArms,
 };
+pub use walk_permissions::WalkGlobals;
 mod play_scripts;
 pub use play_scripts::{ScriptNavPaint, ScriptStartHandle};
 mod play_slots;
@@ -160,7 +162,8 @@ pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
     clear_background_bots_ack_error, panel_ui_path, panel_ui_value, panel_ui_value_at,
-    persist_background_bots_ack, persist_panel_ui_value, persist_panel_ui_value_at, LiveSlot,
+    persist_background_bots_ack, persist_panel_ui_value, persist_panel_ui_value_at,
+    update_panel_ui_at, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
@@ -272,6 +275,9 @@ pub struct Play {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     /// Shared user preference; slot threads read it at the takeover fence.
     pause_script_on_manual_walk_abort: Arc<std::sync::atomic::AtomicBool>,
+    /// One coherent global permission snapshot, shared by every slot admission.
+    walk_globals: Arc<Mutex<WalkGlobals>>,
+    walk_globals_store: Option<Arc<std::path::PathBuf>>,
     /// Host-scope nav world (collision + transport graph) baked from the
     /// pack at construction (see [`default_pack_path`]); `None` when no
     /// pack loads, and `ctx.walk` then refuses to arm.
@@ -283,6 +289,27 @@ pub struct Play {
 }
 
 impl Play {
+    /// Applies to new manual and compiled-native walks; compat wiring is unchanged.
+    pub fn set_walk_globals(&self, globals: WalkGlobals) {
+        *self.walk_globals.lock().unwrap() = globals;
+    }
+
+    /// Bind the durable store for cross-process rereads at each admission.
+    pub fn set_walk_globals_store(&mut self, path: std::path::PathBuf) {
+        let path = Arc::new(path);
+        for bot in self.navs.lock().unwrap().values_mut() {
+            bot.walk_globals_store = Some(Arc::clone(&path));
+        }
+        self.walk_globals_store = Some(path);
+    }
+
+    pub fn walk_globals(&self) -> WalkGlobals {
+        self.walk_globals_store.as_ref().map_or_else(
+            || *self.walk_globals.lock().unwrap(),
+            |path| WalkGlobals::read_at(path).unwrap_or_default(),
+        )
+    }
+
     /// Changes only owner pausing, never movement detection or cancellation.
     /// Shared by current workers and workers spawned after this call.
     pub fn set_pause_script_on_manual_walk_abort(&self, enabled: bool) {
@@ -485,6 +512,9 @@ mod quester_journal_live_tests;
 
 #[cfg(test)]
 mod nav_arrival_live_tests;
+
+#[cfg(test)]
+mod walk_optins_live_tests;
 
 #[cfg(test)]
 #[path = "nav_door_toggle_live_settlement_tests.rs"]
