@@ -8,7 +8,12 @@
 //! whole cell finished inside 60 s. It saves a JSON receipt and a
 //! CPU-rendered PNG below `LIVE_EVIDENCE_DIR`.
 //!
-//! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=bk GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --lib live_bank_core_exact_withdraw_at_draynor -- --ignored --nocapture --test-threads=1`
+//! Like the Gatherer live cells, the client cache is the revision's decoded
+//! snapshot copied once and reused: `BOT_CACHE_DIR` is the copied versioned
+//! snapshot and `CLIENT_UNPACK_DIR` its copied unpack root. A launch never
+//! fetches or deletes that immutable cache.
+//!
+//! `LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=bk GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --lib live_bank_core_exact_withdraw_at_draynor -- --ignored --nocapture --test-threads=1`
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -474,14 +479,15 @@ fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
         nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(path("GATHERER_ENGINE_DIR")?),
         vault_path: Some(scratch.join("vault")),
-        unpack_dir: Some(scratch.join("unpack")),
+        cache_dir: Some(path("BOT_CACHE_DIR")?),
+        unpack_dir: Some(path("CLIENT_UNPACK_DIR")?),
         catalog_root: Some(path("GATHERER_CATALOG_ROOT")?),
         ..ProfileOptions::default()
     })
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/LIVE_EVIDENCE_DIR and a local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_exact_withdraw_at_draynor() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     let root = PathBuf::from(

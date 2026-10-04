@@ -842,7 +842,8 @@ impl NativeMachine for BankMachine {
                         let spec = deposit_spec(&self.request.action)
                             .expect("deposit actions have a deposit spec");
                         let wait_done = self.view_armed && now >= self.deadline;
-                        match ops::deposit_next(&spec, side, pack, wait_done) {
+                        match ops::deposit_next(&spec, side, pack, wait_done, self.same_session(cx))
+                        {
                             DepositScan::WaitView => {
                                 if pack.is_some() && spec.kind == DepositKind::UntilEmpty {
                                     if !self.view_armed {
@@ -858,6 +859,11 @@ impl NativeMachine for BankMachine {
                                 return Poll::Pending;
                             }
                             DepositScan::Done => return Poll::Ready(Ok(self.receipt(cx, true))),
+                            DepositScan::SessionGone => {
+                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                    "bank closed during deposit",
+                                ))));
+                            }
                             DepositScan::MissingRequired => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
                                     "inventory products remain but matching bank side row is missing",
@@ -906,6 +912,14 @@ impl NativeMachine for BankMachine {
                             None => return Poll::Pending,
                         }
                     }
+                    // A count change settles only in the bank session that
+                    // sent the click; a closed or replaced session never
+                    // completes it, whichever way the count moved.
+                    if !self.same_session(cx) {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank closed before the transfer settled",
+                        ))));
+                    }
                     // The clicked id's held count: a withdraw raises it, a
                     // deposit lowers it.
                     let current = cx
@@ -933,8 +947,7 @@ impl NativeMachine for BankMachine {
                         self.phase = Phase::Act;
                         continue;
                     }
-                    let same_session = self.same_session(cx);
-                    if !same_session || cx.active_now() >= self.deadline {
+                    if cx.active_now() >= self.deadline {
                         return Poll::Ready(Err(ActionError::Failed(Arc::from(
                             "bank transfer did not settle",
                         ))));
@@ -2134,6 +2147,82 @@ mod tests {
             poll,
             Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
+    }
+
+    /// A deposit settles only in the bank session that sent it: a held count
+    /// that falls while the bank closes, or closes and reopens as a new
+    /// session, is never a completed deposit (Required or until-empty).
+    #[test]
+    fn deposit_does_not_settle_after_its_bank_session_is_gone() {
+        let trout = 333;
+        let side = vec![row_with(
+            item(trout, "Trout", 2, ItemContainer::BankSide),
+            &["Deposit-1", "Deposit-5", "Deposit-All"],
+            0,
+        )];
+        let required = || {
+            bank_request(
+                BankAction::Deposit {
+                    item: BankItem {
+                        id: trout,
+                        name: Arc::from("Trout"),
+                    },
+                },
+                false,
+            )
+        };
+        let until_empty = || {
+            bank_request(
+                BankAction::DepositAll {
+                    keep: Arc::from([]),
+                },
+                false,
+            )
+        };
+        let mut wrong = Vec::new();
+        for (label, request, reopen) in [
+            ("required, closed", required(), false),
+            ("required, reopened", required(), true),
+            ("until-empty, closed", until_empty(), false),
+            ("until-empty, reopened", until_empty(), true),
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_inventory(vec![item(trout, "Trout", 2, ItemContainer::Inventory)], 28);
+            snapshot.seed_bank_observation(10, 1, Some(Vec::new()), side.clone());
+            let generation = snapshot.bank_session_generation();
+            let mut ledger = None;
+            let (handle, poll) = begin_bank(&snapshot, &mut ledger, request);
+            assert!(poll.is_pending(), "{label}: {poll:?}");
+            assert!(
+                matches!(
+                    acknowledge(&mut ledger, 1),
+                    HostEffect::Interaction(InteractReq::InvButton { id, bank_generation, .. })
+                        if id == trout && bank_generation == generation
+                ),
+                "{label}: the deposit click names its session"
+            );
+
+            // The held count drops in the same observation that loses G.
+            snapshot.seed_inventory(Vec::new(), 28);
+            snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+            if reopen {
+                snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+                assert_ne!(snapshot.bank_session_generation(), generation);
+            }
+            let poll = with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            let refused = matches!(poll, Poll::Ready(Err(ActionError::Failed(_))))
+                && ledger.as_ref().unwrap().outbox.is_empty();
+            if !refused {
+                wrong.push(format!("{label}: {poll:?}"));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "a deposit outside its bank session must fail without another click: {wrong:#?}"
+        );
     }
 
     /// Until-empty deposit: a posted empty side settles at once; a side

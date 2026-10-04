@@ -189,11 +189,23 @@ fn p_row_both_row_types_make_the_same_decisions() {
     let pack_native = [held(TROUT, 3)];
     let pack_compat = [compat(TROUT, "Trout", 3, None, None, &[])];
     assert_eq!(
-        deposit_next(&spec, Some(&side_native[..]), Some(&pack_native[..]), false),
+        deposit_next(
+            &spec,
+            Some(&side_native[..]),
+            Some(&pack_native[..]),
+            false,
+            true
+        ),
         DepositScan::Click(want)
     );
     assert_eq!(
-        deposit_next(&spec, Some(&side_compat[..]), Some(&pack_compat[..]), false),
+        deposit_next(
+            &spec,
+            Some(&side_compat[..]),
+            Some(&pack_compat[..]),
+            false,
+            true
+        ),
         DepositScan::Click(want)
     );
     assert_eq!(
@@ -430,7 +442,7 @@ fn p_match_identity_is_the_obj_id() {
         operation: 2,
     };
     assert_eq!(
-        deposit_next(&keep_item, Some(&side[..]), Some(&pack[..]), false),
+        deposit_next(&keep_item, Some(&side[..]), Some(&pack[..]), false, true),
         DepositScan::Click(click)
     );
     assert_eq!(
@@ -453,7 +465,7 @@ fn p_match_identity_is_the_obj_id() {
         only: None,
     };
     assert_eq!(
-        deposit_next(&keep_name, Some(&side[..]), Some(&pack[..]), false),
+        deposit_next(&keep_name, Some(&side[..]), Some(&pack[..]), false, true),
         DepositScan::Done
     );
     assert!(same_name("Trout", "tROUT"));
@@ -473,7 +485,7 @@ fn p_match_identity_is_the_obj_id() {
         only: None,
     };
     assert!(matches!(
-        deposit_next(&spec, Some(&[nameless][..]), Some(&pack[..]), false),
+        deposit_next(&spec, Some(&[nameless][..]), Some(&pack[..]), false, true),
         DepositScan::Click(DepositClick { id: TROUT, .. })
     ));
 }
@@ -497,38 +509,44 @@ fn p_settle_posted_empty_is_not_absent() {
     let empty: [ItemView; 0] = [];
 
     assert_eq!(
-        deposit_next(&required, Some(&empty[..]), Some(&holding[..]), false),
+        deposit_next(&required, Some(&empty[..]), Some(&holding[..]), false, true),
         DepositScan::MissingRequired
     );
     assert_eq!(
-        deposit_next(&required, Some(&empty[..]), Some(&empty[..]), false),
+        deposit_next(&required, Some(&empty[..]), Some(&empty[..]), false, true),
         DepositScan::Done
     );
     assert_eq!(
-        deposit_next(&required, None, Some(&holding[..]), false),
+        deposit_next(&required, None, Some(&holding[..]), false, true),
         DepositScan::WaitView
     );
     assert_eq!(
-        deposit_next(&required, None, Some(&holding[..]), true),
+        deposit_next(&required, None, Some(&holding[..]), true, true),
         DepositScan::WaitView,
         "the view bound never manufactures Required success"
     );
     assert_eq!(
-        deposit_next(&until_empty, Some(&empty[..]), Some(&holding[..]), false),
+        deposit_next(
+            &until_empty,
+            Some(&empty[..]),
+            Some(&holding[..]),
+            false,
+            true
+        ),
         DepositScan::Done,
         "a settled empty side is not a wait"
     );
     assert_eq!(
-        deposit_next(&until_empty, None, Some(&holding[..]), false),
+        deposit_next(&until_empty, None, Some(&holding[..]), false, true),
         DepositScan::WaitView
     );
     assert_eq!(
-        deposit_next(&until_empty, None, Some(&holding[..]), true),
+        deposit_next(&until_empty, None, Some(&holding[..]), true, true),
         DepositScan::Done
     );
     for spec in [&required, &until_empty] {
         assert_eq!(
-            deposit_next::<ItemView>(spec, Some(&empty[..]), None, true),
+            deposit_next::<ItemView>(spec, Some(&empty[..]), None, true, true),
             DepositScan::WaitView,
             "an unposted pack never settles"
         );
@@ -537,7 +555,7 @@ fn p_settle_posted_empty_is_not_absent() {
     // Required: a side row for another id does not satisfy the product.
     let other = [native(1, "Other", 1, 0, 2006, &[Some("Deposit-All")])];
     assert_eq!(
-        deposit_next(&required, Some(&other[..]), Some(&holding[..]), false),
+        deposit_next(&required, Some(&other[..]), Some(&holding[..]), false, true),
         DepositScan::MissingRequired
     );
     // Keep wins over only.
@@ -546,9 +564,25 @@ fn p_settle_posted_empty_is_not_absent() {
         ..required
     };
     assert_eq!(
-        deposit_next(&kept, None, Some(&holding[..]), false),
+        deposit_next(&kept, None, Some(&holding[..]), false, true),
         DepositScan::Done
     );
+
+    // Outside the request's bank session nothing clicks or completes, the
+    // settled-empty and view-bound completions included.
+    for spec in [&required, &until_empty] {
+        for (side, pack, wait_done) in [
+            (Some(&empty[..]), Some(&empty[..]), false),
+            (Some(&empty[..]), Some(&holding[..]), false),
+            (None, Some(&holding[..]), true),
+            (Some(&other[..]), Some(&holding[..]), false),
+        ] {
+            assert_eq!(
+                deposit_next(spec, side, pack, wait_done, false),
+                DepositScan::SessionGone
+            );
+        }
+    }
 }
 
 /// The side-root fact, not vector length, decides whether a side posted.

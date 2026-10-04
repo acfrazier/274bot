@@ -558,6 +558,8 @@ pub enum DepositScan {
     /// Required: the pack still holds a candidate and the posted side has
     /// no clickable row for one.
     MissingRequired,
+    /// The bank closed or another session opened: nothing settles.
+    SessionGone,
 }
 
 /// The side backpack as a deposit observation: `Some` only while the main
@@ -569,13 +571,18 @@ pub fn side_observation<R: BankRow>(main_open: bool, side_root: i32, rows: &[R])
 
 /// The next deposit step. `side` / `pack` `None` is not posted; `Some(&[])`
 /// is posted empty. `empty_wait_done` is the UntilEmpty not-ready bound and
-/// never turns a Required wait into success.
+/// never turns a Required wait into success. Like [`withdraw_progress`],
+/// nothing clicks or completes outside the request's bank session.
 pub fn deposit_next<R: BankRow>(
     spec: &DepositSpec<'_>,
     side: Option<&[R]>,
     pack: Option<&[R]>,
     empty_wait_done: bool,
+    same_session: bool,
 ) -> DepositScan {
+    if !same_session {
+        return DepositScan::SessionGone;
+    }
     let Some(pack) = pack else {
         return DepositScan::WaitView;
     };
