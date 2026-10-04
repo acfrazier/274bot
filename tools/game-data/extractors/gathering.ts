@@ -1930,7 +1930,13 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
         report[skill] = { sites: drafts.length, direct, dropped, outside_box: outsideBox };
     }
-    rows.sort((a, b) => compareCodepoint(a.label, b.label));
+    // Sort by place names so plain names precede their bearing siblings.
+    rows.sort((a, b) => {
+        const aSeparator = a.label.indexOf(' · ');
+        const bSeparator = b.label.indexOf(' · ');
+        return compareCodepoint(a.label.slice(0, aSeparator), b.label.slice(0, bSeparator))
+            || compareCodepoint(a.label, b.label);
+    });
     const ids = rows.map((row) => row.id);
     if (new Set(ids).size !== ids.length) throw new Error(`gather_sites: duplicate ids ${ids.filter((id, index) => ids.indexOf(id) !== index).join(', ')}`);
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
