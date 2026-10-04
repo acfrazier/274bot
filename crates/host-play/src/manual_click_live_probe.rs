@@ -47,6 +47,12 @@ impl Play {
                 "route_generation": bot.route_generation,
                 "request_id": bot.walk_request_id,
                 "route_request_id": bot.route_request_id,
+                "arrival": format!("{:?}", bot.route_arrival),
+                "requested_radius": bot.requested_route.as_ref().map(|(_, radius, ..)| *radius),
+                "requested_destination": bot.requested_route.as_ref().map(|(tile, ..)| [
+                    tile.x, tile.z, tile.level,
+                ]),
+                "outcome_radius": bot.walk_outcome_radius,
                 "route_destination": bot.route.as_ref().map(|route| [
                     route.dest.x, route.dest.z, route.dest.level,
                 ]),

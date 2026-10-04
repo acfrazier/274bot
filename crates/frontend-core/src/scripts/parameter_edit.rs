@@ -65,7 +65,10 @@ impl ParameterOptions {
         let Some(value) = self.values.get(index) else {
             return false;
         };
-        let label = self.labels.get(index).map_or(value.as_str(), String::as_str);
+        let label = self
+            .labels
+            .get(index)
+            .map_or(value.as_str(), String::as_str);
         ascii_contains_case_insensitive(value, query)
             || ascii_contains_case_insensitive(label, query)
     }
@@ -133,7 +136,6 @@ fn move_unselectable_to_preserved(
     }
     options.preserved += initial - end;
 }
-
 
 /// Resolve a schema row once for both front ends. The renderers only choose
 /// among these rows; aliases normalize only after an explicit user pick.
@@ -314,7 +316,6 @@ fn resolve_gather_site_options(
         options.preserved += 1;
     }
 }
-
 
 fn preserve_unknown_values(
     def: &script::SettingDef,
@@ -983,7 +984,12 @@ mod tests {
             serde_json::json!(["removed-resource", "Normal"]),
         );
         let options = resolve_parameter_options(&resources, &bag, &loadouts, Some(data.as_ref()));
-        assert_eq!(options.preserved, 1);
+        assert_eq!(
+            options.preserved, 2,
+            "Jungle is refused and the saved resource is unknown"
+        );
+        assert!(options.values.iter().any(|value| value == "jungle"));
+        assert!(!options.selectable().iter().any(|value| value == "jungle"));
         assert_eq!(
             options.values.len(),
             options.selectable().len() + options.preserved
@@ -1112,17 +1118,19 @@ mod tests {
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "site-options-{}.json",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("site-options-{}.json", std::process::id())),
+        );
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
             .expect("the Gatherer Site field uses shared options");
         let mut bag = serde_json::Map::new();
         let bagless = resolve_parameter_options(site, &bag, &loadouts, None);
-        assert!(bagless.is_empty(), "script options remain empty without facts");
+        assert!(
+            bagless.is_empty(),
+            "script options remain empty without facts"
+        );
 
         let woodcutting = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
         assert!(
@@ -1172,10 +1180,9 @@ mod tests {
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let loadouts = LoadoutsStore::at(std::env::temp_dir().join(format!(
-            "site-invalid-{}.json",
-            std::process::id()
-        )));
+        let loadouts = LoadoutsStore::at(
+            std::env::temp_dir().join(format!("site-invalid-{}.json", std::process::id())),
+        );
         let site = script::gatherer::settings::schema()
             .iter()
             .find(|field| field.id == "site")
@@ -1183,10 +1190,7 @@ mod tests {
         let mut bag = serde_json::Map::new();
         bag.insert("skill".into(), serde_json::json!("Mining"));
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
-        bag.insert(
-            "site".into(),
-            serde_json::json!("mining.varrock_east.se"),
-        );
+        bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
 
         let options = resolve_parameter_options(site, &bag, &loadouts, Some(data.as_ref()));
         assert!(options.is_empty(), "no surface site offers rune stones");
@@ -1201,10 +1205,7 @@ mod tests {
             .label_for("mining.varrock_east.se")
             .ends_with("not for the selected resources"));
 
-        bag.insert(
-            "miningResources".into(),
-            serde_json::json!(["copper"]),
-        );
+        bag.insert("miningResources".into(), serde_json::json!(["copper"]));
         bag.insert(
             "site".into(),
             serde_json::json!("mining.barbarian_village.e"),
@@ -1215,8 +1216,9 @@ mod tests {
             .selectable()
             .iter()
             .all(|id| id != "mining.barbarian_village.e"));
-        assert!(parse_parameter_text(site, "mining.barbarian_village.e", choices.selectable())
-            .is_err());
+        assert!(
+            parse_parameter_text(site, "mining.barbarian_village.e", choices.selectable()).is_err()
+        );
 
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("site".into(), serde_json::json!("fishing.catherby"));

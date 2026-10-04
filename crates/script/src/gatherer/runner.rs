@@ -10,7 +10,9 @@ use super::select::{
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
 use super::supply::{self, SupplyPlan, SupplyPlanResult};
-use super::widen::{remember_group, SearchExclusions, SearchResult, TriedGroup, WidenCursor};
+use super::widen::{
+    remember_group, site_anchor, SearchExclusions, SearchResult, TriedGroup, WidenCursor,
+};
 use super::{GatherRetained, RecoveryState};
 use crate::bank::{self, PickKind, SelectedBank};
 use crate::native::walk::Walk;
@@ -628,6 +630,24 @@ impl Gatherer {
         }
         if self.retained.start_tile.is_none() {
             self.retained.start_tile = Some(here.value);
+            self.sync_retained_from_context(cx);
+        }
+        if self.settings().location.eq_ignore_ascii_case("site") && self.retained.anchor.is_none() {
+            let site = self.prepared.site().expect("admitted Site setting");
+            let Some(anchor) = site_anchor(
+                &self.prepared.catalog,
+                &self.prepared.methods,
+                &site.region,
+                &self.avoid,
+                cx.evidence().tick,
+            ) else {
+                self.fail(
+                    "area-invalid",
+                    format!("no selected resource is accessible at {}", site.label),
+                );
+                return Validation::Pending;
+            };
+            self.retained.anchor = Some(anchor);
             self.sync_retained_from_context(cx);
         }
         if self.settings().location.eq_ignore_ascii_case("auto") && self.retained.anchor.is_none() {
