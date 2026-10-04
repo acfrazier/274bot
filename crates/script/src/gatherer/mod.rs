@@ -28,11 +28,21 @@ pub use settings::{GathererSettings, Skill};
 #[cfg(feature = "test-hooks")]
 pub fn test_bank_deposit_ids(
     config: &crate::native::PreparedConfig,
-    tool_id: i32,
-    inventory: &[api::snapshot::ItemView],
+    snapshot: &api::snapshot::GameSnapshot,
 ) -> Option<std::sync::Arc<[i32]>> {
     let prepared = config.get::<std::sync::Arc<card::Prepared>>()?;
-    Some(supply::bank_deposit_ids(prepared, tool_id, inventory))
+    let tool_id = supply::best_tool(
+        prepared,
+        snapshot.stats(),
+        snapshot.inventory(),
+        snapshot.equipment(),
+    )
+    .map_or(-1, |tool| tool.id);
+    Some(supply::bank_deposit_ids(
+        prepared,
+        tool_id,
+        snapshot.inventory(),
+    ))
 }
 
 #[cfg(test)]
